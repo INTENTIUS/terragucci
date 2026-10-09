@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -62,14 +63,46 @@ function header(path: string, size: number, mode: number): Buffer {
  * owner, no timestamps. Its digest says whether the module's content changed.
  */
 export function moduleTar(dir: string): Buffer {
+  return tarOf(moduleFiles(dir).map((path) => ({ path, data: readFileSync(join(dir, path)), exec: (statSync(join(dir, path)).mode & 0o111) !== 0 })));
+}
+
+/** A module's files as entries, in the order moduleFiles gives them. */
+export interface TarEntry {
+  path: string;
+  data: Buffer;
+  exec: boolean;
+}
+
+function tarOf(entries: TarEntry[]): Buffer {
   const parts: Buffer[] = [];
-  for (const path of moduleFiles(dir)) {
-    const data = readFileSync(join(dir, path));
-    const mode = statSync(join(dir, path)).mode & 0o111 ? 0o755 : 0o644;
-    parts.push(header(path, data.length, mode), data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  for (const { path, data, exec } of entries) {
+    parts.push(header(path, data.length, exec ? 0o755 : 0o644), data, Buffer.alloc((512 - (data.length % 512)) % 512));
   }
   parts.push(Buffer.alloc(1024));
   return Buffer.concat(parts);
+}
+
+/**
+ * The module at `rel` as the commit `ref` holds it, archived as moduleTar
+ * archives a checkout: the same files, so the same bytes and the same digest.
+ * Undefined when the commit has no such directory.
+ */
+export function moduleTarAt(repo: string, ref: string, rel: string): Buffer | undefined {
+  const ls = spawnSync("git", ["-C", repo, "ls-tree", "-r", "-z", `${ref}:${rel}`], { encoding: "utf-8", maxBuffer: 1 << 30 });
+  if (ls.status !== 0) return undefined;
+  const entries: TarEntry[] = [];
+  for (const line of ls.stdout.split("\0").filter(Boolean)) {
+    const m = /^(\d+) (\w+) ([0-9a-f]+)\t(.*)$/s.exec(line);
+    if (!m || m[2] !== "blob") continue;
+    const path = m[4];
+    const parts = path.split("/");
+    if (parts.some((p) => SKIP.has(p)) || path === "version" || parts[parts.length - 1] === ".terraform.lock.hcl") continue;
+    const blob = spawnSync("git", ["-C", repo, "cat-file", "blob", m[3]], { maxBuffer: 1 << 30 });
+    if (blob.status !== 0) return undefined;
+    entries.push({ path, data: blob.stdout, exec: m[1] === "100755" });
+  }
+  if (entries.length === 0) return undefined;
+  return tarOf(entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)));
 }
 
 export const gzip = (tar: Buffer): Buffer => gzipSync(tar, { level: 9 });

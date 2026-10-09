@@ -29,7 +29,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
-| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the ledger's branch and path; on a waiting wave, `waiting_since`, when it began waiting for an approval of this digest; on a `tf-apply` wave that applied nothing although it planned, `refused`: the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied; on a plan's wave, `review_digest`, the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to, and `waits`, whether the gate will hold it |
+| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the ledger's branch and path; on a waiting wave, `waiting_since`, when it began waiting for an approval of this digest; on a `tf-apply` wave that applied nothing although it planned, `refused`: the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied; on a waiting `tf-apply` wave under `approval: pr-review`, `review`: the `pull_request` whose approving review of its head would approve the wave and the `url` to review it on; on a plan's wave, `review_digest`, the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to, and `waits`, whether the gate will hold it |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
@@ -46,7 +46,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
-The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`.
+The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
 
 ## Reading it
 
@@ -68,7 +68,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 ## The index and the estate page
 
-Each `index.json` in the bucket is `terragucci.report-index/v1`: one row per run, newest first.
+Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON Schema in the package as `dist/report-index.schema.json`: one row per run, newest first.
 
 | Row field | What it holds |
 |---|---|
@@ -78,14 +78,16 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`: one row per run
 | `changed` | roots with a change; on a `tf-drift` row, the roots that drifted |
 | `approval`, `waiting_since` | a `tf-apply` wave's gate, and when a waiting wave began waiting |
 | `applied` | when a `tf-apply` wave finished applying |
+| `overridden` | roots the policy denied that a recorded override let through; absent when none |
 | `destroys`, `destroys_total` | up to 50 destroys and replacements, and how many there are when the row lists fewer |
 | `commit_url`, `pull_request`, `pull_request_url`, `job_url`, `trace_url` | links |
 
-`estate.json` is `terragucci.estate/v1`, which [`terragucci estate`](/terragucci/reference/cli/#estate) builds from those rows alone:
+`estate.json` is `terragucci.estate/v1`, which [`terragucci estate`](/terragucci/reference/cli/#estate) builds from those rows alone, with its JSON Schema in the package as `dist/estate.schema.json`:
 
 | Field | What it holds |
 |---|---|
-| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes |
+| `generated` | when the page was built; every `age_seconds` is as of then |
+| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, and `overridden_roots` when an override let a root through |
 | `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, and `status` (`ok`, `no-index` or `error`) |
 | `recent[]` | the 20 newest runs across every project |
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |

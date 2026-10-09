@@ -123,21 +123,39 @@ export class Registry {
 
   /** Push a module archive under a tag; returns the manifest digest. */
   async pushModule(repo: string, tag: string, archive: Uint8Array, annotations: Record<string, string>): Promise<string> {
-    const layer = await this.pushBlob(repo, archive);
-    const config = await this.pushBlob(repo, Buffer.from("{}"));
-    const manifest: Manifest = {
-      schemaVersion: 2,
-      mediaType: MANIFEST_TYPE,
-      artifactType: MODULE_TYPE,
-      config: { mediaType: EMPTY_TYPE, ...config },
-      layers: [{ mediaType: MODULE_TYPE, ...layer }],
-      annotations,
-    };
-    const body = Buffer.from(JSON.stringify(manifest));
+    await this.pushBlob(repo, archive);
+    await this.pushBlob(repo, Buffer.from("{}"));
+    const body = moduleManifest(archive, annotations);
     await this.expect(
-      await this.send(`${this.base}/${repo}/manifests/${tag}`, { method: "PUT", headers: { "content-type": MANIFEST_TYPE }, body }),
+      await this.send(`${this.base}/${repo}/manifests/${tag}`, { method: "PUT", headers: { "content-type": MANIFEST_TYPE }, body: body as BodyInit }),
       `publishing ${tag}`,
     );
     return sha256(body);
   }
+
+  /** The manifest bytes at a tag or digest, exactly as the registry holds them, or undefined when absent. */
+  async manifestBytes(repo: string, ref: string): Promise<Buffer | undefined> {
+    const res = await this.send(`${this.base}/${repo}/manifests/${ref}`, { headers: { accept: MANIFEST_TYPE } });
+    if (res.status === 404) return undefined;
+    await this.expect(res, `reading ${ref}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+}
+
+/**
+ * The manifest bytes pushModule writes for an archive: the module layer and an
+ * empty config. The same archive and annotations give the same bytes, so the
+ * manifest digest is known before the push.
+ */
+export function moduleManifest(archive: Uint8Array, annotations: Record<string, string>): Buffer {
+  const empty = Buffer.from("{}");
+  const manifest: Manifest = {
+    schemaVersion: 2,
+    mediaType: MANIFEST_TYPE,
+    artifactType: MODULE_TYPE,
+    config: { mediaType: EMPTY_TYPE, digest: sha256(empty), size: empty.length },
+    layers: [{ mediaType: MODULE_TYPE, digest: sha256(archive), size: archive.length }],
+    annotations,
+  };
+  return Buffer.from(JSON.stringify(manifest));
 }

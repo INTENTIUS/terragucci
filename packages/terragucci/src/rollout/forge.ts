@@ -14,6 +14,18 @@ export interface WavePullRequest {
   mergeCommit?: string;
 }
 
+/** A pull request from a rollout's branch, as the list of the repo's pull requests gives it. */
+export interface ListedPullRequest {
+  branch: string;
+  url: string;
+  title: string;
+  state: "open" | "merged" | "closed";
+  body: string;
+}
+
+/** How many pull requests a list reads, newest update first: a wave that merged since the last run is among them. */
+export const LIST_LIMIT = 500;
+
 export interface CommitCheck {
   name: string;
   state: "success" | "pending" | "failure";
@@ -28,6 +40,8 @@ export interface RolloutForge {
   createPullRequest(pr: { base: string; head: string; title: string; body: string }): Promise<string>;
   /** The checks and statuses on a commit, newest per name. */
   commitChecks(sha: string): Promise<CommitCheck[]>;
+  /** Pull requests in any state whose head branch starts with `prefix`, from the newest LIST_LIMIT by last update. */
+  listPullRequests(prefix: string): Promise<ListedPullRequest[]>;
 }
 
 const STATE: Record<string, CommitCheck["state"]> = {
@@ -111,6 +125,41 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
       const merged = pr.merged === true || !!pr.merged_at;
       const state = merged ? "merged" : pr.state === "open" ? "open" : "closed";
       return { url: pr.html_url, state, body: pr.body ?? "", ...(merged && pr.merge_commit_sha ? { mergeCommit: pr.merge_commit_sha } : {}) };
+    },
+
+    async listPullRequests(prefix) {
+      const out: ListedPullRequest[] = [];
+      if (t.forge === "gitlab") {
+        for (let page = 1; page <= LIST_LIMIT / 100; page++) {
+          const list = (await get(`/projects/${id}/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&page=${page}`)) as Array<{ web_url: string; title?: string; state: string; description?: string | null; source_branch?: string }>;
+          for (const mr of list) {
+            if (!mr.source_branch?.startsWith(prefix)) continue;
+            out.push({ branch: mr.source_branch, url: mr.web_url, title: mr.title ?? "", state: mr.state === "merged" ? "merged" : mr.state === "opened" ? "open" : "closed", body: mr.description ?? "" });
+          }
+          if (list.length < 100) break;
+        }
+        return out;
+      }
+      type Pull = { html_url: string; title?: string; state: string; merged?: boolean; merged_at?: string | null; body?: string | null; head?: { ref?: string } };
+      const size = t.forge === "github" ? 100 : 50;
+      for (let page = 1; page <= LIST_LIMIT / size; page++) {
+        let list: Pull[];
+        try {
+          list = (await get(t.forge === "github" ? `/repos/${t.path}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=${page}` : `/repos/${t.path}/pulls?state=all&sort=recentupdate&limit=50&page=${page}`)) as Pull[];
+        } catch (e) {
+          // Forgejo answers 404 for the pull requests of an empty repo.
+          if (!(t.forge === "forgejo" && e instanceof ForgeError && e.status === 404 && ((await get(`/repos/${t.path}`)) as { empty?: boolean }).empty === true)) throw e;
+          list = [];
+        }
+        for (const pr of list) {
+          const branch = pr.head?.ref;
+          if (!branch?.startsWith(prefix)) continue;
+          const merged = pr.merged === true || !!pr.merged_at;
+          out.push({ branch, url: pr.html_url, title: pr.title ?? "", state: merged ? "merged" : pr.state === "open" ? "open" : "closed", body: pr.body ?? "" });
+        }
+        if (list.length < size) break;
+      }
+      return out;
     },
 
     async createPullRequest(pr) {

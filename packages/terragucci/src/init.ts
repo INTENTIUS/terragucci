@@ -5,7 +5,7 @@
  * from what it would detect. Run twice, the second run changes nothing.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { emitYAML } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
@@ -18,6 +18,7 @@ import {
   findConfig,
   loadConfig,
   resolveRepo,
+  responseTo,
   type Approval,
   type Binary,
   type ForgeName,
@@ -31,7 +32,7 @@ import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
 import { agentCommentInput } from "./agent-comment";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
-import { MARKER, RenderError, renderPipeline, type PipelineInput } from "./render";
+import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
 
@@ -69,7 +70,8 @@ export interface TerragruntFound {
 
 export interface FileChange {
   path: string;
-  status: "created" | "updated" | "unchanged";
+  /** `removed`: a file an earlier init wrote, which the config no longer asks for. */
+  status: "created" | "updated" | "unchanged" | "removed";
   content: string;
 }
 
@@ -217,6 +219,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ref = imageFor(binary.value);
   }
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
+  // The rollout job: when rollouts names a schedule and respond.rollout is not off.
+  const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
   const pipeline = renderPipeline({
     forge: forgeChoice.value,
     binary: binary.value,
@@ -230,9 +234,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     tokenEnv: settings.token_env,
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
-    ...(settings.modules?.publish ? { publish: true } : {}),
+    ...(settings.modules?.publish ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}) } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
+    ...(rollouts ? { rollouts } : {}),
     ...(settings.synth ? { synth: settings.synth } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
     ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command } } : {}),
@@ -246,6 +251,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
+    ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
   });
@@ -253,7 +259,19 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
+  const rolloutRel = forgeChoice.value === "gitlab" ? undefined : ROLLOUT_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
+  for (const f of pipeline.extra ?? []) {
+    const path = join(repo, f.path);
+    // The rollout workflow, like the pipeline, overwrites only a file terragucci wrote.
+    if (f.path === rolloutRel && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    files.push(plan(path, f.content));
+  }
+  // A rollout workflow an earlier init wrote goes when the config stops asking for it.
+  if (rolloutRel && !(pipeline.extra ?? []).some((f) => f.path === rolloutRel) && !options.settings) {
+    const rolloutPath = join(repo, rolloutRel);
+    if (existsSync(rolloutPath) && readFileSync(rolloutPath, "utf-8").startsWith(MARKER)) files.push({ path: rolloutPath, status: "removed", content: "" });
+  }
   // On GitLab the repo's own .gitlab-ci.yml includes the pipeline; its jobs stay.
   if (forgeChoice.value === "gitlab") {
     const root = join(repo, GL_ROOT_FILE);
@@ -321,6 +339,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.drift && forgeChoice.value === "gitlab") {
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
   }
+  if (rollouts && forgeChoice.value === "gitlab") {
+    notes.push(`rollouts is set: add a pipeline schedule with the cron ${rollouts} and the variable TERRAGUCCI_SCHEDULE set to rollouts under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api and write_repository scopes so the rollout job can push a wave's branch and open its merge request`);
+  }
+  if (settings.rollouts && !rollouts) notes.push("rollouts is set and respond.rollout is off, so no rollout job is written");
   if (settings.comments && forgeChoice.value === "gitlab") {
     notes.push(`comments is set: add a pipeline schedule with the cron ${settings.comments} and the variable TERRAGUCCI_SCHEDULE set to comments under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope and the Developer role so the comments job can answer notes and start pipelines`);
   }
@@ -336,6 +358,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (!options.dryRun) {
     for (const f of files) {
       if (f.status === "unchanged") continue;
+      if (f.status === "removed") {
+        unlinkSync(f.path);
+        continue;
+      }
       mkdirSync(dirname(f.path), { recursive: true });
       writeFileSync(f.path, f.content);
     }
@@ -481,7 +507,7 @@ function workspaceName(repo: string, name?: string): string {
 /** What `init` prints. */
 export function describeInit(repo: string, r: InitResult, dryRun = false): string {
   const verb = (s: FileChange["status"]): string =>
-    s === "unchanged" ? "unchanged" : dryRun ? (s === "created" ? "would write" : "would update") : s === "created" ? "wrote" : "updated";
+    s === "unchanged" ? "unchanged" : dryRun ? (s === "created" ? "would write" : s === "removed" ? "would remove" : "would update") : s === "created" ? "wrote" : s === "removed" ? "removed" : "updated";
   const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
   const tg = r.terragrunt;
   const lines = [

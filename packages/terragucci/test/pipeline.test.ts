@@ -911,6 +911,17 @@ describe("publish job", () => {
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("REGISTRY");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: with attest, the publish job alone gets the signing key's secrets", (forge) => {
+    expect(JSON.stringify(body(withPublish(forge)).jobs)).not.toContain("COSIGN");
+    const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attest: true }).content).jobs;
+    expect(jobs.publish.env.COSIGN_PRIVATE_KEY).toBe("${{ secrets.COSIGN_PRIVATE_KEY }}");
+    expect(jobs.publish.env.COSIGN_PASSWORD).toBe("${{ secrets.COSIGN_PASSWORD }}");
+    const steps = jobs.publish.steps.map((s: { run?: string }) => s.run ?? "");
+    expect(steps.findIndex((r: string) => r.includes("terragucci install cosign 2.6.5"))).toBe(steps.length - 2);
+    expect(JSON.stringify(body(withPublish(forge)).jobs.publish)).not.toContain("install cosign");
+    for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("COSIGN");
+  });
+
   it("gitlab: a publish job after apply, on the default branch, with full history", () => {
     const doc = body(withPublish("gitlab"));
     expect(doc.publish.needs).toEqual(["apply-wave-2"]);
@@ -918,6 +929,10 @@ describe("publish job", () => {
     expect(doc.publish.variables.GIT_DEPTH).toBe("0");
     expect(doc.publish.script.join("\n")).toContain("terragucci publish");
     expect(JSON.stringify(doc["apply-wave-2"])).not.toContain("terragucci publish");
+    expect(doc.publish.script.join("\n")).not.toContain("install cosign");
+    const attested = body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attest: true }).content);
+    expect(attested.publish.script[0]).toContain('dir="$(terragucci install cosign 2.6.5)"');
+    expect(attested.publish.script[0]).toContain('export PATH="$dir:$PATH"');
   });
 });
 
@@ -1702,6 +1717,59 @@ describe("two concurrent pushes to main on forgejo", () => {
         api.close();
       }
     });
+  });
+});
+
+describe("the rollout job", () => {
+  const input = { binary: "tofu" as const, version: "1.13.1", image: "img:1", layers, env: {} };
+
+  it.each(FORGES)("%s: no rollout job, and the same pipeline, unless rollouts names a schedule", (forge) => {
+    const r = renderPipeline({ forge, ...input });
+    expect(r.extra).toBeUndefined();
+    expect(r.content).not.toContain("respond rollout");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: a workflow of its own runs respond rollout on the schedule or by hand, and the pipeline does not change", (forge) => {
+    const r = renderPipeline({ forge, ...input, rollouts: "*/15 * * * *" });
+    expect(r.content).toBe(renderPipeline({ forge, ...input }).content);
+    const rollout = r.extra!.find((f) => f.path === `.${forge}/workflows/terragucci-rollout.yml`)!;
+    expect(r.extra!.length).toBe(1);
+    const doc = body(rollout.content);
+    expect(doc.on).toEqual({ schedule: [{ cron: "*/15 * * * *" }], workflow_dispatch: {} });
+    expect(Object.keys(doc.jobs)).toEqual(["rollout"]);
+    expect(doc.jobs.rollout.env.TG_TOKEN).toBe("${{ github.token }}");
+    const run = doc.jobs.rollout.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    expect(run).toContain(`export ${forge === "github" ? "GITHUB_TOKEN" : "FORGEJO_TOKEN"}="$TG_TOKEN"`);
+    expect(run).toContain("terragucci respond rollout --mode apply");
+    expect(run).not.toContain("|| true");
+  });
+
+  it("github: with token_env the job opens the wave and pushes its branch with that secret, so the wave's pull request is planned", () => {
+    const doc = body(renderPipeline({ forge: "github", ...input, rollouts: "*/15 * * * *", tokenEnv: "ROLLOUT_TOKEN" }).extra![0]!.content);
+    expect(doc.jobs.rollout.env.TG_TOKEN).toBe("${{ secrets.ROLLOUT_TOKEN }}");
+    expect(doc.jobs.rollout.steps[0].with).toEqual({ "fetch-depth": 0, token: "${{ secrets.ROLLOUT_TOKEN }}" });
+    expect(doc.jobs.rollout.permissions).toEqual({ contents: "write", "pull-requests": "write", statuses: "read", checks: "read" });
+    expect(doc.jobs.rollout.steps.map((s: any) => s.run).join("\n")).toContain('export ROLLOUT_TOKEN="$TG_TOKEN"');
+  });
+
+  it("gitlab: the rollouts schedule runs the rollout job, and drift leaves that schedule's pipelines alone", () => {
+    const doc = body(renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *" }).content);
+    expect(doc.rollout.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "rollouts"' }]);
+    expect(doc.rollout.script.join("\n")).toContain("terragucci respond rollout --mode apply");
+    expect(doc.rollout.variables.GIT_DEPTH).toBe("0");
+    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
+  });
+
+  it("gitlab: with apply.resume too, drift leaves both the resume and the rollouts schedules alone", () => {
+    const doc = body(renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *", resume: 10 }).content);
+    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+  });
+
+  it("github: with apply.resume too, the rollout workflow sits beside the resume workflow", () => {
+    const r = renderPipeline({ forge: "github", ...input, rollouts: "*/15 * * * *", resume: 10 });
+    expect(r.extra!.map((f) => f.path)).toContain(".github/workflows/terragucci-rollout.yml");
+    expect(r.extra!.length).toBe(2);
   });
 });
 

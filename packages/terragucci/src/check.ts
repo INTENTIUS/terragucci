@@ -32,6 +32,8 @@ export interface CheckResult {
 export interface CheckOptions {
   exec?: PolicyExec;
   env?: NodeJS.ProcessEnv;
+  /** `modules.require: attested`: the root's pins checked before validate; each line names a refused pin. */
+  pins?: (dir: string) => Promise<{ refused: string[]; verified: string[] }>;
 }
 
 /** `file:line:col-line:col` for a diagnostic, with the root's directory in front of the file. */
@@ -128,6 +130,20 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
   const log: string[] = [];
   const report: string[] = [`### ${dir}`, ""];
   let ok = true;
+  if (options.pins) {
+    const pins = await options.pins(dir);
+    for (const line of pins.refused) {
+      log.push(line);
+      report.push(`- ${line.replace(`refused: ${dir}: `, `refused: \`${dir}\`: `)}`);
+    }
+    if (pins.refused.length) {
+      ok = false;
+      log.push(`FAILED ${dir}: modules.require: attested refused ${pins.refused.length} module pin${pins.refused.length === 1 ? "" : "s"}`);
+    } else if (pins.verified.length) {
+      log.push(`attested ${dir}: ${pins.verified.join("; ")}`);
+      report.push(`- attested: ${pins.verified.map((v) => `\`${v}\``).join(", ")}`);
+    }
+  }
   const v = await exec(binary, [`-chdir=${dir}`, "validate", "-json"], repo);
   const parsed = parseValidate(v.stdout);
   if (!parsed) {

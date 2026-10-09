@@ -1,7 +1,7 @@
 ---
 title: Tell a chat channel when a wave stops
-description: Post a Slack or Microsoft Teams message when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run.
-claims: [notify-chat]
+description: Post a Slack or Microsoft Teams message, or a signed JSON event to a webhook, when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run.
+claims: [notify-chat, notify-webhook]
 prompt: |
   Read https://intentius.io/terragucci/guides/notify-a-chat-channel/.
   Add a `notify:` block to terragucci.yml naming the secret SLACK_WEBHOOK_URL (or TEAMS_WEBHOOK_URL), run
@@ -14,12 +14,17 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
-A message in your channel each time an apply job stops at a wave. A message approves nothing; a person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+A message in your channel each time an apply job stops at a wave. A message approves nothing. A person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
+
+| You want | You set up |
+|---|---|
+| a notice in Slack or Teams, and under `approval: pr-review` a link straight to the review that approves the wave | `notify:` and an incoming webhook for the channel. Nothing to install or host. |
+| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own: a bot or a function that receives the [signed event](#send-events-to-your-own-webhook) and, for the person who clicked, runs `terragucci approve wave-<k> --plan <digest>` with the digest the event named, so plans that moved since are never approved. The wave then resumes: with the relay's token, or within [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) minutes |
 
 | The wave | Exit | The message says |
 |---|---|---|
-| waits for an approval | 3 | the wave, its roots, the [`chant approve`](/terragucci/concepts/glossary/#chant) command for its digest, and the run |
-| is refused: its plans changed after approval | 4 | the wave, its roots, the outcome line, `npx terragucci approve wave-<k>` for the new digest, and the run |
+| waits for an approval | 3 | the wave, its roots, its plan digest, the [`chant approve`](/terragucci/concepts/glossary/#chant) command for that digest, and the run; under `approval: pr-review`, first a link to review the pull request ([below](#approve-from-the-message-by-review)) |
+| is refused: its plans changed after approval | 4 | the wave, its roots, the outcome line, `npx terragucci approve wave-<k> --plan <digest>` for the new digest, and the run |
 | fails, or the policy denies it | 1 | the wave, its roots, the outcome line, that there is nothing to approve, and the run |
 
 ## Before you start
@@ -84,12 +89,12 @@ A message in your channel each time an apply job stops at a wave. A message appr
    ```text
    terragucci: wave 2 of github.com/acme/infra waits for an approval
    Roots: envs/prod/app, envs/prod/db
-   Approve: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c... (or npx terragucci approve wave-2)
+   Approve: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c... (or npx terragucci approve wave-2 --plan jcs1-sha256:9f2c...)
    Run: https://github.com/acme/infra/actions/runs/42
    ```
      </TabItem>
      <TabItem label="Teams">
-       An Adaptive Card titled with the same first line. Its facts are Wave, Roots, Approve and Run, and its one button opens the run.
+       An Adaptive Card titled with the same first line. Its facts are Wave, Roots, Digest, Approve and Run. Its button opens the run.
      </TabItem>
    </Tabs>
 
@@ -101,6 +106,73 @@ A message in your channel each time an apply job stops at a wave. A message appr
 | answers an error, or not within 10 seconds | logs the status and goes on; the wave's own exit code stands |
 
 A comment that applies (`/terragucci apply`) posts the same messages from its job.
+
+## Approve from the message, by review
+
+With [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review), a waiting wave's message opens with a link to the pull request's review page, when an approving review of its head would approve the wave. The approval is still a person's own review on the forge, and it binds the plans the pull request's note recorded. The chat app holds no key and approves nothing.
+
+```text
+terragucci: wave 2 of github.com/acme/infra waits for an approval
+Review and approve: pull request 12, then run the wave again
+Roots: envs/prod/app, envs/prod/db
+Digest: jcs1-sha256:9f2c...
+Or approve: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c... (or npx terragucci approve wave-2 --plan jcs1-sha256:9f2c...)
+Run: https://github.com/acme/infra/actions/runs/42
+```
+
+In Teams, the card's first button (Review and approve) opens the same page.
+
+| Forge | The link opens | Given when |
+|---|---|---|
+| GitHub | the pull request's Files changed tab, where Review changes > Approve is | the wave's pull request has no approving review of its head, or a reviewer asked for changes, and its plan note has a digest for the wave |
+| Forgejo | the pull request's Files changed tab, where Review > Approve is | the same |
+| GitLab | the merge request, where Approve is | the same, and the merge request is still open (applied before it merges): GitLab takes no approval of a merged one |
+
+A direct push gets no link, and neither does a refused wave or one the pull request's note has no digest for: no review of that head can approve those plans. The message then offers the approve command alone.
+
+After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-with-chant)). The wave finds the approving review of the head and records it on `chant/lifecycle` with `via: pr-review`. Then it applies.
+
+## Send events to your own webhook
+
+For a program rather than a channel, such as a chat bot, an incident tool or a relay that approves from chat, `notify` also posts one JSON event to any HTTPS endpoint. A key you hold signs it. The default chat path above needs none of this.
+
+<Steps>
+
+1. Store two secrets in your forge's store, as in step 2 above: the endpoint's address, and a random key of 32 bytes or more, for example from `openssl rand -hex 32`. Give the receiver the same key.
+
+2. Name both in `terragucci.yml`. They can sit beside `slack` and `teams`.
+
+   ```yaml
+   notify:
+     webhook: TERRAGUCCI_HOOK_URL
+     webhook_key: TERRAGUCCI_HOOK_KEY
+   ```
+
+   `config check` refuses one without the other: an event is never sent unsigned.
+
+3. Run `npx terragucci init` and merge. The apply jobs get the secrets as `TERRAGUCCI_WEBHOOK` and `TERRAGUCCI_WEBHOOK_KEY`.
+
+4. Verify each request before reading it. The body is a [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event.
+
+   | Header | Holds |
+   |---|---|
+   | `X-Terragucci-Signature` | `sha256=` and the hex HMAC-SHA256 of the raw body with the key |
+   | `X-Terragucci-Event` | `waiting`, `refused` or `failed` |
+   | `X-Terragucci-Delivery` | the event's `id`, the same for each post of one wave's event about one digest; drop a repeat |
+
+   ```js
+   import { createHmac, timingSafeEqual } from "node:crypto";
+
+   function verified(rawBody, header, key) {
+     const want = Buffer.from("sha256=" + createHmac("sha256", key).update(rawBody).digest("hex"));
+     const got = Buffer.from(header ?? "");
+     return got.length === want.length && timingSafeEqual(got, want);
+   }
+   ```
+
+</Steps>
+
+The event carries the wave's outcome as the stage wrote it ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
 
 ## Next
 

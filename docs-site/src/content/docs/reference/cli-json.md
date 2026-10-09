@@ -1,6 +1,6 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan, stage, rollout, respond and config check print with --json, and the exit codes behind it.
+description: The envelope that init, reconcile, plan, stage, rollout, respond and config check print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
 prompt: |
   Read https://intentius.io/terragucci/reference/cli-json/.
   Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
@@ -30,7 +30,7 @@ With `--json`, these commands print one JSON object on stdout and nothing else.
 | `results` | What the command found or did, as below. `null` when the command could not run. |
 | `error` | Present when `results` is `null`: why it could not run. |
 
-Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them. No envelope carries code 4: `stage tf-apply` refuses `--json`.
+Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them. No envelope carries code 4: `stage tf-apply` refuses `--json` and writes [its outcome](#the-apply-outcome) to a file instead.
 
 ## init
 
@@ -84,6 +84,45 @@ The exit code is 1 when any project failed.
 
 A root that refused to plan exits 1.
 
+## The apply outcome
+
+`stage tf-apply` writes how its wave ended to the file `TG_OUTCOME_JSON` names, on every exit but a usage error, whatever the wave did. With `--rest` the file holds the last wave that ran. The generated apply jobs set the variable when `notify` is on, and `terragucci notify` reads the file. A waiting wave's file carries the [chant](/terragucci/concepts/glossary/#chant) command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+
+```json
+{
+  "schema": "terragucci.outcome/v1",
+  "status": "waiting",
+  "exit": 3,
+  "wave": 2,
+  "roots": ["envs/prod/app", "envs/prod/db"],
+  "line": "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c...",
+  "set_digest": "jcs1-sha256:9f2c...",
+  "gate": { "name": "wave-2", "branch": "chant/lifecycle", "path": "_gates/tf-apply.jsonl" },
+  "approval": "waiting",
+  "approval_mode": "pr-review",
+  "approve_command": "chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c...",
+  "waiting_since": "2026-10-08T14:02:11.000Z",
+  "review": { "pull_request": 12, "url": "https://github.com/acme/infra/pull/12/files" }
+}
+```
+
+| Field | Holds |
+|---|---|
+| `schema` | `terragucci.outcome/v1`. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
+| `status`, `exit` | `applied` (0), `waiting` (3), `refused` (4) or `failed` (1) |
+| `wave`, `roots` | the wave and its roots (units in a Terragrunt repo); `roots` is empty when the repo has no such wave |
+| `line` | the line the job's `terragucci/apply` status carries, when the wave wrote one (`TG_OUTCOME`) |
+| `set_digest` | the set digest over the roots that change: what an approval binds |
+| `gate` | when a gate held the wave: its `name` and the `branch` and `path` of its ledger |
+| `approval` | `waiting`, `approved` or `not-required` |
+| `approval_mode` | with a gate: `ledger`, `pr-review` or `sealed`, the mode in force at base |
+| `approve_command` | waiting, or refused because the plans moved after an approval or a review: the `chant approve` command for `set_digest`, with `--sign` under `sealed` |
+| `waiting_since` | waiting: when the wave began waiting for an approval of this digest |
+| `review` | waiting under `approval: pr-review`: the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
+| `refused` | why the wave applied nothing although it planned: `reason` (`approval`, `review`, `override` or `policy`), the digest `approved` and `by` whom, and the `roots` that moved or were denied |
+| `policy_denied` | the roots the policy denied, when no override lets them through |
+| `failed_roots` | failed: the roots that failed to plan or apply |
+
 ## rollout
 
 `results` is the rollout as the run left it.
@@ -107,8 +146,11 @@ A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`
 |---|---|
 | `event`, `response`, `text` | the event, the response it got and the text printed |
 | `skipped`, `data`, `proposals`, `agent_input` | set only when the response has them |
+| `exit` | set when the command exits other than 0 |
 
-Exit 0 when handled. An unknown event or a missing flag exits 2 with `results` null.
+`respond rollout` with no module puts `mode` and `rollouts` in `data`: for each rollout in flight, `kind`, `name`, `from`, `to`, `wave` (its newest), `waves`, `action` (`ran`, `waiting`, `stopped`, `done` or `failed`), `reason`, `pullRequests`, and `result`, [the rollout](#rollout) when it ran.
+
+Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not run. An unknown event or a missing flag exits 2 with `results` null.
 
 ## config check
 

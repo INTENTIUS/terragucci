@@ -193,6 +193,8 @@ export function ledgerEntries(project: string, path: string, changes: LedgerChan
           reason: override ? str(r.note) : undefined,
           rules: denial && Array.isArray(denial.rules) ? denial.rules : undefined,
           plan_digest: denied,
+          // A service that wrote the line on a person's behalf names itself in relayedBy.
+          relayed_by: str(r.relayedBy),
           committed_by: c.author,
         }),
       });
