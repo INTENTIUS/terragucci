@@ -8,42 +8,48 @@
       "says": "the example boots and deploys locally",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "check",
       "says": "tf-check fails an unformatted root and names the file",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "affected",
       "says": "only the roots a change touches are planned",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "grouped",
       "says": "one note groups many plans",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "report",
       "says": "the report is JSON and HTML, and links every root to its full plan",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "highlight",
       "says": "destroys and outliers are open, identical groups are folded",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "waves",
@@ -51,7 +57,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "refuse",
@@ -59,7 +65,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "sealed",
@@ -67,126 +73,143 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "drift",
       "says": "drift is reported by root",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "rollout",
       "says": "a module version rolls out one pull request per wave",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "publish",
       "says": "changed modules are published at a new version",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tips",
       "says": "tips are on by default and name their rule",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "zero-config",
       "says": "with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "apply-serial",
       "says": "two pushes to main apply one after the other, and the commit carries one terragucci/apply status",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "reconcile",
       "says": "a control repo opens one pull request per project that changes, and the merged pipeline applies",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "traces",
       "says": "each plan run is one trace, with a span per root and the binary spans inside it",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "metrics",
       "says": "the metrics of a plan run reach Prometheus with the counts in its report",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-zero-config",
       "says": "init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-waves",
       "says": "the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-check",
       "says": "tf-check fails an unformatted Terragrunt file and names it",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-affected",
       "says": "only the units a change reaches are planned, including a file a module reads that Terragrunt misses",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-mock-lint",
       "says": "a dependency whose mock_outputs can stand in for apply is named by a tip",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-refuse",
       "says": "a unit whose plan would read mock_outputs is not planned; it waits for its upstream to apply",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-mock-trap",
       "says": "a new upstream and its dependent merge together and apply in order, so no mock reaches real state",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-drift",
       "says": "drift is reported by unit in a Terragrunt repo, with the same tracking issue",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "respond-refused",
@@ -194,231 +217,263 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "respond-triage",
       "says": "a failed apply is triaged from the known-error table",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "respond-drift",
       "says": "drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "respond-tips",
       "says": "each tip becomes its own small pull request",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "respond-fmt",
       "says": "fmt on request commits to the pull request branch and nowhere else",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "respond-notes",
       "says": "release notes come from the conventional commits that touched the module",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "fresh-plan",
       "says": "on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "forgejo-oidc",
       "says": "a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "steward",
       "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
       "needs": "273",
       "verdict": "pending",
-      "break": null
+      "break": null,
+      "commit": "6766e9e"
     },
     {
       "claim": "policy",
       "says": "an opt-in policy denies a plan, fails the root in tf-plan, and names the violation",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "comment-plan",
       "says": "a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "lock-wait",
       "says": "a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-pipeline",
       "says": "the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-changes",
       "says": "the Change review dashboard init writes shows the roots, groups and changes by action of a pull request",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-waves",
       "says": "the Rollouts and waves dashboard init writes shows a wave waiting for its approval, how long, and wave runs by result",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-drift",
       "says": "the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-estate",
       "says": "the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-runs",
       "says": "the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "dash-slos",
       "says": "the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "drill-down",
       "says": "the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-wave",
       "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "check-diagnostics",
       "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "comment-not-affected",
       "says": "a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "drift-attribute",
       "says": "with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "version-bump-job",
       "says": "with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-spans",
       "says": "the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "oidc-clouds",
       "says": "a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "comment-apply",
       "says": "a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "comment-agent",
       "says": "a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "wave-report",
       "says": "the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-delete-key",
       "says": "a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "report-oidc",
       "says": "with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-gate-wait",
       "says": "a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-gate-refuse",
@@ -426,133 +481,151 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-sealed",
       "says": "under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-apply",
       "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-apply-lock",
       "says": "a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-apply-stale",
       "says": "a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-comment-apply",
       "says": "a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "provider-calls",
       "says": "with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "summed-timings",
       "says": "with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "foreign-checkout",
       "says": "a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-layers",
       "says": "a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-source",
       "says": "a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-requires",
       "says": "with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-lock",
       "says": "/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "front-door",
       "says": "the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "ledger-default",
       "says": "with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "approval-at-base",
       "says": "a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "sealed-migrate",
       "says": "a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "estate",
       "says": "terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "drift-overdue",
       "says": "the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-review",
@@ -560,7 +633,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-review-moved",
@@ -568,35 +641,39 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-review-status",
       "says": "with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "a5c8037"
     },
     {
       "claim": "cdf-concurrency",
       "says": "with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "cdf-write-race",
       "says": "with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "cdf-iam",
       "says": "with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "approve-command",
@@ -604,91 +681,111 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-pr-apply",
       "says": "with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-pr-apply-lock",
       "says": "in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "plan-lock",
       "says": "with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "a5c8037"
     },
     {
       "claim": "plan-lock-release",
       "says": "with locks: plan the merge of a pull request releases the lock its first plan took",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "a5c8037"
     },
     {
       "claim": "policy-override",
       "says": "a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-override-moved",
       "says": "an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-override-unlisted",
       "says": "an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
+    },
+    {
+      "claim": "policy-override-applied",
+      "says": "once a wave applied a root under its override, the next plan of that root the policy denies is recorded as a new denial and waits for its own override, and only an override no wave applied refuses",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "blob-azure",
       "says": "with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "blob-gcs",
       "says": "with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "note-diff",
       "says": "the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "note-split",
       "says": "a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "note-report-link",
       "says": "with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "6766e9e"
     },
     {
       "claim": "config-ts",
@@ -696,7 +793,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "role-refused",
@@ -704,7 +801,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "description-check",
@@ -712,7 +809,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "decide-backends",
@@ -720,7 +817,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "otlp-headers",
@@ -728,7 +825,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "6766e9e"
     },
     {
       "claim": "pinned-install",
@@ -736,7 +833,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "drift-close",
@@ -744,7 +841,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "6766e9e"
     },
     {
       "claim": "estate-control",
@@ -752,7 +849,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "estate-override",
@@ -760,7 +857,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "comment-refused",
@@ -768,7 +865,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "note-stale",
@@ -776,7 +873,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-confirm",
@@ -784,7 +881,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-base-config",
@@ -792,7 +889,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-guard",
@@ -800,7 +897,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "pr-close-release",
@@ -808,7 +905,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-lock-fanout",
@@ -816,7 +913,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "token-scrub",
@@ -824,7 +921,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "fork-no-plan",
@@ -832,7 +929,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "highlight-sensitive",
@@ -840,7 +937,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "6766e9e"
     },
     {
       "claim": "approval-revoke",
@@ -848,7 +945,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "pending-expiry",
@@ -856,7 +953,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "signer-trust",
@@ -864,7 +961,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "rollout-control",
@@ -872,7 +969,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "rollout-provider",
@@ -880,7 +977,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d6d5427"
+      "commit": "6766e9e"
     },
     {
       "claim": "rollout-pins",
@@ -888,7 +985,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d6d5427"
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-opa",
@@ -896,7 +993,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-hcp",
@@ -904,7 +1001,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "policy-hcl",
@@ -912,7 +1009,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-policy",
@@ -920,7 +1017,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-credentials",
@@ -928,7 +1025,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-dependents",
@@ -936,7 +1033,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "tf-terraform",
@@ -944,7 +1041,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "tg-terraform",
@@ -952,7 +1049,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "tfquery-import",
@@ -960,7 +1057,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "alerts-fire",
@@ -968,7 +1065,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "6766e9e"
     },
     {
       "claim": "blob-gcs-key",
@@ -976,7 +1073,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "blob-azure-key",
@@ -984,7 +1081,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "index-writes",
@@ -992,7 +1089,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "6766e9e"
     },
     {
       "claim": "cdf-shared-bucket",
@@ -1000,7 +1097,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "6766e9e"
     },
     {
       "claim": "cdktn-synth",
@@ -1008,7 +1105,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0bde4ea"
+      "commit": "6766e9e"
     },
     {
       "claim": "audit",
@@ -1016,7 +1113,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "6766e9e"
     },
     {
       "claim": "audit-override",
@@ -1024,7 +1121,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "6766e9e"
     },
     {
       "claim": "audit-refused",
@@ -1032,7 +1129,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "audit-control",
@@ -1040,7 +1137,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "6766e9e"
     },
     {
       "claim": "notify-chat",
@@ -1048,7 +1145,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "cost-estimate",
@@ -1056,7 +1153,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "6766e9e"
     },
     {
       "claim": "approval-used",
@@ -1064,7 +1161,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "6766e9e"
     },
     {
       "claim": "cdktn-affected",
@@ -1072,7 +1169,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0bde4ea"
+      "commit": "6766e9e"
     }
   ]
 }
