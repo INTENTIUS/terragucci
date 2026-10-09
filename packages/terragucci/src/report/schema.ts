@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 15;
+export const REPORT_MINOR = 16;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -29,6 +29,8 @@ export interface ReportRun {
   stage: ReportStage;
   /** Set on a `tf-apply` wave's report. */
   wave?: number;
+  /** On a `tf-apply` wave split across jobs (`waves.jobs`), the share this report applied, from 1 (minor 16); `waves[0].roots` are its roots. */
+  share?: number;
   binary: string;
   runtime: string;
   started: string;

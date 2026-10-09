@@ -59,7 +59,7 @@ export function runPath(report: Report): string {
   const at = new Date(report.run.finished);
   const yyyy = String(at.getUTCFullYear());
   const mm = String(at.getUTCMonth() + 1).padStart(2, "0");
-  const stage = report.run.wave !== undefined ? `${report.run.stage}-wave-${report.run.wave}` : report.run.stage;
+  const stage = report.run.wave !== undefined ? `${report.run.stage}-wave-${report.run.wave}${report.run.share !== undefined ? `-share-${report.run.share}` : ""}` : report.run.stage;
   return `${yyyy}/${mm}/${report.run.commit}/${stage}`;
 }
 
@@ -140,6 +140,8 @@ export interface IndexEntry {
   commit: string;
   stage: string;
   wave?: number;
+  /** The share of a `tf-apply` wave split across jobs. */
+  share?: number;
   finished: string;
   /** The run's directory, relative to the index. */
   path: string;
@@ -197,6 +199,7 @@ export function indexEntry(report: Report, path: string): IndexEntry {
     commit: report.run.commit,
     stage: report.run.stage,
     ...(report.run.wave !== undefined ? { wave: report.run.wave } : {}),
+    ...(report.run.share !== undefined ? { share: report.run.share } : {}),
     finished: report.run.finished,
     path,
     roots: report.roots.length,
@@ -219,8 +222,8 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   };
 }
 
-/** What makes a row the latest of its kind: its project, stage and wave. */
-const rowKind = (r: IndexEntry): string => `${r.project}\n${r.stage}\n${r.wave ?? ""}`;
+/** What makes a row the latest of its kind: its project, stage, wave and share. */
+const rowKind = (r: IndexEntry): string => `${r.project}\n${r.stage}\n${r.wave ?? ""}\n${r.share ?? ""}`;
 
 /**
  * The first `rows` of a newest-first list, and after them the newest row of
