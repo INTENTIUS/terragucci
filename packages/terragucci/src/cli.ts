@@ -46,6 +46,9 @@
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *   terragucci notify drift [--report <dir>]   (post the drift job's findings to Slack and Teams, with a Re-plan button; run by the generated pipeline)
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
+ *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
+ *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
+ *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   (a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo; credentials from the environment)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -95,6 +98,8 @@ import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
 import { startRelay } from "./relay";
+import { mcp } from "./mcp";
+import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
@@ -131,6 +136,9 @@ const USAGE = `usage:
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci notify drift [--report <dir>]
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
+  terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+  terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
+  terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   a read-only MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures; credentials from the environment
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
@@ -607,6 +615,39 @@ export async function main(argv: string[]): Promise<number> {
         const result = jsonFile ? readOutcome(resolve(cwd, jsonFile)) : undefined;
         const report = str(flags, "report");
         for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), ...(result ? { result } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
+        return 0;
+      }
+      case "drift-agent": {
+        const sub = args[0];
+        const policyDir = str(flags, "policy-dir") ?? "policy";
+        if (sub === "prompt") {
+          const report = str(flags, "report");
+          const out = str(flags, "out");
+          if (!report || !out) throw new ConfigError("drift-agent prompt needs --report <dir> and --out <file>");
+          const w = writeDriftPrompt({ report: resolve(cwd, report), out: resolve(cwd, out), policyDir });
+          console.log(`terragucci drift-agent: wrote the prompt for drift issue #${w.issue}, ${w.roots} root${w.roots === 1 ? "" : "s"} drifted`);
+          return 0;
+        }
+        if (sub === "push") {
+          const change = str(flags, "change");
+          if (!change) throw new ConfigError("drift-agent push needs --change <dir>");
+          const forge = str(flags, "forge") ?? "github";
+          if (forge !== "github" && forge !== "forgejo") throw new ConfigError("drift-agent push's --forge is github or forgejo");
+          const r = await pushDriftChange({ change: resolve(cwd, change), policyDir, forge });
+          console.log(`terragucci drift-agent: ${r.reason}`);
+          return r.fail ? 1 : 0;
+        }
+        throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
+      }
+      case "mcp": {
+        // stdout is the protocol's: nothing else is printed there.
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const bucket = str(flags, "bucket");
+        await mcp({
+          cwd,
+          config: path ? await loadConfig(resolve(path)) : {},
+          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
+        });
         return 0;
       }
       case "relay": {
