@@ -81,6 +81,25 @@ A wave of units the gate holds waits as a wave of roots does, naming its units, 
 
 <Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the chant approve tf-apply wave-2 command, and exits with code 3" />
 
+## How a change applies, layer by layer
+
+terragucci applies a change one dependency layer at a time, and every layer applies only the plans a person approved.
+
+<Steps>
+
+1. The layer's wave plans its units with one `terragrunt run --all`, saving each unit's plan. Units of later layers are not planned yet.
+2. The wave takes the set digest over the saved plans that change a resource or an output, and the gate holds it until an approval of that digest.
+3. A second `run --all` applies exactly those saved plans. Nothing is planned again between the approval and the apply.
+4. The next layer's wave then plans against the state the layer before it left, and waits at its own gate. Its approval covers that real plan, not a plan made before its upstream applied.
+
+</Steps>
+
+| What you might expect from `run --all apply` | What a terragucci wave does |
+|---|---|
+| every unit applies at once | one dependency layer per wave, each behind its own gate |
+| a plan made at apply time | the saved plans the approval names, applied as they were |
+| a downstream unit planned against values its upstream has not produced yet | planned against the state its upstream left; a plan that would read `mock_outputs` fails its wave |
+
 ## Next
 
 - [The same shop on Terragrunt](/terragucci/tutorial/terragrunt/) runs this on an example.
