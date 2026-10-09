@@ -11339,7 +11339,7 @@ example_edges() {
     root="envs/dev/$(basename "$dir")"
     for key in $(perl -0ne 'while (/data "terraform_remote_state"[^{]*\{.*?key\s*=\s*"([^"]+)"/sg) { print "$1\n" }' "$dir/main.tf"); do
       for up in "$EXAMPLE"/envs/dev/*/; do
-        perl -0ne 'exit(/backend "s3" \{[^}]*key\s*=\s*"\Q'"$key"'\E"/s ? 0 : 1)' "$up/main.tf" && echo "envs/dev/$(basename "$up") $root"
+        KEY="$key" perl -0ne 'exit(/backend "s3" \{[^}]*key\s*=\s*"\Q$ENV{KEY}\E"/s ? 0 : 1)' "$up/main.tf" && echo "envs/dev/$(basename "$up") $root"
       done
     done
   done | sort
