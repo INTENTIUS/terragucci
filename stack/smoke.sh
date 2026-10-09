@@ -5439,7 +5439,7 @@ claim_review_agent() {
 # workflow posts the note with its run's token. Sets AIR_FORGED to the note.
 aireview_forge() { # repo
   local forge="$work/forge" image sha i
-  image="$(grep -m1 -o 'ghcr\.io/intentius/terragucci-tofu:[^"'"'"' ]*' "$AIR_WF")"
+  image="$(grep -m1 -o 'ghcr\.io/intentius/terragucci-tofu:[A-Za-z0-9_.-]*' "$AIR_WF")"
   [ -n "$image" ] || { log "no image in the pipeline to run the forging job in"; return 1; }
   mkdir -p "$forge/.forgejo/workflows"
   cat > "$forge/.forgejo/workflows/forge.yml" <<YML
@@ -5523,7 +5523,7 @@ REGO
   [ -n "$merge" ] || { log "pull request $AIR_PR has no merge commit"; return 1; }
   wait_run "$repo" "$merge" push || return 1
   logs="$(run_logs "$repo" "$RUN_ID")"
-  grep -o "review: [^\r]*input.review[^\r]*" <<<"$logs" | head -1 | sed 's/^/[smoke review-policy]   /' >&2 || true
+  grep -o "review: pull request [0-9]*'s head [0-9a-f]* was reviewed with risk [a-z]* in run [0-9]*\|review: no run of pull request [0-9]*'s head [0-9a-f]* kept a review" <<<"$logs" | head -1 | sed 's/^/[smoke review-policy]   /' >&2 || true
   [ "$RUN_STATUS" = failure ] || { log "the merge commit's run ended '$RUN_STATUS': the policy did not deny the wave"; rc=1; }
   grep -q "review: pull request $AIR_PR's head ${AIR_HEAD:0:8} was reviewed with risk high in run $pr_run, which the policy reads as input.review" <<<"$logs" \
     || { log "the wave did not read risk high from the review artifact of run $pr_run"; rc=1; }
