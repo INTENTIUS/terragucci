@@ -160,6 +160,8 @@ export interface PipelineInput {
    * pipeline schedule with TERRAGUCCI_SCHEDULE=resume starts it.
    */
   resume?: number;
+  /** The repo carries state migration files (migrate.ts migrationFiles): under gate: never, GitHub's apply jobs still need to write chant/lifecycle, where a migration's gate is. */
+  migrations?: boolean;
   /** GitLab only, `gitlab.token`: with `protected`, no merge request pipeline holds the token, and the comments job posts the plan notes. */
   gitlabToken?: GitLabToken;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
@@ -1663,7 +1665,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
-  const writesLedger = gate !== "never" || input.cost?.approveAbove === true;
+  // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
+  const writesLedger = gate !== "never" || input.cost?.approveAbove === true || (forge === "github" && input.migrations === true);
   const what = tg ? "unit" : "root";
   // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
   const fmtOn = !tg && responds(input.respond, "fmt");

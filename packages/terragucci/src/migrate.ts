@@ -53,6 +53,7 @@ import { binaryEnv } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, type Approval } from "./config";
 import type { S3Fetch, S3Target } from "./report/s3";
+import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 
 export const MIGRATE_OP = "tf-migrate";
@@ -237,14 +238,53 @@ function parseRestores(doc: Record<string, unknown>, problems: string[], rootOf:
   return out;
 }
 
-/** The repo's migration files, by name. */
-export function listMigrations(repo: string, dir = MIGRATIONS_DIR): Migration[] {
+/**
+ * The repo's migration files, `migrations/<name>.yml` or `.yaml`, by name:
+ * the one test of whether a repo carries migrations, which the plan job,
+ * wave 1, init and config check all use.
+ */
+export function migrationFiles(repo: string, dir = MIGRATIONS_DIR): string[] {
   const at = join(repo, dir);
   if (!existsSync(at)) return [];
   return readdirSync(at)
     .filter((f) => /\.ya?ml$/.test(f))
     .sort()
-    .map((f) => parseMigration(`${dir}/${f}`, readFileSync(join(at, f), "utf-8")));
+    .map((f) => `${dir}/${f}`);
+}
+
+/**
+ * Why the repo's generated GitHub pipeline cannot run its migrations: an
+ * apply job that may not write `chant/lifecycle` (`contents: read`), where a
+ * migration's gate and record are. init gives them `contents: write` when it
+ * finds migration files; a pipeline written before them, or by an init that
+ * was skipped, lacks it. No migration files, no generated GitHub pipeline, or
+ * one terragucci did not write: no problem.
+ */
+export function migrationPipelineProblems(repo: string): string[] {
+  const files = migrationFiles(repo);
+  if (files.length === 0) return [];
+  const path = join(repo, PIPELINE_PATHS.github);
+  if (!existsSync(path)) return [];
+  const text = readFileSync(path, "utf-8");
+  if (!text.startsWith(MARKER)) return [];
+  let doc: unknown;
+  try {
+    doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n"));
+  } catch {
+    return [];
+  }
+  const jobs = (doc as { jobs?: Record<string, { permissions?: { contents?: string } }> } | undefined)?.jobs ?? {};
+  const readOnly = Object.entries(jobs)
+    .filter(([name, job]) => /^apply/.test(name) && job?.permissions?.contents !== "write")
+    .map(([name]) => name)
+    .sort();
+  if (readOnly.length === 0) return [];
+  return [`${MIGRATIONS_DIR}/ holds ${files.length === 1 ? "a migration" : `${files.length} migrations`} (${files.join(", ")}), and in ${PIPELINE_PATHS.github} ${readOnly.join(", ")} may not write chant/lifecycle, where a migration waits for its approval; run terragucci init to write the pipeline again`];
+}
+
+/** The repo's migration files, read, by name. */
+export function listMigrations(repo: string, dir = MIGRATIONS_DIR): Migration[] {
+  return migrationFiles(repo, dir).map((f) => parseMigration(f, readFileSync(join(repo, f), "utf-8")));
 }
 
 // ── the states ───────────────────────────────────────────────────────────
@@ -985,6 +1025,12 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
     return { code: EXIT.failed, records: [] };
   }
   if (migrations.length === 0) return { code: EXIT.applied, records: [] };
+  // A pull request's plan refuses migrations its pipeline could not run, so none is merged to wait where nothing can record it.
+  if (options.planOnly) {
+    const problems = migrationPipelineProblems(repo);
+    for (const p of problems) log(`migrations: ${p}`);
+    if (problems.length > 0) return { code: EXIT.failed, records: [] };
+  }
   let done = new Map<string, { status: string; file_digest?: string; timestamp: string }>();
   let ledger: GateLedger = { pending: [], resolutions: [] };
   try {
