@@ -132,6 +132,15 @@
       "commit": "df05c7f"
     },
     {
+      "claim": "tips",
+      "says": "the plan note on a merge request counts the tips the plan report holds, each naming its rule and page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
       "claim": "zero-config",
       "says": "with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline",
       "needs": null,
@@ -146,6 +155,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "df05c7f"
+    },
+    {
+      "claim": "apply-serial",
+      "says": "two pushes to main apply one after the other through the resource group, none is cancelled, and the commit carries one terragucci/apply success",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
     },
     {
       "claim": "reconcile",
@@ -780,6 +798,15 @@
       "commit": "df05c7f"
     },
     {
+      "claim": "policy-override",
+      "says": "a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
       "claim": "policy-override-moved",
       "says": "an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4",
       "needs": null,
@@ -1282,6 +1309,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "df05c7f"
+    },
+    {
+      "claim": "note-footer",
+      "says": "the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
     }
   ]
 }
