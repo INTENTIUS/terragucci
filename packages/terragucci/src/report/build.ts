@@ -21,6 +21,7 @@ import {
   type ReportDeferred,
   type ReportPolicy,
   type ReportRootPolicy,
+  type ReportRootBinary,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
@@ -34,6 +35,8 @@ export interface RootInput {
   /** Why the root failed to plan. */
   error?: string;
   planner?: ChangeSetPlanner;
+  /** The binary the root ran. */
+  binary?: ReportRootBinary;
   /** Where the root's full plan is kept, relative to the report. */
   files?: { text?: string; json?: string };
   job_url?: string;
@@ -234,6 +237,7 @@ export function buildReport(input: BuildInput): Report {
     const group = memberGroup.get(m.member);
     return {
       path: m.member,
+      ...(src.binary ? { binary: src.binary } : {}),
       ...(src.terragrunt ? { terragrunt: src.terragrunt } : {}),
       status: m.status,
       ...(m.error ? { error: m.error } : {}),

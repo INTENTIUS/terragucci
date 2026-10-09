@@ -17,7 +17,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "affected",
@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "apply-serial",
@@ -887,7 +887,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "note-report-link",
@@ -943,7 +943,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
+    },
+    {
+      "claim": "root-pins",
+      "says": "two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4b0ca65"
     },
     {
       "claim": "drift-close",

@@ -272,8 +272,11 @@ export interface ProjectSettings {
   roots?: string[];
   /** The binary the pipeline runs. Detected when absent. */
   binary?: Binary;
-  /** The binary's version. Read from the roots' `required_version` when it pins one. */
-  version?: string;
+  /**
+   * The binary's version. Read from the roots' `required_version` when it pins one. As a map of root
+   * glob to release, the version each root it matches runs (tofu and terraform, plain roots only).
+   */
+  version?: string | Record<string, string>;
   /** The forge, for a host terragucci cannot name. */
   forge?: ForgeName;
   /** Where the project lives, for a forge not on https or the default port. */
@@ -491,6 +494,27 @@ function stringList(v: unknown, where: string, problems: string[]): void {
   }
 }
 
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+
+/** `version`: one release for the repo, or, in a repo's own file, a map of root glob to the release those roots run. */
+function checkVersion(v: unknown, binary: unknown, where: string, problems: string[]): void {
+  if (v === undefined || typeof v === "string") return;
+  if (!isObject(v)) {
+    problems.push(`${where}.version must be a release version, or a map of root glob to release version`);
+    return;
+  }
+  if (where !== "config") {
+    problems.push(`${where}.version: a version per root glob goes in the project's own terragucci.yml, which its jobs read; here, give one release version`);
+    return;
+  }
+  if (binary === "choudoufu") problems.push(`${where}.version: choudoufu runs one release for every root; give one release version`);
+  for (const [glob, release] of Object.entries(v)) {
+    if (typeof release !== "string" || !RELEASE_VERSION.test(release)) {
+      problems.push(`${where}.version["${glob}"] must be a release version such as 1.10.6, quoted when YAML would read it as a number`);
+    }
+  }
+}
+
 function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (!isObject(s)) {
     problems.push(`${where} must be a map of settings`);
@@ -510,9 +534,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
   else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
-  for (const k of ["version", "url", "token_env"] as const) {
+  for (const k of ["url", "token_env"] as const) {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
+  checkVersion(s.version, s.binary, where, problems);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }

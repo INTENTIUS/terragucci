@@ -93,7 +93,8 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
+import { binaryText, type ReportPolicy, type ReportRootBinary, type ReportRootPolicy, type ReportWave } from "./report/schema";
+import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
@@ -470,6 +471,10 @@ interface PlannedRoot {
   error?: string;
   /** The policy's verdict on its plan, when `policy` is on. */
   policy?: ReportRootPolicy;
+  /** What it planned with, which its apply runs too: the job's binary or the version it pins. */
+  binary: string;
+  /** That binary as the report names it. */
+  bin: ReportRootBinary;
 }
 
 /** How long a plan or an apply waits for a state lock unless the job set a `-lock-timeout` of its own. */
@@ -500,20 +505,31 @@ function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
   return { dir: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "cache-")), initTurn: oneAtATime() };
 }
 
-async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache): Promise<PlannedRoot> {
+async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
-    return await planTimed(repo, binary, root, work, i, observer, timing, cache);
+    return await planTimed(repo, binaries, root, work, i, observer, timing, cache);
   } finally {
     observer.endRoot(timing);
   }
 }
 
-async function planTimed(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache): Promise<PlannedRoot> {
+async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache): Promise<PlannedRoot> {
   const dir = join(repo, root);
   const env = { ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir };
   const planFile = join(work, `${i}.tfplan`);
-  const base = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "" };
+  const expected = binaries.expected(root);
+  const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected };
+  let resolved: RootBinary;
+  try {
+    resolved = await binaries.resolve(root);
+  } catch (e) {
+    return { ...failed, error: (e as Error).message };
+  }
+  const binary = resolved.path;
+  const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
+  if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
+  const base = { ...failed, binary, bin };
   const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
   const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
@@ -537,11 +553,11 @@ async function planTimed(repo: string, binary: string, root: string, work: strin
   };
 }
 
-async function applyRoot(repo: string, binary: string, p: PlannedRoot, observer: StageObserver): Promise<boolean> {
+async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver): Promise<boolean> {
   observer.reopen(p.timing);
   let r: Run;
   try {
-    r = await timed(observer, p.timing, binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.env, join(repo, p.root));
+    r = await timed(observer, p.timing, p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.env, join(repo, p.root));
   } finally {
     observer.endRoot(p.timing);
   }
@@ -587,6 +603,8 @@ export interface ApplyWaveOptions {
   share?: number;
   /** The decision file the wave's job writes and its shares read. Default: terragucci-wave/wave-<k>.json in the checkout. */
   decided?: string;
+  /** How a version a root pins is installed. Default: the release, checked against its SHA256SUMS. */
+  installer?: Installer;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
@@ -681,8 +699,8 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     roots: w.planned.map((p) => {
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
-      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
+      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
     }),
     waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}) }],
     redacted,
@@ -778,8 +796,9 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
   const cache = waveCache(work, process.env);
+  const binaries = new RootBinaries(repo, binary, settings.version, options.env ?? process.env, options.installer);
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binary, r, work, i, w.observer, cache);
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache);
   });
   w.planned = planned;
   w.roots = roots;
@@ -834,7 +853,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
   const ok: boolean[] = new Array(planned.length);
   await eachLimited(planned, limit.value, async (p, i) => {
-    ok[i] = await applyRoot(repo, binary, p, w.observer);
+    ok[i] = await applyRoot(repo, p, w.observer);
   });
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   if (ok.includes(false)) {
@@ -906,8 +925,9 @@ async function runShare(
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
   const cache = waveCache(work, process.env);
+  const binaries = new RootBinaries(repo, binary, settings.version, options.env ?? process.env, options.installer);
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binary, r, work, i, w.observer, cache);
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache);
   });
   w.planned = planned;
   w.roots = roots;
@@ -928,7 +948,7 @@ async function runShare(
   }
   const ok: boolean[] = new Array(planned.length);
   await eachLimited(planned, limit.value, async (p, i) => {
-    ok[i] = await applyRoot(repo, binary, p, w.observer);
+    ok[i] = await applyRoot(repo, p, w.observer);
   });
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   if (ok.includes(false)) {
@@ -941,7 +961,7 @@ async function runShare(
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy">;
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy"> & { bin?: ReportRootBinary };
 
 /**
  * Run the policy over a wave's plans, when `policy` is on. Returns the exit

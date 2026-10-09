@@ -28,6 +28,7 @@ import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
+import { describeBinary, RootBinaries, type Installer } from "../pins";
 import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
 import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
@@ -75,6 +76,8 @@ export interface StageOptions {
   layers?: string[][];
   /** The binary, when the pipeline names it. Default: the config's, then detection. */
   binary?: string;
+  /** How a version a root pins is installed. Default: the release, checked against its SHA256SUMS. */
+  installer?: Installer;
   /** Where to copy the report, when the pipeline names a bucket. Default: the config's `reports`. */
   reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
   /** Globs for wave 1. Default: the config's `waves.canary`. */
@@ -686,6 +689,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
   const planner = plannerForBinary(binary);
+  // Each root's binary: the job's, or the version the root pins, installed once per version.
+  const binaries = new RootBinaries(repo, binary, settings.version, env, options.installer);
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), stage, env);
   if (roots.length > 0) await observer.collectSpans(log);
@@ -734,11 +739,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
     }
     const planFile = join(work, `${index}.tfplan`);
     const timing = observer.root(root);
+    let bin = binaries.expected(root);
+    let path = binary;
     const run = (...args: string[]) =>
-      observer.commandAsync(timing, binary, args, binEnv, (e) => spawnAsync(binary, [`-chdir=${dir}`, ...args], e));
+      observer.commandAsync(timing, path, args, binEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
     const failed = (error: string, line: string): RootOutcome => {
       lines.push(line);
-      return { root, lines, input: { path: root, planner, error, preventDestroy: new Set() } };
+      return { root, lines, input: { path: root, planner, binary: bin, error, preventDestroy: new Set() } };
     };
     const refused = pinRefusals.get(root);
     if (refused) {
@@ -746,6 +753,14 @@ export async function runStage(stage: string, repo: string, options: StageOption
       return failed(refused.join("\n"), `${root}: refused by modules.require: attested`);
     }
     try {
+      try {
+        const resolved = await binaries.resolve(root);
+        ({ path } = resolved);
+        bin = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
+      } catch (e) {
+        return failed((e as Error).message, `${root}: ${(e as Error).message}`);
+      }
+      if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
       const init = await initTurn(() => run("init", "-input=false", "-no-color"));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
@@ -776,7 +791,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
       };
     } finally {
       observer.endRoot(timing);
@@ -804,7 +819,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
       // The upstreams this layer reads, each read once, before any root of the layer plans.
       const ups = [...new Set(layer.flatMap((r) => [...(readsOf.get(r) ?? [])]))].filter((up) => !upstreamState.has(up)).sort();
       await eachLimited(ups, limit.value, async (up) => {
-        upstreamState.set(up, await stateIsEmptyAsync(binary, join(repo, up), binEnv, initTurn));
+        // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
+        const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), binEnv, initTurn));
       });
       const first = index;
       index += layer.length;

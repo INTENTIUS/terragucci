@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 16;
+export const REPORT_MINOR = 17;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -227,8 +227,25 @@ export interface ReportTimings {
   note?: string;
 }
 
+/** The binary a root ran, and the version it pinned when it pinned one (minor 17). */
+export interface ReportRootBinary {
+  /** tofu, terraform or choudoufu. */
+  name: string;
+  /** Absent when the binary did not say. */
+  version?: string;
+  /** Where the root pinned its version: `.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`. Absent when it runs the job's binary unpinned. */
+  pin?: string;
+}
+
+/** A root's binary as the note, the report and the log name it: `tofu 1.10.6 (.opentofu-version)`. */
+export function binaryText(b: ReportRootBinary): string {
+  return `${b.name}${b.version ? ` ${b.version}` : ""}${b.pin ? ` (${b.pin})` : ""}`;
+}
+
 export interface ReportRoot {
   path: string;
+  /** The binary the root ran (minor 17). */
+  binary?: ReportRootBinary;
   /** Set when the root is a Terragrunt unit. */
   terragrunt?: ReportUnit;
   status: "planned" | "failed";

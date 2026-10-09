@@ -259,6 +259,7 @@ description-check|with respond.description: check the plan job flags a destroy t
 decide-backends|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
 otlp-headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
+root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
 estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
@@ -7649,6 +7650,53 @@ JS
   return $rc
 }
 
+claim_root_pins() {
+  # Two roots in one wave: old pins OpenTofu 1.10.6 in its .opentofu-version,
+  # which the tofu image does not carry, and new pins nothing. tf-plan, run in
+  # the tofu image as the plan job runs it, installs 1.10.6 for old, checked
+  # against its SHA256SUMS, and plans new with the image's tofu. Each root's
+  # plan.json says which tofu made it, and the report and the note name each
+  # root's binary and version.
+  # BREAK: old's pin is ignored (the stage never sees it), so both roots plan
+  # with the image's tofu.
+  log() { echo "[smoke root-pins] $*" >&2; }
+  local work rc=0 dir image carried old new r
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  for r in old new; do
+    mkdir -p "$work/repo/$r"
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "%s" {\n  input = "%s"\n}\n' "$r" "$r" > "$work/repo/$r/main.tf"
+  done
+  [ -n "${BREAK:-}" ] || echo 1.10.6 > "$work/repo/old/.opentofu-version"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "two roots, two versions"
+  # One layer, so one wave: the stage plans both roots at once.
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers 'new,old' --forge github >"$work/plan.log" 2>&1 || { log "the plan run failed"; rc=1; }
+  cat "$work/plan.log" >&2
+  clean_mounted "$work/repo" "$image"
+  dir="$work/repo/terragucci-report"
+  [ -f "$dir/report.json" ] || { log "the plan wrote no report"; drop_work "$work"; return 1; }
+  [ "$(jq -c '[.waves[] | .roots | sort]' "$dir/report.json")" = '[["new","old"]]' ] || { log "old and new are not one wave: $(jq -c '[.waves[].roots]' "$dir/report.json")"; rc=1; }
+  old="$(jq -r '.terraform_version // ""' "$dir/roots/old/plan.json" 2>/dev/null)"
+  new="$(jq -r '.terraform_version // ""' "$dir/roots/new/plan.json" 2>/dev/null)"
+  carried="$(jq -r '.roots[] | select(.path == "new") | .binary.version // ""' "$dir/report.json")"
+  log "old planned with tofu ${old:-?}, new with tofu ${new:-?}; the image carries ${carried:-?}"
+  [ "$old" = 1.10.6 ] || { log "old did not plan with the tofu 1.10.6 its .opentofu-version pins"; rc=1; }
+  [ -n "$new" ] && [ "$new" = "$carried" ] && [ "$new" != 1.10.6 ] || { log "new did not plan with the image's tofu"; rc=1; }
+  [ "$(jq -c '.roots[] | select(.path == "old") | .binary' "$dir/report.json")" = '{"name":"tofu","version":"1.10.6","pin":".opentofu-version"}' ] \
+    || { log "the report does not name old's binary as tofu 1.10.6 pinned by .opentofu-version: $(jq -c '.roots[] | select(.path == "old") | .binary' "$dir/report.json")"; rc=1; }
+  grep -qF "Binaries: tofu 1.10.6 for \`old\` (.opentofu-version); tofu $carried for 1 root." "$dir/note.md" || { log "the note does not name each root's binary and version"; rc=1; }
+  grep -qF 'old: tofu 1.10.6 (.opentofu-version)' "$work/plan.log" || { log "the log does not say old runs tofu 1.10.6"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "one wave planned old with the tofu 1.10.6 it pins, installed and checked in the job, and new with the image's tofu $carried, and the report and the note name both"
+  return $rc
+}
+
 claim_drift_close() {
   # A queue applied with a visibility timeout of 30, then set to 45 in floci
   # outside OpenTofu: tf-drift opens the drift issue naming app. The timeout
@@ -10967,6 +11015,7 @@ description-check    weight=60
 decide-backends      weight=80
 otlp-headers         weight=60
 pinned-install       weight=60
+root-pins            weight=60
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150
