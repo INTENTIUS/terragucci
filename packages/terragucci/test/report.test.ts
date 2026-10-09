@@ -18,7 +18,8 @@ import { addToIndex, bucketReportUrl, copyToRun, INDEX_TRIES, indexEntry, render
 import { isArtifactPage, NOTE_FOOTER, renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
 import { TACO_NOTE_URL, TACO_PNG } from "../src/report/taco";
 import { fixture200, plan, rc, RUN, smallFixture } from "./report-fixtures";
-import { tmp, validate, write, type Json } from "./helpers";
+import { tmp, write } from "./helpers";
+import { validate, type Json } from "../../../scripts/schema-check";
 
 const GOLDEN = join(import.meta.dirname, "__golden__/report.small.json");
 const SCHEMA = JSON.parse(readFileSync(join(import.meta.dirname, "../src/report/report.schema.json"), "utf-8"));
