@@ -1,6 +1,6 @@
 ---
 title: Threat model
-description: What each forge's generated jobs can reach, what each approval mode and a policy override allow, the trust apply before merge asks for, where the forge-token scrub ends, and the branch protection each forge relies on.
+description: What each forge's generated jobs can reach, what each approval mode and a policy override allow, the trust apply before merge and the chat relay ask for, where the forge-token scrub ends, and the branch protection each forge relies on.
 prompt: |
   Read https://intentius.io/terragucci/reference/threat-model/.
   For this repo's forge, compare the branch protection, the merge methods and the apply role's trust policy with the page's "Branch protection" tab, reading them through the forge's API or CLI.
@@ -24,6 +24,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
 | On GitLab, anyone allowed to run a pipeline on the default branch | start `mr-apply` with any variables | `mr-apply` reads the merge request, the note and the head from GitLab, and refuses a head the merge request does not have |
 | A fork's author | nothing | forks get no plan job and never apply |
+| The [chat relay](#the-chat-relay), in your cloud | under `ledger` and `pr-review`, record an approval of a waiting digest in the name of a chat user the signers file lists | Slack's or Teams' signature on each request, the signers file on the default branch, the digest waiting, and an approve-only token |
 
 ## What the generated jobs reach
 
@@ -167,6 +168,28 @@ With `apply.when: pull-request`, the open change's head runs with the apply role
 | No other open pull request holds a lock on its roots | two changes applying the same root |
 
 After the checks, the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) lists it. Review those before approving the head.
+
+## The chat relay
+
+[`terragucci relay`](/terragucci/guides/approve-from-chat/) turns a Slack click or a Teams reply into an approval line on `chant/lifecycle`. It runs in your cloud, and terragucci hosts no part of it.
+
+| Guard | Stops |
+|---|---|
+| Each request is verified: Slack's signing secret over the timestamp and the body, within five minutes; the Teams outgoing webhook's HMAC over the body | anyone else posting a click, and a Slack click replayed later |
+| The chat user maps to a principal only through their line of the signers file on the default branch, which a reviewed merge changes | an unlisted chat user approving, and a pull request adding its author's chat id to pass its own wave |
+| The approval names the digest the message showed, and only a wave waiting for that digest takes it | a click approving plans that moved after the message |
+| Under `approval: sealed` the relay records nothing | a relay, or whoever holds its token, releasing a sealed gate |
+| The token is approve-only: the relay refuses one that administers the repo or may push to the default branch, and on GitLab one with the `api` scope; it uses the token only to fetch the repo and push `chant/lifecycle`, and starts no job | a stolen relay token merging, applying or changing settings |
+| The answer goes to Slack's own `response_url` hosts only | the relay posting to an address a request names |
+
+| It does not stop | Because |
+|---|---|
+| A stolen chat account approving as its owner | the chat platform's login is the identity the relay checks |
+| Whoever holds the relay's token or its secrets writing approval lines in any listed name | under `ledger` and `pr-review` an approval line is the relay's word, as any writer's is; `sealed` does not count them |
+| A Teams reply replayed while the same digest still waits | Teams signs the body with no timestamp; the replay approves only that digest, in the same person's name |
+| A Slack retry within five minutes | the second click finds the wave approved and records nothing |
+
+The relay's token pushes `chant/lifecycle` like any approver's, so it is one more writer the [approval modes](#what-each-approval-mode-stops) account for.
 
 ## Steps
 
