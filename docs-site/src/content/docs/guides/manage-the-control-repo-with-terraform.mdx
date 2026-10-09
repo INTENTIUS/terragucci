@@ -11,7 +11,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A Terraform or OpenTofu configuration that owns the control repo's `terragucci.yml`, as described in [Govern many repos from one place](/terragucci/guides/govern-many-repos/). The provider commits each change through the forge's API, so a plan shows which setting of which project moves before anything is written. `terragucci reconcile` reads what it wrote the same way it reads a hand-written config.
 

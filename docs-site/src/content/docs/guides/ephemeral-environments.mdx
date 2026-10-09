@@ -11,7 +11,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A reviewer wants to try a change before it merges. With `ephemeral` set, each open pull request gets an environment of its own: the roots you name, applied from its head under state keys nothing else uses.
 
@@ -79,7 +79,7 @@ An environment expires `ttl` after the last apply that changed it, so a pull req
 
 Forks never get one. On GitLab the job needs the project token, so `ephemeral` with `gitlab.token: protected` is a config error.
 
-## What can be copied
+## Supported roots
 
 | Setup | Gets an environment |
 |---|---|
