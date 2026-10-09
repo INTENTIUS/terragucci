@@ -12,6 +12,12 @@
  * (./attest.ts, ./ledger.ts). The record and the tag are written together: a
  * git tag in one atomic push with the ledger commit, an OCI tag only after the
  * ledger holds its record, so no tag stands without one.
+ *
+ * With `modules.registry`, each release is also written as the module
+ * registry protocol's static files (./registry.ts), after the other targets,
+ * so its download can point at the git tag or OCI artifact just published.
+ * With `modules.test`, a module is tested before any target writes a release
+ * of it (./test.ts), and a module whose tests do not pass is refused.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -19,7 +25,7 @@ import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { appendLifecycle } from "../apply";
 import { loadHclParser } from "../rollout/parser";
 import { globMatch } from "../detect";
-import { ConfigError, type ResolvedSettings } from "../config";
+import { ConfigError, type RegistrySettings, type ResolvedSettings } from "../config";
 import { gzip, moduleTar, moduleTarAt, sha256 } from "./archive";
 import { commitsSince, git, hasCommit, tryGit } from "./git";
 import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
@@ -27,6 +33,8 @@ import { fetchLedger, LEDGER_PATH } from "./ledger";
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, moduleManifest, parseOci, type Fetch } from "./oci";
 import { applyBump, bumpFor, compareSemver, formatSemver, parseSemver, type Semver } from "./semver";
+import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
+import { testModule, type TestBinary, type TestRunner } from "./test";
 
 export { bumpFor, parseSemver } from "./semver";
 
@@ -41,7 +49,7 @@ export interface Release {
 export interface Published {
   module: string;
   target: string;
-  status: "published" | "unchanged" | "skipped";
+  status: "published" | "unchanged" | "skipped" | "refused";
   version?: string;
   /** The OCI manifest digest, or for a git tag the content digest. A pin can name it. */
   digest?: string;
@@ -61,7 +69,14 @@ export interface PublishOptions {
   signer?: Signer;
   /** The HCL parser an attested release's SBOM is read with. */
   parser?: Hcl2Json;
+  /** Runs `modules.test`'s commands, for tests. */
+  testRunner?: TestRunner;
+  /** Where `modules.registry` is written, for tests; the bucket or dir it names by default. */
+  registryStore?: RegistryStore;
 }
+
+/** What publish reads from the settings: `modules`, and the binary `modules.test` runs. */
+export type PublishSettings = Pick<ResolvedSettings, "modules"> & { binary?: string };
 
 /** What publishing one release needs from the target, past the archive. */
 interface PublishContext {
@@ -76,14 +91,16 @@ interface PublishContext {
 
 interface Target {
   label: string;
-  latest(name: string): Promise<Release | undefined>;
+  latest(mod: Module): Promise<Release | undefined>;
   /** Called before a write: the content digest of a version the target already holds, when it does. */
-  existing?(name: string, version: Semver): Promise<{ ref: string; content: string } | undefined>;
-  publish(name: string, version: Semver, ctx: PublishContext): Promise<string>;
+  existing?(mod: Module, version: Semver): Promise<{ ref: string; content: string } | undefined>;
+  publish(mod: Module, version: Semver, ctx: PublishContext): Promise<string>;
   /** The reference a release is published as and the bytes whose digest is signed: the archive of a git tag, the manifest of an OCI tag. */
-  subject(name: string, version: Semver, ctx: PublishContext): { ref: string; bytes: Buffer };
+  subject(mod: Module, version: Semver, ctx: PublishContext): { ref: string; bytes: Buffer };
   /** OCI: attach the signature and attestations to the pushed manifest. */
-  attach?(name: string, digest: string, attested: Attested, signer: Signer): Promise<void>;
+  attach?(mod: Module, digest: string, attested: Attested, signer: Signer): Promise<void>;
+  /** False for a target that only points at a release another target wrote and attested. */
+  attests?: boolean;
 }
 
 export interface Module {
@@ -119,14 +136,13 @@ function readVersionFile(dir: string): Semver | undefined {
 
 const tagFor = (rel: string, v: Semver): string => `${rel}/v${formatSemver(v)}`;
 
-function gitTagTarget(repo: string, push: boolean, modules: Module[]): Target {
-  const byName = new Map(modules.map((m) => [m.name, m.rel]));
+function gitTagTarget(repo: string, push: boolean): Target {
   const hasOrigin = (): boolean => push && tryGit(repo, ["remote", "get-url", "origin"]) !== undefined;
   const contentOf = (tag: string): string => /^content: (sha256:[0-9a-f]+)$/m.exec(git(repo, ["tag", "--list", "--format=%(contents)", tag]))?.[1] ?? "";
   return {
     label: "git-tags",
-    async latest(name) {
-      const rel = byName.get(name)!;
+    async latest(mod) {
+      const rel = mod.rel;
       // A clone can lack the release tags (a fresh checkout, a shallow CI clone),
       // and a version chosen without them may already be on the remote.
       if (hasOrigin()) tryGit(repo, ["fetch", "--quiet", "--no-tags", "origin", `+refs/tags/${rel}/v*:refs/tags/${rel}/v*`]);
@@ -141,14 +157,14 @@ function gitTagTarget(repo: string, push: boolean, modules: Module[]): Target {
       const content = /^content: (sha256:[0-9a-f]+)$/m.exec(message)?.[1] ?? "";
       return { version: best.v, revision: git(repo, ["rev-list", "-n", "1", best.tag]), content };
     },
-    async existing(name, version) {
-      const tag = tagFor(byName.get(name)!, version);
+    async existing(mod, version) {
+      const tag = tagFor(mod.rel, version);
       if (hasOrigin() && tryGit(repo, ["ls-remote", "--tags", "origin", `refs/tags/${tag}`])) {
         tryGit(repo, ["fetch", "--quiet", "--no-tags", "origin", `+refs/tags/${tag}:refs/tags/${tag}`]);
       }
       return tryGit(repo, ["rev-parse", "--verify", "--quiet", `refs/tags/${tag}`]) ? { ref: tag, content: contentOf(tag) } : undefined;
     },
-    async publish(name, version, ctx) {
+    async publish(_mod, version, ctx) {
       const tag = tagFor(ctx.rel, version);
       const env: Record<string, string> = {};
       if (!tryGit(repo, ["config", "user.name"])) Object.assign(env, { GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" });
@@ -164,7 +180,7 @@ function gitTagTarget(repo: string, push: boolean, modules: Module[]): Target {
       } else if (push && tryGit(repo, ["remote", "get-url", "origin"]) !== undefined) git(repo, ["push", "origin", `refs/tags/${tag}`]);
       return ctx.content;
     },
-    subject(_name, version, ctx) {
+    subject(_mod, version, ctx) {
       return { ref: tagFor(ctx.rel, version), bytes: ctx.tar };
     },
   };
@@ -192,7 +208,7 @@ function ociTarget(url: string, opts: PublishOptions): Target {
   };
   return {
     label: url,
-    async latest(name) {
+    async latest({ name }) {
       const tags = await registry.tags(`${repo}/${name}`);
       let best: { v: Semver; tag: string } | undefined;
       for (const tag of tags) {
@@ -204,7 +220,7 @@ function ociTarget(url: string, opts: PublishOptions): Target {
       const notes = found?.manifest.annotations ?? {};
       return { version: best.v, revision: notes[REVISION] ?? "", content: notes[CONTENT] ?? "" };
     },
-    async publish(name, version, ctx) {
+    async publish({ name }, version, ctx) {
       const path = `${repo}/${name}`;
       const tag = formatSemver(version);
       if (await registry.manifest(path, tag)) throw new ConfigError(`${url}/${name}:${tag} exists already and a published version never changes`);
@@ -212,33 +228,136 @@ function ociTarget(url: string, opts: PublishOptions): Target {
       ctx.pushWithRecord?.([]);
       return registry.pushModule(path, tag, gzip(ctx.tar), annotations(version, ctx));
     },
-    subject(name, version, ctx) {
+    subject({ name }, version, ctx) {
       const bytes = moduleManifest(gzip(ctx.tar), annotations(version, ctx));
       return { ref: `${host}/${repo}/${name}:${formatSemver(version)}`, bytes };
     },
-    async attach(name, digest, attested, signer) {
+    async attach({ name }, digest, attested, signer) {
       await signer.attachOci?.(`${host}/${repo}/${name}@${digest}`, attested.predicates, access);
     },
   };
 }
 
+/** A git remote's URL as a module source names it: no credentials, an scp-style address as ssh://. */
+export function sourceUrl(url: string): string {
+  const scp = /^([^@/:]+@)?([^/:]+):(?!\/\/)(.+)$/.exec(url);
+  if (scp && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return `ssh://${scp[1] ?? ""}${scp[2]}/${scp[3]}`;
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, "$1");
+}
+
+function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], publishTo: string[], opts: PublishOptions): Target {
+  const env = opts.env ?? process.env;
+  const store = opts.registryStore ?? registryStore(repo, reg, env as NodeJS.ProcessEnv);
+  const download = reg.download ?? "tarball";
+  const base = reg.url.replace(/\/+$/, "");
+  const addrs = new Map<string, RegistryAddress>();
+  const seen = new Map<string, string>();
+  for (const m of modules) {
+    const a = registryAddress(reg, m.rel);
+    const other = seen.get(a.source);
+    if (other) throw new ConfigError(`${other} and ${m.rel} are both ${a.source} in the registry; map one's path to another namespace in modules.registry.namespaces`);
+    seen.set(a.source, m.rel);
+    addrs.set(m.rel, a);
+  }
+  const addr = (mod: Module): RegistryAddress => addrs.get(mod.rel)!;
+  const metaKey = (a: RegistryAddress, v: string): string => keyFor(reg, `${a.path}/${v}/release.json`);
+  const meta = async (a: RegistryAddress, v: string): Promise<ReleaseMeta | undefined> => {
+    const body = (await store.read(metaKey(a, v))).body;
+    if (!body) return undefined;
+    try {
+      return JSON.parse(body) as ReleaseMeta;
+    } catch {
+      return undefined;
+    }
+  };
+  const ociUrl = publishTo.find((t) => t.startsWith("oci://"));
+  /** Where the download points, once the release it points at is checked to hold this content. */
+  const locate = async (mod: Module, version: Semver, ctx: PublishContext): Promise<string> => {
+    const name = mod.name;
+    const v = formatSemver(version);
+    if (download === "git-tags") {
+      const tag = tagFor(ctx.rel, version);
+      const message = tryGit(repo, ["tag", "--list", "--format=%(contents)", tag]);
+      const content = message && /^content: (sha256:[0-9a-f]+)$/m.exec(message)?.[1];
+      if (content !== ctx.content) throw new ConfigError(`the registry points ${addr(mod).source} ${v} at the git tag ${tag}, which ${content ? "holds other content" : "is not published"}; publish git-tags first`);
+      const origin = tryGit(repo, ["remote", "get-url", "origin"]);
+      if (!origin) throw new ConfigError(`the registry points each version at its git tag on origin, and this checkout has no origin`);
+      return `git::${sourceUrl(origin)}//${ctx.rel}?ref=${tag}`;
+    }
+    if (download === "oci") {
+      const { host, repo: path } = parseOci(ociUrl!);
+      const insecure = /^(1|true|yes)$/i.test(env.TERRAGUCCI_REGISTRY_INSECURE ?? "");
+      const registry = new Registry(host, { fetch: opts.fetch, scheme: insecure ? "http" : "https", user: env.TERRAGUCCI_REGISTRY_USER, password: env.TERRAGUCCI_REGISTRY_PASSWORD });
+      const found = await registry.manifest(`${path}/${name}`, v);
+      if (found?.manifest.annotations?.[CONTENT] !== ctx.content) throw new ConfigError(`the registry points ${addr(mod).source} ${v} at ${ociUrl}/${name}:${v}, which ${found ? "holds other content" : "is not published"}; publish to ${ociUrl} first`);
+      return `${ociUrl}/${name}?tag=${v}`;
+    }
+    return `${base}/${addr(mod).path}/${v}/${tarballName(addr(mod), v)}`;
+  };
+  return {
+    label: `registry ${base}`,
+    attests: download === "tarball",
+    async latest(mod) {
+      const a = addr(mod);
+      const best = newest(readVersions((await store.read(keyFor(reg, `${a.path}/versions`))).body));
+      if (!best) return undefined;
+      const m = await meta(a, formatSemver(best));
+      return { version: best, revision: m?.revision ?? "", content: m?.content ?? "" };
+    },
+    async existing(mod, version) {
+      const m = await meta(addr(mod), formatSemver(version));
+      return m ? { ref: `${addr(mod).source} ${formatSemver(version)}`, content: m.content } : undefined;
+    },
+    async publish(mod, version, ctx) {
+      const a = addr(mod);
+      const v = formatSemver(version);
+      const location = await locate(mod, version, ctx);
+      // Attested: the record goes first, as for an OCI tag, so no version is listed without one.
+      ctx.pushWithRecord?.([]);
+      const record: ReleaseMeta = { module: ctx.rel, version: v, revision: ctx.revision, content: ctx.content, location };
+      await writeVersion(store, reg, a, version, {
+        ...(download === "tarball" ? { tarball: { key: keyFor(reg, `${a.path}/${v}/${tarballName(a, v)}`), body: gzip(ctx.tar) } } : {}),
+        download: { key: keyFor(reg, `${a.path}/${v}/download`), body: downloadDoc(location) },
+        meta: { key: metaKey(a, v), body: `${JSON.stringify(record, null, 2)}\n` },
+      });
+      return ctx.content;
+    },
+    subject(mod, version, ctx) {
+      return { ref: `${addr(mod).source} ${formatSemver(version)}`, bytes: ctx.tar };
+    },
+  };
+}
+
 /** The `modules.publish` setting as a list of targets. */
-function targets(repo: string, publish: string | string[], modules: Module[], opts: PublishOptions): Target[] {
-  return (Array.isArray(publish) ? publish : [publish]).map((p) => {
-    if (p === "git-tags") return gitTagTarget(repo, opts.push ?? true, modules);
+function targets(repo: string, publish: string | string[] | undefined, registry: RegistrySettings | undefined, modules: Module[], opts: PublishOptions): Target[] {
+  const list = publish === undefined ? [] : Array.isArray(publish) ? publish : [publish];
+  const out = list.map((p) => {
+    if (p === "git-tags") return gitTagTarget(repo, opts.push ?? true);
     if (p.startsWith("oci://")) return ociTarget(p, opts);
     throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; use an oci:// registry address or git-tags`);
   });
+  // Last, so a download that points at a git tag or an OCI artifact points at one this run has written.
+  if (registry) out.push(registryTarget(repo, registry, modules, list, opts));
+  return out;
 }
 
 /** Publish every module under `modules.path` that changed since its last release, to each target. */
-export async function publish(repo: string, settings: Pick<ResolvedSettings, "modules">, opts: PublishOptions = {}): Promise<Published[]> {
+export async function publish(repo: string, settings: PublishSettings, opts: PublishOptions = {}): Promise<Published[]> {
   const publishTo = settings.modules?.publish;
-  if (!publishTo) throw new ConfigError("nothing to publish to; set modules.publish to an oci:// registry or git-tags");
+  const registry = settings.modules?.registry;
+  if (!publishTo && !registry) throw new ConfigError("nothing to publish to; set modules.publish to an oci:// registry or git-tags, or set modules.registry");
   const modules = findModules(repo, settings.modules?.path ?? "modules/*");
   const head = git(repo, ["rev-parse", "HEAD"]);
   const results: Published[] = [];
-  const list = targets(repo, publishTo, modules, opts);
+  const list = targets(repo, publishTo, registry, modules, opts);
+  const testBinary: TestBinary = settings.binary === "terraform" ? "terraform" : "tofu";
+  const tested = new Map<string, string | undefined>();
+  /** Why a module's release is refused by modules.test, tested once a run; undefined when it passes or the setting is off. */
+  const refusedByTests = (mod: Module, dir: string): string | undefined => {
+    if (settings.modules?.test !== true) return undefined;
+    if (!tested.has(mod.rel)) tested.set(mod.rel, testModule(dir, mod.rel, testBinary, opts.testRunner));
+    return tested.get(mod.rel);
+  };
   const keyPath = attestKey(settings.modules?.attest);
   let attesting: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string } | undefined;
   const attestDeps = async () => {
@@ -263,7 +382,7 @@ export async function publish(repo: string, settings: Pick<ResolvedSettings, "mo
     const pinned = readVersionFile(dir);
     for (const target of list) {
       const row = { module: mod.name, target: target.label };
-      const last = await target.latest(mod.name);
+      const last = await target.latest(mod);
       let version: Semver;
       if (last) {
         if (last.content === content) {
@@ -296,10 +415,11 @@ export async function publish(repo: string, settings: Pick<ResolvedSettings, "mo
         version = pinned ?? { major: 0, minor: 1, patch: 0 };
       }
       if (opts.dryRun) {
-        results.push({ ...row, status: "published", version: formatSemver(version), detail: keyPath ? "dry run: would publish, sign and record" : "dry run: would publish" });
+        const would = ["test", "publish", "sign and record"].filter((w) => (w === "test" ? settings.modules?.test === true : w === "sign and record" ? keyPath && target.attests !== false : true));
+        results.push({ ...row, status: "published", version: formatSemver(version), detail: `dry run: would ${would.join(", ")}` });
         continue;
       }
-      const held = await target.existing?.(mod.name, version);
+      const held = await target.existing?.(mod, version);
       if (held) {
         if (held.content !== content) {
           throw new ConfigError(`${held.ref} already exists with different content; the version is taken, so change ${mod.rel}/version or remove the tag if it was a mistake`);
@@ -307,22 +427,27 @@ export async function publish(repo: string, settings: Pick<ResolvedSettings, "mo
         results.push({ ...row, status: "unchanged", version: formatSemver(version), detail: `${held.ref} is already published with this content` });
         continue;
       }
+      const untested = refusedByTests(mod, dir);
+      if (untested) {
+        results.push({ ...row, status: "refused", version: formatSemver(version), detail: untested });
+        continue;
+      }
       const ctx: PublishContext = { dir, rel: mod.rel, revision: head, content, tar };
-      const deps = await attestDeps();
+      const deps = target.attests === false ? undefined : await attestDeps();
       if (!deps) {
-        const digest = await target.publish(mod.name, version, ctx);
+        const digest = await target.publish(mod, version, ctx);
         results.push({ ...row, status: "published", version: formatSemver(version), digest });
         continue;
       }
-      const subject = target.subject(mod.name, version, ctx);
+      const subject = target.subject(mod, version, ctx);
       const attested = await attestRelease(
         { module: mod.rel, dir, version: formatSemver(version), target: target.label, ref: subject.ref, bytes: subject.bytes, commit: head },
         { ...deps, ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}) },
       );
       ctx.pushWithRecord = (refs) =>
         appendLifecycle(repo, LEDGER_PATH, [JSON.stringify(attested.record)], attested.files, `Release record: ${mod.rel} ${formatSemver(version)} ${attested.digest}`, refs);
-      const digest = await target.publish(mod.name, version, ctx);
-      await target.attach?.(mod.name, attested.digest, attested, deps.signer);
+      const digest = await target.publish(mod, version, ctx);
+      await target.attach?.(mod, attested.digest, attested, deps.signer);
       results.push({ ...row, status: "published", version: formatSemver(version), digest, detail: `signed and recorded in the release ledger as ${attested.digest}` });
     }
   }
@@ -335,6 +460,7 @@ export function describePublish(results: Published[]): string {
     .map((r) => {
       const at = r.version ? ` ${r.version}` : "";
       const digest = r.digest ? ` ${r.digest}` : "";
+      if (r.status === "refused") return `${r.module}${at}: refused, not published to ${r.target} (${r.detail})`;
       return `${r.module}${at}: ${r.status} to ${r.target}${digest}${r.detail ? ` (${r.detail})` : ""}`;
     })
     .join("\n");

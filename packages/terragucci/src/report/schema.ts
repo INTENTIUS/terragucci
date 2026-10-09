@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 22;
+export const REPORT_MINOR = 24;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -235,7 +235,7 @@ export interface ReportRootBinary {
   version?: string;
   /** Where the root pinned its version: `.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`. Absent when it runs the job's binary unpinned. */
   pin?: string;
-  /** A Terragrunt unit: the Terragrunt release that ran it, and `terragrunt_version_constraint` when the unit pinned it (minor 22). */
+  /** A Terragrunt unit: the Terragrunt release that ran it, and `terragrunt_version_constraint` when the unit pinned it (minor 24). */
   terragrunt?: { version: string; pin?: string };
 }
 

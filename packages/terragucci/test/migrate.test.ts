@@ -126,9 +126,23 @@ describe("which roots a migration refuses", () => {
     // A unit holds no .tf files of its own: Terragrunt prepares its code, so it is not refused for that.
     expect(refusal(repo, "unit")).toBeUndefined();
     expect(refusal(repo, "hcp")).toContain("cloud block");
-    expect(refusal(repo, "empty")).toContain("no .tf files");
+    expect(refusal(repo, "empty")).toContain("holds no .tf or .tf.json files");
     expect(refusal(repo, "gone")).toContain("not a directory");
     expect(refusal(repo, "ok")).toBeUndefined();
+  });
+
+  it("takes a CDK Terrain stack, whose code is cdk.tf.json, and refuses one with a cloud block or JSON it cannot read", () => {
+    const stack = (terraform: unknown) => JSON.stringify({ "//": { metadata: { backend: "s3", stackName: "dev" } }, terraform, resource: { terraform_data: { keep: { input: "x" } } } });
+    const repo = write(tmp(), {
+      "cdktf.out/stacks/dev/cdk.tf.json": stack({ backend: { s3: { bucket: "b", key: "dev.tfstate", use_lockfile: true } } }),
+      "cdktf.out/stacks/hcp/cdk.tf.json": stack({ cloud: { organization: "acme", workspaces: { name: "hcp" } } }),
+      "cdktf.out/stacks/listed/cdk.tf.json": stack([{ required_version: ">= 1.10" }, { cloud: { organization: "acme" } }]),
+      "cdktf.out/stacks/broken/cdk.tf.json": "{ not json",
+    });
+    expect(refusal(repo, "cdktf.out/stacks/dev")).toBeUndefined();
+    expect(refusal(repo, "cdktf.out/stacks/hcp")).toContain("cloud block");
+    expect(refusal(repo, "cdktf.out/stacks/listed")).toContain("cloud block");
+    expect(refusal(repo, "cdktf.out/stacks/broken")).toBe("cdktf.out/stacks/broken: cdk.tf.json is not JSON");
   });
 });
 

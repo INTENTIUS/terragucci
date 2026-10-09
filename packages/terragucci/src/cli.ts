@@ -12,7 +12,7 @@
   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
@@ -83,7 +83,7 @@ import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
-import { applyWave, readLedger } from "./apply";
+import { applyWave, parseBranches, readLedger } from "./apply";
 import { resumeStep } from "./resume";
 import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
@@ -109,7 +109,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
@@ -336,6 +336,8 @@ export async function main(argv: string[]): Promise<number> {
             ...(str(flags, "shares") ? { shares: wholeFlag("shares", str(flags, "shares")!) } : {}),
             ...(str(flags, "share") ? { share: wholeFlag("share", str(flags, "share")!) } : {}),
             ...(str(flags, "decided") ? { decided: str(flags, "decided") } : {}),
+            ...(str(flags, "branches") ? { branches: parseBranches(str(flags, "branches")!) } : {}),
+            ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
           });
         }
         const result = await runStage(args[0] ?? "", cwd, {
@@ -426,7 +428,8 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const results = await publish(cwd, settings, { dryRun: flags["dry-run"] === true });
         console.log(describePublish(results));
-        return 0;
+        // A release modules.test refused fails the job, once every other module has published.
+        return results.some((r) => r.status === "refused") ? 1 : 0;
       }
       case "verify-release": {
         const [module, version] = args;
