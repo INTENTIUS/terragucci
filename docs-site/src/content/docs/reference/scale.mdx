@@ -58,8 +58,8 @@ The bench's own scripts build the estate. [choudoufu](/terragucci/concepts/gloss
 | Platform | the network, ECS cluster and Route 53 zone | platform |
 | Service | one ECS service, its task definition and its IAM role | platform |
 | DNS | ten Route 53 records | platform |
-| Team | one team's IAM role and policies | identity, 100 a repo |
-| `count` or module teams | two teams | identity, 100 a repo |
+| Team | one team's IAM role and policies | the other repos, 100 a repo |
+| `count` or module teams | two teams | the other repos, 100 a repo |
 
 Service and DNS roots read the platform root's state. Sharing its repo lets its waves order them.
 

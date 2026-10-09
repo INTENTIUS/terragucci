@@ -24,8 +24,8 @@ const rail = [
 			<desc id="tg-flow-desc">
 				Setup, not timed: terralith-gen writes one root module and the bench carves it into {n(run.estate.roots)} roots in {run.estate.repos} repos.
 				Timed: in the reconcile phase the control repo, whose terragucci.yml lists {run.estate.repos} repos, opens one pipeline pull request per repo.
-				The create, plan and change phases run in the repos: the platform repo applies the platform root in wave 1 and the {n(platform - 1)} roots that read its state in wave 2; {identityRepos} identity repos hold {n(identityRoots)} roots that read no state.
-				The runs write one state file per root and a report per stage to the reports bucket. Verify checks that the state files hold all {n(run.estate.resources)} resources.
+				The create, plan and change phases run in the repos: the platform repo applies the platform root in wave 1 and the {n(platform - 1)} roots that read its state in wave 2; {identityRepos} more repos hold {n(identityRoots)} roots, {run.estate.roots_per_repo} to a repo, that read no state.
+				Both write to the state and reports buckets: a state file per root and a report per stage. Verify checks that the state files hold all {n(run.estate.resources)} resources.
 			</desc>
 			<defs>
 				<marker id="tg-flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
@@ -64,7 +64,7 @@ const rail = [
 			<text class="small" x="100" y="282">{n(platform - 1)} roots read it</text>
 
 			<rect class="box" x="226" y="192" width="130" height="102" rx="6" />
-			<text class="strong" x="236" y="210">{identityRepos} identity repos</text>
+			<text class="strong" x="236" y="210">{identityRepos} more repos</text>
 			<text class="small" x="236" y="232">{n(identityRoots)} roots,</text>
 			<text class="small" x="236" y="248">{run.estate.roots_per_repo} to a repo</text>
 			<text class="small muted" x="236" y="270">read no state</text>
@@ -72,14 +72,11 @@ const rail = [
 			<line class="flow" x1="149" y1="294" x2="149" y2="318" marker-end="url(#tg-flow-arrow)" />
 			<line class="flow" x1="291" y1="294" x2="291" y2="318" marker-end="url(#tg-flow-arrow)" />
 
-			<rect class="box" x="84" y="322" width="130" height="42" rx="6" />
-			<text class="strong" x="94" y="340">state files</text>
-			<text class="small" x="94" y="356">one per root</text>
-			<rect class="box" x="226" y="322" width="130" height="42" rx="6" />
-			<text class="strong" x="236" y="340">reports bucket</text>
-			<text class="small" x="236" y="356">a report per stage</text>
+			<rect class="box" x="84" y="322" width="272" height="42" rx="6" />
+			<text class="strong" x="96" y="340">state and reports buckets</text>
+			<text class="small" x="96" y="356">a state file per root, a report per stage</text>
 
-			<line class="flow" x1="149" y1="364" x2="149" y2="386" marker-end="url(#tg-flow-arrow)" />
+			<line class="flow" x1="220" y1="364" x2="220" y2="386" marker-end="url(#tg-flow-arrow)" />
 			<text class="rail-label muted" x="0" y="414">verify</text>
 			<rect class="box" x="84" y="390" width="272" height="42" rx="6" />
 			<text class="strong" x="96" y="408">verify</text>
