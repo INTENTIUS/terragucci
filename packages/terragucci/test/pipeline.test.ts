@@ -56,6 +56,11 @@ describe("the check job", () => {
     const remote = 'git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"';
     expect(publishScript("gitlab")).toContain(remote);
     expect(applyScript("tofu", layers, "gitlab")).toContain(remote);
+    // A policy denial is recorded on chant/lifecycle for an override, so a wave under gate: never pushes too when policy is set.
+    expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1, gate: "never" })).not.toContain(remote);
+    expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1, gate: "never", policy: true })).toContain(remote);
+    const policyNever = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true, gate: "never" }).content;
+    expect(body(policyNever)["apply-wave-1"].script.join("\n")).toContain(remote);
     const all = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content;
     expect(all).not.toContain("CI_SERVER_HOST");
     expect(all).not.toContain("https://oauth2");

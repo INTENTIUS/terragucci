@@ -230,7 +230,7 @@ validation-record *forges:
 example *args="up":
     stack/example.sh {{args}}
 
-[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], logs, reset, shot <url> <out.png> [light|dark], down.")]
+[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], logs, reset, shot <url> <out.png> [light|dark], capture, down. TGLAB=1 runs it on the GitLab lab.")]
 example-gitlab *args="up":
     stack/example-gitlab.sh {{args}}
 
@@ -245,6 +245,14 @@ sandbox *args:
 [doc("The scale bench, on its own stack (compose project tgscale): up, run <scale>..., record [file], down. Scale 136 is 10,069 resources in 1,361 roots.")]
 scale *args:
     stack/scale/scale.sh {{args}}
+
+[doc("The GitLab lab, on its own stack (compose project tglab): up, status, stop, down. Off until up; it takes about 5 GB of memory.")]
+gitlab-lab *args:
+    stack/gitlab/gitlab.sh {{args}}
+
+[doc("Run the named smoke claims on the GitLab lab, plain and under BREAK=1, in parallel, and write their GitLab rows into smoke.json.")]
+gitlab-claims +names:
+    SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
 
 [doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
 see-runs:
