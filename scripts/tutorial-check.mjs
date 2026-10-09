@@ -21,7 +21,9 @@ const smoke = JSON.parse(readFileSync(join(root, "docs-site/src/data/smoke.json"
 const verdict = Object.fromEntries(smoke.claims.map((c) => [c.claim, c.verdict]));
 
 // The same hash stack/tutorial-capture.sh writes: each file under example/,
-// in byte order, as its path, a NUL, then its content.
+// in byte order, as its path, a NUL, then its content. In the pipeline the
+// image references are left out: a release moves them, and no capture shows
+// them.
 function files(dir) {
   return readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
@@ -29,11 +31,16 @@ function files(dir) {
     return statSync(p).isDirectory() ? files(p) : [p];
   });
 }
+function withoutImages(text) {
+  return text
+    .replace(/^# Every job runs in .*$/gm, "# Every job runs in the image")
+    .replace(/ghcr\.io\/intentius\/terragucci-([a-z]+):[^\s"']+/g, "ghcr.io/intentius/terragucci-$1");
+}
 const hash = createHash("sha256");
 for (const f of files(join(root, "example")).map((p) => relative(root, p)).sort()) {
   hash.update(f);
   hash.update("\0");
-  hash.update(readFileSync(join(root, f)));
+  hash.update(f.startsWith("example/.forgejo/") ? withoutImages(readFileSync(join(root, f), "utf8")) : readFileSync(join(root, f)));
 }
 const exampleHash = hash.digest("hex").slice(0, 16);
 
