@@ -489,7 +489,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(21);
+    expect(r.report.minor).toBe(22);
     // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
@@ -549,17 +549,16 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(readFileSync(join(repo, "out/report.html"), "utf-8")).toContain('id="deferred"');
   });
 
-  it("with dependents: plan, a waiting unit is previewed, marked provisional, and kept out of every digest", async () => {
+  it("with dependents: plan, a waiting unit is still not previewed on its mocks", async () => {
     const repo = liveRepo({ "terragucci.yml": "terragrunt:\n  dependents: plan\n" });
-    const exec = fakeTerragrunt({ noOutputs: { "live/dev/app": "live/dev/vpc" } });
+    const calls: string[][] = [];
+    const exec = fakeTerragrunt({ calls, noOutputs: { "live/dev/app": "live/dev/vpc" } });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/app", "live/dev/vpc"]], terragruntExec: exec, env: {} }, () => {});
-    const app = r.report.roots.find((u) => u.path === "live/dev/app")!;
-    expect(app.terragrunt?.provisional).toBe(true);
-    expect(app.status).toBe("planned");
+    expect(r.report.roots.map((u) => u.path)).toEqual(["live/dev/vpc"]);
     expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"]]);
-    expect(r.report.deferred?.[0].previewed).toBe(true);
-    const alone = await runStage("tf-plan", repo, { out: join(repo, "out2"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: exec, env: {} }, () => {});
-    expect(r.report.change_set).toBe(alone.report.change_set);
+    expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "would read mock_outputs", previewed: false }]);
+    // No plan skipped the mock check.
+    expect(calls.filter((c) => c[0] === "run" && c[1] === "--all").every((c) => calls.some((d) => d[0] === "render" && c.includes(`{./${argOf(d, "--working-dir")}}`)))).toBe(true);
   });
 
   it("against a base, only the affected units plan, each with its reason, and their dependents wait", async () => {
