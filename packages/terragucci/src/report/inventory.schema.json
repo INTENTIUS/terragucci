@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/inventory/v1/inventory.schema.json",
+  "title": "terragucci.inventory/v1",
+  "description": "inventory.json in a project's directory of a reports prefix: the resources each root holds, as its newest applied tf-apply wave left them. Addresses, types and providers, never a value. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "roots"],
+  "properties": {
+    "schema": { "const": "terragucci.inventory/v1" },
+    "roots": {
+      "type": "array",
+      "description": "By root path.",
+      "items": {
+        "type": "object",
+        "required": ["root", "commit", "finished", "path", "resources"],
+        "properties": {
+          "root": { "type": "string" },
+          "commit": { "type": "string" },
+          "finished": { "type": "string", "description": "When the wave that recorded the list finished." },
+          "wave": { "type": "integer" },
+          "path": { "type": "string", "description": "The wave's run directory, relative to the project's index.json." },
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "provider"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "provider": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
