@@ -119,14 +119,22 @@ describe("the reader contracts' schemas", () => {
 
 describe("run.json", () => {
   it("is what the waves' jobs write, and between them they carry every field the schema names", () => {
-    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]));
-    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1" }, at(1));
+    const states = new Map([
+      ["net", { state: { bucket: "state", key: "net.tfstate" }, external: [] }],
+      ["app", { state: { key: "app.tfstate" }, external: [{ data: "dns", bucket: "other", key: "dns.tfstate" }] }],
+    ]);
+    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]), states);
+    const spans = [{ phase: "plan" as const, start: at(1), end: at(1, 2) }, { phase: "gate" as const, start: at(1, 2) }, { phase: "apply" as const, start: at(1, 30), share: 1 }];
+    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1", changed: ["net"], spans }, at(1));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "chant approve tf-apply wave-2 --plan d2", shares: 2 }, at(2));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
     expect(validate(RUN_VIEW, v)).toEqual([]);
     expect([...keys([v as unknown as Json])].sort()).toEqual(named(RUN_VIEW).sort());
     expect([...keys(v.roots as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.roots.items).sort());
     expect([...keys(v.waves as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items).sort());
+    expect([...keys(v.waves.flatMap((w) => w.spans ?? []) as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items.properties.spans.items).sort());
+    expect([...keys(v.roots.flatMap((r) => [r.state, ...(r.external ?? [])]).filter(Boolean) as unknown as Json[])].sort()).toEqual(["bucket", "data", "key"]);
+    expect(validate(RUN_VIEW, { ...v, waves: [{ ...v.waves[0], spans: [{ phase: "wait", start: at(1) }] }] })).toEqual(['$.waves[0].spans[0].phase: "wait" not in enum']);
   });
 });
 
@@ -178,6 +186,9 @@ describe("terragucci.estate/v1", () => {
     const { objects, fetch, s3 } = bucket();
     await upload(s3, runs());
     objects.set("acme-reports:reports/audit.json", JSON.stringify({ schema: "terragucci.audit-summary/v1", generated: at(11, 30), entries: 3 }));
+    // The run view of the network project's applied commit, as its waves' jobs write it.
+    const view = withWave(undefined, runSkeleton(NET, "b".repeat(40), [["a"], ["envs/dev/orders", "envs/dev/search"]], new Map([["envs/dev/orders", new Set(["a"])]])), { number: 1, state: "applied" }, at(10, 40));
+    objects.set(`acme-reports:reports/${NET}/runs/${"b".repeat(40)}/run.json`, JSON.stringify(view));
     const config = {
       defaults: { reports: { bucket: "s3://acme-reports", endpoint: "http://minio:9000", prefix: "reports" } },
       projects: { [WEB]: {}, [NET]: {}, "github.com/acme/locked": { reports: { bucket: "s3://locked", endpoint: "http://minio:9000" } }, "github.com/acme/fresh": {} },
@@ -203,6 +214,10 @@ describe("terragucci.estate/v1", () => {
     const stateRoots: Json[] = projects.flatMap((p) => p.states ?? []);
     expect([...keys(stateRoots)].sort()).toEqual(named(ESTATE.$defs.stateRoot).sort());
     expect([...keys(stateRoots.flatMap((r) => r.versions))].sort()).toEqual(named(ESTATE.$defs.stateRoot.properties.versions.items).sort());
+    expect([...keys(projects.flatMap((p) => (p.run_view ? [p.run_view] : [])))].sort()).toEqual(named(ESTATE.$defs.project.properties.run_view).sort());
+    expect([...keys(page.graph.nodes)].sort()).toEqual(named(ESTATE.properties.graph.properties.nodes.items).sort());
+    expect([...keys(page.graph.edges)].sort()).toEqual(named(ESTATE.properties.graph.properties.edges.items).sort());
+    expect([...keys(page.graph.edges.flatMap((e: Json) => [e.from, e.to]))].sort()).toEqual(named(ESTATE.$defs.graphRoot).sort());
   });
 
   it("refuses a project with a status it does not know, and a run with a field it does not name", async () => {
