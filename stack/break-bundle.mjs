@@ -7,7 +7,7 @@
 // exactly once in its file, so a source change that moves the code fails the
 // build instead of building a bundle that breaks nothing. The rest of the
 // bundle is built with the shipped options (scripts/cli-bundle.mjs).
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -47,4 +47,5 @@ const cut = {
   },
 };
 await build({ ...bundleOptions(pkg, [cut]), outfile: out });
+chmodSync(out, 0o755);
 console.error(`break-bundle: ${out}, ${cuts.size} file(s) cut`);

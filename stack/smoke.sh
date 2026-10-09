@@ -8844,6 +8844,8 @@ claim_plan_no_lock() {
   # BREAK: a bundle whose plan leaves out -lock=false (break_bundle), so the
   # pull request plan waits 30s for the lock and fails.
   log() { echo "[smoke plan-no-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=terragucci-smoke-lock
   local key holder="terragucci-smoke-plan-no-lock-$STAMP${BREAK:+-break}" base i rc=0 s t0 took
   image="$(image_tag tofu)"
