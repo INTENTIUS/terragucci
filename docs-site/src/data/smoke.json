@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "apply-serial",
@@ -357,7 +357,23 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
+    },
+    {
+      "claim": "import-atlantis",
+      "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4b0ca65"
+    },
+    {
+      "claim": "comment-atlantis",
+      "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4b0ca65"
     },
     {
       "claim": "lock-wait",
@@ -983,7 +999,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "note-stale",

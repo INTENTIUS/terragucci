@@ -212,6 +212,7 @@ Internal; a value set in `env:` is overwritten.
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
 | `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
+| `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
 | `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
