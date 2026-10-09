@@ -21,7 +21,7 @@ packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split unlock-state
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
@@ -35,9 +35,10 @@ packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate-control audit-control
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions
-packages/terragucci/src/audit.ts          audit* migrate-split
-packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never
+packages/terragucci/src/audit.ts          audit* migrate-split unlock-state
+packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state
+packages/terragucci/src/unlock.ts         unlock-state
+packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state
 packages/terragucci/src/notify.ts         notify-chat notify-webhook
 packages/terragucci/src/notify.schema.json notify-webhook
 packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-calls summed-timings otlp-headers tg-spans dash-* drill-down alerts-fire
@@ -78,7 +79,7 @@ packages/terragucci/src/report/state-versions.schema.json reader-contracts
 packages/terragucci/src/report/changes.schema.json reader-contracts
 packages/terragucci/src/report/history.schema.json reader-contracts
 packages/terragucci/src/report/dora.schema.json dora reader-contracts
-packages/terragucci/src/report/audit.ts   audit* state-versions migrate-split
+packages/terragucci/src/report/audit.ts   audit* state-versions migrate-split unlock-state
 packages/terragucci/src/report/highlight.ts highlight*
 packages/terragucci/src/report/azure-blob.ts blob-azure*
 packages/terragucci/src/report/gcs.ts     blob-gcs*
@@ -86,14 +87,16 @@ packages/terragucci/src/report/cost.ts   cost-*
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tip-moved
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
-packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue
+packages/terragucci/src/respond/tips.ts   respond-tips tip-moved
+packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue tip-moved
 packages/terragucci/src/publish/require.ts require-*
 packages/terragucci/src/publish           publish publish-attest require-* version-bump-job
 packages/terragucci/src/rollout           rollout rollout-*
-packages/terragucci/src/tips              tips respond-tips
+packages/terragucci/src/tips/moved.ts     tips tip-moved
+packages/terragucci/src/tips              tips respond-tips tip-moved
 
 # The JSON Schema check a claim runs on what a run wrote.
 scripts/schema-check.ts                   reader-contracts
@@ -110,6 +113,7 @@ stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
+stack/fixtures/unlock-state               unlock-state
 stack/fixtures/cost-policy                cost-gate cost-policy
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook cost-estimate
 example-terragrunt/                       tg-*
