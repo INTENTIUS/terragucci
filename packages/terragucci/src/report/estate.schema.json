@@ -43,6 +43,16 @@
         "resources": { "type": "integer", "description": "Addresses with at least one apply." },
         "generated": { "type": "string" }
       }
+    },
+    "dora": {
+      "type": "object",
+      "description": "The DORA metrics beside the page (dora.json, terragucci.dora/v1).",
+      "required": ["file", "generated", "deployments"],
+      "properties": {
+        "file": { "type": "string" },
+        "generated": { "type": "string" },
+        "deployments": { "type": "integer", "description": "The estate's applied waves in the metrics' window." }
+      }
     }
   },
   "$defs": {

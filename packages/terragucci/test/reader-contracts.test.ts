@@ -1,6 +1,6 @@
 /**
  * The reader contracts: the JSON Schemas the package ships for index.json,
- * estate.json and audit.jsonl, held to what the writers put in a bucket.
+ * estate.json, dora.json and audit.jsonl, held to what the writers put in a bucket.
  * The objects are the ones uploadReport, terragucci estate and the audit
  * record write, never hand-made rows, and between them they carry every
  * field each schema names, so a field added to a writer and not to its
@@ -14,6 +14,7 @@ import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDG
 import { buildReport } from "../src/report/build";
 import { ESTATE_SCHEMA } from "../src/report/estate";
 import { CHANGES_SCHEMA, HISTORY_SCHEMA } from "../src/report/history";
+import { DORA_SCHEMA } from "../src/report/dora";
 import { INVENTORY_SCHEMA } from "../src/report/inventory";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report } from "../src/report/schema";
@@ -30,6 +31,7 @@ const AUDIT = schema("audit.schema.json");
 const INVENTORY = schema("inventory.schema.json");
 const CHANGES = schema("changes.schema.json");
 const HISTORY = schema("history.schema.json");
+const DORA = schema("dora.schema.json");
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
@@ -66,8 +68,10 @@ function runs(): Report[] {
   });
   const b = "b".repeat(40);
   return [
-    buildReport({ run: { ...RUN, project: WEB, ...LINKS, finished: at(11) }, roots: [...smallFixture(), { path: "envs/big", planner: "tofu", plan: many }] }),
+    buildReport({ run: { ...RUN, project: WEB, ...LINKS, finished: at(11) }, roots: [...smallFixture(), { path: "envs/big", planner: "tofu", plan: many }], waves: [{ number: 1, roots: ["envs/big"] }] }),
     buildReport({ run: { ...RUN, project: WEB, stage: "tf-drift", finished: at(4, 17) }, roots: smallFixture().slice(0, 2) }),
+    // The next check finds none: its row names the drift it cleared.
+    buildReport({ run: { ...RUN, project: WEB, commit: "f".repeat(40), stage: "tf-drift", finished: at(5, 17) }, roots: [{ path: "envs/dev/orders", planner: "tofu", plan: plan([]) }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", plan: created, applied: true, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 2, finished: at(10) }, roots: smallFixture().slice(0, 2), waves: [{ number: 2, roots: ["envs/dev/orders", "envs/dev/search"], approval: "waiting", waitingSince: at(9) }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
@@ -91,7 +95,7 @@ const named = (s: Json): string[] => Object.keys(s.properties ?? {});
 
 describe("the reader contracts' schemas", () => {
   it("use only the keywords the check reads, and name the schema id the writer puts in `schema`", () => {
-    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA]] as const) {
+    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
       expect(s.properties.schema.const).toBe(id);
@@ -101,7 +105,7 @@ describe("the reader contracts' schemas", () => {
 
   it("ship beside report.schema.json: the build copies each one into dist, which the package publishes", () => {
     const shipped = readdirSync(SRC).filter((f) => f.endsWith(".schema.json")).sort();
-    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json"]);
+    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json"]);
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf-8"));
     expect(pkg.files).toContain("dist");
     const build = readFileSync(join(import.meta.dirname, "../../../scripts/build-cli.mjs"), "utf-8");
@@ -230,6 +234,28 @@ describe("terragucci.changes/v1 and terragucci.history/v1", () => {
     expect([...keys(history.resources)].sort()).toEqual(named(HISTORY.properties.resources.items).sort());
     expect([...keys(history.resources.flatMap((r: Json) => r.applies))].sort()).toEqual(named(HISTORY.properties.resources.items.properties.applies.items).sort());
     expect(validate(HISTORY, { ...history, resources: [{ ...history.resources[0], applies: [{ ...history.resources[0].applies[0], actions: ["rename"] }] }] })).toEqual(['$.resources[0].applies[0].actions[0]: "rename" not in enum']);
+  });
+});
+
+describe("terragucci.dora/v1", () => {
+  it("holds the dora.json terragucci estate writes from the audit record and the indexes, and every field it names is one it writes", async () => {
+    const { objects, fetch, s3 } = bucket();
+    const reports = runs();
+    await upload(s3, reports);
+    const applies = reports.map((r) => reportEntry(r, runPath(r), { source: "report", bucket: "s3://acme-reports", key: `reports/${r.run.project}/${runPath(r)}/report.json` }, [])).filter((e) => e !== undefined);
+    objects.set("acme-reports:reports/audit.jsonl", appendEntries(readRecord(undefined), applies));
+    await estate(tmp(), { reports: { bucket: "s3://acme-reports", endpoint: "http://minio:9000", prefix: "reports" } }, { fetch, env: ENV, now: NOW });
+    const dora = JSON.parse(objects.get("acme-reports:reports/dora.json")!);
+    expect(validate(DORA, dora)).toEqual([]);
+    expect(dora.estate.deployments).toBeGreaterThan(0);
+    expect([...keys([dora])].sort()).toEqual(named(DORA).sort());
+    expect([...keys([dora.estate])].sort()).toEqual(named(DORA.$defs.metrics).sort());
+    expect([...keys(dora.projects)].sort()).toEqual(named(DORA.properties.projects.items).sort());
+    expect([...keys([dora.estate.lead_time])].sort()).toEqual(named(DORA.$defs.lead_time).sort());
+    expect([...keys([dora.estate.change_failure])].sort()).toEqual(named(DORA.$defs.change_failure).sort());
+    expect([...keys([dora.estate.restore])].sort()).toEqual(named(DORA.$defs.restore).sort());
+    expect([...keys(dora.estate.trend)].sort()).toEqual(named(DORA.$defs.trend.items).sort());
+    expect(validate(DORA, { ...dora, estate: { ...dora.estate, per_week: "often" } })).toEqual(["$.estate.per_week: string is not number"]);
   });
 });
 

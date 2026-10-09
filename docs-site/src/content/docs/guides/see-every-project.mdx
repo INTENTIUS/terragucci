@@ -1,7 +1,7 @@
 ---
 title: See every project in one page
 description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
-claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history]
+claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-every-project/.
   In this control repo, add the scheduled estate job the page gives for my forge,
@@ -26,6 +26,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 | the resources each root holds, by project, root and type, with a filter box | each project's `inventory.json` |
 | each resource's change history, on `history.html` | each project's `changes.json`, and `audit.jsonl` for the approvers |
 | a link to the [audit trail](/terragucci/reference/audit-trail/), when the job writes one | `audit.json` beside the page |
+| the four DORA metrics per project and for the estate, week by week, also in `dora.json` | `audit.jsonl` and each project's `index.json` |
 
 The page reads `index.json`, `inventory.json`, `changes.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
 
@@ -59,6 +60,19 @@ Each `tf-apply` wave also records what it did to each resource of the roots it a
 
 Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers. Without the audit trail the history still lists every apply but names nobody. A wave no gate held has no approver.
 
+## Delivery metrics
+
+The Delivery section shows the four DORA metrics for each project and for the estate over the newest eight weeks, with a row per week. The same numbers go to `dora.json` beside the page.
+
+| Metric | What the page counts |
+|---|---|
+| Deployment frequency | applied waves per week |
+| Lead time | the median time from a change's first plan to its wave applied, and that time before the gate, at the gate and after the approval |
+| Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies; a refused wave does not count |
+| Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none |
+
+The applies come from the audit trail, so run `terragucci audit` before `terragucci estate` (step 5). With an OTLP endpoint set, the job also sends the four as gauges, and the Estate dashboard graphs them. [Delivery metrics](/terragucci/reference/delivery-metrics/) defines each one exactly.
+
 ## Before you start
 
 | You need | Why |
@@ -84,7 +98,7 @@ Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers
    | one central bucket | every project's `reports.bucket` names it, each writing with a `reports.role` of its own |
    | a bucket per account | the project's `reports` in the control repo names its bucket and a `role` that can read it |
 
-2. Give the job an identity. It reads the indexes, writes two objects and signs the link.
+2. Give the job an identity. It reads the indexes and the audit trail, writes the page and its files, and signs the link.
 
    <Tabs syncKey="cloud">
      <TabItem label="AWS">
@@ -93,7 +107,7 @@ Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers
      "Version": "2012-10-17",
      "Statement": [
        { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl"] },
-       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json"] }
+       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json"] }
      ]
    }
    ```
@@ -188,15 +202,16 @@ Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers
    estate: 3 projects, 1 wave waiting, 1 project drifted, 0 roots failed
      gitlab.example.com/platform/network: wave 2 waits, for 3h 0m
      github.com/acme/data: 2 roots drifted
-   wrote terragucci-estate/estate.json and terragucci-estate/estate.html
-   copied to s3://acme-terragucci/reports/estate.json and reports/estate.html
+   dora: 2.5 deployments per week, lead time 3h 10m, change failure rate 5%, time to restore 1h 20m
+   wrote terragucci-estate/estate.json, terragucci-estate/estate.html and terragucci-estate/dora.json
+   copied to s3://acme-terragucci/reports/estate.json, reports/estate.html and reports/dora.json
    link, until 2026-10-08T12:00:00.000Z:
    https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/estate.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
    ```
 
    The job fails (exit 1) when a project's index could not be read; the page still goes up and names that project.
 
-5. Add the audit trail, if you want one: a `terragucci audit` step before the estate step writes `audit.jsonl` and `audit.html`, and the page links them. [The audit trail](/terragucci/reference/audit-trail/#write-it) lists what that step reads.
+5. Add the audit trail: a `terragucci audit` step before the estate step writes `audit.jsonl` and `audit.html`, and the page links them. The approvers in the change history and the applies in the delivery metrics come from it. [The audit trail](/terragucci/reference/audit-trail/#write-it) lists what that step reads.
 
    ```yaml
    - run: npx --yes @intentius/terragucci audit
@@ -219,4 +234,5 @@ The page's own numbers need nothing else. Its links to each run's report open wh
 
 - [CLI commands](/terragucci/reference/cli/#estate) lists the flags.
 - [The audit trail](/terragucci/reference/audit-trail/) describes every entry of `audit.jsonl`.
+- [Delivery metrics](/terragucci/reference/delivery-metrics/) defines each DORA metric and the fields of `dora.json`.
 - [Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) describes `estate.json`, the index rows, `inventory.json`, `changes.json` and `history.json`.

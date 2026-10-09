@@ -169,7 +169,7 @@ describe("the history in the bucket and beside the estate page", () => {
     const estateHtml = objects.get("acme-reports:reports/estate.html")!;
     expect(estateHtml).toContain(`<a href="history.html#${app.id}"><code>terraform_data.app</code></a>`);
     expect(estateHtml).toContain('href="history.html" id="resource-history"');
-    expect(describeEstate(r, cwd)).toContain("wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/history.json and terragucci-estate/history.html");
+    expect(describeEstate(r, cwd)).toContain("wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/dora.json, terragucci-estate/history.json and terragucci-estate/history.html");
     // No value of the plans, sensitive or plain, reaches a stored object outside the run directories.
     for (const [k, v] of objects) {
       if (/\/20\d\d\/\d\d\//.test(k)) continue;
@@ -206,7 +206,7 @@ describe("the history in the bucket and beside the estate page", () => {
     expect(renderHistoryHtml(missing)).toContain("not in the audit trail");
   });
 
-  it("writes no history and reads no audit record when no apply changed a resource", async () => {
+  it("writes no history when no apply changed a resource", async () => {
     const { objects, fetch, s3 } = bucket();
     await upload(s3, [buildReport({ run: RUN, roots: [{ path: "r", plan: plan([]), planner: "tofu" }] })]);
     const r = await estate(tmp(), config, { fetch, env: ENV, now: NOW });

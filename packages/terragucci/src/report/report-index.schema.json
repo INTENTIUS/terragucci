@@ -45,6 +45,15 @@
         "waiting_since": { "type": "string", "description": "When a waiting wave began waiting for an approval of its digest." },
         "applied": { "type": "string", "description": "When a tf-apply wave finished applying." },
         "overridden": { "type": "integer", "description": "Roots the policy denied that a recorded override let through. Absent when none." },
+        "wave_digests": { "type": "array", "items": { "type": "string" }, "description": "A tf-plan row: each wave's set digest and review digest, the digests an apply of the same plans binds. Absent when no wave has one." },
+        "drifted_roots": { "type": "array", "items": { "type": "string" }, "description": "A tf-drift row: the roots that drifted, at most 50. Absent when none drifted." },
+        "drift_since": { "type": "string", "description": "A tf-drift row that found drift: when the project's open drift was first found, by this run or an earlier one." },
+        "drift_cleared": {
+          "type": "object",
+          "description": "A tf-drift row that found none after a row that found some: when that drift was first found, and its roots.",
+          "required": ["since", "roots"],
+          "properties": { "since": { "type": "string" }, "roots": { "type": "array", "items": { "type": "string" } } }
+        },
         "destroys": { "type": "array", "items": { "type": "string" }, "description": "Destroys and replacements as `<root>: <address>`, at most 50." },
         "destroys_total": { "type": "integer", "description": "How many destroys and replacements there are, when there are more than the row lists." },
         "commit_url": { "type": "string" },

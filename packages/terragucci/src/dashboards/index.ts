@@ -301,6 +301,9 @@ export const projectIndexUrl = (reports: string): string => `${reports}/\${__val
 /** The URL of the page that sends a trace's reader to its run's report. */
 export const traceReportUrl = (reports: string): string => `${reports}/traces/\${__data.fields.traceID}.html`;
 
+/** A DORA gauge at each point, by project: terragucci estate sends it on its schedule, so its latest value holds for a day. */
+const dora = (metric: string, matchers: Matcher[]): string => `max by (project) (last_over_time(${selector(metric, matchers)}[1d]))`;
+
 function estate(s: Required<DashboardSettings>, links: DashboardLinks): DashboardEntity {
   const ds = prom(s.prometheus);
   // Each project links to its report index in the bucket.
@@ -313,12 +316,21 @@ function estate(s: Required<DashboardSettings>, links: DashboardLinks): Dashboar
     8,
     links.reports ? [fieldLink("project", "Report index", projectIndexUrl(links.reports))] : [],
   );
-  return dashboard(s, DASHBOARD_UIDS.estate, "terragucci: Estate", "Roots per project, the binary and terragucci versions they run, module pins across repos and tips by rule.", [
+  return dashboard(s, DASHBOARD_UIDS.estate, "terragucci: Estate", "Roots per project, the binary and terragucci versions they run, the DORA metrics terragucci estate computes, module pins across repos and tips by rule.", [
     new Row({
       title: "Projects",
       panels: [
         perProject,
         table("Versions", "The binary, its version and the terragucci release each project's latest run used.", ds, `count by (project, binary, version, service_version) (last_over_time(${selector(METRIC.binaryVersion, [P])}[7d]))`),
+      ],
+    }),
+    new Row({
+      title: "Delivery",
+      panels: [
+        series("Deployments per week", "Applied waves per week over the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.", ds, dora(METRIC.doraDeployments, [P]), "{{project}}"),
+        series("Lead time", "Median time from a change's first plan to its wave applied, by project.", ds, dora(METRIC.doraLeadTime, [P, ["segment", "=", "total"]]), "{{project}}", "s"),
+        series("Change failure rate", "Failed applies and applied waves followed by drift, over all applies, by project.", ds, dora(METRIC.doraFailureRate, [P]), "{{project}}", "percentunit"),
+        series("Time to restore", "Median time from a failed apply or drift found to restored, by project.", ds, dora(METRIC.doraRestore, [P]), "{{project}}", "s"),
       ],
     }),
     new Row({
