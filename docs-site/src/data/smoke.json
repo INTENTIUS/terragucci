@@ -1280,7 +1280,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "1d4d183"
     },
     {
       "claim": "apply-outcome",
@@ -1400,7 +1400,31 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "1d4d183"
+    },
+    {
+      "claim": "cdktn-apply",
+      "says": "with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d4d183"
+    },
+    {
+      "claim": "cdktn-tips",
+      "says": "with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d4d183"
+    },
+    {
+      "claim": "cdktn-refused",
+      "says": "with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d4d183"
     },
     {
       "claim": "wave-jobs",
