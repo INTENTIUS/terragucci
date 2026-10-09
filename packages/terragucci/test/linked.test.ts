@@ -112,7 +112,7 @@ describe("a linked plan's rewrite", () => {
 
 /**
  * A stand-in binary: init passes, `state pull` prints a state with an output
- * (so no root is held back), and plan copies the root's plan.json to the plan
+ * (so no root is held back) unless the root has a `never-applied` file, and plan copies the root's plan.json to the plan
  * file, after saving the linked file it finds (to linked.seen) and failing
  * when the root has a `fail-linked` file and the linked file is there.
  */
@@ -122,7 +122,7 @@ function linkedTofu(dir: string): string {
 chdir="\${1#-chdir=}"; shift
 case "$1" in
   init) exit 0 ;;
-  state) echo '{"version":4,"resources":[],"outputs":{"a":{"value":1}}}'; exit 0 ;;
+  state) if [ -f "$chdir/never-applied" ]; then exit 0; fi; echo '{"version":4,"resources":[],"outputs":{"a":{"value":1}}}'; exit 0 ;;
   plan)
     if [ -f "$chdir/${LINKED_FILE}" ]; then
       cat "$chdir/${LINKED_FILE}" "$chdir/main.tf" > "$chdir/linked.seen"
@@ -192,6 +192,19 @@ describe("tf-plan plans a root on the planned outputs of the roots it reads", ()
     expect(app.reads).toEqual([{ upstream: "net", data: "net", outputs: "applied", why: "the plan on its planned outputs failed: Invalid for_each argument" }]);
     expect(report.waves[1].replans_after).toBeUndefined();
     expect(logs.some((l) => l.startsWith("app: the plan on the planned outputs of net failed (Invalid for_each argument)"))).toBe(true);
+  });
+
+  it("holds back a root whose upstream has never applied, even when that upstream planned in the run", async () => {
+    const repo = estate({ "net/never-applied": "" });
+    const logs: string[] = [];
+    const { report } = await runStage("tf-plan", repo, { binary: linkedTofu(tmp()), layers: [["net"], ["app"]], out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));
+    // app never planned, linked or not: its remote state block would read a state that does not exist.
+    expect(existsSync(join(repo, "app/linked.seen"))).toBe(false);
+    expect(logs).toContain("app: held back, net has no state yet");
+    expect(report.roots.map((r) => r.path)).toEqual(["net"]);
+    expect(report.deferred).toEqual([expect.objectContaining({ unit: "app", after: ["net"], previewed: false })]);
+    expect(report.waves.map((w) => w.number)).toEqual([1]);
+    expect(validate(REPORT_SCHEMA, report)).toEqual([]);
   });
 
   it("plans on the applied state when the upstream is not planned in the run", async () => {
