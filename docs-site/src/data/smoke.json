@@ -7,7 +7,7 @@
       "claim": "boot",
       "says": "the example boots and deploys locally",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
       "commit": "68fd6a8"
     },
@@ -219,7 +219,7 @@
       "claim": "tg-waves",
       "says": "the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
       "commit": "68fd6a8"
     },
@@ -360,6 +360,22 @@
       "commit": "68fd6a8"
     },
     {
+      "claim": "import-atlantis",
+      "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "cb0fa61"
+    },
+    {
+      "claim": "comment-atlantis",
+      "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "cb0fa61"
+    },
+    {
       "claim": "lock-wait",
       "says": "a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace",
       "needs": null,
@@ -443,7 +459,7 @@
       "claim": "check-diagnostics",
       "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
       "commit": "68fd6a8"
     },
