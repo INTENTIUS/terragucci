@@ -138,6 +138,7 @@ export default defineConfig({
 								{ label: 'Set up with a coding agent', slug: 'getting-started/agents' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
+								{ label: 'Have a model review a pull request', slug: 'guides/agent-review-a-pull-request' },
 							],
 						},
 					],

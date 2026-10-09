@@ -27,6 +27,7 @@ const ORDER = [
 	'guides/use-terragrunt',
 	'guides/agent-refused-wave',
 	'guides/agent-change-a-pull-request',
+	'guides/agent-review-a-pull-request',
 	'reference/config',
 	'reference/cli',
 	'reference/stages',
