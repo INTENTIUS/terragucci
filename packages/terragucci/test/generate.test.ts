@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { resolveProject, resolveRepo, validateConfig, type ResolvedSettings } from "../src/config";
-import { checkGenerated, combineGenerate, GENERATED_MARKER, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
+import { checkGenerated, combineGenerate, GENERATED_MARKER, includesGenerated, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
 import { init } from "../src/init";
 import { checkScript } from "../src/render";
 import { bareFrom, git, tmp, write } from "./helpers";
@@ -219,11 +219,107 @@ terraform {
     expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/generate\.roots names gone, which is not a directory/);
   });
 
-  it("refuses a Terragrunt repo and points at Terragrunt's own generate blocks", async () => {
-    const dir = write(tmp(), { "root.hcl": "", "app/terragrunt.hcl": "", "terragucci.yml": "generate:\n  backend: { local: {} }\n" });
-    expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/Terragrunt's own generate blocks/);
-    await expect(init(dir, { binary: "tofu", forge: "github", dryRun: true })).rejects.toThrow(/Terragrunt's own generate blocks/);
-    expect(() => validateConfig({ terragrunt: {}, generate: {} }, "t")).toThrow(/Terragrunt's own generate blocks/);
+  describe("in a Terragrunt repo", () => {
+    const INCLUDE = 'include "terragucci" {\n  path = find_in_parent_folders("terragucci.hcl")\n}\n';
+    const unitHcl = (extra = INCLUDE): string => `${extra}\nterraform {\n  source = "../../modules/thing"\n}\n`;
+    const CONFIG = [
+      "generate:",
+      "  backend:",
+      "    s3: { bucket: state, key: \"gen/{root}.tfstate\", region: us-east-1 }",
+      "  providers:",
+      "    aws: { source: hashicorp/aws, version: \"6.67.0\", region: us-east-1 }",
+      "  dirs:",
+      "    \"live/prod/*\":",
+      "      providers: { aws: { region: eu-west-1 } }",
+      "  roots:",
+      "    live/dev/web:",
+      "      required_version: \">= 1.6\"",
+      "",
+    ].join("\n");
+    const tgRepo = (config = CONFIG, files: Record<string, string> = {}): string =>
+      write(tmp(), {
+        "root.hcl": "",
+        "live/dev/app/terragrunt.hcl": unitHcl(),
+        "live/dev/web/terragrunt.hcl": unitHcl(),
+        "live/prod/app/terragrunt.hcl": unitHcl(),
+        "modules/thing/main.tf": resource("thing"),
+        "terragucci.yml": config,
+        ...files,
+      });
+
+    it("writes one terragucci.hcl: each unit's settings by its path, through remote_state and generate blocks", () => {
+      const dir = tgRepo();
+      const plan = generate(dir);
+      expect(plan.terragrunt).toBe(true);
+      expect(plan.roots).toEqual(["live/dev/app", "live/dev/web", "live/prod/app"]);
+      expect(plan.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([["terragucci.hcl", "created"]]);
+      const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
+      expect(hcl.startsWith(GENERATED_MARKER)).toBe(true);
+      expect(hcl).toContain('    "live/dev/app" = {\n      backend   = "s3"\n      config    = { bucket = "state", key = "gen/live/dev/app.tfstate", region = "us-east-1" }\n      providers = <<-EOT\n        provider "aws" {\n          region = "us-east-1"\n        }\n      EOT\n      versions  = <<-EOT\n        terraform {\n          required_providers {');
+      // The prod unit takes its glob's region; web alone takes its own required_version.
+      expect(hcl).toMatch(/"live\/prod\/app" = \{[\s\S]*?region = "eu-west-1"/);
+      expect(hcl.match(/required_version = ">= 1\.6"/g)).toHaveLength(1);
+      expect(hcl).toContain('  terragucci_unit = local.terragucci_units[path_relative_to_include("terragucci")]');
+      expect(hcl).toContain('remote_state {\n  backend      = local.terragucci_unit.backend\n  disable_init = true\n\n  generate = {\n    path      = "backend.tf"\n    if_exists = "overwrite_terragrunt"\n  }\n\n  config = local.terragucci_unit.config\n}');
+      expect(hcl).toContain('generate "terragucci_providers" {\n  path      = "providers.tf"\n  if_exists = "overwrite_terragrunt"\n  disable   = local.terragucci_unit.providers == ""\n  contents  = local.terragucci_unit.providers\n}');
+      // Once written, --check passes and a second run changes nothing.
+      expect(checkGenerated(dir, settingsOf(dir))).toMatchObject({ ok: true, log: ["generated files match terragucci.yml: 1 file for 3 units"] });
+      expect(generate(dir).files.map((f) => f.status)).toEqual(["unchanged"]);
+    });
+
+    it("takes an include of terragucci.hcl however its path is built", () => {
+      expect(includesGenerated(INCLUDE)).toBe(true);
+      expect(includesGenerated('include "terragucci" {\n  path = "${get_repo_root()}/terragucci.hcl"\n}\n')).toBe(true);
+      expect(includesGenerated('# include "terragucci" { path = "terragucci.hcl" }\ninclude "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n')).toBe(false);
+    });
+
+    it("keeps an interpolation out of the files Terragrunt writes", () => {
+      const dir = tgRepo('generate:\n  providers:\n    aws: { default_tags: { tags: { note: "${var.x}" } } }\n');
+      generate(dir);
+      // The .tf content escapes it once, and the heredoc once more, so Terragrunt writes "$${var.x}".
+      expect(readFileSync(join(dir, "terragucci.hcl"), "utf-8")).toContain('note = "$$${var.x}"');
+    });
+
+    it("--check refuses a unit that does not include terragucci.hcl, another remote_state, and a generate block for the same file, by name", () => {
+      const dir = tgRepo(CONFIG, {
+        "live/dev/web/terragrunt.hcl": unitHcl('include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n'),
+        "root.hcl": 'remote_state {\n  backend = "s3"\n  generate = {\n    path      = "backend.tf"\n    if_exists = "overwrite"\n  }\n  config = {}\n}\n\ngenerate "provider" {\n  path      = "providers.tf"\n  if_exists = "overwrite"\n  contents  = ""\n}\n',
+      });
+      const r = checkGenerated(dir, settingsOf(dir));
+      expect(r.ok).toBe(false);
+      expect(r.log).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^refused: live\/dev\/web\/terragrunt\.hcl does not include terragucci\.hcl, so generate's settings never reach it; add include "terragucci" \{ path = find_in_parent_folders\("terragucci\.hcl"\) \}$/),
+        "refused: root.hcl declares remote_state, and terragucci.hcl gives each unit its backend from generate; remove one of them",
+        "refused: root.hcl has a generate block that writes providers.tf, which terragucci.hcl writes from generate; remove one of them",
+      ]));
+      // remote_state's own generate = { } is not counted as a generate block.
+      expect(r.log.filter((l) => l.includes("writes backend.tf"))).toEqual([]);
+    });
+
+    it("refuses a backend for some units and not others, and a generate.roots path that is no unit", () => {
+      const dir = tgRepo('generate:\n  roots:\n    live/dev/app:\n      backend: { local: {} }\n');
+      expect(() => planGenerate(dir, settingsOf(dir))).toThrow("generate gives live/dev/app a backend and not live/dev/web, live/prod/app");
+      const other = tgRepo('generate:\n  roots:\n    modules/thing:\n      required_version: ">= 1.6"\n');
+      expect(() => planGenerate(other, settingsOf(other))).toThrow("generate.roots names modules/thing, which is not a Terragrunt unit in the repo");
+    });
+
+    it("removes terragucci.hcl once the config no longer asks for it, and never overwrites one it did not write", () => {
+      const dir = tgRepo();
+      generate(dir);
+      writeFileSync(join(dir, "terragucci.yml"), "binary: tofu\n");
+      expect(planGenerate(dir, settingsOf(dir)).files.map((f) => f.status)).toEqual(["removed"]);
+      const mine = tgRepo(CONFIG, { "terragucci.hcl": "locals {}\n" });
+      expect(planGenerate(mine, settingsOf(mine)).foreign).toEqual([expect.stringMatching(/^terragucci\.hcl exists and terragucci did not write it/)]);
+    });
+
+    it("init adds generate --check to the Terragrunt check job, and config check takes generate beside a terragrunt block", async () => {
+      const dir = tgRepo(`binary: tofu\nforge: github\nterragrunt:\n  version: 1.1.6\n${CONFIG}`);
+      generate(dir);
+      const result = await init(dir, { binary: "tofu", forge: "github", dryRun: true, terragrunt: "/nonexistent/terragrunt" });
+      const wf = result.files.find((f) => f.path.endsWith(".github/workflows/terragucci.yml"))!.content;
+      expect(wf).toContain("terragucci generate --check");
+      expect(validateConfig({ terragrunt: {}, generate: { backend: { local: {} } } }, "t")).toEqual({ terragrunt: {}, generate: { backend: { local: {} } } });
+    });
   });
 
   it("config check names each problem in a generate key", () => {

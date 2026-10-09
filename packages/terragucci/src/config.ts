@@ -642,7 +642,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
-  if (isObject(s.apply) && s.apply.branches !== undefined && s.terragrunt !== undefined) problems.push(`${where}.apply.branches: ${BRANCHES_NOT_TERRAGRUNT}`);
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
@@ -651,7 +650,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
   checkVersion(s.version, s.binary, where, problems);
-  checkGenerate(s.generate, `${where}.generate`, problems, s.terragrunt);
+  checkGenerate(s.generate, `${where}.generate`, problems);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }
@@ -1087,8 +1086,6 @@ export const APPLY_BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
 
 /** Why `apply.branches` is refused with `apply.when: pull-request`. */
 export const BRANCHES_NOT_PR_APPLY = "apply.when: pull-request applies an open pull request into the default branch, and a push applies nothing, so no branch could apply its roots; leave apply.branches unset";
-/** Why `apply.branches` is refused in a Terragrunt repo. */
-export const BRANCHES_NOT_TERRAGRUNT = "a Terragrunt wave runs its units with one run --all, cut from terragrunt find when it runs; apply.branches maps plain roots, so leave it unset";
 
 function checkApplyBranches(b: unknown, where: string, problems: string[], when: unknown): void {
   if (!isObject(b) || Object.keys(b).length === 0) {

@@ -14,7 +14,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `import` | writes `terragucci.yml` from an `atlantis.yaml` or a `digger.yml`, and prints what became of each setting |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
-| `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/); `--check` refuses one that differs, and the generated `tf-check` job runs it |
+| `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
@@ -200,7 +200,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
 | `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
-| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots of `--branch` when the map names it, and otherwise every root no branch's glob matches |
+| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots (in a Terragrunt repo, the units) of `--branch` when the map names it, and otherwise every root no branch's glob matches |
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
 
 ## publish
@@ -544,7 +544,7 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 
 | Flag | Meaning |
 |---|---|
-| `<root>` | the root whose state to export, a directory of plain roots with an `s3` backend in a bucket that keeps versions |
+| `<root>` | the root whose state to export, with an `s3` backend in a bucket that keeps versions: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
 | `--version` | the version id, as the estate page's State versions section lists it; the bucket's current version by default |
 | `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |

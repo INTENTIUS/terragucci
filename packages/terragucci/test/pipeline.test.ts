@@ -1699,12 +1699,20 @@ describe("apply.branches", () => {
     expect(JSON.stringify(doc["apply-wave-2"].script)).toContain(`--branches 'release=prod/*' --branch \\"$CI_COMMIT_BRANCH\\"`);
   });
 
-  it("renders as before without the map, and is refused in a Terragrunt repo and with apply.when: pull-request", () => {
+  it("in a Terragrunt repo the waves pass the map and the branch as well, so a branch applies its units", () => {
+    const doc = body(pipeline("forgejo", { terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }));
+    const run = doc.jobs["apply-wave-1"].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+    expect(run).toContain("--terragrunt");
+    expect(run).toContain(`--branches 'release=prod/*' --branch "$GITHUB_REF_NAME"`);
+    expect(doc.jobs["apply-wave-1"].if).toBe("(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.ref == 'refs/heads/release')");
+    expect(validateConfig({ terragrunt: { version: "1.1.6" }, apply: { branches: { release: ["live/prod/*"] } } }, "t")).toEqual({ terragrunt: { version: "1.1.6" }, apply: { branches: { release: ["live/prod/*"] } } });
+  });
+
+  it("renders as before without the map, and is refused with apply.when: pull-request", () => {
     for (const forge of FORGES) {
       expect(pipeline(forge, { applyBranches: undefined })).not.toContain("--branches");
       expect(pipeline(forge, { applyBranches: {} })).toBe(pipeline(forge, { applyBranches: undefined }));
     }
-    expect(() => pipeline("forgejo", { terragrunt: { installs: [] } })).toThrow(/apply\.branches: a Terragrunt wave/);
     expect(() => pipeline("forgejo", { applyWhen: "pull-request" })).toThrow(/apply\.branches: apply\.when: pull-request/);
   });
 
@@ -1717,7 +1725,6 @@ describe("apply.branches", () => {
     expect(() => validateConfig({ apply: { branches: { release: ["a,b"] } } }, "t")).toThrow("must be a list of root globs");
     expect(() => validateConfig({ apply: { branches: { release: ["envs/prod/*"], hotfix: ["envs/prod/*"] } } }, "t")).toThrow("envs/prod/* is under both release and hotfix");
     expect(() => validateConfig({ apply: { when: "pull-request", branches: { release: ["a"] } } }, "t")).toThrow("config.apply.branches: apply.when: pull-request");
-    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, apply: { branches: { release: ["a"] } } }, "t")).toThrow("config.apply.branches: a Terragrunt wave");
   });
 });
 
