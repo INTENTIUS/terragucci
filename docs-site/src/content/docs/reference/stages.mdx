@@ -23,7 +23,7 @@ Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 whi
 
 ## Check
 
-`tf-check` runs on every push and fork pull request, once per root. A failing root does not stop the next, so one run shows every diagnostic. Warnings print and fail nothing.
+`tf-check` runs on every push and fork pull request, once per root. A failing root does not stop the next, so one run shows every diagnostic. Warnings print and fail nothing. Under [`modules.require: attested`](/terragucci/guides/publish-modules/#require-attested-releases), a root whose module pins do not verify fails before `validate`, and `tf-plan` fails it before `init`.
 
 <Tabs syncKey="binary">
   <TabItem label="Terraform">

@@ -340,11 +340,11 @@ running: chant approve policy-override envs/prod/app --plan sha256:9b0f2a71... -
 ## check-root and check-policy
 
 ```bash
-terragucci check-root <dir> [--binary <b>]
+terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
 ```
 
-`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 

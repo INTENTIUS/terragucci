@@ -153,6 +153,8 @@ drift|drift is reported by root|
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
 publish-attest|with modules.attest each release is signed, attested and recorded in the release ledger with its tag|
+require-attested|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
+require-recorded|with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record|
 tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
@@ -1503,6 +1505,67 @@ claim_publish_attest() {
   log "the publish job signed, attested and recorded modules/service 0.1.0 on both targets, and verify-release and cosign verified it from a fresh clone"
   drop_work "$work"
 }
+
+# modules.require: attested on a Forgejo repo that publishes modules/service
+# attested: the pipeline publishes 0.1.0, then tf-plan runs in the CI image on
+# a clone whose envs/dev pins a release of it. $1 is what BREAK does to the
+# pin: tampered moves the 0.1.0 tag to a changed commit; unrecorded pins
+# 0.1.1, a tag pushed by hand. Either way no ledger record matches, and tf-plan
+# must refuse the root before init, naming it, the call and the version.
+require_claim() { # claim name, tampered|unrecorded
+  local claim="$1" break_as="$2"
+  log() { echo "[smoke $claim] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work name="$claim-$(date +%s)" sha out rc=0 image version=0.1.0
+  local repo="$USER/$name"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; drop_work "$work"; return 1; }
+  local tree="$work/tree"
+  mkdir -p "$tree/modules/service" "$tree/envs/dev" "$work/keys"
+  docker run --rm -v "$work/keys:/k" -w /k -e COSIGN_PASSWORD=smoke-require "$image" cosign generate-key-pair >/dev/null 2>&1 \
+    && [ -s "$work/keys/cosign.key" ] || { log "cosign in $image could not make a key pair"; drop_work "$work"; return 1; }
+  fresh_repo "$name" || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for t in COSIGN_PRIVATE_KEY COSIGN_PASSWORD; do
+    jq -n --arg d "$( [ "$t" = COSIGN_PASSWORD ] && echo smoke-require || cat "$work/keys/cosign.key")" '{data: $d}' \
+      | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/$t" || { log "could not set the $t secret"; drop_work "$work"; return 1; }
+  done
+  cp "$work/keys/cosign.pub" "$tree/cosign.pub"
+  printf 'resource "terraform_data" "service" {}\n' > "$tree/modules/service/main.tf"
+  printf 'resource "terraform_data" "dev" {}\n' > "$tree/envs/dev/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nroots: ["envs/*"]\nmodules:\n  path: modules/*\n  publish: git-tags\n  attest: true\n  require: attested\n' > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" main "feat: service")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; drop_work "$work"; return 1; }
+  local remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  git ls-remote --exit-code "$remote" refs/tags/modules/service/v0.1.0 refs/heads/chant/lifecycle >/dev/null \
+    || { print_logs "$repo" "$RUN_ID" >&2; log "the run published no attested 0.1.0"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    # A tag no attested publish wrote: moved over 0.1.0, or a new 0.1.1.
+    [ "$break_as" = unrecorded ] && version=0.1.1
+    git clone -q "$remote" "$work/hand" && printf 'output "id" { value = terraform_data.service.id }\n' > "$work/hand/modules/service/outputs.tf" \
+      && git -C "$work/hand" add -A && git -C "$work/hand" -c user.email=hand@smoke -c user.name=hand -c commit.gpgsign=false commit -q -m "fix: by hand" \
+      && git -C "$work/hand" -c user.email=hand@smoke -c user.name=hand tag -f -a "modules/service/v$version" -m "by hand" >/dev/null \
+      && git -C "$work/hand" push -q -f "$remote" "refs/tags/modules/service/v$version" \
+      || { log "could not push the hand-made tag"; drop_work "$work"; return 1; }
+  fi
+  # The root that pins the release, planned in the CI image from a fresh clone, as a pull request's plan job would.
+  out="$(in_image "$work" sh -c "git clone -q http://$USER:$TOKEN@forgejo:3000/$repo.git c && cd c \
+    && printf 'module \"service\" {\n  source = \"git::http://forgejo:3000/$repo.git//modules/service?ref=modules/service/v$version\"\n}\n' > envs/dev/pin.tf \
+    && terragucci stage tf-plan --root envs/dev --out /tmp/report" 2>&1)" || rc=$?
+  echo "${out//$TOKEN/***}" >&2
+  [ "$rc" = 0 ] || { log "tf-plan refused envs/dev pinning modules/service $version (exit $rc)"; drop_work "$work"; return 1; }
+  grep -q "^envs/dev: attested module.service git::http://forgejo:3000/$repo.git//modules/service modules/service/v$version" <<<"$out" \
+    || { log "tf-plan did not say it verified the pin"; drop_work "$work"; return 1; }
+  log "tf-plan verified envs/dev's pin of modules/service $version against the ledger and the key, and planned it"
+  drop_work "$work"
+}
+
+claim_require_attested() { require_claim require-attested tampered; }
+claim_require_recorded() { require_claim require-recorded unrecorded; }
 
 claim_rollout() {
   # One repo, three roots taking modules/network by git tag: dev/app (the
@@ -9808,6 +9871,8 @@ refuse          runner self! weight=200
 sealed          runner self! weight=200
 publish         runner self! registry! weight=200
 publish-attest  runner self! registry! weight=200
+require-attested runner self! weight=200
+require-recorded runner self! weight=200
 forgejo-oidc    runner self! weight=200
 grouped         ex runner self! after=boot weight=200
 check           ex runner self! after=boot weight=200
