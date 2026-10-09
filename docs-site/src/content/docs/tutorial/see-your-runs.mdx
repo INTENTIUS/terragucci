@@ -21,7 +21,7 @@ import Shot from '../../../components/Shot.astro';
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-Every stage can send traces and metrics to an OpenTelemetry collector. `dashboards: true` makes `init` write the Grafana dashboards and alert rules too. This page sends three runs of the example to Grafana:
+Every stage can send traces and metrics to an OpenTelemetry collector. `dashboards: true` makes `init` write the Grafana dashboards and alert rules too. Send three runs of the example to Grafana:
 
 ```bash
 just see-runs
@@ -39,13 +39,13 @@ It runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT`
 
 The ledger goes to a scratch repo, so the Forgejo example stays as it was.
 
-Open Grafana at [localhost:3310](http://localhost:3310) and look in the `terragucci` folder. The pictures below show the last hour.
+The dashboards are in the `terragucci` folder of Grafana at [localhost:3310](http://localhost:3310). The pictures below show the last hour.
 
 ## Pipeline health
 
 <Shot step="see-runs" view="pipeline" alt="The Pipeline health dashboard: runs per hour, errors and duration for the tf-plan, tf-drift and tf-apply stages of the example" />
 
-Each stage run is one span, counted by stage and outcome. The plan and drift run are successes, and the waves are `nothing` and `waiting`, not errors.
+Each stage run is one span counted by stage and outcome. The plan and drift runs count as successes and the waves as `nothing` and `waiting`, which are not errors.
 
 ## Rollouts and waves
 

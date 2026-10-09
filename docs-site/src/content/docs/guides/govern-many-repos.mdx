@@ -12,11 +12,11 @@ prompt: |
 import { Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-## What you end up with
+## Result
 
-A control repo whose `terragucci.yml` lists every project. One command previews each project's pipeline and another opens a pull request in each project that changes. The projects' own pipelines apply.
+A control repo whose `terragucci.yml` lists every project. One command previews each project's pipeline and another opens a pull request in each project that changes; the projects' own pipelines apply.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -55,9 +55,9 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
        source: git+https://github.com/acme/policy.git@v3
    ```
 
-   `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it. The same goes for the other keys the jobs read there, such as [`reports`](/terragucci/guides/keep-reports-in-a-bucket/), `parallelism` and `respond`; [A file for many repos](/terragucci/reference/config/#a-file-for-many-repos) lists them. With [`generate`](/terragucci/guides/generate-root-files/#in-a-control-repo) set, the same pull request carries each root's generated backend, provider and version files.
+   `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it, and likewise the other keys the jobs read there, such as [`reports`](/terragucci/guides/keep-reports-in-a-bucket/), `parallelism` and `respond`; [A file for many repos](/terragucci/reference/config/#a-file-for-many-repos) lists them. With [`generate`](/terragucci/guides/generate-root-files/#in-a-control-repo) set, the same pull request carries each root's generated backend, provider and version files.
 
-   A project with a `terragucci.yml` of its own keeps it. When one of those keys differs from the control repo's, `reconcile` fails that project and names the key to set.
+   A project with a `terragucci.yml` of its own keeps it; if one of those keys differs from the control repo's, `reconcile` fails that project and names the key.
 
 2. Check the file.
 
@@ -76,7 +76,7 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
    npx terragucci reconcile --config terragucci.yml
    ```
 
-   This dry run says per project whether the pipeline would change, prints the files and lists setup tips. `--project github.com/acme/infra` narrows it to one project; `--json` prints one object ([JSON output](/terragucci/reference/cli-json/#reconcile)).
+   This dry run says per project whether the pipeline would change, and prints the files and setup tips. `--project github.com/acme/infra` narrows it to one project; `--json` prints one object ([JSON output](/terragucci/reference/cli-json/#reconcile)).
 
 4. Open the pull requests.
 
@@ -84,7 +84,7 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
    npx terragucci reconcile --config terragucci.yml --mode apply
    ```
 
-   Each project gets a pull request, never a push to its main branch; `--mode apply` runs no `terraform apply`. Current projects are left alone. The exit code is 1 when any project failed.
+   Each project gets a pull request instead of a push to its main branch, and current projects are left alone; `--mode apply` runs no `terraform apply`. The exit code is 1 when any project failed.
 
    <Shot step="reconcile" view="pull" alt="The pull request reconcile opened in a Forgejo project with no pipeline, terragucci: update the pipeline: its body says the control repo's config changed what the pipeline should be and that it adds .forgejo/workflows/terragucci.yml, the project's own plan note below it, and the merge" />
 
@@ -92,7 +92,7 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
 
 5. Merge in each project.
 
-   Each team reviews its pull request. Run `reconcile` again later, for example after editing `defaults`, and it opens one only where something changed.
+   Each team reviews its pull request. A later `reconcile`, such as after editing `defaults`, opens one only where something changed.
 
 </Steps>
 

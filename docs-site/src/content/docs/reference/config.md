@@ -12,7 +12,7 @@ terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root;
 
 ## Defaults with no file
 
-With no `terragucci.yml`, `init` starts from these defaults:
+`init` starts from these defaults:
 
 | Setting | Default |
 |---|---|
@@ -142,7 +142,7 @@ dashboards: true
 | `rollouts` | `false` (off) | a cron schedule for the rollout job, which opens the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) for its token and the GitLab schedule |
 | `comments` | `false` (off) | GitLab only: the cron of the comments schedule, whose pipelines answer `/terragucci` merge request notes; see [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
 | `gitlab.token` | `unprotected` | GitLab only: `protected` keeps `GITLAB_TOKEN` (or the `token_env` variable, marked Protected and Masked) out of every merge request and branch pipeline; the comments job then posts the plan notes, and there is no fmt job. Needs `comments`; see [the threat model](/terragucci/reference/threat-model/) |
-| `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
+| `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Runtimes](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
 | `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers` and `required_version` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
@@ -192,7 +192,7 @@ version:
 
 A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
-A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version. A Terragrunt unit is pinned the same ways, and an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` pins the Terragrunt release that runs it, installed the same way. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-a-root-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`; `choudoufu` takes one version. A Terragrunt unit is pinned the same ways, and an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` pins the Terragrunt release that runs it, installed the same way. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-each-directory-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
 
 ## Apply before merge
 
@@ -253,9 +253,9 @@ apply:
 On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts, such as `terragucci/apply`, blocks every apply. Leave it out of branch protection.
 :::
 
-Gate, approval mode, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check an apply comment must pass.
+Gate, approval mode, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists every check an apply comment must pass.
 
-Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [What the pull request's code can reach](/terragucci/reference/pipeline/#pull-request-code-access).
 
 ## Apply from other branches
 
@@ -266,7 +266,7 @@ apply:
     staging: ["envs/staging/*"]
 ```
 
-Each key is a branch, and its list holds root globs. A push to `release` runs the apply waves for the roots under `envs/prod/` and no others. The waves, the gate and the approval are the ones a push to the default branch gets: `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. A push to the default branch skips every root a glob here matches, and so does `/terragucci apply` on a pull request merged into it. A push to any other branch applies nothing.
+Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves, gate and approval work as on the default branch, and `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
 
 | On a push to | Applies |
 |---|---|
@@ -387,7 +387,7 @@ agent:
     timeout: 30
 ```
 
-Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. The agent's jobs get no cloud credentials; `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
+Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. As with the comment agent, its jobs get no cloud credentials and `init` refuses it on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
 
 ## The review
 

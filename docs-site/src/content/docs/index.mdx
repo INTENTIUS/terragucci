@@ -15,7 +15,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
 
-terragucci launched in Rome: [watch the launch party](/terragucci/launch-party/). The [0.4.4 release](/terragucci/reference/whats-new/) plans each root on its upstream's planned outputs and keeps every sensitive value out of its reports.
+The [0.4.4 release](/terragucci/reference/whats-new/) plans each root on its upstream's planned outputs and keeps every sensitive value out of its reports. terragucci launched in Rome, and you can [watch the launch party](/terragucci/launch-party/).
 
 ## Your forge and your bucket
 
@@ -42,17 +42,17 @@ Every plan, apply and drift run sends one OpenTelemetry trace over OTLP to your 
 
 ## The lifecycle around your roots
 
-`init` writes the pipeline that runs these stages, in your forge's own format, so you write no pipeline yourself. [How terragucci works](/terragucci/concepts/how-it-works/).
+`init` writes the pipeline for these stages in your forge's own format. [Architecture](/terragucci/concepts/how-it-works/).
 
 <Lifecycle />
 
 ## Waves and approvals
 
-The change goes out a few roots at a time, the [canary](/terragucci/concepts/glossary/#canary) roots first. By default a wave that destroys or replaces something waits for an approval. That approval covers exactly the plans it was shown.
+A change goes out a few roots at a time, [canary](/terragucci/concepts/glossary/#canary) roots first. By default a wave that destroys or replaces something waits for an approval, which covers exactly the plans it was shown.
 
 <Waves />
 
-The report lists each wave with the digest of its plans and links the approval record that let it go out. [How waves and approvals work](/terragucci/concepts/waves-and-approvals/).
+The report lists each wave with the digest of its plans and links the approval record that let it go out. [Waves and approvals](/terragucci/concepts/waves-and-approvals/).
 
 ## One note for two hundred plans
 
@@ -78,8 +78,8 @@ With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu
 | A live check in `tf-check` on every push, before the apply waves, with no cloud credentials | [Check](/terragucci/reference/stages/#check) |
 | No state file: one record per resource in an S3 backend you own, each write conditional, so there is no lock table or database to run | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
 | How long a wave waited for a state lock, and how many tries it took | [State lock waits](/terragucci/reference/observability/#state-lock-waits) |
-| Which provider calls were slow, and the resource each was for | [What the report lists](/terragucci/reference/observability/#what-the-report-lists) |
-| Timings summed by resource type, so a large estate's report stays readable | [What the report lists](/terragucci/reference/observability/#what-the-report-lists) |
+| Which provider calls were slow, and the resource each was for | [What the report lists](/terragucci/reference/observability/#report-contents) |
+| Timings summed by resource type, so a large estate's report stays readable | [What the report lists](/terragucci/reference/observability/#report-contents) |
 | Two applies that change different resources of one estate at once, with no estate-wide lock; two that change the same resource leave one winner, named | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
 | A role scoped to one estate by an IAM condition on the `tofu-estate` tag, refused on another estate's resources | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
 
@@ -135,10 +135,8 @@ A coding agent at your desk reads the estate, a root's last apply, the audit tra
 
 ## Hand the setup to your agent
 
-You can skip this. [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) gives the same steps by hand.
-
-Paste this into Claude Code, Codex or Cursor in your Terraform, OpenTofu or Terragrunt repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
+[Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) has the same steps by hand. Or paste this into Claude Code, Codex or Cursor in your repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
 
 <Landing part="agent" />
 
-When it has run, the [guides](/terragucci/guides/add-to-a-repo/) and the [reference](/terragucci/reference/config/) cover tasks and details. The [concepts](/terragucci/concepts/how-it-works/) and the [glossary](/terragucci/concepts/glossary/) explain the reasons and the words.
+Then the [guides](/terragucci/guides/add-to-a-repo/) cover tasks and the [reference](/terragucci/reference/config/) the details; the [concepts](/terragucci/concepts/how-it-works/) and the [glossary](/terragucci/concepts/glossary/) explain the reasons and the terms.

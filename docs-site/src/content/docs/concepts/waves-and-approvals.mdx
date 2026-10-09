@@ -1,15 +1,15 @@
 ---
-title: How waves and approvals work
+title: Waves and approvals
 description: Why a change goes out in waves, what an approval binds, and when a wave refuses to apply.
 ---
 
 import Shot from '../../../components/Shot.astro';
 
-A shared module change goes out in batches, each after the last; a batch waits only when the [gate policy](#when-a-wave-waits) holds it.
+A shared module change goes out in batches, each after the last; a batch waits only when the [gate policy](#waiting-waves) holds it.
 
 <Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo. The plan note lists the records table of staging email under destroys and replacements, shows wave 4 with one root and approval not requested. Below it the apply-wave jobs show as skipped on the pull request" />
 
-## How roots are split into waves
+## Waves
 
 The roots in `waves.canary` go first, then one dependency layer per wave, so no root in a wave reads another in it. The report's wave 3 is the gate `wave-3`.
 
@@ -20,11 +20,11 @@ Terragrunt units split the same way: the canary units' layers first, then the la
 | `init` | `terragrunt find`; without Terragrunt on the path, the plain paths in each unit's `dependency` and `dependencies` blocks |
 | each apply job | `terragrunt find` in the job, which splits a wave whose units read each other; the last job also runs any wave past the jobs `init` wrote |
 
-## What an approval binds
+## Approval binding
 
-An approval binds the wave's set digest: these exact plans are fine. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. Under `approval: sealed` it counts only when its ssh seal verifies against the signers file.
+An approval binds the wave's set digest, so it covers exactly those plans. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. Under `approval: sealed` it counts only when its ssh seal verifies against the signers file.
 
-The `approval` key, the signers and the gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule, except a multi-commit rebase: [merge or squash such changes](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
+The `approval` key, the signers and the gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule, except a multi-commit rebase: [merge or squash such changes](/terragucci/guides/approve-a-wave/#rule-commit).
 
 A gated wave reads the newest approval of its gate:
 
@@ -38,11 +38,11 @@ An approval never counts for a digest other than its own. Under `on-destroy` a r
 
 ## Plans are made late
 
-Each wave plans after the last applied, on real outputs, and an approval binds only the digest of that plan. A Terragrunt unit never plans on `mock_outputs` ([details](/terragucci/guides/use-terragrunt/#what-is-different-in-a-terragrunt-repo)).
+Each wave plans on real outputs after the last one applied, and an approval binds only that plan's digest. A Terragrunt unit never plans on `mock_outputs` ([details](/terragucci/guides/use-terragrunt/#differences)).
 
 ## Linked roots
 
-A root that reads another root's state through `terraform_remote_state` goes in a later wave. In a pull request's plan, when the change reaches both, the reading root plans on the outputs the other root's plan makes, not on the ones it last applied:
+A root that reads another root's state through `terraform_remote_state` goes in a later wave. When a pull request's change reaches both, the reading root plans on the other root's planned outputs instead of its last applied ones:
 
 | An output it reads | In the pull request's plan |
 |---|---|
@@ -52,7 +52,7 @@ A root that reads another root's state through `terraform_remote_state` goes in 
 
 The plan note lists each root planned this way and the outputs it read before they were known. A wave that read such an output plans again once the waves it reads have applied, then waits for an approval of that plan. The note gives no digest for it, and under `approval: pr-review` the pull request's review does not approve it. A wave that read only known outputs plans the same digest again when its upstream applies as planned, so an approval or review of the note's digest still counts.
 
-For that plan, terragucci points the root's references to the block at a local holding the upstream's planned outputs, adds a file, `terragucci_linked.tf`, for as long as the plan runs, and then puts the files back. These still plan on the applied state, and the report's `roots[].reads` says why:
+For that plan, terragucci points the root's references to the block at a local holding the upstream's planned outputs, adds `terragucci_linked.tf` while the plan runs, then puts the files back. These still plan on the applied state, and the report's `roots[].reads` says why:
 
 | Case | It plans on |
 |---|---|
@@ -62,11 +62,11 @@ For that plan, terragucci points the root's references to the block at a local h
 | a root in JSON syntax, or a block in a child module | the applied state; neither orders the waves either |
 | `terragucci plan` on your machine | the applied state |
 
-A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#what-a-pull-request-shows-of-later-layers).
+A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#later-layers).
 
 ## The run view
 
-With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply also writes one page for its commit, `<prefix>/<project>/runs/<commit>/run.html`, and its data, `run.json`. It shows every wave left to right, the roots in each and the roots each reads, and where each wave stands:
+With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply also writes one page for its commit, `<prefix>/<project>/runs/<commit>/run.html`, and its data, `run.json`. It shows the waves left to right with their roots and the roots each reads, and where each wave stands:
 
 | State | The wave |
 |---|---|
@@ -86,7 +86,7 @@ Below the waves the page has two more parts:
 | Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state`, followed through, and the dependency graph of the commit's roots with both marked |
 | Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
 
-A wave that waited has two plans on the timeline: the one that asked for the approval, and the one after it, which applies. In `run.json` each wave carries `changed`, the roots whose plan changes something, and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start`, and `end` once it ended. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
+A wave that waited has two plans on the timeline, the one that asked for the approval and the later one that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
 
 ### Blast radius in the plan note
 
@@ -102,7 +102,7 @@ A pull request's plan note names the same radius: the roots whose plan changes s
 
 The note leaves it out when no root reads a changed root's state. `report.json` carries it as `blast`. Terragrunt units are not in it.
 
-## When a wave waits
+## Waiting waves
 
 The gate policy decides which waves wait for a person.
 
@@ -138,7 +138,7 @@ In a Terragrunt repo the wave's job plans every unit with one `run --all`, and e
 
 A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).
 
-## Where to go next
+## Next
 
 - [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/)
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/)

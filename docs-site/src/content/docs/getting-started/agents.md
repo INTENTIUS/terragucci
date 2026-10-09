@@ -6,9 +6,9 @@ prompt: setup
 
 Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only four opt-in features [run a model](/terragucci/#opt-in-coding-agent).
 
-This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
+Run your coding agent in a repository of Terraform, OpenTofu or Terragrunt roots and paste it the prompt above.
 
-## What the agent reads
+## Agent inputs
 
 | File | Holds |
 |---|---|
@@ -22,16 +22,16 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Steps for the agent
 
-1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run --json`. It lists each finding with its reason and the files it would write. Show the user.
-2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
-3. Write a `terragucci.yml` only if the defaults are wrong, as small as possible; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
+1. Install terragucci with `npm i -D @intentius/terragucci` and run `npx terragucci init --dry-run --json`. Show the user the findings with their reasons and the files it would write.
+2. Check what it found. Pass `--binary` or `--forge` if either is wrong, or ask the user.
+3. Write a `terragucci.yml`, as small as possible, only if the defaults are wrong; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
 5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. Then stop. Approvals are [chant](/terragucci/concepts/glossary/#chant) records on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and they belong to the user.
 
    ```text
    Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
    ```
-6. Tell the user to install chant, and under `approval: sealed` to add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#before-your-first-approval)). Do not add a key yourself. The file must be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
+6. Tell the user to install chant, and under `approval: sealed` to add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#first-approval)). Do not add a key yourself. The file must be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
 
 ## Rules for the agent
 

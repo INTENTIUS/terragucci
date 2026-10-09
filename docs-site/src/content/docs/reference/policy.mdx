@@ -10,7 +10,7 @@ prompt: |
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-Add `policy` to `terragucci.yml` to turn policy checks on; `tf-plan` then fails each planned root whose plan JSON your Rego denies.
+With `policy` in `terragucci.yml`, `tf-plan` fails each planned root whose plan JSON your Rego denies.
 
 ```yaml
 policy:
@@ -64,7 +64,7 @@ projects:
   github.com/acme/network: {}
 ```
 
-A project's jobs read `policy` from the project's own `terragucci.yml`, so `reconcile` writes the key there, in a file that starts with a line saying the control repo writes it. A project whose own `terragucci.yml` sets a different `policy` fails in `reconcile`, with the key to set.
+A project's jobs read `policy` from its own `terragucci.yml`, so `reconcile` writes the key there, in a file whose first line says the control repo writes it. A project whose `terragucci.yml` sets a different `policy` fails in `reconcile`, with the key to set.
 
 ## Writing a policy
 
@@ -83,11 +83,11 @@ deny contains msg if {
 }
 ```
 
-### What Rego sees
+### Rego input
 
 `input` is the unredacted `show -json` of one root. Before a denial or warning reaches the report, note or log, every sensitive value in it, short ones such as `1` included, becomes `(sensitive, redacted by terragucci)`.
 
-Where the policy came from sets what to change:
+Settings by where the policy came from:
 
 | Policy source | Setting |
 |---|---|
@@ -132,7 +132,7 @@ With [`review.agent`](/terragucci/guides/agent-review-a-pull-request/) set, `inp
 | `review.risk` | `low`, `medium` or `high` from that review; `unknown` when none was found, the model gave none, or its command failed |
 | `review.pull_request`, `review.head` | the pull request the commit merged, or the one applied before merge, and its head; `null` for a commit no pull request made |
 
-The wave reads the review from the newest `terragucci-review-<head>` artifact, through the forge's API, that a run of the default branch's review workflow kept: on GitHub a `workflow_run` run of `terragucci-review.yml`, on Forgejo a `pull_request_target` run of it whose event names the default branch as the base, and this pull request and head. The artifact must say it reviewed this pull request and head against the default branch. An artifact of that name from any other run, such as the pull request's own pipeline, is passed over, and the wave's log says why. It never reads the note on the pull request, which any run's token can post, the run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). On GitHub the apply jobs get `actions: read` for it. An artifact the forge has expired reads as no review. GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
+The wave reads, through the forge's API, the newest `terragucci-review-<head>` artifact kept by a run of the default branch's review workflow: on GitHub a `workflow_run` run of `terragucci-review.yml`, on Forgejo a `pull_request_target` run of it whose event names the default branch as the base, and this pull request and head. The artifact must say it reviewed this pull request and head against the default branch. An artifact of that name from any other run, such as the pull request's own pipeline, is passed over, and the wave's log says why. It never reads the note on the pull request, which any run's token can post, the run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). On GitHub the apply jobs get `actions: read` for it. An artifact the forge has expired reads as no review. GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
 
 ```rego
 package main
@@ -145,7 +145,7 @@ deny contains msg if {
 }
 ```
 
-### Which rules count
+### Counted rules
 
 | Rule | Effect |
 |---|---|
@@ -168,7 +168,7 @@ The job's log and `roots[].policy.rules` in the report list them.
 
 If no Rego file outside the tests declares the namespace and has a `deny`, `violation` or `warn` rule, every planned root is refused and the message lists the packages found.
 
-## What a denial does
+## Denials
 
 <Shot step="policy" view="pull" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
 
@@ -178,7 +178,7 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 | the policy cannot run (no engine, Rego that does not compile) | the root fails |
 | a warning | never blocks |
 
-Responses, agents and comments cannot waive a denial. The code changes until the policy passes, the policy changes in a pull request your reviewers approve and merge, or a listed approver overrides one plan.
+Responses, agents and comments cannot waive a denial. Either the code changes until the policy passes, the policy changes in a pull request your reviewers approve and merge, or a listed approver overrides one plan.
 
 ## Overriding a denial
 
@@ -205,7 +205,7 @@ policy:
 
 </Steps>
 
-### What an override binds
+### Override binding
 
 | Part | Effect |
 |---|---|
@@ -214,7 +214,7 @@ policy:
 | the rule ids | `--rule` names exactly the rules that denied the plan; a rule added or gone needs a new override |
 | a reason | required; kept on the ledger line and shown in the report |
 
-### Which overrides count
+### Valid overrides
 
 | Case | Counts |
 |---|---|
@@ -225,9 +225,9 @@ policy:
 | no `override` at base | nothing counts, and no denial is recorded |
 | a root the policy could not check (no engine, Rego that does not compile) | never overridden |
 
-Base is the applied commit's first parent, or the pull request's base with `apply.when: pull-request`, as for [approvals](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from). Under `approval: ledger` the line names its approver without proving who wrote it; `approval: sealed` proves it ([threat model](/terragucci/reference/threat-model/#what-a-policy-override-allows)).
+Base is the applied commit's first parent, or the pull request's base with `apply.when: pull-request`, as for [approvals](/terragucci/guides/approve-a-wave/#rule-commit). Under `approval: ledger` the line names its approver without proving who wrote it; `approval: sealed` proves it ([threat model](/terragucci/reference/threat-model/#policy-overrides)).
 
-### Where it shows
+### Override records
 
 | Place | Shows |
 |---|---|
@@ -318,7 +318,7 @@ deny contains msg if {
 
 ### The run fields
 
-`input.plan` is the plan. `input.run` carries what terragucci knows about the run, in HCP Terraform's field names:
+`input.plan` is the plan; `input.run` holds what terragucci knows of the run, in HCP Terraform's field names:
 
 | Field | Value |
 |---|---|

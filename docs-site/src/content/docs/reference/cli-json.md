@@ -7,7 +7,7 @@ prompt: |
   Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-With `--json`, these commands print one JSON object on stdout and nothing else.
+With `--json`, these commands print only one JSON object on stdout.
 
 ## The envelope
 
@@ -30,7 +30,7 @@ With `--json`, these commands print one JSON object on stdout and nothing else.
 | `results` | What the command found or did, as below. `null` when the command could not run. |
 | `error` | Present when `results` is `null`: why it could not run. |
 
-Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them. No envelope carries code 4: `stage tf-apply` refuses `--json` and writes [its outcome](#the-apply-outcome) to a file instead.
+`--json` leaves the [exit codes](/terragucci/reference/cli/#exit-codes) as they are. `stage tf-apply` refuses `--json` and writes [its outcome](#the-apply-outcome) to a file instead, so no envelope carries code 4.
 
 ## init
 
@@ -86,7 +86,7 @@ A root that refused to plan exits 1.
 
 ## The apply outcome
 
-`stage tf-apply` writes how its wave ended to the file `TG_OUTCOME_JSON` names, on every exit but a usage error, whatever the wave did. With `--rest` the file holds the last wave that ran. The generated apply jobs set the variable when `notify` is on, and `terragucci notify` reads the file. A waiting wave's file carries the [chant](/terragucci/concepts/glossary/#chant) command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+On every exit but a usage error, `stage tf-apply` writes its wave's outcome to the file `TG_OUTCOME_JSON` names. With `--rest` the file holds the last wave that ran. The generated apply jobs set the variable when `notify` is on, and `terragucci notify` reads the file. A waiting wave's file carries the [chant](/terragucci/concepts/glossary/#chant) command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
 
 ```json
 {
@@ -154,7 +154,7 @@ Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not 
 
 ## config check
 
-`terragucci config check [--config <file>]` lists every problem; for `.ts` it also checks that folding and running agree.
+`terragucci config check [--config <file>]` lists every problem, and for `.ts` checks that folding and running agree.
 
 | `results` field | Holds |
 |---|---|

@@ -30,7 +30,7 @@ The apply is one job per wave, canary first.
 | 3 | the staging and prod platform roots |
 | 4 | their eight services |
 
-The gate is `on-destroy`, the default. A wave waits only when its plans destroy or replace something. Make one do that:
+With the default gate `on-destroy` a wave waits only when its plans destroy or replace something. This scenario makes one destroy.
 
 <Captured step="wave-waiting" cmd="just example change destroy" optional />
 
@@ -49,7 +49,7 @@ The example runs `approval: sealed`, so its approvals need a key. Your own repo 
 
 <Steps>
 
-1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key for the example's sealed mode and commits it to `.chant/allowed_signers` on main, the file that says who may approve.
+1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key for the example's sealed mode and commits it to `.chant/allowed_signers` on main, the file listing who may approve.
 
    <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
