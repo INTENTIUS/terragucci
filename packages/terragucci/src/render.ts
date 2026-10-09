@@ -1674,8 +1674,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   const writesLedger = gate !== "never" || input.cost?.approveAbove === true;
   const what = tg ? "unit" : "root";
-  // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
-  const fmtOn = !tg && responds(input.respond, "fmt");
+  // The fmt commit: the binary's fmt, and in a Terragrunt repo terragrunt hcl fmt too. The drift pull request is for plain roots, where respond finds the roots itself.
+  const fmtOn = responds(input.respond, "fmt");
   const driftPr = !tg && responds(input.respond, "drift") ? { tokenEnv } : undefined;
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
   const tipsOn = responds(input.respond, "tips");
