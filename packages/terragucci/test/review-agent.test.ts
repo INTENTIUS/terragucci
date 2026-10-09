@@ -90,6 +90,17 @@ describe("the review workflow", () => {
     expect(doc("github").name).toBe("terragucci");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: own_jobs go into the pipeline, never the review workflow, and a job of theirs named review is the pipeline's alone", (forge) => {
+    const own = { review: { "runs-on": "ubuntu-latest", steps: [{ run: "echo mine" }] } };
+    const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, review, ownJobs: own });
+    expect(r.content).toContain("echo mine");
+    const rw = r.extra!.find((f) => f.path === REVIEW_PATHS[forge])!.content;
+    expect(rw).not.toContain("echo mine");
+    expect(rw).not.toContain("own_jobs");
+    expect(body(r.content).jobs.review.steps).toEqual([{ run: "echo mine" }]);
+    expect(Object.keys(body(rw).jobs)).toEqual(["review", "review-note"]);
+  });
+
   it("is refused on GitLab", () => {
     expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, review })).toThrow(RenderError);
   });

@@ -15,6 +15,38 @@ function withRemote(remote: string): string {
 }
 
 describe("init", () => {
+  it.each([
+    ["https://github.com/acme/infra.git", ".github/workflows/terragucci.yml", "github"],
+    ["https://codeberg.org/acme/infra.git", ".forgejo/workflows/terragucci.yml", "forgejo"],
+    ["git@gitlab.com:acme/infra.git", ".gitlab/terragucci.yml", "gitlab"],
+  ])("own_jobs from a file in %s: init writes the jobs into the pipeline as they are, and again on the next init", async (remote, file, forge) => {
+    const job = forge === "gitlab"
+      ? 'explain:\n  stage: apply\n  needs: [apply-wave-1]\n  rules:\n    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH\n      when: on_failure\n  script:\n    - echo "wave 1 was refused: ${CI_JOB_ID}"\n'
+      : 'explain:\n  needs: apply-wave-1\n  if: failure()\n  runs-on: ubuntu-latest\n  steps:\n    - run: echo "${{ github.run_id }}"\n      env: { KEY: "${{ secrets.KEY }}" }\n';
+    const dir = write(withRemote(remote), { "terragucci.yml": "own_jobs: ci/own-jobs.yml\n", "ci/own-jobs.yml": job });
+    const first = await init(dir, { binary: "tofu" });
+    const text = readFileSync(join(dir, file), "utf-8");
+    const doc = parseYAML(text) as Record<string, any>;
+    const jobs = forge === "gitlab" ? doc : doc.jobs;
+    expect(jobs.explain).toEqual(parseYAML(job).explain);
+    expect(text).toContain("# Your own jobs, from own_jobs in terragucci.yml, as they are there.");
+    // The next init writes the same file, own job and all.
+    const again = await init(dir, { binary: "tofu" });
+    expect(again.files.find((f) => f.path.endsWith(file))?.status).toBe("unchanged");
+    expect(readFileSync(join(dir, file), "utf-8")).toBe(text);
+    expect(first.files.find((f) => f.path.endsWith(file))?.status).toBe("created");
+  });
+
+  it("own_jobs refuses a missing file, a file that holds no jobs, and a name terragucci gives a job", async () => {
+    const gh = (files: Record<string, string>) => write(withRemote("https://github.com/acme/infra.git"), files);
+    await expect(init(gh({ "terragucci.yml": "own_jobs: ci/none.yml\n" }), { binary: "tofu", dryRun: true })).rejects.toThrow("own_jobs names ci/none.yml, which the repo does not have");
+    await expect(init(gh({ "terragucci.yml": "own_jobs: ci/j.yml\n", "ci/j.yml": "- a\n- b\n" }), { binary: "tofu", dryRun: true })).rejects.toThrow("own_jobs (ci/j.yml) must be a map of job name to job");
+    await expect(init(gh({ "terragucci.yml": "own_jobs: ci/j.yml\n", "ci/j.yml": "explain: []\n" }), { binary: "tofu", dryRun: true })).rejects.toThrow("own_jobs (ci/j.yml).explain must be a job");
+    await expect(init(gh({ "terragucci.yml": "own_jobs:\n  check:\n    runs-on: ubuntu-latest\n" }), { binary: "tofu", dryRun: true })).rejects.toThrow("own_jobs.check: terragucci writes a job of that name");
+    const gl = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "own_jobs:\n  variables:\n    script: [x]\n" });
+    await expect(init(gl, { binary: "tofu", dryRun: true })).rejects.toThrow("own_jobs.variables: GitLab reads variables as a keyword");
+  });
+
   it("comments on GitLab: the pipeline gets the comments job, and the note names the schedule and its variable", async () => {
     const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\n" });
     const r = await init(dir, { binary: "tofu", dryRun: true });
