@@ -213,7 +213,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "tg-waves",
@@ -221,7 +221,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "tg-check",
@@ -229,7 +229,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "8fd354f"
     },
     {
       "claim": "tg-affected",
@@ -261,7 +261,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "8fd354f"
     },
     {
       "claim": "tg-drift",
@@ -309,7 +309,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "respond-notes",
@@ -558,7 +558,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "tg-gate-refuse",
@@ -638,7 +638,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "policy-source",
@@ -1376,7 +1376,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "cost-policy",
@@ -1408,7 +1408,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
     },
     {
       "claim": "steps-before-plan",
@@ -1432,7 +1432,39 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "f0fde540"
+    },
+    {
+      "claim": "tg-cost-gate",
+      "says": "with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3fc9c23"
+    },
+    {
+      "claim": "tg-steps-gate",
+      "says": "a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3fc9c23"
+    },
+    {
+      "claim": "tg-wave-jobs",
+      "says": "with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3fc9c23"
+    },
+    {
+      "claim": "tg-respond-fmt",
+      "says": "in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f0fde540"
     },
     {
       "claim": "mr-widget",

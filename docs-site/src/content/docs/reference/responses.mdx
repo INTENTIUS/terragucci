@@ -181,7 +181,7 @@ Each tip is its own pull request.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 
-`fmt` runs on request and pushes one commit to the pull request's branch. It refuses the default branch. In the generated pipeline the `fmt` job runs it after a failed check, so the check job holds no token that pushes.
+`fmt` runs on request and pushes one commit to the pull request's branch. It refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. In the generated pipeline the `fmt` job runs it after a failed check, so the check job holds no token that pushes.
 
 <Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
