@@ -132,6 +132,8 @@ export interface PendingRecord {
   description?: string;
   runId?: string;
   url?: string;
+  /** terragucci's addition: the commit the wave planned, so an approval can find the run or pull request to resume. */
+  commit?: string;
   /** terragucci's addition: each root's plan digest, so a later refusal can name the roots that moved. */
   members?: WaveMember[];
   /**
@@ -956,6 +958,7 @@ async function gateWave(
         }));
       if (!decision.standing) {
         const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+        const atCommit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
         appendPending(repo, {
           version: 1,
           kind: "pending",
@@ -966,6 +969,7 @@ async function gateWave(
           planDigest: digest,
           description: `${label}: ${roots.join(", ")}`,
           ...(runId ? { runId } : {}),
+          ...(atCommit ? { commit: atCommit } : {}),
           members,
           neverOverMcp: true,
         }, { [approvedPath(wave, digest)]: report() });

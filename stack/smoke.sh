@@ -223,6 +223,8 @@ pr-review-status|with approval: pr-review terragucci/approval on the head of a p
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
+resume-approve|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
+resume-schedule|with apply.resume set, the resume workflow applies a waiting wave on its next run once an approval of its digest is on chant/lifecycle|
 approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
 approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
 tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
@@ -6342,6 +6344,110 @@ claim_approve_plan() {
   return $rc
 }
 
+claim_resume_approve() {
+  # The gated fixture, approval ledger. A pull request changes canary/one and
+  # merges; wave 1 of the merge commit waits. In a clone, with FORGEJO_TOKEN
+  # set to the approver's token, terragucci approve approves the wave and,
+  # since Forgejo's API has no re-run, comments /terragucci apply on the
+  # merged pull request as the approver. The apply-comment job runs, and
+  # canary/one applies with nothing else done.
+  # BREAK: --no-resume, so the approval is recorded and nothing starts: no
+  # comment is posted and canary/one stays out.
+  log() { echo "[smoke resume-approve] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/resume-approve" sha head pr merge out before applied i rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo resume-approve || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "resume-approve: first")"
+  wait_run "$repo" "$sha" || rc=1
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/canary/one/rev.txt"
+    head="$(push_tree "$work/tree" "$repo" change "resume-approve: change canary/one")" || rc=1
+  fi
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "resume-approve: change canary/one")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || rc=1
+    merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+    [ -n "$merge" ] || { log "pull request $pr has no merge commit"; rc=1; }
+    [ $rc = 0 ] && { wait_run "$repo" "$merge" push || rc=1; }
+    [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-apply wave-1 --plan' || { log "wave 1 of the merge commit did not wait"; rc=1; }; }
+  fi
+  if [ $rc = 0 ]; then
+    before="$(pr_replies "$repo" "$pr")"
+    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
+    git -C "$work/approver-clone" config user.name smoke-approver
+    git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
+    out="$(cd "$work/approver-clone" && FORGEJO_TOKEN="$TOKEN" PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --actor smoke-approver ${BREAK:+--no-resume} 2>&1)" || { log "terragucci approve failed: $out"; rc=1; }
+    log "terragucci approve: $(tr '\n' ' ' <<<"$out")"
+    grep -qF "resumed: commented /terragucci apply on pull request $pr" <<<"$out" || { log "terragucci approve did not resume the wave on pull request $pr"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The comment's apply-comment job answers with a reply once it ran.
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+      [ "$(pr_replies "$repo" "$pr")" -gt "$before" ] && break
+      [ $(( i % 20 )) = 0 ] && log "waiting for the apply-comment job's reply on pull request $pr"
+      sleep 3
+    done
+    applied="$(gated_applied resume-approve)"
+    log "after the approval: state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply after terragucci approve, with nothing else done"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "terragucci approve recorded the approval and resumed the wave, and canary/one applied"
+  return $rc
+}
+
+claim_resume_schedule() {
+  # The gated fixture, approval ledger, apply.resume: 5, so init writes the
+  # resume workflow. A push waits at wave 1. In a clone, terragucci approve
+  # --no-resume records the approval and starts nothing. The next run of the
+  # resume workflow, on its schedule, applies canary/one; wave 2 then waits at
+  # its own gate.
+  # BREAK: nobody approves, so the resume run that follows applies nothing.
+  log() { echo "[smoke resume-schedule] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/resume-schedule" sha out last ended i applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo resume-schedule || { drop_work "$work"; return 1; }
+  printf 'apply:\n  resume: 5\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  [ -f "$work/tree/.forgejo/workflows/terragucci-resume.yml" ] || { log "init wrote no resume workflow"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "resume-schedule: first")"
+  wait_run "$repo" "$sha" || rc=1
+  [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-apply wave-1 --plan' || { log "wave 1 did not wait"; rc=1; }; }
+  # The newest schedule run so far: the one that resumes must start after the approval.
+  sched_runs() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq -c '[.workflow_runs[] | select(.event == "schedule")]'; }
+  last="$(sched_runs | jq '[.[].id] | max // 0')"
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
+    git -C "$work/approver-clone" config user.name smoke-approver
+    git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
+    out="$(cd "$work/approver-clone" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --actor smoke-approver --no-resume 2>&1)" || { log "terragucci approve failed: $out"; rc=1; }
+    log "terragucci approve: $(tr '\n' ' ' <<<"$out")"
+  fi
+  if [ $rc = 0 ]; then
+    # Wait for one resume run that started after the approval to end, then read the state once.
+    ended=""
+    for i in $(seq 1 160); do
+      ended="$(sched_runs | jq -r --argjson l "$last" '[.[] | select(.id > $l and (.status | IN("success","failure","cancelled","skipped")))] | first | if . == null then "" else "\(.id) \(.status)" end')"
+      [ -n "$ended" ] && break
+      [ $(( i % 20 )) = 0 ] && log "waiting for the resume workflow's next run ($(( i * 3 ))s)"
+      sleep 3
+    done
+    log "the resume run after the approval: ${ended:-none ended within 8 minutes}"
+    [ -n "$ended" ] || rc=1
+    applied="$(gated_applied resume-schedule)"
+    log "after the resume run: state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected the resume run to apply canary/one"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the approval started nothing, and the next resume run applied canary/one"
+  return $rc
+}
+
 # ── policy overrides ──────────────────────────────────────────────────────
 # stack/fixtures/policy-wave with a bare repo for origin, the policy key
 # listing smoke-approver under override, and gate: never, so only the policy
@@ -9915,6 +10021,8 @@ pr-review            runner self! weight=300
 pr-review-moved      runner self! weight=300
 pr-review-status     runner self! weight=250
 approve-plan         runner self! weight=150
+resume-approve       runner self! weight=250
+resume-schedule      runner self! weight=300
 cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250

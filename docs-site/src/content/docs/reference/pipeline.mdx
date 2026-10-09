@@ -20,6 +20,25 @@ A wave whose commit is no longer the branch tip stands down on GitHub and Forgej
 
 `tf-plan`, `tf-drift` and `tf-apply` plan a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 16 otherwise. `tf-apply` applies them up to the same number at once. A stage's roots share one provider cache, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job.
 
+## Resume after an approval
+
+An approval is a commit on `chant/lifecycle`, and a push there starts nothing: the forges run a push's workflows from the pushed branch, which holds only the ledger. Two things start the waiting wave again.
+
+| What | When | How |
+|---|---|---|
+| [`terragucci approve`](/terragucci/reference/cli/#approve) | right after it records the approval, with your token | GitHub: re-runs the failed jobs of the run that waited (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`). GitLab: retries that pipeline's job of the wave (`GITLAB_TOKEN`). Forgejo, whose API has no re-run: comments `/terragucci apply` on the merged pull request that made the commit (`FORGEJO_TOKEN`). Without a token it says so and the approval still stands. |
+| the resume job, with `apply.resume: <minutes>` | within that many minutes | `terragucci resume` reads the ledger. When a waiting wave's digest has an approval no apply has used, GitHub's and Forgejo's job runs the waves from wave 1 at the default branch's commit, as a comment's apply does, and GitLab's retries the newest push pipeline's first apply job that did not succeed. With nothing to resume it stops before any credential. |
+
+Neither approves anything: the wave's gate decides again against the plans it makes now.
+
+| Forge | The resume job |
+|---|---|
+| GitHub | `.github/workflows/terragucci-resume.yml`, on its own schedule, which `init` writes; GitHub may start a scheduled run a few minutes late |
+| Forgejo | `.forgejo/workflows/terragucci-resume.yml`, the same |
+| GitLab | the `resume` job in the pipeline, for a pipeline schedule you create with the variable `TERRAGUCCI_SCHEDULE=resume`, every `apply.resume` minutes |
+
+Each run costs a short job even when nothing waits.
+
 ## Apply from a comment
 
 On GitHub and Forgejo, `/terragucci apply` on a merged pull request runs `apply-comment` from the default branch's workflow. It runs `tf-apply` on the merge commit with the apply role, under the push lock. Forgejo's job also skips a merge commit that a later apply superseded.

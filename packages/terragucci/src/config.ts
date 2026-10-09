@@ -100,6 +100,12 @@ export interface ApplySettings {
   merge?: ApplyMerge;
   merge_token_env?: string;
   requires?: ApplyRequire[];
+  /**
+   * Minutes between runs of the resume job, which applies a waiting wave once
+   * an approval of its digest is on chant/lifecycle (resume.ts). Off when
+   * unset. 5 to 60.
+   */
+  resume?: number;
 }
 
 /**
@@ -643,6 +649,8 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
   for (const k of Object.keys(a)) if (!APPLY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${APPLY_KEYS.join(", ")})`);
   oneOf(a.when, APPLY_WHEN, `${where}.when`, problems);
   oneOf(a.merge, APPLY_MERGE, `${where}.merge`, problems);
+  // GitHub runs a schedule at most every 5 minutes.
+  if (a.resume !== undefined && !(Number.isInteger(a.resume) && (a.resume as number) >= 5 && (a.resume as number) <= 60)) problems.push(`${where}.resume must be the minutes between the resume job's runs, from 5 to 60`);
   if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
   if (a.merge_token_env !== undefined) {
     if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
@@ -658,7 +666,7 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
   }
 }
 
-const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires"];
+const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume"];
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {

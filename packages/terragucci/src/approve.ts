@@ -30,6 +30,8 @@ import { readLedger, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { checkoutApproval } from "./approval";
 import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
+import type { Fetch } from "./forge";
+import { originOf, resumeAfterApproval } from "./resume";
 
 export interface WaitingWave {
   wave: number;
@@ -37,6 +39,9 @@ export interface WaitingWave {
   since: string;
   expiresAt: string;
   description?: string;
+  /** The run or pipeline that waited, and the commit it planned, when the pending fact names them. */
+  runId?: string;
+  commit?: string;
 }
 
 const at = (iso: string): number => new Date(iso).getTime();
@@ -52,7 +57,7 @@ export function waitingWaves(ledger: GateLedger): WaitingWave[] {
   for (const [gate, p] of newest) {
     const answered = ledger.resolutions.some((r) => r.gate === gate && r.planDigest === p.planDigest && at(r.timestamp) >= at(p.timestamp));
     if (answered) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}) });
+    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
   }
   return out.sort((a, b) => a.wave - b.wave);
 }
@@ -83,6 +88,10 @@ export interface ApproveOptions {
   dryRun?: boolean;
   /** The chant executable. Default: chant from node_modules/.bin, then the path. */
   chant?: string;
+  /** `--no-resume`: approve only, and leave the wave to the resume job or a re-run. Default: resume it with the approver's token. */
+  resume?: boolean;
+  /** The forge calls of the resume. Default: fetch. */
+  fetch?: Fetch;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
 }
@@ -135,7 +144,15 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
     return { code: 0, command, wave };
   }
   const code = runChant(repo, args, command, o, log);
-  if (code === 0) log(`approved ${waveGate(wave.wave)}; run its job again, or comment /terragucci apply, and it applies these plans`);
+  if (code === 0) {
+    log(`approved ${waveGate(wave.wave)}`);
+    const config = configPath ? await loadConfig(configPath) : {};
+    const url = spawnSync("git", ["remote", "get-url", "origin"], { cwd: repo, encoding: "utf-8" }).stdout?.trim() ?? "";
+    const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
+    if (o.resume === false) log("not resumed (--no-resume): run its job again, comment /terragucci apply, or let the resume job apply it");
+    else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run its job again, or comment /terragucci apply");
+    else log(await resumeAfterApproval({ origin, wave, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+  }
   return { code, command, wave };
 }
 
