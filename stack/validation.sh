@@ -51,7 +51,9 @@ gitlab|pr-apply-stale|a /terragucci apply note on an approved merge request whos
 gitlab|pr-apply-lock|a second merge request that reaches a root an open merge request applied is refused by its mr-apply job with the root and the holder named
 gitlab|pr-apply-trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies
 gitlab|gl-token-protected|with gitlab.token: protected a job the merge request adds to its own pipeline finds GITLAB_TOKEN empty, and the comments schedule posts the plan note and terragucci/plan
-gitlab|gl-review-bot|under approval: pr-review an approval by the user the pipeline token acts as leaves the wave waiting, and nothing applies'
+gitlab|gl-review-bot|under approval: pr-review an approval by the user the pipeline token acts as leaves the wave waiting, and nothing applies
+gitlab|gl-check-token|with GITLAB_TOKEN an unprotected variable the synth command of a branch runs in the check job with no forge token variable, and the check passes
+gitlab|gl-managed-state|a root on GitLab-managed state applies with its backend password passed as TF_HTTP_PASSWORD from the job token, and GitLab holds its state'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

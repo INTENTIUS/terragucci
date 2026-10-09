@@ -13,9 +13,11 @@ import { estate } from "../src/estate";
 import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDGER_FILE, readRecord, reportEntry, type LedgerChange } from "../src/report/audit";
 import { buildReport } from "../src/report/build";
 import { ESTATE_SCHEMA } from "../src/report/estate";
+import { CHANGES_SCHEMA, HISTORY_SCHEMA } from "../src/report/history";
+import { INVENTORY_SCHEMA } from "../src/report/inventory";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report } from "../src/report/schema";
-import { copyToRun, INDEX_DESTROYS, INDEX_SCHEMA, uploadReport, VIEWS_DIR, writeReportDir } from "../src/report/store";
+import { copyToRun, INDEX_DESTROYS, INDEX_SCHEMA, runPath, uploadReport, VIEWS_DIR, writeReportDir } from "../src/report/store";
 import { unknownKeywords, validate, type Json } from "../../../scripts/schema-check";
 import { plan, rc, RUN, smallFixture } from "./report-fixtures";
 import { tmp } from "./helpers";
@@ -25,6 +27,9 @@ const schema = (name: string): Json => JSON.parse(readFileSync(join(SRC, name), 
 const INDEX = schema("report-index.schema.json");
 const ESTATE = schema("estate.schema.json");
 const AUDIT = schema("audit.schema.json");
+const INVENTORY = schema("inventory.schema.json");
+const CHANGES = schema("changes.schema.json");
+const HISTORY = schema("history.schema.json");
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
@@ -56,12 +61,14 @@ const at = (h: number, m = 0): string => `2026-10-07T${String(h).padStart(2, "0"
 function runs(): Report[] {
   const many = plan(Array.from({ length: INDEX_DESTROYS + 3 }, (_, i) => rc(`aws_s3_object.o${i}`, ["delete"], { key: `o${i}` }, null)));
   const override = { by: "alice", at: at(9), rules: ["main.deny"], reason: "why", plan_digest: "jcs1-sha256:aa", digest: "sha256:bb", sealed: false };
-  const created = plan([rc("aws_s3_bucket.logs", ["create"], null, { bucket: "logs" })]);
+  const created = plan([rc("aws_s3_bucket.logs", ["create"], null, { bucket: "logs" })], {
+    planned_values: { root_module: { resources: [{ address: "aws_s3_bucket.logs", mode: "managed", type: "aws_s3_bucket", name: "logs", provider_name: "registry.opentofu.org/hashicorp/aws", values: { bucket: "logs" } }] } },
+  });
   const b = "b".repeat(40);
   return [
     buildReport({ run: { ...RUN, project: WEB, ...LINKS, finished: at(11) }, roots: [...smallFixture(), { path: "envs/big", planner: "tofu", plan: many }] }),
     buildReport({ run: { ...RUN, project: WEB, stage: "tf-drift", finished: at(4, 17) }, roots: smallFixture().slice(0, 2) }),
-    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", plan: created, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", plan: created, applied: true, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 2, finished: at(10) }, roots: smallFixture().slice(0, 2), waves: [{ number: 2, roots: ["envs/dev/orders", "envs/dev/search"], approval: "waiting", waitingSince: at(9) }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
   ];
@@ -82,7 +89,7 @@ const named = (s: Json): string[] => Object.keys(s.properties ?? {});
 
 describe("the reader contracts' schemas", () => {
   it("use only the keywords the check reads, and name the schema id the writer puts in `schema`", () => {
-    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA]] as const) {
+    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
       expect(s.properties.schema.const).toBe(id);
@@ -92,7 +99,7 @@ describe("the reader contracts' schemas", () => {
 
   it("ship beside report.schema.json: the build copies each one into dist, which the package publishes", () => {
     const shipped = readdirSync(SRC).filter((f) => f.endsWith(".schema.json")).sort();
-    expect(shipped).toEqual(["audit.schema.json", "estate.schema.json", "report-index.schema.json", "report.schema.json"]);
+    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json"]);
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf-8"));
     expect(pkg.files).toContain("dist");
     const build = readFileSync(join(import.meta.dirname, "../../../scripts/build-cli.mjs"), "utf-8");
@@ -165,6 +172,11 @@ describe("terragucci.estate/v1", () => {
     expect([...keys(projects)].sort()).toEqual(named(ESTATE.$defs.project).sort());
     expect([...keys(runRows)].sort()).toEqual(named(ESTATE.$defs.run).sort());
     expect([...keys(projects.flatMap((p) => p.waiting))].sort()).toEqual(named(ESTATE.$defs.waiting).sort());
+    const inventories: Json[] = projects.flatMap((p) => (p.inventory ? [p.inventory] : []));
+    expect([...keys(inventories)].sort()).toEqual(named(ESTATE.$defs.inventory).sort());
+    const invRoots: Json[] = inventories.flatMap((i) => i.roots);
+    expect([...keys(invRoots)].sort()).toEqual(named(ESTATE.$defs.inventory.properties.roots.items).sort());
+    expect([...keys(invRoots.flatMap((r) => r.resources))].sort()).toEqual(named(ESTATE.$defs.resource).sort());
   });
 
   it("refuses a project with a status it does not know, and a run with a field it does not name", async () => {
@@ -174,6 +186,48 @@ describe("terragucci.estate/v1", () => {
     const page = JSON.parse(objects.get("acme-reports:reports/estate.json")!);
     expect(validate(ESTATE, { ...page, projects: [{ ...page.projects[0], status: "stale" }] })).toEqual(['$.projects[0].status: "stale" not in enum']);
     expect(validate(ESTATE, { ...page, recent: [{ ...page.recent[0], live: true }] })).toEqual(["$.recent[0]: live is not in the schema"]);
+  });
+});
+
+describe("terragucci.inventory/v1", () => {
+  it("holds the inventory.json an applied wave's upload writes, and every field it names is one the upload writes", async () => {
+    const { objects, s3 } = bucket();
+    await upload(s3, runs());
+    const inv = JSON.parse(objects.get(`acme-reports:reports/${NET}/inventory.json`)!);
+    expect(validate(INVENTORY, inv)).toEqual([]);
+    expect([...keys([inv])].sort()).toEqual(named(INVENTORY).sort());
+    expect([...keys(inv.roots)].sort()).toEqual(named(INVENTORY.properties.roots.items).sort());
+    expect([...keys(inv.roots.flatMap((r: Json) => r.resources))].sort()).toEqual(named(INVENTORY.properties.roots.items.properties.resources.items).sort());
+    // Only a wave whose roots applied writes one.
+    expect(objects.has(`acme-reports:reports/${WEB}/inventory.json`)).toBe(false);
+    expect(validate(INVENTORY, { ...inv, roots: [{ ...inv.roots[0], resources: [{ address: "x", type: "t" }] }] })).toEqual(["$.roots[0].resources[0]: missing provider"]);
+  });
+});
+
+describe("terragucci.changes/v1 and terragucci.history/v1", () => {
+  it("hold the changes.json applied waves' uploads write and the history.json terragucci estate writes, and every field each names is one they write", async () => {
+    const { objects, fetch, s3 } = bucket();
+    const D = `sha256:${"d".repeat(64)}`;
+    const moved = plan([{ ...rc("aws_s3_bucket.logs2", ["update"], { bucket: "logs", tags: {} }, { bucket: "logs", tags: { a: "b" } }), previous_address: "aws_s3_bucket.logs" }]);
+    const wave4 = buildReport({ run: { ...RUN, project: NET, commit: "e".repeat(40), stage: "tf-apply", wave: 4, finished: at(11, 30), pull_request: "9" }, roots: [{ path: "a", plan: moved, applied: true }], waves: [{ number: 4, roots: ["a"], approval: "approved", setDigest: D }] });
+    const reports = [...runs(), wave4];
+    await upload(s3, reports);
+    const approval = { schema: AUDIT_SCHEMA as typeof AUDIT_SCHEMA, id: "sha256:ap", kind: "approval" as const, project: NET, at: at(11), who: "bob", what: "wave-4", digest: D, result: "unsigned", evidence: { source: "ledger" as const } };
+    const applies = reports.map((r) => reportEntry(r, runPath(r), { source: "report", bucket: "s3://acme-reports", key: `reports/${r.run.project}/${runPath(r)}/report.json` }, [approval])).filter((e) => e !== undefined);
+    objects.set("acme-reports:reports/audit.jsonl", appendEntries(readRecord(undefined), [approval, ...applies]));
+    await estate(tmp(), { reports: { bucket: "s3://acme-reports", endpoint: "http://minio:9000", prefix: "reports" } }, { fetch, env: ENV, now: NOW });
+
+    const changes = JSON.parse(objects.get(`acme-reports:reports/${NET}/changes.json`)!);
+    expect(validate(CHANGES, changes)).toEqual([]);
+    expect([...keys([changes])].sort()).toEqual(named(CHANGES).sort());
+    expect([...keys(changes.changes)].sort()).toEqual(named(CHANGES.properties.changes.items).sort());
+
+    const history = JSON.parse(objects.get("acme-reports:reports/history.json")!);
+    expect(validate(HISTORY, history)).toEqual([]);
+    expect([...keys([history])].sort()).toEqual(named(HISTORY).sort());
+    expect([...keys(history.resources)].sort()).toEqual(named(HISTORY.properties.resources.items).sort());
+    expect([...keys(history.resources.flatMap((r: Json) => r.applies))].sort()).toEqual(named(HISTORY.properties.resources.items.properties.applies.items).sort());
+    expect(validate(HISTORY, { ...history, resources: [{ ...history.resources[0], applies: [{ ...history.resources[0].applies[0], actions: ["rename"] }] }] })).toEqual(['$.resources[0].applies[0].actions[0]: "rename" not in enum']);
   });
 });
 

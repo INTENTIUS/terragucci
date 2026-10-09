@@ -1080,8 +1080,6 @@ export interface PlanReportInput {
   terragrunt?: { prelude: string };
   /** respond.description is on: before the note is posted, flag a pull request whose description does not match its plan. */
   description?: boolean;
-  /** The agent comment is on, so a re-plan leaves `/terragucci agent` comments to the agent job. */
-  agentComment?: boolean;
   /** `approval: pr-review`: after the note, post `terragucci/approval` on the head (review.ts). */
   prReview?: boolean;
   /** `synth`: the command that writes the roots, run on the checkout before the credentials. */
@@ -1129,26 +1127,22 @@ const COUNTS_JS =
   'const f=n(["refused"]);' +
   'console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")';
 
-/** "yes" when the plan report planned nothing and held nothing back: the change reaches no root. */
-const UNREACHED_JS = 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(r.roots.length===0&&!(r.deferred||[]).length?"yes":"")';
-
 /** The roots (or units) a plan report planned, comma-separated, for the note's first line. */
 const PLANNED_JS = 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))';
 
 /**
- * The pull request stage: `terragucci stage tf-plan` plans the roots the
- * change reaches, in apply order, and writes the plan report. The report's
- * note is posted as the one plan note, and its counts are the one
- * terragucci/plan status.
+ * GitLab's plan job by default: `terragucci stage tf-plan` plans the roots the
+ * change reaches, in apply order, and writes the plan report. The job posts
+ * the report's note as the one plan note, and its counts as the one
+ * terragucci/plan status, with the project token the job holds. GitHub and
+ * Forgejo plan with planFilesScript and post from the plan-note job.
  */
-export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, replan = false): string {
+export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "gitlab", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
     "--report-url", reportUrl(forge),
-    // A re-plan names its root, when the comment did; TG_BASE (set by replanPrelude) is the range it reads.
-    ...(replan ? ['${TG_ROOT:+--root "$TG_ROOT"}'] : []),
     ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
     ...(report.terragrunt ? ["--terragrunt"] : []),
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
@@ -1159,27 +1153,16 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
   return [
     READS_EXIT,
     forgeApi(forge),
-    ...(replan ? [replanPrelude(layers, forge, report.agentComment)] : []),
     ...(report.synth ? [synthScript(report.synth, "terragucci/plan")] : []),
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
-    // A re-plan of one named root may find the change does not reach it, and then leaves the status as it was.
-    replan ? '[ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"' : 'tg status terragucci/plan pending "planning"',
+    'tg status terragucci/plan pending "planning"',
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
     `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
     '  tg status terragucci/plan failure "the plan report was not written"',
     "  exit 1",
     "fi",
-    // A re-plan that names a root the change does not reach answers that, and leaves the plan note and the status as they are.
-    ...(replan
-      ? [
-          `if [ -n "$TG_ROOT" ] && [ "$(node -e '${UNREACHED_JS}' ${REPORT_DIR}/report.json)" = yes ]; then`,
-          '  tg reply "$TG_ROOT is not affected by this pull request, so nothing was planned."',
-          '  exit 0',
-          'fi',
-        ]
-      : []),
     `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
     'if [ -n "${TG_PR:-}" ]; then',
     ...(report.description ? [`  terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
@@ -1187,8 +1170,6 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     "  # The first line says which roots the note covers, so an apply can mark it stale.",
     `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
     '  tg note "$note"',
-    // Under pr-review the head says whether a wave the gate will hold has an approving review of it, so branch protection can require one.
-    ...(report.prReview ? [`  terragucci approval-status --forge ${forge} --report ${REPORT_DIR} || echo "terragucci/approval was not posted"`] : []),
     "fi",
     'if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi',
     'tg status terragucci/plan success "$counts"',
@@ -1196,19 +1177,22 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
 }
 
 /**
- * GitLab's plan job with `gitlab.token: protected`: the same stage, with no
- * forge token. The note and the status go into the report directory
- * (plan-note-gitlab.ts), which the job keeps as its artifact, and the
- * comments job posts them from there. It stops first when the token reaches
- * it anyway, since then the variable is not protected and the merge
- * request's code holds it.
+ * A plan job that holds no forge token: the same stage, with the note and the
+ * status written into the report directory (PLAN_NOTE_FILE,
+ * PLAN_STATUS_FILE), which the job keeps as its artifact. Another job that
+ * runs none of the change's code posts them: on GitHub and Forgejo the
+ * `plan-note` job (plan-note.ts), on GitLab with `gitlab.token: protected`
+ * the comments job (plan-note-gitlab.ts). A re-plan names its root
+ * (`TG_ROOT`) and reads its range from `TG_BASE`; its checkout must be the
+ * head the comment's decision read.
  */
-export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, tokenEnv = "GITLAB_TOKEN"): string {
+export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean } = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
-    "--report-url", reportUrl("gitlab"),
+    "--report-url", reportUrl(forge),
+    ...(options.replan ? ['${TG_ROOT:+--root "$TG_ROOT"}'] : []),
     ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
     ...(report.terragrunt ? ["--terragrunt"] : []),
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
@@ -1219,9 +1203,17 @@ export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oi
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
   return [
     READS_EXIT,
-    gitlabTokenCheck(tokenEnv),
-    ...(report.synth ? [synthScript(report.synth)] : []),
-    ...cloudScripts("gitlab", oidc, "plan", "terragucci-plan"),
+    ...(options.tokenCheck ? [options.tokenCheck] : []),
+    // The OIDC token request; no forge token is in the job.
+    ...(forge !== "gitlab" && oidc ? [forgeApi(forge)] : []),
+    ...(options.replan ? ['if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi'] : []),
+    ...(report.synth
+      ? [
+          "# synth in terragucci.yml: write the roots before reading them.",
+          `( set -e; ${report.synth} ) || { mkdir -p ${REPORT_DIR} && echo "failure the synth command failed" >${status}; echo "terragucci: the synth command failed" >&2; exit 1; }`,
+        ]
+      : []),
+    ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
@@ -1241,6 +1233,76 @@ export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oi
 }
 
 /**
+ * GitLab's plan job with `gitlab.token: protected`: planFilesScript, which
+ * stops first when the token reaches it anyway, since then the variable is
+ * not protected and the merge request's code holds it.
+ */
+export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, tokenEnv = "GITLAB_TOKEN"): string {
+  return planFilesScript(binary, layers, "gitlab", oidc, report, { tokenCheck: gitlabTokenCheck(tokenEnv) });
+}
+
+/** The variables a runner or a job may hold a forge token in. A step that runs the change's code starts again without them. */
+export const STEP_TOKEN_VARS = ["TG_TOKEN", "TG_MERGE_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "ACTIONS_RUNTIME_TOKEN"] as const;
+
+/**
+ * The first line of a GitHub or Forgejo step that runs the change's code. The
+ * step's shell starts again, with `exec`, without any forge token variable:
+ * Forgejo's runner gives every step the run's token (as GITHUB_TOKEN,
+ * GITEA_TOKEN and ACTIONS_RUNTIME_TOKEN) whatever `permissions:` says, and
+ * `unset` alone would leave it in the shell's own process environment, which
+ * the shell's children can read. The OIDC request variables stay: the step
+ * asks for its cloud role with them.
+ *
+ * The restart needs the step's script file (a runner runs `<shell> <file>`,
+ * so `$0` is its path, never the shell's own) and `env` and the shell on the
+ * PATH. When any of them is missing (the script given to `sh -c`, or no PATH), the shell does not
+ * restart and drops the variables with `unset`, so its children still start
+ * without them, and the script runs on.
+ */
+export function dropForgeTokens(shell: "bash" | "sh" = "bash"): string {
+  const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
+  const can = `[ -z "\${TG_NO_FORGE_TOKEN:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
+  return `if ${can}; then exec env ${STEP_TOKEN_VARS.map((v) => `-u ${v}`).join(" ")} TG_NO_FORGE_TOKEN=1 ${again}; fi; unset ${STEP_TOKEN_VARS.join(" ")}`;
+}
+
+/**
+ * The re-plan's first step, before any of the change's code is checked out:
+ * `terragucci comment` reads the comment and writes a decision file; the
+ * shell reads four values from it (a number, a sha, a branch and a root, each
+ * already checked against a pattern with no shell syntax), never the comment,
+ * and hands them on as the step's outputs. On Forgejo the command reads the
+ * commenter's permission from the event, since the job's token may not ask
+ * the API for it. A re-plan of the whole change says it is planning.
+ */
+export function replanDecideScript(layers: string[][], forge: Exclude<ForgeName, "gitlab">, agentComment?: boolean): string {
+  return [
+    READS_EXIT,
+    forgeApi(forge),
+    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""}${agentComment ? " --agent on" : ""} --out terragucci-comment.json || exit 1`,
+    `read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF`,
+    `$(node -e '${DECISION_JS}' terragucci-comment.json)`,
+    "EOF",
+    '[ -n "$TG_PR" ] || exit 0',
+    '[ "$TG_ROOT" = "-" ] && TG_ROOT=""',
+    'export TG_SHA',
+    '{ echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"',
+    '[ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"',
+  ].join("\n");
+}
+
+/**
+ * The `plan-note` and `replan-note` jobs' script: post the plan job's note
+ * and `terragucci/plan` from its report (`terragucci plan-note`), and under
+ * `approval: pr-review` `terragucci/approval` from the same report.
+ */
+export function planNoteScript(forge: Exclude<ForgeName, "gitlab">, options: { replan?: boolean; prReview?: boolean } = {}): string {
+  return [
+    "set -u",
+    `terragucci plan-note --forge ${forge} --report ${REPORT_DIR} --plan-result "\${TG_PLAN_RESULT:-}"${options.replan ? ' ${TG_ROOT:+--root "$TG_ROOT"}' : ""}${options.prReview ? " --approval-status" : ""}`,
+  ].join("\n");
+}
+
+/**
  * The protected plan job's first check: with `gitlab.token: protected` the
  * forge token is a protected variable, which a merge request's pipeline never
  * sees. When the job sees it, the merge request's code can too, so the job
@@ -1252,31 +1314,6 @@ export function gitlabTokenCheck(tokenEnv = "GITLAB_TOKEN"): string {
 
 /** Reads the decision file `terragucci comment` wrote. */
 const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")';
-
-/**
- * The re-plan job's first lines, before any credential is asked for. The
- * comment is read by `terragucci comment`, which writes a decision file; the
- * shell only reads four values from it (a number, a sha, a branch and a root,
- * each already checked against a pattern with no shell syntax), never the
- * comment. On Forgejo the command reads the commenter's permission from the
- * event, since the job's token may not ask the API for it. The job then checks
- * out the pull request's head: the event's sha is the default branch's, so the
- * head comes from the pull request, fetched by its number.
- */
-function replanPrelude(layers: string[][], forge: ForgeName, agentComment?: boolean): string {
-  return [
-    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""}${agentComment ? " --agent on" : ""} --out terragucci-comment.json || exit 1`,
-    `read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF`,
-    `$(node -e '${DECISION_JS}' terragucci-comment.json)`,
-    "EOF",
-    '[ -n "$TG_PR" ] || exit 0',
-    '[ "$TG_ROOT" = "-" ] && TG_ROOT=""',
-    'export TG_PR TG_SHA TG_ROOT TG_BASE="origin/$TG_BASE"',
-    'git fetch --quiet origin "refs/pull/$TG_PR/head" || { echo "terragucci: could not fetch the pull request head" >&2; exit 1; }',
-    'if [ "$(git rev-parse FETCH_HEAD)" != "$TG_SHA" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi',
-    'git checkout --quiet --detach "$TG_SHA"',
-  ].join("\n");
-}
 
 /** The pipeline variable that tells the comments schedule's pipelines from drift's on GitLab. */
 export const SCHEDULE_VAR = "TERRAGUCCI_SCHEDULE";
@@ -1537,21 +1574,20 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // Only the jobs that run no merge request code see the merge token: GitLab gives a variable scoped to this environment to the jobs that name it.
     const mergeEnvironment = { environment: { name: MERGE_ENVIRONMENT, action: "access" } };
     // A branch's pipeline is built from the branch's files too, and with gitlab.token: protected it never sees the
-    // token: then the check job holds none, and commits no formatting.
+    // token: then there is no fmt job, and nothing commits formatting.
     const glFmt = fmtOn && !protectedToken;
+    // The check runs the branch's code (synth, validate's providers, the policy engine). Its shell drops every forge
+    // token variable GitLab hands the job before it runs anything, so none of that code inherits one.
+    const glCheckBody = [`unset ${[...new Set(["TG_TOKEN", "TG_MERGE_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN", ...(tokenEnv ? [tokenEnv] : [])])].join(" ")}`, checkBody].join("\n");
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,
       // The policy tests read the policy from the default branch, so with `policy:` the job has its history.
-      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy ? { GIT_DEPTH: "0" } : {}), ...(glFmt ? { TG_TOKEN: gitlabEnv.TG_TOKEN } : {}) },
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy ? { GIT_DEPTH: "0" } : {}) },
       ...notScheduled,
-      script: script(checkBody),
+      script: script(glCheckBody),
       // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
       artifacts: { name: CHECK_DIR, when: "always", paths: [`${CHECK_DIR}/`] },
-      // After a failing check on a branch, commit the formatting; the job's own result stands.
-      ...(glFmt
-        ? { after_script: [...(installStep ? [installStep] : []), bash("FMT", `if [ "$CI_JOB_STATUS" = failed ] && [ -n "$CI_COMMIT_BRANCH" ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then\n${fmtScript(binary, forge, tokenEnv)}\nfi`)] }
-        : {}),
     } as never);
     // Plan runs a merge request's code, so it gets the read-only role, and never runs for a merge request from a fork.
     // By default it posts its note and status with the project token, which the merge request's code can read too;
@@ -1568,7 +1604,21 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // The report stays with the job; its counts feed the merge request's widget.
       artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
     } as never);
-    const jobs = new Map<string, never>([["check", check as never], ["plan", plan as never]]);
+    const jobs = new Map<string, never>([["check", check as never]]);
+    if (glFmt) {
+      // After a failing check on a branch, commit the formatting: a job of its own, so the check job, which runs the
+      // branch's code, holds no token that pushes. It runs fmt, which parses the files and runs none of them.
+      // It shares the check stage, so a repo whose own stages list terragucci's needs no new one; `needs` runs it after check.
+      jobs.set("fmt", new GitLabJob({
+        stage: "check",
+        image: jobImage,
+        needs: ["check"],
+        variables: { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN },
+        rules: [new Rule({ if: `$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"${notMrApply}`, when: "on_failure" } as never)],
+        script: script(bash("FMT", fmtScript(binary, forge, tokenEnv))),
+      } as never) as never);
+    }
+    jobs.set("plan", plan as never);
     for (const [i, job] of pushApplyJobs.entries()) {
       jobs.set(job.name, new GitLabJob({
         stage: "apply",
@@ -1758,46 +1808,53 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(cached && tg ? [new Step({ name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
     main,
   ];
-  // Check runs for a push, and for a fork's pull request, which has no push here.
+  const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
+  const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
+  // A job that runs the change's code checks it out with no credentials left in the git config.
+  const bareCheckout = (history: boolean, ref?: string, cond?: string): InstanceType<typeof Step> =>
+    new Step({ ...(cond ? { if: cond } : {}), uses: "actions/checkout@v4", with: { ...(ref ? { ref } : {}), ...(history ? { "fetch-depth": 0 } : {}), "persist-credentials": false } });
+  // The steps between the checkout and the main step of a job that runs the change's code.
+  const toolSteps = (cached: boolean, estimator: boolean, cond?: string): InstanceType<typeof Step>[] => [
+    ...(installStep ? [new Step({ ...(cond ? { if: cond } : {}), name: installName, run: installStep })] : []),
+    ...(estimator && costInstall ? [new Step({ ...(cond ? { if: cond } : {}), name: `Install Infracost ${INFRACOST_VERSION}`, run: costInstall })] : []),
+    ...(cached && tg ? [new Step({ ...(cond ? { if: cond } : {}), name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
+  ];
+  // Check runs for a push, and for a fork's pull request, which has no push here. It runs the branch's code
+  // (synth, validate's providers, the policy engine) and holds no forge token: the checkout keeps no credentials,
+  // and the step starts without the runner's token variables.
   const check = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'push' || (github.event_name == 'pull_request' && ${isFork})`,
-    ...(fmtOn ? { permissions: { contents: "write" } } : {}),
-    env: { TG_BRANCH: "${{ github.event.repository.default_branch }}", ...(fmtOn ? { TG_TOKEN: "${{ github.token }}" } : {}) },
+    env: { TG_BRANCH: "${{ github.event.repository.default_branch }}" },
     steps: [
       // The policy tests read the policy from the default branch, so with `policy:` the checkout has the history.
-      ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody }), false, Boolean(input.policy)),
+      bareCheckout(Boolean(input.policy)),
+      ...toolSteps(false, false),
+      new Step({ name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${checkBody}` }),
       // The check report stays with the run, beside the job summary.
       new Step({
         name: "Keep the check report",
         if: "always()",
-        uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+        uses: upload,
         with: { name: CHECK_DIR, path: `${CHECK_DIR}/`, "if-no-files-found": "ignore" },
       }),
-      // After a failing check on a branch, commit the formatting to it; a fork's pull request has no push here.
-      ...(fmtOn
-        ? [new Step({
-            name: "Commit the formatting",
-            if: "failure() && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)",
-            shell: "bash",
-            run: fmtScript(binary, forge, tokenEnv),
-          })]
-        : []),
     ],
   } as never);
-  // With a drift schedule the plan reads the drift job's runs, to say when the schedule has stopped.
+  // With a drift schedule the plan note says when the schedule has stopped, from the drift job's runs.
   const driftRead = drift && forge === "github" ? { actions: "read" } : {};
   // Plan runs a pull request's code, so it gets the read-only role, and never
-  // runs for a fork, whose pull requests carry no token and no OIDC.
+  // runs for a fork, whose pull requests carry no token and no OIDC. It holds
+  // no forge token while that code runs: it posts the pending status before
+  // the checkout, writes the note and the status into its report, and the
+  // plan-note job posts them.
   const plan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'pull_request' && ${sameRepo}`,
-    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: "read", statuses: "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     env: {
-      TG_TOKEN: "${{ github.token }}",
       TG_SHA: "${{ github.event.pull_request.head.sha }}",
       TG_PR: "${{ github.event.pull_request.number }}",
       ...headersEnv,
@@ -1806,16 +1863,36 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...reportKeyEnv(forge, input.reports),
     },
     steps: [
-      ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true, undefined, true),
-      // The report stays with the run. Forgejo's artifact store speaks the v3 protocol.
+      new Step({ name: "Say on the head that the plan started", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: [forgeApi(forge), 'tg status terragucci/plan pending "planning"'].join("\n") }),
+      bareCheckout(true),
+      ...toolSteps(true, true),
+      new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
+      // The report stays with the run, and the plan-note job reads the note and the status from it. Forgejo's artifact store speaks the v3 protocol.
       new Step({
         name: "Keep the plan report",
         if: "always()",
-        uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+        uses: upload,
         with: { name: REPORT_DIR, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
       }),
     ],
   } as never);
+  // The note job of a plan: a fresh container that checks nothing out and runs none of the change's code. It reads the
+  // plan job's note and status as data and posts them with the job's token.
+  const noteJob = (needs: string, cond: string, artifact: string, env: Record<string, string>, replan: boolean): InstanceType<typeof Job> =>
+    new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs,
+      if: `always() && (needs.${needs}.result == 'success' || needs.${needs}.result == 'failure') && ${cond}`,
+      permissions: { statuses: "write", "pull-requests": "write", ...driftRead },
+      env: { TG_TOKEN: "${{ github.token }}", TG_PLAN_RESULT: `\${{ needs.${needs}.result }}`, ...env },
+      steps: [
+        new Step({ name: "Fetch the plan report", uses: download, "continue-on-error": true, with: { name: artifact, path: REPORT_DIR } } as never),
+        // Forgejo ignores continue-on-error, so the post runs whatever the download did: a plan job that failed before its report still fails terragucci/plan.
+        new Step({ name: "Post the plan note and terragucci/plan", if: "always()", shell: "bash", run: planNoteScript(forge, { replan, prReview }) }),
+      ],
+    } as never);
+  const planNote = noteJob("plan", `github.event_name == 'pull_request' && ${sameRepo}`, REPORT_DIR, { TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}" }, false);
   // With apply.when: pull-request, `/terragucci lock` and `/terragucci unlock` are the apply-comment job's too: it holds the locks.
   const APPLY_COMMENT = prApply
     ? "(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))"
@@ -1824,31 +1901,68 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const LOCK_COMMENT = "(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))";
   const lockElsewhere = locksPlan && !prApply ? ` && !${LOCK_COMMENT}` : "";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
-  // never an expression in the script: the command reads it from the event file (comment.ts).
+  // never an expression in the script: the command reads it from the event file (comment.ts). The decision
+  // step holds the job's token and runs before the change is checked out; the plan step holds none, and the
+  // replan-note job posts the note.
+  const go = "steps.decide.outputs.go == '1'";
+  const replanEnv = { ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
-    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) },
+    ...(Object.keys(replanEnv).length ? { env: replanEnv } : {}),
+    outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", sha: "${{ steps.decide.outputs.sha }}", root: "${{ steps.decide.outputs.root }}" },
     steps: [
-      ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, { ...report, ...(input.agentComment ? { agentComment: true } : {}) }, true) }), true, true, undefined, true),
+      bareCheckout(false),
+      new Step({ id: "decide", name: "Read the comment and decide whether it re-plans", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: replanDecideScript(layers, forge, input.agentComment !== undefined) }),
+      // The head comes from the pull request, by number; the base branch comes with the history, for the range.
+      bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go),
+      ...toolSteps(true, true, go),
+      new Step({
+        if: go,
+        name: "Re-plan the pull request on request and write the plan report",
+        shell: "bash",
+        env: { TG_PR: "${{ steps.decide.outputs.pr }}", TG_SHA: "${{ steps.decide.outputs.sha }}", TG_ROOT: "${{ steps.decide.outputs.root }}", TG_BASE: "origin/${{ steps.decide.outputs.base }}" },
+        run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true })}`,
+      }),
       new Step({
         name: "Keep the plan report",
-        if: "always()",
-        uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+        if: `always() && ${go}`,
+        uses: upload,
         with: { name: `${REPORT_DIR}-replan`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
       }),
     ],
   } as never);
+  const replanNote = noteJob("replan", "needs.replan.outputs.go == '1'", `${REPORT_DIR}-replan`, { TG_PR: "${{ needs.replan.outputs.pr }}", TG_SHA: "${{ needs.replan.outputs.sha }}", TG_ROOT: "${{ needs.replan.outputs.root }}" }, true);
   const entities = new Map<string, never>([
     ["workflow", workflow as never],
     ["check", check as never],
     ["plan", plan as never],
+    ["plan-note", planNote as never],
     ["replan", replan as never],
+    ["replan-note", replanNote as never],
   ]);
+  // After a failing check on a branch, commit the formatting to it; a fork's pull request has no push here. A job of
+  // its own, so the check job, which runs the branch's code, never holds the token that pushes. It runs fmt, which
+  // parses the files and runs none of them.
+  if (fmtOn) {
+    entities.set("fmt", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs: "check",
+      if: "always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)",
+      permissions: { contents: "write" },
+      env: { TG_TOKEN: "${{ github.token }}" },
+      steps: [
+        new Step({ uses: "actions/checkout@v4" }),
+        ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
+        new Step({ name: "Commit the formatting", shell: "bash", run: fmtScript(binary, forge, tokenEnv) }),
+      ],
+    } as never) as never);
+  }
   // `/terragucci apply` on a merged pull request re-runs its apply from the merge commit, with the
   // apply role, under the lock a push's apply holds. The workflow is the default branch's, as for
   // every comment; commentApplyScript decides before it asks for any credential. A Terragrunt repo's

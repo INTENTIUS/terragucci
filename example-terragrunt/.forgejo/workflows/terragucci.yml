@@ -36,8 +36,11 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Format check and validate, every unit
         run: |
+          if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
           set -eu
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tofu fmt -check -recursive -diff .
@@ -58,23 +61,14 @@ jobs:
       image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     env:
-      TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
       TG_PR: '${{ github.event.pull_request.number }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
-        with:
-          path: .terragrunt-cache
-          key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
-          restore-keys: terragucci-tg-
-      - name: Plan the units the change reaches and write the plan report
+      - name: Say on the head that the plan started
         shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
         run: |
-          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -130,23 +124,36 @@ jobs:
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
           }' -- "$@"; }
-          export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tg status terragucci/plan pending "planning"
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Cache Terragrunt sources and providers
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: .terragrunt-cache
+          key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
+          restore-keys: terragucci-tg-
+      - name: Plan the units the change reaches and write the plan report
+        shell: bash
+        run: |
+          if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
+          set +e -uo pipefail
+          export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
           rc=$?
           if [ ! -f terragucci-report/report.json ]; then
-            tg status terragucci/plan failure "the plan report was not written"
+            mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
             exit 1
           fi
           counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
           if [ -n "${TG_PR:-}" ]; then
-            note="$(mktemp)"
             # The first line says which roots the note covers, so an apply can mark it stale.
-            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >"$note"
-            tg note "$note"
+            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >terragucci-report/plan-note.md
           fi
-          if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
-          tg status terragucci/plan success "$counts"
+          if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
+          echo "success $counts" >terragucci-report/plan-status.txt
       - name: Keep the plan report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v3
@@ -154,6 +161,29 @@ jobs:
           name: terragucci-report
           path: terragucci-report/
           if-no-files-found: ignore
+  plan-note:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+    needs: plan
+    if: always() && (needs.plan.result == 'success' || needs.plan.result == 'failure') && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      TG_TOKEN: '${{ github.token }}'
+      TG_PLAN_RESULT: '${{ needs.plan.result }}'
+      TG_SHA: '${{ github.event.pull_request.head.sha }}'
+      TG_PR: '${{ github.event.pull_request.number }}'
+    steps:
+      - name: Fetch the plan report
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          name: terragucci-report
+          path: terragucci-report
+      - name: Post the plan note and terragucci/plan
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          terragucci plan-note --forge forgejo --report terragucci-report --plan-result "${TG_PLAN_RESULT:-}"
   replan:
     runs-on: docker
     container:
@@ -162,20 +192,20 @@ jobs:
     concurrency:
       group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}
       cancel-in-progress: false
-    env:
-      TG_TOKEN: '${{ github.token }}'
+    outputs:
+      go: '${{ steps.decide.outputs.go }}'
+      pr: '${{ steps.decide.outputs.pr }}'
+      sha: '${{ steps.decide.outputs.sha }}'
+      root: '${{ steps.decide.outputs.root }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
         with:
-          fetch-depth: 0
-      - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
-        with:
-          path: .terragrunt-cache
-          key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
-          restore-keys: terragucci-tg-
-      - name: Re-plan the pull request on request and write the plan report
+          persist-credentials: false
+      - id: decide
+        name: Read the comment and decide whether it re-plans
         shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
@@ -239,38 +269,79 @@ jobs:
           EOF
           [ -n "$TG_PR" ] || exit 0
           [ "$TG_ROOT" = "-" ] && TG_ROOT=""
-          export TG_PR TG_SHA TG_ROOT TG_BASE="origin/$TG_BASE"
-          git fetch --quiet origin "refs/pull/$TG_PR/head" || { echo "terragucci: could not fetch the pull request head" >&2; exit 1; }
-          if [ "$(git rev-parse FETCH_HEAD)" != "$TG_SHA" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
-          git checkout --quiet --detach "$TG_SHA"
+          export TG_SHA
+          { echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"
+          [ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"
+      - if: steps.decide.outputs.go == '1'
+        uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          ref: refs/pull/${{ steps.decide.outputs.pr }}/head
+          fetch-depth: 0
+          persist-credentials: false
+      - if: steps.decide.outputs.go == '1'
+        name: Cache Terragrunt sources and providers
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: .terragrunt-cache
+          key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
+          restore-keys: terragucci-tg-
+      - if: steps.decide.outputs.go == '1'
+        name: Re-plan the pull request on request and write the plan report
+        shell: bash
+        env:
+          TG_PR: '${{ steps.decide.outputs.pr }}'
+          TG_SHA: '${{ steps.decide.outputs.sha }}'
+          TG_ROOT: '${{ steps.decide.outputs.root }}'
+          TG_BASE: origin/${{ steps.decide.outputs.base }}
+        run: |
+          if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
+          set +e -uo pipefail
+          if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
-          [ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
           rc=$?
           if [ ! -f terragucci-report/report.json ]; then
-            tg status terragucci/plan failure "the plan report was not written"
+            mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
             exit 1
-          fi
-          if [ -n "$TG_ROOT" ] && [ "$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(r.roots.length===0&&!(r.deferred||[]).length?"yes":"")' terragucci-report/report.json)" = yes ]; then
-            tg reply "$TG_ROOT is not affected by this pull request, so nothing was planned."
-            exit 0
           fi
           counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
           if [ -n "${TG_PR:-}" ]; then
-            note="$(mktemp)"
             # The first line says which roots the note covers, so an apply can mark it stale.
-            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >"$note"
-            tg note "$note"
+            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >terragucci-report/plan-note.md
           fi
-          if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
-          tg status terragucci/plan success "$counts"
+          if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
+          echo "success $counts" >terragucci-report/plan-status.txt
       - name: Keep the plan report
-        if: always()
+        if: always() && steps.decide.outputs.go == '1'
         uses: https://code.forgejo.org/actions/upload-artifact@v3
         with:
           name: terragucci-report-replan
           path: terragucci-report/
           if-no-files-found: ignore
+  replan-note:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+    needs: replan
+    if: always() && (needs.replan.result == 'success' || needs.replan.result == 'failure') && needs.replan.outputs.go == '1'
+    env:
+      TG_TOKEN: '${{ github.token }}'
+      TG_PLAN_RESULT: '${{ needs.replan.result }}'
+      TG_PR: '${{ needs.replan.outputs.pr }}'
+      TG_SHA: '${{ needs.replan.outputs.sha }}'
+      TG_ROOT: '${{ needs.replan.outputs.root }}'
+    steps:
+      - name: Fetch the plan report
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          name: terragucci-report-replan
+          path: terragucci-report
+      - name: Post the plan note and terragucci/plan
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          terragucci plan-note --forge forgejo --report terragucci-report --plan-result "${TG_PLAN_RESULT:-}" ${TG_ROOT:+--root "$TG_ROOT"}
   apply-comment:
     runs-on: docker
     container:

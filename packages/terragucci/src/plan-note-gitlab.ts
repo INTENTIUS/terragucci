@@ -38,7 +38,7 @@ export const PLAN_STATUS_FILE = "plan-status.txt";
 /** The status the plan note's counts go to. */
 const PLAN_CONTEXT = "terragucci/plan";
 /** How a plan note starts. */
-const PLAN_MARK = "<!-- terragucci:plan";
+export const PLAN_MARK = "<!-- terragucci:plan";
 /** The last line of a note the comments job posted: the plan job it came from. */
 export const planJobMarker = (job: number): string => `<!-- terragucci:plan-job=${job} -->`;
 /** GitLab keeps notes up to a million characters; a longer note is cut. */
@@ -46,13 +46,13 @@ const MAX_NOTE = 900_000;
 /** GitLab keeps a status description to 255 characters. */
 const MAX_DESCRIPTION = 255;
 const SHA = /^[0-9a-f]{40}$/;
-const ROOTS_LINE = /^<!-- terragucci:plan roots=([A-Za-z0-9_.\/,@+=-]*) -->$/;
+export const ROOTS_LINE = /^<!-- terragucci:plan roots=([A-Za-z0-9_.\/,@+=-]*) -->$/;
 /**
  * terragucci markers a note from the plan job may not carry: the replies the
  * comments job and pr-merge read (`note=`, `applied`), `stale`, and a second
  * `plan`. The waves marker and the description flag are the plan's own.
  */
-const FORGED = /<!--\s*terragucci:(?!waves |description -->)/gi;
+export const FORGED = /<!--\s*terragucci:(?!waves |description -->)/gi;
 
 /** What the job did with one merge request's plan. */
 export interface PlanNoteOutcome {

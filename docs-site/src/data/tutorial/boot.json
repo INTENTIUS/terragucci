@@ -1,17 +1,17 @@
 {
   "step": "boot",
-  "source_hash": "197b083215a6a023",
+  "source_hash": "c6909fe377b97186",
   "commands": [
     {
       "cmd": "just example up",
-      "output": "[example] starting Forgejo, its runner and floci (a minute or two the first time)…\n[example] pushed to main at c33540dc; the pipeline applies every root…\n[example] run 1 for c33540dc: success (http://localhost:3300/terragucci-admin/example/actions/runs/1/jobs/0/attempt/1)\n[example] all 40 resources are in floci\n[example] ready in 90s\n\n  The example is running.\n\n  Forgejo     http://localhost:3300/terragucci-admin/example\n  Pipeline    http://localhost:3300/terragucci-admin/example/actions/runs/1/jobs/0/attempt/1\n  Sign in as  terragucci-admin / Terragucci-local-pw-1234 (only needed to merge or comment)\n  floci       http://localhost:4580 (the AWS stand-in)\n\n  Next: just example change one-root",
+      "output": "[example] starting Forgejo, its runner and floci (a minute or two the first time)…\n[example] pushed to main at 3380d2eb; the pipeline applies every root…\n[example] run 1 for 3380d2eb: success (http://localhost:3300/terragucci-admin/example/actions/runs/1/jobs/0/attempt/1)\n[example] all 40 resources are in floci\n[example] ready in 90s\n\n  The example is running.\n\n  Forgejo     http://localhost:3300/terragucci-admin/example\n  Pipeline    http://localhost:3300/terragucci-admin/example/actions/runs/1/jobs/0/attempt/1\n  Sign in as  terragucci-admin / Terragucci-local-pw-1234 (only needed to merge or comment)\n  floci       http://localhost:4580 (the AWS stand-in)\n\n  Next: just example change one-root",
       "exit": 0
     }
   ],
   "shots": {
     "repo-light": "23d1463523c1c07a",
     "repo-dark": "859f8f1c7640c0a2",
-    "run-light": "987a5019b000791e",
-    "run-dark": "140d93510d1e30ad"
+    "run-light": "f880f672e46c7f56",
+    "run-dark": "fe8a59eb8e6a1801"
   }
 }

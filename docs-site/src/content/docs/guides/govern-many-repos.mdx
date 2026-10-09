@@ -55,11 +55,9 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
        source: git+https://github.com/acme/policy.git@v3
    ```
 
-   `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it.
+   `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it. The same goes for the other keys the jobs read there, such as [`reports`](/terragucci/guides/keep-reports-in-a-bucket/), `parallelism` and `respond`; [A file for many repos](/terragucci/reference/config/#a-file-for-many-repos) lists them.
 
-   A project's [`reports`](/terragucci/guides/keep-reports-in-a-bucket/), from `defaults` or its own entry, goes there too: the plan job gets the bucket from the pipeline, and the apply waves read it from that file.
-
-   A project with a `terragucci.yml` of its own keeps it. When its `policy` or `reports` differs from the control repo's, `reconcile` fails that project and names the key to set.
+   A project with a `terragucci.yml` of its own keeps it. When one of those keys differs from the control repo's, `reconcile` fails that project and names the key to set.
 
 2. Check the file.
 
@@ -90,7 +88,7 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
 
    <Shot step="reconcile" view="pull" alt="The pull request reconcile opened in a Forgejo project with no pipeline, terragucci: update the pipeline: its body says the control repo's config changed what the pipeline should be and that it adds .forgejo/workflows/terragucci.yml, the project's own plan note below it, and the merge" />
 
-   <Shot step="reconcile" view="files" alt="That pull request's one file, .forgejo/workflows/terragucci.yml, added in full: the generated pipeline, its triggers and its check job pinned by digest" />
+   <Shot step="reconcile" view="files" alt="That pull request's files, with .forgejo/workflows/terragucci.yml added in full: the generated pipeline, its triggers and its check job pinned by digest" />
 
 5. Merge in each project.
 
