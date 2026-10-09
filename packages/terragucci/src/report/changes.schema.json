@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/changes/v1/changes.schema.json",
+  "title": "terragucci.changes/v1",
+  "description": "changes.json in a project's directory of a reports prefix: one row per resource each applied tf-apply wave changed, newest first. Actions and attribute names, never a value. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "changes"],
+  "properties": {
+    "schema": { "const": "terragucci.changes/v1" },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["address", "type", "actions", "attributes", "root", "commit", "finished", "path", "plan_digest", "set_digest"],
+        "properties": {
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "actions": { "type": "array", "items": { "enum": ["create", "update", "replace", "delete", "import", "move", "forget"] } },
+          "attributes": { "type": "array", "items": { "type": "string" }, "description": "The top-level attributes an update or a replacement changed, by name." },
+          "previous_address": { "type": "string", "description": "Where a moved resource was." },
+          "root": { "type": "string" },
+          "commit": { "type": "string" },
+          "wave": { "type": "integer" },
+          "finished": { "type": "string", "description": "When the wave finished." },
+          "path": { "type": "string", "description": "The wave's run directory, relative to the project's index.json." },
+          "plan_digest": { "type": ["string", "null"], "description": "The root's plan digest: the plan that applied." },
+          "set_digest": { "type": ["string", "null"], "description": "The wave's set digest, which its approval binds." },
+          "pull_request": { "type": "string" }
+        }
+      }
+    }
+  }
+}

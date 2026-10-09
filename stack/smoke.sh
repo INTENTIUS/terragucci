@@ -293,6 +293,8 @@ audit|terragucci audit writes one record to the bucket: every approval on the le
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
+inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
+resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
@@ -10118,6 +10120,156 @@ YAML
   return $rc
 }
 
+# ── the resource inventory ───────────────────────────────────────────────
+# The example's envs/dev/platform and envs/dev/orders roots and the service
+# module, in a repo whose reports go to the bucket under a fresh prefix. Each
+# root keeps local state and its resources get a name of their own (env
+# i<stamp> in place of dev), so the claim shares nothing with the example.
+inventory_repo() { # work, prefix -> $1/wave with the two roots and the module, and $1/origin.git
+  local work="$1" prefix="$2" env="i$STAMP" root
+  mkdir -p "$work/wave/envs/dev" "$work/wave/modules/service"
+  cp "$EXAMPLE/modules/service/"*.tf "$work/wave/modules/service/"
+  for root in platform orders; do
+    mkdir -p "$work/wave/envs/dev/$root"
+    cp "$EXAMPLE/envs/dev/$root/main.tf" "$EXAMPLE/envs/dev/$root/.terraform.lock.hcl" "$work/wave/envs/dev/$root/"
+    perl -0pi -e 's/backend "s3" \{.*?\n  \}\n/backend "local" {}\n/s; s/backend = "s3"\n  config = \{.*?\n  \}/backend = "local"\n  config = {\n    path = "..\/platform\/terraform.tfstate"\n  }/s' \
+      "$work/wave/envs/dev/$root/main.tf"
+  done
+  perl -pi -e "s/\"shop-dev-logs\"/\"shop-$env-logs\"/" "$work/wave/envs/dev/platform/main.tf"
+  perl -pi -e "s/env(\s+)= \"dev\"/env\$1= \"$env\"/" "$work/wave/envs/dev/orders/main.tf"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+}
+
+claim_inventory() {
+  # inventory_repo's two roots apply in two waves, platform then orders, each
+  # copying its report to the bucket. terragucci estate then lists every
+  # resource of both roots: estate.json has each root with its resources by
+  # address, type and provider and the project's count of each type, and
+  # estate.html shows each root and resource. No name of a resource, which
+  # the plans hold as values, reaches inventory.json or the page.
+  # BREAK: the orders root's list is dropped from inventory.json before the
+  # page is built, so the page lists platform alone.
+  log() { echo "[smoke inventory] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="inventory-$STAMP" project inv page html wave
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  inventory_repo "$work" "$prefix"
+  for wave in 1 2; do
+    [ $rc = 0 ] || break
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform;envs/dev/orders' --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave $wave exited $AUDIT_CODE, not 0"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    inv="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/inventory.json")" || { log "no inventory.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    jq '.roots |= map(select(.root != "envs/dev/orders"))' <<<"$inv" | curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @- "$FLOCI/$REPORT_BUCKET/$prefix/$project/inventory.json" || { log "could not drop the orders list"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.projects[].inventory | {resources, types, roots: [.roots[] | {root, wave, resources: [.resources[] | "\(.address) \(.type)"]}]}' <<<"$page" >&2
+    [ "$(jq -r '[.projects[].inventory.roots[]?.root] | join(",")' <<<"$page")" = "envs/dev/orders,envs/dev/platform" ] \
+      || { log "the page lists the roots $(jq -c '[.projects[].inventory.roots[]?.root]' <<<"$page"), not envs/dev/orders and envs/dev/platform"; rc=1; }
+    jq -e '[.projects[].inventory.roots[]? | select(.root == "envs/dev/platform") | .resources[] | select(.address == "aws_s3_bucket.logs" and .type == "aws_s3_bucket" and (.provider | endswith("hashicorp/aws")))] | length == 1' <<<"$page" >/dev/null \
+      || { log "envs/dev/platform does not list aws_s3_bucket.logs"; rc=1; }
+    jq -e '[.projects[].inventory.roots[]? | select(.root == "envs/dev/orders") | .resources[].address] as $a | ["module.service.aws_dynamodb_table.records[0]", "module.service.aws_s3_bucket.files", "module.service.aws_s3_object.registration", "module.service.aws_sqs_queue.jobs"] - $a | length == 0' <<<"$page" >/dev/null \
+      || { log "envs/dev/orders does not list the service module's bucket, queue, table and registration"; rc=1; }
+    jq -e '[.projects[].inventory.types[]? | select(.type == "aws_s3_bucket") | .count] == [2]' <<<"$page" >/dev/null \
+      || { log "the project does not count two aws_s3_bucket: $(jq -c '[.projects[].inventory.types]' <<<"$page")"; rc=1; }
+    grep -q '<tbody class="inv" data-root="envs/dev/orders">' <<<"$html" || { log "estate.html shows no envs/dev/orders"; rc=1; }
+    grep -q '<code>module.service.aws_sqs_queue.jobs</code>' <<<"$html" || { log "estate.html does not list the jobs queue"; rc=1; }
+    if grep -q "shop-i$STAMP-" <<<"$inv$page$html"; then log "a resource name, a value in the plan, reached inventory.json or the page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the estate page lists both roots' resources by root and type, and no value"
+  return $rc
+}
+
+claim_resource_history() {
+  # The audit repo (one root, app, holding terraform_data.app) with --gate
+  # always and reports in the bucket. Three commits each set a new input; each
+  # time wave 1 waits, approver-one, approver-two and approver-three approve it
+  # in turn, and the next run applies. terragucci audit writes the record and
+  # terragucci estate the history: terraform_data.app has three applies in
+  # order, a create and two updates of input, approved by approver-one,
+  # approver-two and approver-three, and the estate page links it. No input
+  # value reaches changes.json, the history or the estate page.
+  # BREAK: the second apply copies its report to another prefix, so neither
+  # its report nor its changes are in the bucket and the history lists two.
+  log() { echo "[smoke resource-history] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="history-$STAMP" n who project changes hist html page id got
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  audit_repo "$work" "$prefix"
+  for n in 1 2 3; do
+    [ $rc = 0 ] || break
+    case $n in 1) who=approver-one ;; 2) who=approver-two ;; 3) who=approver-three ;; esac
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "hist-%s-%s"\n}\n' "$STAMP" "$n" > "$work/wave/app/main.tf"
+    printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+    if [ -n "${BREAK:-}" ] && [ $n = 2 ]; then
+      printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s-elsewhere\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+    fi
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input $n"
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 3 ] || { log "change $n: the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; break; }
+    audit_approve "$work/origin.git" "$work/ledger" "$who" wave-1 || { log "change $n: could not approve wave 1"; rc=1; break; }
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 0 ] || { log "change $n: the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    changes="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/changes.json")" || { log "no changes.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+    hist="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/history.json")" || { log "no history.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/history.html")" || { log "no history.html at $REPORT_BUCKET/$prefix"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.resources[] | {address, applies: [.applies[] | {actions, attributes, approver, finished}]}' <<<"$hist" >&2
+    got="$(jq -r '[.resources[] | select(.address == "terraform_data.app") | .applies[] | "\(.actions | join("+")) \(.approver)"] | join(",")' <<<"$hist")"
+    [ "$got" = "create approver-one,update approver-two,update approver-three" ] \
+      || { log "the history of terraform_data.app is [$got], not a create by approver-one and updates by approver-two and approver-three"; rc=1; }
+    jq -e '[.resources[] | select(.address == "terraform_data.app") | .applies | (map(.finished) == (map(.finished) | sort)) and ([.[] | select(.actions == ["update"]) | .attributes | index("input")] | all(. != null))] == [true]' <<<"$hist" >/dev/null \
+      || { log "the applies are not oldest first, or an update does not name input"; rc=1; }
+    id="$(jq -r '.resources[] | select(.address == "terraform_data.app") | .id' <<<"$hist")"
+    grep -q "<section id=\"$id\">" <<<"$html" || { log "history.html has no section for terraform_data.app"; rc=1; }
+    grep -q "href=\"history.html#$id\"" <<<"$page" || { log "estate.html does not link terraform_data.app to its history"; rc=1; }
+    if grep -q "hist-$STAMP-" <<<"$changes$hist$html$page"; then log "an input value reached changes.json, the history or the estate page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "terraform_data.app lists three applies in order, approved by approver-one, approver-two and approver-three, and no value"
+  return $rc
+}
+
 claim_notify_chat() {
   # The gated fixture (gate: always) with approval: pr-review and notify
   # naming two secrets, which hold the addresses of a webhook stand-in: one
@@ -10584,6 +10736,8 @@ apply-outcome        self! weight=120
 audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
+inventory            weight=150
+resource-history     weight=200
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150

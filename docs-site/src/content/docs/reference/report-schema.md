@@ -44,6 +44,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
+| `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
+| `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
 The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
@@ -87,7 +89,31 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON S
 | Field | What it holds |
 |---|---|
 | `generated` | when the page was built; every `age_seconds` is as of then |
-| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, and `overridden_roots` when an override let a root through |
-| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, and `status` (`ok`, `no-index` or `error`) |
+| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, `overridden_roots` when an override let a root through, and `resources` when a project has an inventory |
+| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, `status` (`ok`, `no-index` or `error`), and `inventory`: its resource count, the count of each type (`types`) and each root's resources with the wave that recorded them (`roots`) |
 | `recent[]` | the 20 newest runs across every project |
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |
+| `history` | the resource history beside the page: `page`, how many addresses it holds (`resources`) and `generated`, once an apply changed a resource; each listed resource with a history links its section as `history` |
+
+Each project's `inventory.json` is `terragucci.inventory/v1`, with its JSON Schema in the package as `dist/inventory.schema.json`. A `tf-apply` wave's upload replaces the list of each root it applied, unless the file holds a newer one.
+
+| Field | What it holds |
+|---|---|
+| `roots[]` | by root path: `root`, the `commit`, `wave` and `finished` time of the wave that recorded the list, the wave's directory as `path`, relative to the project's `index.json`, and `resources`, each with `address`, `type` and `provider` |
+
+Each project's `changes.json` is `terragucci.changes/v1`, with its JSON Schema in the package as `dist/changes.schema.json`: one row per resource each applied `tf-apply` wave changed, newest first, up to 20,000 rows. A rerun of the same wave replaces its rows.
+
+| Row field | What it holds |
+|---|---|
+| `address`, `type`, `actions`, `attributes`, `previous_address` | what the wave did to the resource, as in `roots[].applied_changes` |
+| `root`, `commit`, `wave`, `finished`, `path` | the root and the wave, and the wave's directory relative to the project's `index.json` |
+| `plan_digest`, `set_digest` | the root's plan digest, and the wave's set digest, which its approval binds |
+| `pull_request` | the pull or merge request the wave applied |
+
+`history.json` beside the page is `terragucci.history/v1`, with its JSON Schema in the package as `dist/history.schema.json`. `terragucci estate` builds it from every project's `changes.json` and the audit trail.
+
+| Field | What it holds |
+|---|---|
+| `generated` | when it was built |
+| `audit` | whether `audit.jsonl` was read for the approvers |
+| `resources[]` | each address by `project` and `root`, with its `type`, its `id` (the anchor on `history.html`) and `applies`, oldest first: the row's actions, attributes, commit, wave, time and digests, the `report` link, and `approver` from the wave's apply entry in the audit trail, with that entry's `approval` id; `approver` is `null` when no gate held the wave, and absent when the audit trail has no entry for it |
