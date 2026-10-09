@@ -12,6 +12,7 @@
 import { groupAnchor, rootAnchor } from "./build";
 import { actionWord, binaryText, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
 import { duration } from "./spans";
+import { stepResult } from "./views";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
 export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -149,6 +150,7 @@ function rootBlock(r: ReportRoot, wave: number | undefined): string {
   const o = r.policy?.override;
   if (o) body += `<p class="notice">Policy override: ${o.rules.map((x) => `<code>${esc(x)}</code>`).join(", ")} overridden by ${esc(o.by)} at ${esc(o.at)}${o.sealed ? ", sealed" : ""}, for plan <code>${esc(o.plan_digest)}</code>: ${esc(o.reason)}</p>`;
   if (r.policy?.warnings.length) body += `<p class="notice">Policy warnings, which fail nothing:</p><ul>${r.policy.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`;
+  if (r.steps?.length) body += `<p class="notice">Steps that ran:</p><ul class="steps">${r.steps.map((x) => `<li><code>${esc(x.when)}</code> ${esc(x.name)}: ${esc(stepResult(x))} (${x.seconds}s)</li>`).join("")}</ul>`;
   if (shown.length) body += `<ul class="changes">${shown.map(changeRow).join("")}</ul>`;
   if (folded.length) {
     const kinds = [...new Set(folded.map((c) => KIND_WORD[c.kind!]))].join(", ");

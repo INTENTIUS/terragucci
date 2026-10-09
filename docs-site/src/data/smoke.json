@@ -1379,6 +1379,30 @@
       "commit": "df3c5bf"
     },
     {
+      "claim": "steps-before-plan",
+      "says": "a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "795df59"
+    },
+    {
+      "claim": "steps-stop",
+      "says": "a step before apply that exits 1 fails the wave job before anything applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "795df59"
+    },
+    {
+      "claim": "steps-gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "795df59"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,

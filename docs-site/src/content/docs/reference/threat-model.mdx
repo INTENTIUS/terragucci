@@ -151,10 +151,25 @@ With `apply.when: pull-request`, the open change's head runs with the apply role
 | On GitLab, the head the pipeline's variable names is the merge request's head now | a pipeline started by hand for code nobody approved |
 | The head did not move while the comment was read, and contains the default branch as it is now | applying code nobody reviewed, or undoing merged changes |
 | The change does not edit the pipeline file | a change rewriting the job that applies it |
-| Waves, gate, signers, policy and config come from the default branch | a change loosening its own gate |
+| Waves, gate, signers, policy, config and `steps` come from the default branch | a change loosening its own gate, or adding a step that runs with the apply role |
 | No other open pull request holds a lock on its roots | two changes applying the same root |
 
 After the checks, the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) lists it. Review those before approving the head.
+
+## Steps
+
+[`steps`](/terragucci/guides/run-steps/) are commands the stage runs in the plan, apply and drift jobs, with the job's cloud identity and without its forge tokens. On an apply wave that identity is the apply role. So the stage reads `steps` from `terragucci.yml` at base and never from the change it plans or applies.
+
+| Run | Steps read at | So a change cannot |
+|---|---|---|
+| a pull request's plan | the target branch | run a step it adds with the plan role, or skip one it removes |
+| an apply after a merge | the applied commit's first parent, as the approval mode | run a step it adds with the apply role on its own merge, or drop an `on_failure: approve` step to pass its own gate |
+| `apply.when: pull-request` | the base the head applies onto | run a step it adds with the apply role before it merges |
+| drift | the default branch's checkout | (drift runs no change) |
+
+When the base's file cannot be read, the stage runs no step if the checkout names none, and fails if it names some, rather than run the change's. An edit to `steps` therefore takes effect for the changes after it merges.
+
+What this does not stop: a step runs whatever its command runs at the time, so a step that calls a script in the repo runs the change's copy of that script. Keep what a step runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without steps. An `on_failure: approve` step holds a wave at the same gate as the gate policy, so the [approval mode](#what-each-approval-mode-stops) decides who can release it.
 
 ## Where the token scrub ends
 

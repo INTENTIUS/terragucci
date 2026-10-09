@@ -22,6 +22,7 @@ import {
   type ReportPolicy,
   type ReportRootPolicy,
   type ReportRootBinary,
+  type ReportStep,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
@@ -52,6 +53,8 @@ export interface RootInput {
   policy?: ReportRootPolicy;
   /** A `tf-apply` wave applied the root, or it had nothing to apply: the report lists the resources its plan leaves. */
   applied?: boolean;
+  /** The steps that ran for it. */
+  steps?: ReportStep[];
 }
 
 export interface WaveInput {
@@ -66,6 +69,8 @@ export interface WaveInput {
   refused?: ReportWave["refused"];
   /** The pull request whose review would approve a waiting `tf-apply` wave. */
   review?: ReportWave["review"];
+  /** The roots whose `on_failure: approve` step failed: the gate holds the wave. */
+  heldBySteps?: string[];
 }
 
 export interface BuildInput {
@@ -230,6 +235,8 @@ export function buildReport(input: BuildInput): Report {
     const why: string[] = [];
     if (m.status === "failed") why.push(policyRefused(src) ? "refused by policy" : "refused to plan");
     if (src.policy?.override) why.push(`policy overridden by ${src.policy.override.by}`);
+    const holding = (src.steps ?? []).filter((x) => x.status === "approval").map((x) => x.name);
+    if (holding.length) why.push(`step ${holding.join(", ")} asks for an approval`);
     if (src.policy?.warnings.length) why.push(`${src.policy.warnings.length} policy warning${src.policy.warnings.length === 1 ? "" : "s"}`);
     if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
     if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");
@@ -253,6 +260,7 @@ export function buildReport(input: BuildInput): Report {
       why,
       ...(src.policy ? { policy: src.policy } : {}),
       ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: planAppliedChanges(src.plan) } : {}),
+      ...(src.steps?.length ? { steps: src.steps } : {}),
     };
   });
 
@@ -296,7 +304,7 @@ export function buildReport(input: BuildInput): Report {
       const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
       review = {
         review_digest: failed || changing.length === 0 ? null : changeSetDigest(changing),
-        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys)),
+        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys) || (w.heldBySteps?.length ?? 0) > 0),
       };
     }
     return {
@@ -309,6 +317,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
       ...(w.refused ? { refused: w.refused } : {}),
       ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
+      ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
     };
   });
 

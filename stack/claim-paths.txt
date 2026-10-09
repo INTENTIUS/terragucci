@@ -21,12 +21,13 @@ packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs root-pins
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-estimate rollout-continue policy-source reconcile-parallelism wave-jobs
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-estimate rollout-continue policy-source reconcile-parallelism wave-jobs steps-*
 packages/terragucci/src/synth.ts          cdktn-*
+packages/terragucci/src/steps.ts          steps-*
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-* token-scrub plan-token-free check
 packages/terragucci/src/pins.ts           root-pins pinned-install tf-terraform check zero-config note-* report
 packages/terragucci/src/install.ts        root-pins pinned-install tf-terraform tg-terraform cdf-* cost-estimate
@@ -79,7 +80,7 @@ packages/terragucci/src/report/cost.ts   cost-estimate
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora root-pins
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue
