@@ -3651,6 +3651,9 @@ REGO
   [ -n "${BREAK:-}" ] && check_step_unchecked "$cdir/.forgejo/workflows/terragucci.yml"
   body="$(check_step_body "$cdir/.forgejo/workflows/terragucci.yml")"
   grep -q '^choudoufu fmt -check' <<<"$body" || { log "no check step for choudoufu in the pipeline init wrote"; return 1; }
+  # init writes the published tag; this tree's own suffix (TG_IMAGE_SUFFIX) is
+  # added only when push_tree pushes the pipeline.
+  cimage="${cimage%"${TG_IMAGE_SUFFIX:-}"}"
   grep -qF "image: $cimage" "$cdir/.forgejo/workflows/terragucci.yml" || { log "the pipeline init wrote for the choudoufu repo does not run in $cimage"; return 1; }
   run_copied --rm --network terragucci -v "$cdir:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" \
