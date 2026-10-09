@@ -29,6 +29,17 @@ def ts(s):
         return None
 
 
+def host_load(path):
+    """The host's one-minute load average over the run: mean and highest of the samples, and how many."""
+    try:
+        xs = [float(l) for l in open(path) if l.strip()]
+    except (OSError, TypeError, ValueError):
+        return None
+    if not xs:
+        return None
+    return {"samples": len(xs), "mean": round(sum(xs) / len(xs), 2), "max": round(max(xs), 2), "cpus": os.cpu_count()}
+
+
 def run_record(a):
     manifest = json.load(open(a.manifest))
     jobs = [json.loads(line) for line in open(a.jobs) if line.strip()]
@@ -57,8 +68,9 @@ def run_record(a):
             longest[j["phase"]] = {"seconds": round(secs), "job": j["name"], "repo": j["repo"]}
     notes = []
     for line in open(a.notes):
-        repo, size, roots = line.rstrip("\n").split("\t")
-        notes.append({"repo": repo, "bytes": int(size), "roots": int(roots)})
+        repo, size, roots, *cut = line.rstrip("\n").split("\t")
+        # cut: the note was cut to stay within the forge's comment limit; the job's report has all of it.
+        notes.append({"repo": repo, "bytes": int(size), "roots": int(roots), "cut": bool(cut and int(cut[0]))})
     roots_by_repo = {r["name"]: len(r["roots"]) for r in manifest["repos"]}
     for n in notes:
         if n["roots"] != roots_by_repo.get(n["repo"]):
@@ -88,6 +100,7 @@ def run_record(a):
             "roots_per_repo": int(a.per_repo),
             "choudoufu_ref": a.choudoufu,
         },
+        "host_load": host_load(a.load),
         "passed": runs_ok and not failed,
         # Times the bench restarted its runner because Forgejo left a job waiting with the runner idle.
         "runner_restarts": int(a.restarts or 0),
@@ -133,7 +146,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--merge")
     ap.add_argument("--out")
-    for k in ["manifest", "runs", "jobs", "notes", "reports", "phases", "created", "held", "release", "choudoufu", "capacity", "per-repo", "parallelism", "restarts"]:
+    for k in ["manifest", "runs", "jobs", "notes", "reports", "phases", "created", "held", "release", "choudoufu", "capacity", "per-repo", "parallelism", "restarts", "load"]:
         ap.add_argument("--" + k)
     a = ap.parse_args()
     merge(a) if a.merge else run_record(a)

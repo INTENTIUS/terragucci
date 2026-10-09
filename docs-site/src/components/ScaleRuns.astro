@@ -1,0 +1,68 @@
+---
+// The scale bench's runs, as last recorded by `just scale record`.
+import record from '../data/scale.json';
+
+type Run = (typeof record.runs)[number];
+const runs = record.runs as Run[];
+
+const n = (v: number) => v.toLocaleString('en-US');
+const mins = (s: number) => (s < 90 ? `${s} s` : `${Math.round(s / 60)} min`);
+const kb = (b: number) => (b < 1_000_000 ? `${Math.round(b / 1000)} kB` : `${(b / 1_000_000).toFixed(1)} MB`);
+// A run of a commit on main records the release before it and the commit: 0.4.1+9cc0eca.
+const build = (release: string) => (release.includes('+') ? `main at ${release.split('+')[1]}` : release);
+const host = (r: Run) => {
+	const load = (r as { host_load?: { mean: number; cpus: number } | null }).host_load;
+	return `${r.host.os === 'darwin' ? 'macOS' : r.host.os === 'linux' ? 'Linux' : r.host.os} ${r.host.arch}, ${r.host.runner_capacity} jobs at once${load ? `, mean load ${load.mean} on ${load.cpus} CPUs` : ''}`;
+};
+---
+<div class="tg-scale not-content">
+	<table>
+		<thead>
+			<tr>
+				<th>Resources</th><th>Roots</th><th>Repos</th>
+				<th>Create</th><th>Plan</th><th>Change</th><th>Runner minutes</th>
+				<th>Largest plan note</th><th>Largest report</th><th>Run</th>
+			</tr>
+		</thead>
+		<tbody>
+			{runs.map((r) => (
+				<tr>
+					<td>{n(r.estate.resources)}</td>
+					<td>{n(r.estate.roots)}</td>
+					<td>{r.estate.repos}</td>
+					<td>{mins(r.wall_seconds.create)}</td>
+					<td>{mins(r.wall_seconds.plan)}</td>
+					<td>{mins(r.wall_seconds.change)}</td>
+					<td>{n(Math.round(r.runner_minutes.total))}</td>
+					<td>{kb(r.note.bytes_max)}</td>
+					<td>{kb(r.reports.report_json_bytes_max)}</td>
+					<td>{build(r.release)}, {r.finished_at.slice(0, 10)}, {host(r)}</td>
+				</tr>
+			))}
+		</tbody>
+	</table>
+</div>
+
+<style>
+	.tg-scale {
+		overflow-x: auto;
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.9rem;
+	}
+	th {
+		text-align: left;
+		font-weight: 500;
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+		padding: 0.5rem 0.75rem 0.5rem 0;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+	}
+	td {
+		padding: 0.5rem 0.75rem 0.5rem 0;
+		border-bottom: 1px solid var(--sl-color-gray-6);
+		vertical-align: top;
+	}
+</style>

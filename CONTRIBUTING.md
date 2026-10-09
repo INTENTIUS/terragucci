@@ -390,7 +390,7 @@ just scale down               # its containers, network and volumes
 | Variable | Default | What it sets |
 |---|---|---|
 | `TGSCALE_RELEASE` | the newest on npm | the published release whose `reconcile` writes the pipelines and whose images the jobs run |
-| `TGSCALE_BUILD=tree` | unset | runs this tree instead: its bundle reconciles, and one more commit on each pipeline pull request points the jobs at `tgscale-tofu:<commit>`, the release's tofu image with the tree's bundle in it; commit first, since the tag is the commit |
+| `TGSCALE_BUILD=tree` | unset | runs this tree instead: its bundle reconciles, and one more commit on each pipeline pull request points the jobs at `tgscale-tofu:<commit>`, the release's tofu image with the tree's bundle in it; the commit is the newest one of `packages/terragucci`, so the run refuses uncommitted changes there |
 | `TGSCALE_CAPACITY` | 3 | jobs the runner runs at once (set at `up`) |
 | `TGSCALE_PARALLELISM` | 4 | `parallelism` in each repo's `terragucci.yml` |
 | `TGSCALE_ROOTS_PER_REPO` | 100 | identity roots per repo |

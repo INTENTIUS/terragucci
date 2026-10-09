@@ -1,0 +1,492 @@
+{
+  "runs": [
+    {
+      "finished_at": "2026-10-08T21:53:53Z",
+      "release": "0.4.1+9cc0eca",
+      "substrate": "floci",
+      "forge": "forgejo",
+      "host": {
+        "os": "darwin",
+        "arch": "arm64",
+        "runner_capacity": 3,
+        "parallelism": 4
+      },
+      "estate": {
+        "terralith_scale": 1,
+        "resources": 79,
+        "roots": 11,
+        "repos": 2,
+        "roots_per_repo": 100,
+        "choudoufu_ref": "1c8ede26372fcb0b653084574d1b326f1c58d935"
+      },
+      "passed": true,
+      "runner_restarts": 0,
+      "failures": [],
+      "wall_seconds": {
+        "reconcile": 44,
+        "create": 60,
+        "plan": 30,
+        "change": 55,
+        "total": 189
+      },
+      "runner_minutes": {
+        "reconcile": 0.4,
+        "create": 1.5,
+        "plan": 0.7,
+        "change": 1.3,
+        "total": 3.9
+      },
+      "longest_job": {
+        "reconcile": {
+          "seconds": 13,
+          "job": "check",
+          "repo": "identity-00"
+        },
+        "create": {
+          "seconds": 22,
+          "job": "apply-wave-2",
+          "repo": "platform"
+        },
+        "plan": {
+          "seconds": 16,
+          "job": "check",
+          "repo": "identity-00"
+        },
+        "change": {
+          "seconds": 27,
+          "job": "apply-wave-1",
+          "repo": "identity-00"
+        }
+      },
+      "note": {
+        "bytes_max": 32949,
+        "bytes_total": 45779,
+        "by_repo": [
+          {
+            "repo": "platform",
+            "bytes": 12830,
+            "roots": 3
+          },
+          {
+            "repo": "identity-00",
+            "bytes": 32949,
+            "roots": 8
+          }
+        ]
+      },
+      "reports": {
+        "objects": 112,
+        "bytes_total": 2395753,
+        "report_json_bytes_max": 121386,
+        "report_html_bytes_max": 169454
+      }
+    },
+    {
+      "finished_at": "2026-10-08T22:04:52Z",
+      "release": "0.4.1+9cc0eca",
+      "substrate": "floci",
+      "forge": "forgejo",
+      "host": {
+        "os": "darwin",
+        "arch": "arm64",
+        "runner_capacity": 3,
+        "parallelism": 4
+      },
+      "estate": {
+        "terralith_scale": 4,
+        "resources": 301,
+        "roots": 41,
+        "repos": 2,
+        "roots_per_repo": 100,
+        "choudoufu_ref": "1c8ede26372fcb0b653084574d1b326f1c58d935"
+      },
+      "passed": true,
+      "runner_restarts": 0,
+      "failures": [],
+      "wall_seconds": {
+        "reconcile": 145,
+        "create": 145,
+        "plan": 88,
+        "change": 148,
+        "total": 526
+      },
+      "runner_minutes": {
+        "reconcile": 1.5,
+        "create": 3.6,
+        "plan": 2.4,
+        "change": 3.1,
+        "total": 10.5
+      },
+      "longest_job": {
+        "reconcile": {
+          "seconds": 61,
+          "job": "check",
+          "repo": "identity-00"
+        },
+        "create": {
+          "seconds": 79,
+          "job": "apply-wave-1",
+          "repo": "identity-00"
+        },
+        "plan": {
+          "seconds": 71,
+          "job": "check",
+          "repo": "identity-00"
+        },
+        "change": {
+          "seconds": 76,
+          "job": "apply-wave-1",
+          "repo": "identity-00"
+        }
+      },
+      "note": {
+        "bytes_max": 98118,
+        "bytes_total": 118649,
+        "by_repo": [
+          {
+            "repo": "platform",
+            "bytes": 20531,
+            "roots": 9
+          },
+          {
+            "repo": "identity-00",
+            "bytes": 98118,
+            "roots": 32
+          }
+        ]
+      },
+      "reports": {
+        "objects": 232,
+        "bytes_total": 8143096,
+        "report_json_bytes_max": 474558,
+        "report_html_bytes_max": 629629
+      }
+    },
+    {
+      "finished_at": "2026-10-08T22:26:42Z",
+      "release": "0.4.1+9cc0eca",
+      "substrate": "floci",
+      "forge": "forgejo",
+      "host": {
+        "os": "darwin",
+        "arch": "arm64",
+        "runner_capacity": 3,
+        "parallelism": 4
+      },
+      "estate": {
+        "terralith_scale": 10,
+        "resources": 745,
+        "roots": 101,
+        "repos": 2,
+        "roots_per_repo": 100,
+        "choudoufu_ref": "1c8ede26372fcb0b653084574d1b326f1c58d935"
+      },
+      "passed": true,
+      "runner_restarts": 0,
+      "failures": [],
+      "wall_seconds": {
+        "reconcile": 284,
+        "create": 347,
+        "plan": 167,
+        "change": 382,
+        "total": 1180
+      },
+      "runner_minutes": {
+        "reconcile": 2.8,
+        "create": 7.8,
+        "plan": 4.6,
+        "change": 7.6,
+        "total": 22.9
+      },
+      "longest_job": {
+        "reconcile": {
+          "seconds": 125,
+          "job": "check",
+          "repo": "identity-00"
+        },
+        "create": {
+          "seconds": 200,
+          "job": "apply-wave-1",
+          "repo": "identity-00"
+        },
+        "plan": {
+          "seconds": 138,
+          "job": "check",
+          "repo": "identity-00"
+        },
+        "change": {
+          "seconds": 212,
+          "job": "apply-wave-1",
+          "repo": "identity-00"
+        }
+      },
+      "note": {
+        "bytes_max": 227558,
+        "bytes_total": 262509,
+        "by_repo": [
+          {
+            "repo": "platform",
+            "bytes": 34951,
+            "roots": 21
+          },
+          {
+            "repo": "identity-00",
+            "bytes": 227558,
+            "roots": 80
+          }
+        ]
+      },
+      "reports": {
+        "objects": 472,
+        "bytes_total": 19599509,
+        "report_json_bytes_max": 1170312,
+        "report_html_bytes_max": 1535789
+      }
+    },
+    {
+      "finished_at": "2026-10-09T03:14:24Z",
+      "release": "0.4.1+9cc0eca",
+      "substrate": "floci",
+      "forge": "forgejo",
+      "host": {
+        "os": "darwin",
+        "arch": "arm64",
+        "runner_capacity": 3,
+        "parallelism": 4
+      },
+      "estate": {
+        "terralith_scale": 50,
+        "resources": 3705,
+        "roots": 501,
+        "repos": 5,
+        "roots_per_repo": 100,
+        "choudoufu_ref": "1c8ede26372fcb0b653084574d1b326f1c58d935"
+      },
+      "passed": true,
+      "runner_restarts": 0,
+      "failures": [],
+      "wall_seconds": {
+        "reconcile": 617,
+        "create": 814,
+        "plan": 429,
+        "change": 638,
+        "total": 2498
+      },
+      "runner_minutes": {
+        "reconcile": 12.9,
+        "create": 32.8,
+        "plan": 17.9,
+        "change": 29.9,
+        "total": 93.5
+      },
+      "longest_job": {
+        "reconcile": {
+          "seconds": 155,
+          "job": "check",
+          "repo": "identity-02"
+        },
+        "create": {
+          "seconds": 269,
+          "job": "apply-wave-2",
+          "repo": "platform"
+        },
+        "plan": {
+          "seconds": 166,
+          "job": "check",
+          "repo": "platform"
+        },
+        "change": {
+          "seconds": 240,
+          "job": "apply-wave-1",
+          "repo": "identity-01"
+        }
+      },
+      "note": {
+        "bytes_max": 397792,
+        "bytes_total": 1230772,
+        "by_repo": [
+          {
+            "repo": "platform",
+            "bytes": 129854,
+            "roots": 101
+          },
+          {
+            "repo": "identity-00",
+            "bytes": 234352,
+            "roots": 100
+          },
+          {
+            "repo": "identity-01",
+            "bytes": 234418,
+            "roots": 100
+          },
+          {
+            "repo": "identity-02",
+            "bytes": 234356,
+            "roots": 100
+          },
+          {
+            "repo": "identity-03",
+            "bytes": 397792,
+            "roots": 100
+          }
+        ]
+      },
+      "reports": {
+        "objects": 2159,
+        "bytes_total": 96394450,
+        "report_json_bytes_max": 2255820,
+        "report_html_bytes_max": 2926128
+      }
+    },
+    {
+      "finished_at": "2026-10-09T05:24:36Z",
+      "release": "0.4.1+9cc0eca",
+      "substrate": "floci",
+      "forge": "forgejo",
+      "host": {
+        "os": "darwin",
+        "arch": "arm64",
+        "runner_capacity": 3,
+        "parallelism": 4
+      },
+      "estate": {
+        "terralith_scale": 136,
+        "resources": 10069,
+        "roots": 1361,
+        "repos": 12,
+        "roots_per_repo": 100,
+        "choudoufu_ref": "1c8ede26372fcb0b653084574d1b326f1c58d935"
+      },
+      "host_load": {
+        "samples": 123,
+        "mean": 16.11,
+        "max": 63.01,
+        "cpus": 18
+      },
+      "passed": true,
+      "runner_restarts": 0,
+      "failures": [],
+      "wall_seconds": {
+        "reconcile": 1593,
+        "create": 2457,
+        "plan": 1225,
+        "change": 1945,
+        "total": 7220
+      },
+      "runner_minutes": {
+        "reconcile": 39.4,
+        "create": 98.9,
+        "plan": 56.8,
+        "change": 92.1,
+        "total": 287.2
+      },
+      "longest_job": {
+        "reconcile": {
+          "seconds": 421,
+          "job": "check",
+          "repo": "platform"
+        },
+        "create": {
+          "seconds": 804,
+          "job": "apply-wave-2",
+          "repo": "platform"
+        },
+        "plan": {
+          "seconds": 517,
+          "job": "check",
+          "repo": "platform"
+        },
+        "change": {
+          "seconds": 444,
+          "job": "check",
+          "repo": "platform"
+        }
+      },
+      "note": {
+        "bytes_max": 397701,
+        "bytes_total": 3323705,
+        "by_repo": [
+          {
+            "repo": "platform",
+            "bytes": 332907,
+            "roots": 273,
+            "cut": false
+          },
+          {
+            "repo": "identity-00",
+            "bytes": 234418,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-01",
+            "bytes": 234352,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-02",
+            "bytes": 234352,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-03",
+            "bytes": 234348,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-04",
+            "bytes": 234348,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-05",
+            "bytes": 234352,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-06",
+            "bytes": 234352,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-07",
+            "bytes": 234352,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-08",
+            "bytes": 368086,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-09",
+            "bytes": 397701,
+            "roots": 100,
+            "cut": false
+          },
+          {
+            "repo": "identity-10",
+            "bytes": 350137,
+            "roots": 88,
+            "cut": false
+          }
+        ]
+      },
+      "reports": {
+        "objects": 5802,
+        "bytes_total": 261631058,
+        "report_json_bytes_max": 5212377,
+        "report_html_bytes_max": 5865988
+      }
+    }
+  ]
+}
