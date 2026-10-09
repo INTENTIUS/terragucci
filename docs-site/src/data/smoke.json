@@ -948,7 +948,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0416c76"
+      "commit": "eed34e9"
     },
     {
       "claim": "comment-refused",
@@ -1220,7 +1220,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "eed34e9"
     },
     {
       "claim": "audit",
@@ -1228,7 +1228,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0416c76"
+      "commit": "eed34e9"
     },
     {
       "claim": "audit-override",
@@ -1244,7 +1244,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "eed34e9"
     },
     {
       "claim": "audit-control",
@@ -1260,7 +1260,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0416c76"
+      "commit": "eed34e9"
     },
     {
       "claim": "resource-history",
@@ -1268,7 +1268,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0416c76"
+      "commit": "eed34e9"
     },
     {
       "claim": "state-versions",
@@ -1276,7 +1276,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0416c76"
+      "commit": "eed34e9"
+    },
+    {
+      "claim": "migrate-split",
+      "says": "a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "eed34e9"
     },
     {
       "claim": "notify-chat",

@@ -1,0 +1,111 @@
+---
+title: Move resources between roots
+description: Split a root in two, merge two roots, or hand a resource to another root, with a migration file in the pull request, proved with no change, approved by digest and written under the state lock.
+claims: [migrate-split]
+prompt: |
+  Read https://intentius.io/terragucci/guides/move-resources-between-roots/.
+  In this repo, move the resource blocks I name from their root to the root I name, write the migration file the page describes for that move, and open a pull request.
+  Tell me which roots the migration touches and what the plan job must prove. Do not run state commands or write any state.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A resource that moves from one root's state to another's through the same gate as an apply, with no destroy and no create. `moved`, `import` and `removed` blocks work inside one root. A migration file covers the move they cannot make: from one root to another.
+
+| Step | Who | What happens |
+|---|---|---|
+| the pull request's plan job | terragucci | builds each affected root's new state in the job, plans every root against it, requires no change, and prints the migration's digest |
+| the apply job's wave 1, after the merge | terragucci | proves the migration again and waits for an approval of that digest; no wave plans until the migration applies |
+| `chant approve tf-migrate <name> --plan <digest>`, with [chant](/terragucci/concepts/glossary/#chant) | you | approves that digest and nothing else |
+| wave 1 again | terragucci | takes each state's lock file, refuses if a state moved since the plan, writes the new states, plans every root again and requires no change, and records each state's version id before and after |
+
+The migration's digest covers the file, each root's state version and digest before, and the digest of each new state. A state written by anyone after the approval changes the digest, and wave 1 refuses with exit 4, naming the root.
+
+State contents stay in your backend and the job's temporary directory. The record holds version ids and digests.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| Plain Terraform or OpenTofu roots | a Terragrunt unit is refused |
+| An `s3` backend with `use_lockfile = true`, or a `local` backend, in every root the migration touches | the job holds the S3 lock file while it writes; a root with a `cloud` block, or another backend, is refused |
+| Bucket versioning on, for S3 | each version id before is the version to go back to; see [Find the state version an apply left](/terragucci/guides/find-a-state-version/) |
+| An apply identity that can write the state objects and their `.tflock` files | the same rights `use_lockfile` already needs |
+
+## Steps
+
+<Steps>
+
+1. Move the resource blocks in code. Cut `aws_sqs_queue.jobs` from `envs/dev/platform` and paste it into `envs/dev/queues`, with any variables and outputs it needs.
+
+2. Write the migration file, `migrations/split-queues.yml`. The file's name, without `.yml`, names the migration and its gate:
+
+   ```yaml
+   moves:
+     - from: envs/dev/platform
+       to: envs/dev/queues
+       addresses:
+         - aws_sqs_queue.jobs
+   ```
+
+   [Migration files](/terragucci/reference/migration-files/) lists what an address can name.
+
+3. Open the pull request. The plan job proves the migration and prints its digest:
+
+   ```text
+   migration split-queues: moving aws_sqs_queue.jobs from envs/dev/platform to envs/dev/queues
+   envs/dev/platform: no changes against its new state
+   envs/dev/queues: no changes against its new state
+   migration split-queues: every root plans with no change against its new state; digest jcs1-sha256:b298de39...
+   ```
+
+   The job fails when a root would change against its new state, and names each change. The roots' own plans in the same note still show the move as a destroy in one root and a create in the other: they plan against the states as they are, before the migration writes.
+
+4. Merge. Wave 1 proves the migration again and waits, exit 3:
+
+   ```text
+   migration split-queues waits for an approval of digest jcs1-sha256:b298de39.... Read the proof above, then approve it with:
+     chant approve tf-migrate split-queues --plan jcs1-sha256:b298de39...
+   ```
+
+   Every later wave waits on wave 1, so no root applies against a state the migration is about to rewrite.
+
+5. Approve the digest, as printed. Under `approval: sealed` add `--sign`. A pull request review does not approve a migration, under any `approval:` mode.
+
+6. Run wave 1 again. It writes the states and goes on to plan and apply the wave:
+
+   ```text
+   migration split-queues: approved by alice for this digest
+   envs/dev/queues: wrote its new state
+   envs/dev/platform: wrote its new state
+   envs/dev/platform: version a7d36113-... before, 0dca9e05-... after
+   envs/dev/queues: version none before, 3a695fbf-... after
+   migration split-queues applied
+   ```
+
+   It writes the root that gains resources first. A write that stops half way leaves a resource in both states, never in neither.
+
+</Steps>
+
+## What is recorded
+
+| Where | What it holds |
+|---|---|
+| `terragucci-report/migrations/<name>.json` in the job, and `<prefix>/<project>/migrations/<name>.json` in the [reports bucket](/terragucci/reference/reports-bucket/) | the moves, each root's version id and digest before and after, the proof and the plan after the write, the approver and the outcome |
+| `_gates/tf-migrate/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) | one line per migration that wrote its states: the digest, the approver, the result and each root's version before and after |
+| the [audit trail](/terragucci/reference/audit-trail/) | a `migration` entry from that line, and the gate's request and approval |
+
+A migration that applied never runs again. Its file can stay in the repo; changing it after it applied fails wave 1, so write a new file for a new move.
+
+## When it stops
+
+| Wave 1 says | Exit | What to do |
+|---|---|---|
+| a root would change against its new state | 1 | fix the code or the file so the move is exact, and push again |
+| the states moved since the approval | 4 | read the new proof, and approve the new digest it prints |
+| under the lock, a state is not the one planned | 4 | run wave 1 again: it plans from the states as they are |
+| a state is locked | 1 | wait for the run that holds it, then run wave 1 again |
+| after the write, a root plans changes | 1 | the states were written; the record names each version before, which [Find the state version an apply left](/terragucci/guides/find-a-state-version/#go-back-to-a-version) restores |

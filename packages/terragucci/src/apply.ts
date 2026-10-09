@@ -65,7 +65,7 @@
  * waits for an approval; 4 the wave's plans changed after approval.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeChangedWave, waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
@@ -99,6 +99,7 @@ import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
+import { MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -106,6 +107,9 @@ export const APPLY_OP = "tf-apply";
 export const waveGate = (wave: number): string => `wave-${wave}`;
 /** The approval command a waiting wave prints, bound to the digest it planned, and under `approval: sealed` sealed with the approver's key. */
 export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string => approveCommand(wave, digest, mode === "sealed");
+
+/** The migration files in a repo's migrations/. */
+const listMigrationFiles = (repo: string): string[] => readdirSync(join(repo, MIGRATIONS_DIR)).filter((f) => /\.ya?ml$/.test(f));
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
@@ -676,6 +680,11 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
   if (options.approval !== undefined && !APPROVALS.includes(options.approval)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
   if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("--wave must be a wave number from 1");
+  // A state migration in the change runs before the first wave plans, behind its own gate (./migrate.ts).
+  if (wave === 1) {
+    const held = await migrationsFirst(repo, options, w);
+    if (held !== undefined) return held;
+  }
   if (options.terragrunt) return runTerragruntWave(repo, options, work, w, facts);
   const waves = applyWaves(options.layers, options.canary);
   const roots = waves[wave - 1];
@@ -768,6 +777,60 @@ async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: 
     console.log(`${p.root}: state${where}${v.version_id ? ` version ${v.version_id}` : `, versions ${v.versioning}${v.note ? ` (${v.note})` : ""}`}`);
   }
   return out;
+}
+
+/**
+ * Run the repo's state migrations that have not run (./migrate.ts), before
+ * wave 1 plans: every later wave waits on wave 1, so no root applies against
+ * a state a migration is about to rewrite. Returns the exit code when a
+ * migration waits, is refused or fails; undefined to go on. Each record goes
+ * to `terragucci-report/migrations/` and, with `reports.bucket`, to
+ * `<prefix>/<project>/migrations/<name>.json`.
+ */
+async function migrationsFirst(repo: string, options: ApplyWaveOptions, w: WaveRun): Promise<number | undefined> {
+  if (!existsSync(join(repo, MIGRATIONS_DIR))) return undefined;
+  const env = options.env ?? process.env;
+  if (options.terragrunt) {
+    if (listMigrationFiles(repo).length === 0) return undefined;
+    console.log(`wave 1: ${MIGRATIONS_DIR}/ holds a migration, and migrations move the state of Terraform and OpenTofu roots, not Terragrunt units; nothing was applied`);
+    writeOutcome(options.env, "wave 1: migrations refuse Terragrunt units", w);
+    return EXIT.failed;
+  }
+  const run = await runMigrations(repo, {
+    binary: options.binary,
+    env,
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.approval ? { approval: options.approval } : {}),
+    ...(options.base ? { base: options.base } : {}),
+    ...(options.config ? { config: options.config } : {}),
+  });
+  if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env);
+  if (run.code === EXIT.applied) return undefined;
+  const last = run.records[run.records.length - 1];
+  if (run.command) w.command = run.command;
+  const what = last ? `migration ${last.name}` : "a migration";
+  writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, w);
+  console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
+  return run.code;
+}
+
+/** Copy each migration record to the reports bucket, when the config names one. A copy that fails is logged. */
+async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, records: MigrationRecord[], env: NodeJS.ProcessEnv): Promise<void> {
+  const configPath = options.config ?? findConfig(repo);
+  const read = await waveSettings(repo, options, configPath).catch(() => undefined);
+  if (!read || "error" in read || !read.settings.reports?.bucket) return;
+  const reports = read.settings.reports;
+  const project = runFacts(repo, env, read.settings.forge).project;
+  const store = storeFromEnv(reports, env);
+  for (const r of records) {
+    const key = [reports.prefix ?? "", project, "migrations", `${r.name}.json`].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/");
+    try {
+      await store.put(key, JSON.stringify(r, null, 2) + "\n", "application/json");
+      console.log(`migration ${r.name}: record copied to ${store.location}/${key}`);
+    } catch (e) {
+      console.log(`migration ${r.name}: the record was not copied to ${reports.bucket}: ${(e as Error).message}`);
+    }
+  }
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */

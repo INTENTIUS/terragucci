@@ -18,6 +18,7 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/<project>/index.json`, `index.html` | every upload | one project's runs, newest first |
 | `<prefix>/<project>/inventory.json` | a `tf-apply` wave's upload | the resources each root holds, from its newest applied wave |
 | `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first |
+| `<prefix>/<project>/migrations/<name>.json` | wave 1 of `tf-apply`, when it runs a [state migration](/terragucci/reference/migration-files/) | the migration's record: each root's state version and digest before and after, never a state's contents |
 | `<prefix>/<project>/states.json` | a `tf-apply` wave's upload | the state version id each root's applies left, newest first; never a state's contents |
 | `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
