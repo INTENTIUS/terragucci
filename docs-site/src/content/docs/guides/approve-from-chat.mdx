@@ -1,0 +1,143 @@
+---
+title: Approve from Slack and Teams
+description: Approve or decline a waiting wave from its chat message, through a relay you run in your own cloud, which checks who clicked against the signers file and approves only the plans the message showed.
+claims: [chat-approve, chat-approve-teams, chat-approve-lambda]
+prompt: |
+  Read https://intentius.io/terragucci/guides/approve-from-chat/.
+  Add `relay: terragucci` under `notify:` in terragucci.yml, and `apply.resume` if it is missing, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.
+  Tell me which chat ids each approver needs on their line, and which token, secrets and Slack or Teams settings I must create; do not edit the signers file yourself, and do not create a token, a secret, a Slack app or a Teams webhook.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A waiting wave's Slack message has an Approve and a Decline button. In Teams, the card gives the reply that approves, `@terragucci approve wave-2 <digest>`, because Teams sends a card's buttons only to a registered bot. A click or a reply goes to `terragucci relay`, which you run in your own cloud. terragucci hosts nothing.
+
+| A click by | Under `approval: ledger` or `pr-review` | Under `approval: sealed` |
+|---|---|---|
+| a chat user the signers file lists beside their principal | the relay records the approval of the digest the message showed, as that principal, relayed by the relay, and says so in the thread; the resume job applies the wave | refused: only the approver's own key seals an approval, so they run `terragucci approve --sign` |
+| a chat user no line lists | refused in the thread; nothing is recorded | the same |
+| anyone, after the plans moved | refused, naming the digest waiting now; nothing is recorded | the same |
+
+Decline records nothing. The relay says in the thread who declined, and the wave keeps waiting until someone approves its plans.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| [Chat notices](/terragucci/guides/notify-a-chat-channel/) for the channel | the buttons go on those messages |
+| [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) | the relay starts no job, so the resume job applies the wave once the approval stands |
+| A signers file, `.chant/allowed_signers`, on the default branch | the relay maps a chat user to a principal there |
+| A place to run a container, or a function | the relay runs in your cloud |
+
+## Steps
+
+<Steps>
+
+1. List each approver's chat ids on their line of `.chant/allowed_signers`, beside their principal, and merge it. The relay reads the file on the default branch for every click.
+
+   ```text
+   alice@acme.com,slack:T0123ABCD/U0456EFGH,teams:6f1c2d0e-1a2b-4c3d-8e9f-0a1b2c3d4e5f ssh-ed25519 AAAAC3Nz...
+   ```
+
+   | Chat | The id | Where to find it |
+   |---|---|---|
+   | Slack | `slack:<team id>/<user id>` | the user's profile, Copy member ID; the workspace's team id is in its settings |
+   | Teams | `teams:<Entra object id>` | the user's Object ID in Microsoft Entra |
+
+   The approval records the line's first principal that is not a chat id. A chat id listed on two people's lines maps to neither.
+
+2. Make the relay's token. It is approve-only: the relay refuses to start with a token that can do more than read the repo and push [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       A fine-grained token for this repo alone, with Contents: Read and write and nothing else, from an account that does not administer the repo. The default branch must be protected. The relay refuses a classic token.
+     </TabItem>
+     <TabItem label="GitLab">
+       A project access token with the Developer role and the `write_repository` and `read_api` scopes. The default branch must be protected with push allowed to Maintainers or no one, and `chant/lifecycle` protected with push for Developers.
+     </TabItem>
+     <TabItem label="Forgejo">
+       A user with write access to the repo, and a token of theirs scoped `write:repository` and `read:user`. Protect the default branch so that user may not push to it.
+     </TabItem>
+   </Tabs>
+
+3. Set up the chat side.
+
+   <Tabs syncKey="chat">
+     <TabItem label="Slack">
+       In the Slack app that holds the channel's incoming webhook, turn on Interactivity and set its Request URL to the relay's address with `/slack`. Copy the app's Signing Secret.
+     </TabItem>
+     <TabItem label="Teams">
+       In the team, add an outgoing webhook named `terragucci` whose callback URL is the relay's address with `/teams`. Copy the security token Teams shows once.
+     </TabItem>
+   </Tabs>
+
+4. Run the relay. It reads its settings from [its environment](/terragucci/reference/environment/#the-relay).
+
+   <Tabs syncKey="relay">
+     <TabItem label="Container">
+       Any container platform, such as ECS, Cloud Run, Azure Container Apps or Kubernetes, behind HTTPS:
+
+       ```bash
+       docker run -p 8080:8080 \
+         -e TERRAGUCCI_RELAY_REPO=https://github.com/acme/infra.git \
+         -e TERRAGUCCI_RELAY_TOKEN -e SLACK_SIGNING_SECRET -e TEAMS_WEBHOOK_SECRET \
+         ghcr.io/intentius/terragucci-tofu:<the tag init names> terragucci relay
+       ```
+     </TabItem>
+     <TabItem label="Function">
+       An AWS Lambda function from a container image, with a function URL. The [Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter) 1.1.0 extension passes each request to the same server, once `/healthz` answers:
+
+       ```dockerfile
+       FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>
+       COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter
+       ENV PORT=8080
+       ENV AWS_LWA_READINESS_CHECK_PATH=/healthz
+       CMD ["terragucci", "relay"]
+       ```
+
+       The adapter reads `PORT` when `AWS_LWA_PORT` is unset, and the relay serves on it. Give the function a timeout of 30 seconds or more: each cold start fetches the repo before the first request.
+
+       Keep the token and the secrets in Secrets Manager and pass them to the function's environment.
+     </TabItem>
+   </Tabs>
+
+   The log names the repo, its default branch and the user it pushes as. A token that can do more than approve stops it there, naming why.
+
+5. Name the relay in `terragucci.yml`, write the pipeline again and merge it:
+
+   ```yaml
+   apply:
+     resume: 5
+   notify:
+     slack: SLACK_WEBHOOK_URL
+     relay: terragucci
+   ```
+
+   ```bash
+   npx terragucci init
+   ```
+
+   `relay` is the name Teams shows the outgoing webhook by, and not a secret. The next waiting wave's message carries the buttons.
+
+</Steps>
+
+## What the relay checks
+
+| Check | Refused when |
+|---|---|
+| The request's signature: Slack's signing secret over the timestamp and body, or the Teams outgoing webhook's HMAC over the body | it does not verify, or a Slack request is more than five minutes old (401) |
+| The chat user | no line of the signers file on the default branch lists them |
+| The mode | the default branch's `approval` is `sealed` |
+| The digest | no wave waits for the digest the button or reply names |
+
+Slack waits three seconds for the relay to answer a click. When fetching the repo and pushing the approval takes longer, Slack shows the person a timeout, and the reply in the thread still says what was recorded.
+
+The approval line carries `relayedBy` and `via: slack` or `via: teams`, and the [audit trail](/terragucci/reference/audit-trail/) shows who relayed it. The [threat model](/terragucci/reference/threat-model/#the-chat-relay) says what the relay is trusted with.
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/) from a checkout
+- [Tell a chat channel when a wave stops](/terragucci/guides/notify-a-chat-channel/)
