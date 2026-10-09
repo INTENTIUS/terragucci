@@ -294,6 +294,7 @@ alerts-fire|with short thresholds every alert init writes fires on its signal, a
 blob-gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
+note-footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
 cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
 apply-outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
@@ -7853,6 +7854,49 @@ statuses_of() { # repo, sha, context -> how many statuses carry it
   api "$URL/api/v1/repos/$1/commits/$2/statuses?limit=100" | jq --arg c "$3" '[.[] | select(.context == $c)] | length'
 }
 
+claim_note_footer() {
+  # A scratch repo with two roots and a pull request that changes app. Its
+  # plan note's last line is the footer, Forgejo's Markdown renderer makes an
+  # image of the footer's taco, and the image answers 200 with a PNG.
+  # BREAK: the plan job points the note's footer at an image the site does
+  # not serve, so the note has a broken taco.
+  log() { echo "[smoke note-footer] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/note-footer" wf head pr i note footer img html got magic rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo note-footer || return 1
+  if [ -n "${BREAK:-}" ]; then
+    wf="$work/tree/.forgejo/workflows/terragucci.yml"
+    sed 's#\(cat terragucci-report/note.md; } >terragucci-report/plan-note.md\)$#\1; sed -i -e "s|brand/taco-small.png|brand/taco-gone.png|" terragucci-report/plan-note.md#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'taco-gone' "$wf" || { log "BREAK found no line that writes the plan note"; drop_work "$work"; return 1; }
+  fi
+  echo 2 > "$work/tree/app/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" footer-change "note-footer: change app")" || return 1
+  pr="$(pr_open "$repo" footer-change "note-footer: change app")" || return 1
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+    [ -n "$note" ] && break
+    sleep 3
+  done
+  [ -n "$note" ] || { log "pull request $pr has no plan note"; rc=1; }
+  if [ $rc = 0 ]; then
+    footer="$(printf '%s\n' "$note" | sed '/^[[:space:]]*$/d' | tail -1)"
+    log "last line: $footer"
+    [[ "$footer" == "<sub><img "*"Posted by [terragucci]("*"</sub>" ]] || { log "the note's last line is not the footer"; rc=1; }
+    img="$(grep -o 'src="[^"]*"' <<<"$footer" | head -1 | sed 's/^src="//; s/"$//' || true)"
+    html="$(api -H 'content-type: application/json' -X POST -d "$(jq -n --arg t "$footer" --arg c "$URL/$repo" '{Text: $t, Mode: "gfm", Context: $c}')" "$URL/api/v1/markdown" || true)"
+    grep -qE "<img [^>]*src=\"$img\"" <<<"$html" || { log "Forgejo does not render the footer's image: $html"; rc=1; }
+    got="$(curl -sS -m 20 -o "$work/taco.png" -w '%{http_code} %{content_type}' "$img" 2>/dev/null || true)"
+    magic="$(head -c 8 "$work/taco.png" 2>/dev/null | od -An -tx1 | tr -d ' \n' || true)"
+    log "$img answers ${got:-nothing}"
+    [[ "$got" == "200 image/png"* ]] && [ "$magic" = 89504e470d0a1a0a ] || { log "the footer's image is not a PNG that answers 200"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $pr: the note ends with the footer, Forgejo renders its taco, and $img is a PNG"
+  return $rc
+}
+
 claim_comment_refused() {
   # A scratch repo with two roots and a pull request that changes app. Once
   # its own plan finished, the admin comments /terragucci approve, merge,
@@ -10747,6 +10791,7 @@ alerts-fire          otel self! weight=300
 blob-gcs-key         gcs! weight=120
 blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
+note-footer          runner self! weight=150
 cdf-shared-bucket    weight=120
 cdktn-synth          runner self! weight=200
 audit                weight=150
