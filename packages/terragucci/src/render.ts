@@ -117,6 +117,8 @@ export interface PipelineInput {
   version: string;
   /** The job image, as a pipeline names it (tag, and digest once published). */
   image: string;
+  /** Set when `image` is the one terragucci.yml names, built FROM terragucci's. */
+  imageFromConfig?: boolean;
   /** Set when the repo pins a version the image does not carry: the job installs it. */
   install?: { binary: Binary; version: string };
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
@@ -1531,13 +1533,15 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
   ].join("\n");
 }
 
-function header(image: string): string {
+function header(image: string, fromConfig?: boolean): string {
   return [
     MARKER,
     "# terragucci writes this file from terragucci.yml, or from its defaults when",
     "# the repo has none. Change terragucci.yml and run `npx terragucci init`",
     "# rather than editing it here.",
-    image.includes("@")
+    fromConfig
+      ? `# Every job runs in ${image}, the image terragucci.yml names.`
+      : image.includes("@")
       ? `# Every job runs in ${image.split("@")[0]}, pinned by digest.`
       : `# Every job runs in ${image}; init pins its digest once the image is published.`,
     "",
@@ -1886,7 +1890,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
-    return { path: PIPELINE_PATHS.gitlab, content: header(image) + out };
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out };
   }
 
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -2322,10 +2326,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ],
       } as never) as never],
     ]);
-    extra.push({ path: RESUME_PATHS[forge], content: header(image) + text(serializer.serialize(resume)) });
+    extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(resume)) });
   }
-  if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image) + text(serializer.serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined))) });
-  return { path: PIPELINE_PATHS[forge], content: header(image) + text(serializer.serialize(entities)), ...(extra.length ? { extra } : {}) };
+  if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined))) });
+  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)), ...(extra.length ? { extra } : {}) };
 }
 
 /**

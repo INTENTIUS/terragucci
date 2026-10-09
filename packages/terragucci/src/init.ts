@@ -28,6 +28,7 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
+import { STEPS_NOT_TERRAGRUNT } from "./steps";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -127,6 +128,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
     if (settings.cost) throw new ConfigError("cost estimates read each root's plan from tf-plan, and a Terragrunt repo plans its units with run --all; remove cost");
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
+    if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
@@ -227,7 +229,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     forge: forgeChoice.value,
     binary: binary.value,
     version: version.value,
-    image: imageReference(ref),
+    // image: the repo's own, built FROM terragucci's, so the jobs still carry terragucci and the binary.
+    image: settings.image ?? imageReference(ref),
+    ...(settings.image ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
@@ -369,7 +373,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: settings.image ?? imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
 }
 
 /** The first line of the terragucci.yml a control repo writes into a project, so a later run knows it may rewrite it. */
