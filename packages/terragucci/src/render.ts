@@ -112,8 +112,8 @@ export interface PipelineInput {
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
-  /** `notify`: the secrets holding a Slack or Teams incoming webhook, which the apply jobs post a waiting, refused or failed wave to. */
-  notify?: { slack?: string; teams?: string };
+  /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
   /** `cost`: the secret holding the estimator's key, and whether the plan jobs install Infracost (no `cost.command`). */
   cost?: { keySecret: string; install: boolean };
   env: Record<string, string>;
@@ -135,6 +135,12 @@ export interface PipelineInput {
   drift?: string;
   /** GitLab only: the comments schedule's cron. The pipeline gets a `comments` job for the pipelines that schedule starts. */
   comments?: string;
+  /**
+   * `apply.resume`: minutes between the resume job's runs. On GitHub and
+   * Forgejo the job is a workflow of its own on that schedule; on GitLab a
+   * pipeline schedule with TERRAGUCCI_SCHEDULE=resume starts it.
+   */
+  resume?: number;
   /** GitLab only, `gitlab.token`: with `protected`, no merge request pipeline holds the token, and the comments job posts the plan notes. */
   gitlabToken?: GitLabToken;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
@@ -166,7 +172,18 @@ export interface PipelineInput {
 export interface RenderedPipeline {
   path: string;
   content: string;
+  /** Further workflow files: on GitHub and Forgejo, the resume workflow. */
+  extra?: { path: string; content: string }[];
 }
+
+/** The resume workflow's file, beside the pipeline's. A workflow of its own, since Forgejo does not say which of a workflow's schedules started a run. */
+export const RESUME_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: ".github/workflows/terragucci-resume.yml",
+  forgejo: ".forgejo/workflows/terragucci-resume.yml",
+};
+
+/** The cron for `apply.resume`'s minutes. */
+export const resumeCron = (minutes: number): string => (minutes >= 60 ? "0 * * * *" : `*/${minutes} * * * *`);
 
 export class RenderError extends Error {}
 
@@ -276,8 +293,12 @@ export function synthScript(command: string, status?: string): string {
 
 /** With `notify`, the line a wave's outcome runs: post it to the chat webhooks. A webhook that fails never fails the job. */
 function notifyLine(event: "waiting" | "refused" | "failed", wave: string): string {
-  return `terragucci notify ${event} --wave ${wave} --outcome "$outcome" || true; `;
+  return `terragucci notify ${event} --wave ${wave} --outcome "$outcome" --outcome-json "$outcome_json" || true; `;
 }
+
+/** With `notify`, the stage also writes its outcome as JSON (`TG_OUTCOME_JSON`), which notify reads. */
+const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
+const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
 export function checkScript(binary: Binary, roots: string[], synth?: string): string {
   return [
@@ -650,8 +671,9 @@ export function applyScript(
     // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
     ...(forge === "gitlab" && gate !== "never" ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
+    ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
-    `TG_OUTCOME="$outcome" terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    `TG_OUTCOME="$outcome" ${outcomeEnv(input.notify)}terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
     triage ? "rc=${PIPESTATUS[0]}" : "rc=$?",
     'case "$rc" in',
     "  0) ;;",
@@ -715,12 +737,13 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
   const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
+    ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
     'done_waves=""',
     'for wave in $(seq 1 "$last"); do',
     '  : >"$outcome"',
     ...(input.terragrunt ? ['  rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi'] : []),
-    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${input.terragrunt ? " $rest" : ""}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    `  TG_OUTCOME="$outcome" ${outcomeEnv(input.notify)}terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${input.terragrunt ? " $rest" : ""}${triage ? ' 2>&1 | tee "$log"' : ""}`,
     triage ? "  rc=${PIPESTATUS[0]}" : "  rc=$?",
     // With --rest the wave that stopped may be a later one: its outcome line names it.
     ...(input.terragrunt ? [`  [ -s "$outcome" ] && wave="$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"`] : []),
@@ -962,6 +985,45 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     ...(prMode
       ? ['if [ "$TG_OPEN" = 1 ]; then', ...openReply(count, input.merge).map((l) => `  ${l}`), "else", '  tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"', "fi"]
       : ['tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"']),
+  ].join("\n");
+}
+
+const RESUME_AGAIN = "Approve the plans with \\`$cmd\\`; the resume job applies them on its next run";
+
+/**
+ * The resume job's script (GitHub and Forgejo): `terragucci resume` reads the
+ * ledger and, when a waiting wave's digest has an approval no apply used,
+ * names the default branch's commit (and the pull request that made it, for
+ * replies). The waves then run from wave 1 at that commit as a comment's
+ * apply does: a wave already applied plans no change, and each gate decides
+ * against the plans it makes now. With nothing to resume it stops before any
+ * credential.
+ */
+export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
+  const total = layers.flat().length;
+  const count = applyWaves(layers, input.canary).length;
+  return [
+    READS_EXIT,
+    forgeApi(forge),
+    `terragucci resume --forge ${forge} --out terragucci-resume.env || exit 1`,
+    "[ -s terragucci-resume.env ] || exit 0",
+    ". ./terragucci-resume.env",
+    "export TG_PR TG_SHA",
+    // A commit no pull request made has nowhere to reply: its replies are log lines.
+    'eval "tg_forge () $(declare -f tg | tail -n +2)"',
+    'tg() { if [ "$1" = reply ] && [ -z "$TG_PR" ]; then echo "terragucci: $2"; else tg_forge "$@"; fi; }',
+    `last=${count}`,
+    'TG_WAVE="-"',
+    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
+    ...(forge === "forgejo" ? [forgejoLock(false)] : []),
+    'git checkout --quiet --detach "$TG_SHA" || { echo "terragucci: could not check out ${TG_SHA:0:8}" >&2; exit 1; }',
+    ...(input.synth ? [synthScript(input.synth)] : []),
+    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
+    ...(input.terragrunt ? [input.terragrunt.prelude] : []),
+    'tg status terragucci/apply pending "applying after an approval"',
+    ...waveLoop(binary, layers, input, "", RESUME_AGAIN),
+    input.terragrunt ? 'tg status terragucci/apply success "every wave of units applied"' : `tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
+    'tg reply "applied wave $done_waves at ${TG_SHA:0:8} after its approval. $run_url"',
   ].join("\n");
 }
 
@@ -1372,7 +1434,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // notify: the apply jobs post a waiting, refused or failed wave to the webhooks, read from the secrets the key names.
   const notifyOn = input.notify ? { notify: true } : {};
   const notifyEnv = Object.fromEntries(
-    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"]] as const)
+    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"], ["webhook", "TERRAGUCCI_WEBHOOK"], ["webhook_key", "TERRAGUCCI_WEBHOOK_KEY"]] as const)
       .filter(([k]) => input.notify?.[k])
       .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
   );
@@ -1441,7 +1503,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         }
       : {};
     // A scheduled pipeline is drift's or the comments poll's; the push and merge request jobs sit it out.
-    const scheduled = Boolean(drift || input.comments);
+    const scheduled = Boolean(drift || input.comments || input.resume);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
     const notMrApply = prApply ? ` && $${MR_VAR} == null` : "";
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
@@ -1579,8 +1641,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "drift",
         image: jobImage,
         variables: gitlabEnv,
-        // The comments schedule's pipelines carry TERRAGUCCI_SCHEDULE=comments; any other schedule, with or without a variable, is drift's.
-        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"` })],
+        // The comments and resume schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments or resume; any other schedule, with or without a variable, is drift's.
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume && writesLedger ? ` && $${SCHEDULE_VAR} != "resume"` : ""}` })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))],
@@ -1600,6 +1662,18 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
         script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken))],
+      } as never) as never);
+    }
+    if (input.resume && writesLedger) {
+      // A pipeline schedule with TERRAGUCCI_SCHEDULE=resume: retry the default branch's waiting apply job once its approval stands.
+      // It reads the ledger and calls the API with the project's token; it takes no cloud credentials.
+      jobs.set("resume", new GitLabJob({
+        stage: "resume",
+        image: jobImage,
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN },
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "resume"` })],
+        resource_group: "terragucci-resume",
+        script: [bash("RESUME", "terragucci resume --forge gitlab")],
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
@@ -1944,5 +2018,25 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
-  return { path: PIPELINE_PATHS[forge], content: header(image) + text(serializer.serialize(entities)) };
+  const extra: { path: string; content: string }[] = [];
+  if (input.resume && writesLedger) {
+    // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
+    const resume = new Map<string, never>([
+      ["workflow", new Workflow({ name: "terragucci resume", on: { schedule: [{ cron: resumeCron(input.resume) }], workflow_dispatch: {} }, env: jobEnv, permissions: { contents: "read" } }) as never],
+      ["resume", new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+        ...openid(needsToken),
+        concurrency: applyConcurrency(forge),
+        env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv },
+        steps: [
+          ...steps(new Step({ name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true),
+          new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-resume`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
+        ],
+      } as never) as never],
+    ]);
+    extra.push({ path: RESUME_PATHS[forge], content: header(image) + text(serializer.serialize(resume)) });
+  }
+  return { path: PIPELINE_PATHS[forge], content: header(image) + text(serializer.serialize(entities)), ...(extra.length ? { extra } : {}) };
 }

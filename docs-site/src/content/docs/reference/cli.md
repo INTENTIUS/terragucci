@@ -27,7 +27,7 @@ prompt: |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
-| `notify` | posts a wave that waits, is refused or fails to the Slack and Teams webhooks `notify` names; the generated apply jobs run it |
+| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names; the generated apply jobs run it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
@@ -132,7 +132,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 `stage tf-plan` and `stage tf-drift` still write the report when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. It refuses `--json` with exit 2.
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. It refuses `--json` with exit 2. With `TG_OUTCOME_JSON` set it writes how the wave ended to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
 
 | Flag | Environment | Meaning |
 |---|---|---|
@@ -268,15 +268,16 @@ With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s
 ## notify
 
 ```text
-terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]
+terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
 ```
 
-Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK`, whichever are set. The generated apply jobs run it with `notify` set, on exit 3, 4 and any other failure.
+Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOOK` and `TERRAGUCCI_WEBHOOK`, whichever are set. The generic webhook gets a [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event signed with `TERRAGUCCI_WEBHOOK_KEY`, and nothing when the key is empty. The generated apply jobs run it with `notify` set, on exit 3, 4 and any other failure.
 
 | Read from | For |
 |---|---|
-| `--outcome`, the stage's `TG_OUTCOME` line | the approve command of a waiting wave, and the roots of a refused one |
-| `--report` (default `terragucci-report`) | the project and the wave's roots |
+| `--outcome-json`, the stage's [outcome](/terragucci/reference/cli-json/#the-apply-outcome) (`TG_OUTCOME_JSON`) | the wave's roots, the digest and approve command of a waiting wave, the pull request to review under `approval: pr-review`, and the roots a refused or denied wave names |
+| `--outcome`, the stage's `TG_OUTCOME` line | the outcome line the message quotes |
+| `--report` (default `terragucci-report`) | the project, the report's link, and the wave's roots when there is no outcome |
 | `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`, or `CI_JOB_URL` | the run's link |
 
 A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
@@ -297,15 +298,17 @@ approval: ledger (the default)
 ## approve
 
 ```bash
-terragucci approve [wave-<k>] [--actor <name>] [--sign [<key>]] [--dry-run]
+terragucci approve [wave-<k>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run] [--no-resume]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `wave-<k>` | the wave to approve; needed only when several wait |
+| `wave-<k>` | the wave to approve; needed only when several wait and no `--plan` picks one |
+| `--plan` | the digest you read, from a chat message, a plan note or a report: approve only a wave waiting for exactly that digest. When none does, it approves nothing, prints the digest waiting and exits 1 |
 | `--actor` | the name the approval records; under `approval: sealed`, your principal in the signers file |
 | `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
 | `--dry-run` | print the `chant approve` command and run nothing |
+| `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
 
 Run it in a checkout whose `origin` you can push to. It finds chant in `node_modules/.bin`, then on the path.
 
@@ -315,6 +318,20 @@ wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), sinc
   destroys app: aws_s3_bucket.logs
 running: chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
 ```
+
+With a digest that no longer waits, because the plans moved after you read them:
+
+```text
+not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha256:2e7a63f3.... The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest
+```
+
+## resume
+
+```text
+terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
+```
+
+The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). It reads `chant/lifecycle` and finds each waiting wave whose digest has an approval no apply has used. On GitHub and Forgejo it writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply; on GitLab it retries the waiting apply job. It exits 0 when there is nothing to resume.
 
 ## override
 

@@ -57,6 +57,8 @@ export interface WaveInput {
   setDigest?: string;
   /** Why a `tf-apply` wave applied nothing although it planned. */
   refused?: ReportWave["refused"];
+  /** The pull request whose review would approve a waiting `tf-apply` wave. */
+  review?: ReportWave["review"];
 }
 
 export interface BuildInput {
@@ -297,6 +299,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.gate ? { gate: w.gate } : {}),
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
       ...(w.refused ? { refused: w.refused } : {}),
+      ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
     };
   });
 

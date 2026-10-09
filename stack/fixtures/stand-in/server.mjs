@@ -12,7 +12,11 @@
 //                keys for any role (floci takes any keys), and
 //                GetCallerIdentity answers the account 000000000000
 //   MODE=webhook a chat incoming webhook (Slack, Teams): any POST answers
-//                200 "ok", as Slack's does, and is kept with its JSON body
+//                200 "ok", as Slack's does, and is kept with its JSON body.
+//                With HMAC_KEY, each POST is also kept with `verified`:
+//                whether X-Terragucci-Signature is sha256= and the
+//                HMAC-SHA256 of the raw body with that key, as a receiver
+//                of terragucci's generic webhook checks it
 //   MODE=cost    a cost estimator's API: POST /estimate takes a plan's
 //                show -json and answers Infracost's JSON, 10.00 a month for
 //                each resource the plan creates, less 10.00 for each it
@@ -28,6 +32,7 @@
 // took, in order: method, path, status, headers, the body as JSON when it
 // parses, and a form body's fields as form (the claims read this from the
 // host through a published port).
+import { createHmac, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
 const mode = process.env.MODE ?? "decide";
@@ -66,6 +71,13 @@ function sts(form) {
     return [200, xml(`${creds}<AssumedRoleUser><Arn>${form.RoleArn ?? ""}/${form.RoleSessionName ?? "smoke"}</Arn><AssumedRoleId>stand-in:smoke</AssumedRoleId></AssumedRoleUser>`), "text/xml"];
   }
   return [400, `<ErrorResponse><Error><Code>InvalidAction</Code><Message>${action} is not answered here</Message></Error></ErrorResponse>`, "text/xml"];
+}
+
+/** Whether the request carries X-Terragucci-Signature over its raw body with HMAC_KEY. */
+function verified(req, raw) {
+  const want = Buffer.from(`sha256=${createHmac("sha256", process.env.HMAC_KEY).update(raw).digest("hex")}`);
+  const got = Buffer.from(String(req.headers["x-terragucci-signature"] ?? ""));
+  return got.length === want.length && timingSafeEqual(got, want);
 }
 
 function webhook(req) {
@@ -177,7 +189,7 @@ http
       }
       const form = /x-www-form-urlencoded/.test(req.headers["content-type"] ?? "") ? Object.fromEntries(new URLSearchParams(raw)) : undefined;
       const [status, out, type] = mode === "webhook" ? webhook(req) : mode === "cost" ? cost(req, body) : mode === "otlp" ? otlp(req) : mode === "sts" ? sts(form ?? Object.fromEntries(new URL(req.url, "http://x").searchParams)) : decide(req, body);
-      seen.push({ method: req.method, path: req.url, status, headers: req.headers, body, form });
+      seen.push({ method: req.method, path: req.url, status, headers: req.headers, body, form, ...(mode === "webhook" && process.env.HMAC_KEY ? { verified: verified(req, raw) } : {}) });
       answer(res, status, out, type);
     });
   })
