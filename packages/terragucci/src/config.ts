@@ -407,6 +407,39 @@ export const BUILT_IN: ResolvedSettings = {
   env: {},
 };
 
+/**
+ * The keys a project's jobs read from the project's own terragucci.yml: the
+ * plan and apply stages, `respond`, `approve` and `check-policy` read them
+ * there, and no pipeline flag carries them. A control repo's `reconcile`
+ * writes each one its settings give the project, other than the built-in
+ * value, into that file (init.ts). Every other key reaches a project through
+ * the pipeline init writes (flags, the job's environment, its steps and
+ * files, such as `apply.resume` and `notify.webhook`). `url` is the project's
+ * own clone URL and `rollouts` belongs to a single repo, so `defaults`
+ * refuses both.
+ */
+export const PROJECT_FILE_KEYS = [
+  "policy",
+  "reports",
+  "approval",
+  "gate",
+  "roots",
+  "waves",
+  "parallelism",
+  "synth",
+  "drift",
+  "cost",
+  "tips",
+  "runtime",
+  "telemetry",
+  "respond",
+  "decide",
+  "audit_region",
+  "modules",
+  "terragrunt",
+  "token_env",
+] as const satisfies ReadonlyArray<keyof ProjectSettings>;
+
 export class ConfigError extends Error {
   /** Every problem found, when the error is a validation failure. */
   readonly problems?: string[];
@@ -990,6 +1023,9 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   }
   if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
   if (isObject(defaults) && defaults.rollouts) problems.push(`defaults.rollouts: ${ROLLOUTS_SINGLE_REPO}`);
+  if (isObject(defaults) && defaults.url !== undefined) {
+    problems.push(`${where}: defaults.url would clone one repo for every project; set url on each project that needs one`);
+  }
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
   if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.
