@@ -1002,6 +1002,14 @@
       "commit": "abdef33f"
     },
     {
+      "claim": "tg-generate",
+      "says": "in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "39b07c05"
+    },
+    {
       "claim": "root-pins",
       "says": "two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root",
       "needs": null,
@@ -1575,6 +1583,14 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught"
+    },
+    {
+      "claim": "apply-branches-drift",
+      "says": "with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would read the state release left behind and report a false drift",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "39b07c05"
     },
     {
       "claim": "own-jobs-kept",
