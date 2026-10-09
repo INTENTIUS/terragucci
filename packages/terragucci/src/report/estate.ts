@@ -20,6 +20,9 @@
  * The roots that read another root's state, from edges.json
  * (./state-edges.ts), each with its last plan against the producer's last
  * apply.
+ *
+ * The live ephemeral environments, from ephemeral.json (../ephemeral.ts):
+ * each pull request's copy, its roots and state keys, and when it expires.
  */
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
@@ -32,6 +35,7 @@ import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { GRAPH_CSS, renderGraphSvg, type GraphEdge } from "./graph";
 import type { RunState, RunView } from "./run-view";
+import type { EphemeralList, EphemeralRow } from "../ephemeral";
 
 export const ESTATE_SCHEMA = "terragucci.estate/v1";
 
@@ -57,6 +61,8 @@ export interface ProjectIndex {
   run?: RunView;
   /** Its edges.json, when a root reads another's state or an apply changed a root. */
   edges?: StateEdges;
+  /** Its ephemeral.json, when a pull request's copy of the ephemeral roots applied. */
+  ephemeral?: EphemeralList;
 }
 
 /** One root's state on the page: where it is, whether its backend keeps versions, and the versions its applies left, newest first. */
@@ -157,6 +163,8 @@ export interface EstateProject {
   edges?: EstateEdge[];
   /** The run view the graph read: its commit, when a wave last wrote it, and its page when the page can link it. Absent until a wave writes one. */
   run_view?: { commit: string; updated: string; page?: string };
+  /** The live ephemeral environments, from its ephemeral.json: each pull request's copy and when it expires. Absent when none is live. */
+  ephemeral?: EphemeralRow[];
 }
 
 /** A run of an edge, linked to its report when the page can link it. */
@@ -179,7 +187,7 @@ export interface Estate {
   schema: typeof ESTATE_SCHEMA;
   generated: string;
   /** `overridden_roots` only when a policy override let a root through; `resources` only when a project has an inventory. */
-  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number; resources?: number };
+  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number; resources?: number; ephemeral?: number };
   projects: EstateProject[];
   /** The newest runs across every project, newest first. */
   recent: EstateRun[];
@@ -278,7 +286,8 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
   const base = dirOf(p.base);
   const index = base !== undefined ? { index: `${base}index.html` } : {};
   if (p.error !== undefined) return { project: p.project, status: "error", error: p.error, ...index, waiting: [], drifted: 0, failed: 0 };
-  if (!p.reports) return { project: p.project, status: "no-index", waiting: [], drifted: 0, failed: 0 };
+  const ephemeral = p.ephemeral && p.ephemeral.project === p.project && p.ephemeral.environments.length > 0 ? { ephemeral: p.ephemeral.environments } : {};
+  if (!p.reports) return { project: p.project, status: "no-index", waiting: [], drifted: 0, failed: 0, ...ephemeral };
   const rows = p.reports.filter((r) => r.project === p.project);
   const plan = newest(rows.filter((r) => r.stage === "tf-plan"));
   const drift = newest(rows.filter((r) => r.stage === "tf-drift"));
@@ -327,6 +336,7 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     ...(p.states ? { states: statesOf(p.states, base) } : {}),
     ...(p.run ? { run_view: { commit: p.run.commit, updated: p.run.updated, ...(base !== undefined ? { page: `${base}runs/${p.run.commit}/run.html` } : {}) } } : {}),
     ...(p.edges && edgesOf(p.edges).length > 0 ? { edges: edgesOfProject(p.edges, base) } : {}),
+    ...ephemeral,
   };
 }
 
@@ -366,6 +376,7 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
   const projects = indexes.map((p) => projectState(p, now));
   const overridden = projects.reduce((n, p) => n + (p.overridden ?? 0), 0);
   const inventoried = projects.filter((p) => p.inventory);
+  const ephemeral = projects.reduce((n, p) => n + (p.ephemeral?.length ?? 0), 0);
   const recent = indexes
     .flatMap((p) => (p.reports ?? []).filter((r) => r.project === p.project).map((r) => ({ r, base: dirOf(p.base) })))
     .sort((a, b) => at(b.r.finished) - at(a.r.finished) || (a.r.path < b.r.path ? -1 : 1))
@@ -383,6 +394,7 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
       unreadable: projects.filter((p) => p.status === "error").length,
       ...(overridden > 0 ? { overridden_roots: overridden } : {}),
       ...(inventoried.length > 0 ? { resources: inventoried.reduce((n, p) => n + p.inventory!.resources, 0) } : {}),
+      ...(ephemeral > 0 ? { ephemeral } : {}),
     },
     projects,
     recent,
@@ -534,6 +546,25 @@ function edgesSection(estate: Estate, now: Date): string {
   return blocks.join("\n");
 }
 
+/** When an ephemeral copy expires: in how long, or that the sweep has yet to destroy it. */
+const expiry = (iso: string, now: Date): string => {
+  const left = Math.round((at(iso) - now.getTime()) / 1000);
+  return left > 0 ? `<time datetime="${esc(iso)}" data-in>in ${esc(age(left))}</time>` : `<span class="warn">expired <time datetime="${esc(iso)}">${esc(age(-left))} ago</time>; the next sweep destroys it</span>`;
+};
+
+/** The ephemeral environments section: per pull request, its copy's roots and state keys, when it last applied and when it expires. */
+function ephemeralSection(estate: Estate, now: Date): string {
+  const rows = estate.projects.flatMap((p) =>
+    (p.ephemeral ?? []).map((e) => {
+      const roots = e.roots.map((r) => `<code>${esc(r.root)}</code> <small>${esc(r.location)}</small>`).join("<br>");
+      const status = e.status === "destroy-failed" ? `<span class="bad">a destroy failed; the sweep tries again</span>` : "live";
+      return `<tr data-pr="${e.pull_request}"><td>${esc(p.project)}</td><td>${link(e.pull_request_url, `#${e.pull_request}`)}</td><td>${roots}</td><td>${short(e.commit)} ${when(e.applied, now)}</td><td>${expiry(e.expires, now)}</td><td>${status}</td></tr>`;
+    }),
+  );
+  if (rows.length === 0) return `<p class="none">No pull request has a live ephemeral environment.</p>`;
+  return `<div class="scroll"><table id="ephemeral-environments"><tr><th>Project</th><th>Pull request</th><th>Roots and state keys</th><th>Applied</th><th>Expires</th><th></th></tr>\n${rows.join("\n")}\n</table></div>`;
+}
+
 /**
  * The page. Its numbers are in the HTML, so it reads with scripts off; a
  * small script only moves the "ago" times forward while it is open, and the
@@ -549,7 +580,8 @@ export function renderEstateHtml(estate: Estate, dora?: Dora): string {
     [t.failed_roots, t.failed_roots === 1 ? "root failed" : "roots failed"],
     ...(t.overridden_roots ? [[t.overridden_roots, t.overridden_roots === 1 ? "root applied by policy override" : "roots applied by policy override"]] : []),
     ...(t.resources !== undefined ? [[t.resources, t.resources === 1 ? "resource" : "resources"]] : []),
-  ].map(([n, label]) => `<div class="tile${Number(n) > 0 && label !== "projects" && !String(label).startsWith("resource") ? " hot" : ""}"><b>${n}</b><span>${label}</span></div>`);
+    ...(t.ephemeral ? [[t.ephemeral, t.ephemeral === 1 ? "ephemeral environment" : "ephemeral environments"]] : []),
+  ].map(([n, label]) => `<div class="tile${Number(n) > 0 && label !== "projects" && !String(label).startsWith("resource") && !String(label).startsWith("ephemeral") ? " hot" : ""}"><b>${n}</b><span>${label}</span></div>`);
   const waiting = estate.projects.flatMap((p) => p.waiting).sort((a, b) => b.age_seconds - a.age_seconds);
   const waitingRows = waiting.map((w) => `<tr><td>${esc(w.project)}</td><td>${link(w.report, `wave ${w.wave}`)}</td><td>${short(w.commit)}</td><td>${lasting(w.since, now)}</td></tr>`);
   const projectRows = estate.projects.map((p) => {
@@ -583,6 +615,8 @@ ${waitingRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Wave<
 <div class="scroll"><table><tr><th>Project</th><th>Latest plan</th><th>Latest drift check</th><th>Apply waves</th></tr>
 ${projectRows.join("\n")}
 </table></div>
+<h2 id="ephemeral">Ephemeral environments</h2>
+${ephemeralSection(estate, now)}
 <h2 id="dependencies">Dependencies</h2>
 ${graphSection(estate)}
 <h2>Recent runs</h2>
@@ -595,7 +629,7 @@ ${statesSection(estate, now)}
 ${edgesSection(estate, now)}
 </main>
 <script type="application/json" id="terragucci-estate">${json}</script>
-<script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime],tbody.inv th time[datetime]").forEach(function(t){var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")});var q=document.getElementById("resources-filter");if(q){q.hidden=false;q.addEventListener("input",function(){var v=q.value.toLowerCase().trim();document.querySelectorAll("tbody.inv").forEach(function(b){var n=0;b.querySelectorAll("tr[data-r]").forEach(function(r){var m=!v||r.getAttribute("data-r").indexOf(v)>=0;r.hidden=!m;if(m)n++});b.hidden=n===0})})}})()</script>
+<script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime],tbody.inv th time[datetime]").forEach(function(t){if(t.hasAttribute("data-in")){var l=Math.round((Date.parse(t.getAttribute("datetime"))-n)/1000);if(l>0)t.textContent="in "+f(l);return}var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")});var q=document.getElementById("resources-filter");if(q){q.hidden=false;q.addEventListener("input",function(){var v=q.value.toLowerCase().trim();document.querySelectorAll("tbody.inv").forEach(function(b){var n=0;b.querySelectorAll("tr[data-r]").forEach(function(r){var m=!v||r.getAttribute("data-r").indexOf(v)>=0;r.hidden=!m;if(m)n++});b.hidden=n===0})})}})()</script>
 </body></html>
 `;
 }

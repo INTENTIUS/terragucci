@@ -30,6 +30,7 @@
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
+ *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
  *   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]   (ask for one version of a root's state, and once someone else approved it, download it to this machine)
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
@@ -106,6 +107,7 @@ import { mcp } from "./mcp";
 import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
+import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
@@ -148,6 +150,9 @@ const USAGE = `usage:
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
+  terragucci ephemeral up --pr <n> [--head <sha>] [--base <ref>] [--binary <b>] [--config <file>]   (run by the generated pipeline)
+  terragucci ephemeral down --pr <n> --reason closed|expired [--base <ref>] [--binary <b>] [--config <file>]
+  terragucci ephemeral sweep [--base <ref>] [--binary <b>] [--config <file>]
   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
   terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
@@ -612,6 +617,17 @@ export async function main(argv: string[]): Promise<number> {
         if (!args[0] || args.length > 1) throw new ConfigError("unlock-state takes one root: unlock-state <root>");
         const done = await unlockState(cwd, args[0], { ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), log: (l) => console.log(`terragucci unlock-state: ${l}`) });
         return done.code;
+      }
+      case "ephemeral": {
+        const sub = args[0];
+        const common = { ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "base") ? { base: str(flags, "base") } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), log: (l: string) => console.log(`terragucci ephemeral: ${l}`) };
+        if (sub === "sweep") return await ephemeralSweep(cwd, common);
+        if (sub !== "up" && sub !== "down") throw new ConfigError("ephemeral takes up, down or sweep");
+        const pr = wholeFlag("pr", str(flags, "pr") ?? "");
+        if (sub === "up") return await ephemeralUp(cwd, { ...common, pr, ...(str(flags, "head") ? { head: str(flags, "head") } : {}) });
+        const reason = str(flags, "reason");
+        if (reason !== "closed" && reason !== "expired") throw new ConfigError("ephemeral down takes --reason closed or --reason expired");
+        return await ephemeralDown(cwd, { ...common, pr, reason });
       }
       case "resume": {
         const forge = str(flags, "forge") ?? (process.env.GITLAB_CI === "true" ? "gitlab" : process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");

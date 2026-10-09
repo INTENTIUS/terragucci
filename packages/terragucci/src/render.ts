@@ -123,7 +123,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
     if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
   }
 }
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, EPHEMERAL_NOT_SYNTH, EPHEMERAL_NOT_TERRAGRUNT } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -263,6 +263,14 @@ export interface PipelineInput {
   applyBranches?: Record<string, string[]>;
   /** `own_jobs`: jobs of the repo's own, written after terragucci's as they are (ownJobsYAML). */
   ownJobs?: Record<string, Record<string, unknown>>;
+  /**
+   * `ephemeral`: a pull request's job applies its copy of the ephemeral roots
+   * and destroys it when the pull request closes, and a sweep on a schedule of
+   * `sweep` minutes destroys the copies whose TTL passed or whose pull request
+   * closed (ephemeral.ts). The roots and the TTL are read from terragucci.yml
+   * at base when the jobs run, so the pipeline carries only the schedule.
+   */
+  ephemeral?: { sweep: number };
 }
 
 export interface RenderedPipeline {
@@ -277,6 +285,49 @@ export const RESUME_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   github: ".github/workflows/terragucci-resume.yml",
   forgejo: ".forgejo/workflows/terragucci-resume.yml",
 };
+
+/** The ephemeral sweep's workflow file, beside the pipeline's (GitHub and Forgejo). */
+export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: ".github/workflows/terragucci-ephemeral.yml",
+  forgejo: ".forgejo/workflows/terragucci-ephemeral.yml",
+};
+
+/**
+ * The ephemeral job's script (GitHub and Forgejo): on the pull request's
+ * closed event its copy is destroyed, on any other its head's copy applies.
+ * The job runs the default branch's workflow (pull_request_target) on its
+ * checkout, and `terragucci ephemeral` checks the head out apart.
+ */
+export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined): string {
+  return [
+    ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
+    'if [ "${TG_ACTION:-}" = closed ]; then',
+    '  terragucci ephemeral down --pr "$TG_PR" --reason closed',
+    "else",
+    '  terragucci ephemeral up --pr "$TG_PR" --head "$TG_SHA"',
+    "fi",
+  ].join("\n");
+}
+
+/**
+ * The ephemeral job on GitLab, in the merge request's pipeline: the head's
+ * copy applies, with terragucci.yml read from the default branch, fetched
+ * first. GitLab starts no pipeline when a merge request closes, so the sweep
+ * destroys a closed merge request's copy.
+ */
+export function gitlabEphemeralScript(oidc: OidcSettings | undefined): string {
+  return [
+    gitlabPushRemote,
+    'git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"',
+    ...cloudScripts("gitlab", oidc, "apply", "terragucci-ephemeral"),
+    'terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/${CI_DEFAULT_BRANCH}"',
+  ].join("\n");
+}
+
+/** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
+export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined): string {
+  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), "terragucci ephemeral sweep"].join("\n");
+}
 
 /** The cron for `apply.resume`'s minutes. */
 export const resumeCron = (minutes: number): string => (minutes >= 60 ? "0 * * * *" : `*/${minutes} * * * *`);
@@ -1705,6 +1756,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const applyBranches = input.applyBranches && Object.keys(input.applyBranches).length > 0 ? input.applyBranches : undefined;
   if (applyBranches && input.applyWhen === "pull-request") throw new RenderError(`apply.branches: ${BRANCHES_NOT_PR_APPLY}`);
   const branchNames = applyBranches ? Object.keys(applyBranches) : [];
+  const ephemeral = input.ephemeral;
+  if (ephemeral && tg) throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_TERRAGRUNT}`);
+  if (ephemeral && input.synth) throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_SYNTH}`);
+  if (ephemeral && forge === "gitlab" && input.gitlabToken === "protected") throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_PROTECTED}`);
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
   // review.agent: an apply job reads the verdict from the review job's artifact in the pull request's run, which takes actions: read on GitHub.
@@ -1859,7 +1914,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         }
       : {};
     // A scheduled pipeline is drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
-    const scheduled = Boolean(drift || input.comments || input.resume || rollouts);
+    const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
     const notMrApply = prApply ? ` && $${MR_VAR} == null` : "";
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
@@ -2015,7 +2070,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         variables: { ...gitlabEnv, ...driftNotifyEnv },
         // The comments, resume and rollouts schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments, resume or rollouts; any other schedule, with or without a variable, is drift's.
-        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}` })],
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}${ephemeral ? ` && $${SCHEDULE_VAR} != "ephemeral"` : ""}` })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify))],
@@ -2060,6 +2115,29 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: [bash("RESUME", "terragucci resume --forge gitlab")],
       } as never) as never);
     }
+    if (ephemeral) {
+      // ephemeral: a merge request from this project applies its copy of the ephemeral roots with the apply role, as its
+      // own pipeline runs it; a schedule with TERRAGUCCI_SCHEDULE=ephemeral destroys the copies whose TTL passed or
+      // whose merge request closed, since GitLab starts no pipeline when one closes.
+      jobs.set("ephemeral", new GitLabJob({
+        stage: "apply",
+        image: jobImage,
+        variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
+        rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
+        resource_group: "terragucci-ephemeral-$CI_MERGE_REQUEST_IID",
+        ...idTokens,
+        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc))),
+      } as never) as never);
+      jobs.set("ephemeral-sweep", new GitLabJob({
+        stage: "apply",
+        image: jobImage,
+        variables: { ...gitlabEnv, GIT_DEPTH: "0" },
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "ephemeral"` })],
+        resource_group: "terragucci-ephemeral-sweep",
+        ...idTokens,
+        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc))),
+      } as never) as never);
+    }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
@@ -2082,7 +2160,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // approval: pr-review: a review of the head re-posts terragucci/approval.
       ...(prReview ? { pull_request_review: {} } : {}),
       // locks: plan: the pr-lock job, from the default branch's workflow, locks a pull request's roots and releases them when it closes.
-      ...(locksPlan ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
+      // ephemeral: the same events apply a pull request's copy of the ephemeral roots and destroy it on close.
+      ...(locksPlan || ephemeral ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
       ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
     },
     env: jobEnv,
@@ -2092,7 +2171,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // not cancel makes a later run wait instead.
     // A pull_request_target run's ref is the default branch's, so with locks: plan it gets a group of its own pull request's.
     ...(forge === "forgejo"
-      ? { concurrency: { group: locksPlan
+      ? { concurrency: { group: locksPlan || ephemeral
         ? "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}"
         : "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } }
       : {}),
@@ -2342,6 +2421,21 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
+  if (ephemeral) {
+    // ephemeral: the default branch's workflow on pull_request_target, so a pull request cannot change the job that applies
+    // its copy or drop the destroy on close. The job checks out the default branch, and terragucci ephemeral reads its
+    // settings there and checks the head out apart. Forks never apply.
+    entities.set("ephemeral", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      if: `github.event_name == 'pull_request_target' && ${sameRepo}`,
+      permissions: { contents: "write", "pull-requests": "read", ...(needsToken ? { "id-token": "write" } : {}) },
+      ...openid(needsToken),
+      concurrency: { group: "terragucci-ephemeral-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": false },
+      env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
+      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc) }), false, true),
+    } as never) as never);
+  }
   // apply.branches: a push to a named branch runs the waves too, for that branch's roots.
   const onRefs = ["github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", ...branchNames.map((b) => `github.ref == 'refs/heads/${b}'`)];
   const applyIf = `${drift ? "github.event_name == 'push' && " : ""}${onRefs.length > 1 ? `(${onRefs.join(" || ")})` : onRefs[0]}`;
@@ -2517,6 +2611,22 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       } as never) as never],
     ]);
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(resume)) });
+  }
+  if (ephemeral) {
+    // ephemeral: a schedule of its own destroys the copies whose TTL passed or whose pull request closed.
+    const sweep = new Map<string, never>([
+      ["workflow", new Workflow({ name: "terragucci ephemeral", on: { schedule: [{ cron: resumeCron(ephemeral.sweep) }], workflow_dispatch: {} }, env: jobEnv, permissions: { contents: "read" } }) as never],
+      ["sweep", new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        permissions: { contents: "write", "pull-requests": "read", ...(needsToken ? { "id-token": "write" } : {}) },
+        ...openid(needsToken),
+        concurrency: { group: "terragucci-ephemeral-sweep-${{ github.repository }}", "cancel-in-progress": false },
+        env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+        steps: steps(new Step({ name: "Destroy the ephemeral copies whose TTL passed or whose pull request closed", shell: "bash", run: ephemeralSweepScript(forge, oidc) }), false, true),
+      } as never) as never],
+    ]);
+    extra.push({ path: EPHEMERAL_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(sweep)) });
   }
   // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
   if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv }))) });
