@@ -37,6 +37,8 @@
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
+ *   terragucci review prompt --report <dir> [--instructions <path>]   (write the review's prompt from the pull request, its plan and the default branch's instructions; run by the generated pipeline's review job)
+ *   terragucci review post --dir <dir>   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
@@ -60,6 +62,7 @@ import { approve, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
+import { postReview, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -110,6 +113,8 @@ const USAGE = `usage:
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
+  terragucci review prompt --report <dir> [--instructions <path>]
+  terragucci review post --dir <dir>
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
@@ -530,6 +535,23 @@ export async function main(argv: string[]): Promise<number> {
         const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}) });
         for (const line of said) console.log(line);
         return 0;
+      }
+      case "review": {
+        const sub = args[0];
+        if (sub === "prompt") {
+          const report = str(flags, "report") ?? "terragucci-report";
+          const w = writeReviewPrompt({ report: resolve(cwd, report), instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS });
+          console.log(`terragucci review: wrote the prompt for pull request ${w.pr} at ${w.head.slice(0, 8)}; instructions: ${w.instructions === "default" ? "the default branch's" : "none on the default branch"}${w.changed ? ", which this pull request changes" : ""}`);
+          return 0;
+        }
+        if (sub === "post") {
+          const dir = str(flags, "dir");
+          if (!dir) throw new ConfigError("review post needs --dir <dir>");
+          const posted = await postReview({ dir: resolve(cwd, dir) });
+          console.log(`terragucci review: ${posted.reason}`);
+          return 0;
+        }
+        throw new ConfigError("review is review prompt --report <dir> [--instructions <path>] or review post --dir <dir>");
       }
       case "approval-status": {
         const forge = str(flags, "forge") ?? "github";

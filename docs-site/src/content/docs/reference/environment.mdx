@@ -228,6 +228,8 @@ Internal; a value set in `env:` is overwritten.
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
 | `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent comment's job: the prompt file and the turn limit |
+| `TG_REVIEW_PROMPT` | the review command's step: the prompt file, which is also its stdin |
+| `TG_DEFAULT_BRANCH` | the review job: the default branch, read from the event, that the instructions come from |
 | `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your job: GitLab state lowers parallelism; the roots of a stage share the cache, or one of the stage's own when it is unset |
 
 

@@ -34,6 +34,7 @@ import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
 import { agentCommentInput } from "./agent-comment";
+import { reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
@@ -286,6 +287,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
+    ...(reviewInput(settings) ? { review: reviewInput(settings) } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),

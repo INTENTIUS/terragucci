@@ -104,7 +104,8 @@ import { approvalRule, type ApprovalRule } from "./approval";
 import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, overrideDigest, type OverridePending } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
-import { changesSomething, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
+import { changesSomething, forgeCalls, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
+import { noReview, reviewOfPull, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
@@ -1136,6 +1137,33 @@ async function priceWave(
 }
 
 /**
+ * What the wave's policy reads as `input.review`: the review note of the head
+ * of the pull request this commit merged (or `TG_PR`'s, applied before merge),
+ * posted by the pipeline's own token. GitLab has no review job, and a commit
+ * no pull request made has no review: both read as not found.
+ */
+async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
+  if (env.GITLAB_CI === "true") return noReview();
+  const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  try {
+    const f = forgeCalls(env, options.fetch);
+    const pr = await pullOf(f, env, sha);
+    if (!pr) {
+      console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
+      return noReview();
+    }
+    const review = await reviewOfPull(f, pr);
+    console.log(review.found
+      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk}, which the policy reads as input.review`
+      : `${label}: review: no review note of pull request ${pr.number}'s head ${pr.head.slice(0, 8)}, so input.review.found is false`);
+    return review;
+  } catch (e) {
+    console.log(`${label}: review: could not read the pull request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
+    return noReview();
+  }
+}
+
+/**
  * Run the policy over a wave's plans, when `policy` is on. Returns the exit
  * code when the policy refused a root or could not check it, so nothing in
  * the wave applies and no approval is waited for; undefined to go on.
@@ -1159,7 +1187,9 @@ async function policyGate(
     const runAt = runFacts(repo, policyEnv, settings.forge);
     // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
     const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
-    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
+    // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
+    const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label) : undefined;
+    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, ...(review ? { review } : {}) });
     const denied = found.failed;
     w.policy = found.policy;
     for (const p of planned) {
