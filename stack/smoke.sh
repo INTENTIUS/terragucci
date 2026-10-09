@@ -8626,6 +8626,9 @@ claim_rollout_pins() {
   printf 'forge: forgejo\nbinary: tofu\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' "$URL" "$repo" > "$tree/terragucci.yml"
   ( cd "$tree" && git init -q -b main && git remote add origin "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" ) || return 1
   push_tree "$tree" "$repo" main "two roots on two pin kinds" >/dev/null || return 1
+  # Forgejo marks a repo not empty a moment after its first push, and until then
+  # answers 404 for its pull requests, which the rollout would take for a failure.
+  local i; for i in $(seq 1 30); do api -o /dev/null "$URL/api/v1/repos/$repo/pulls?state=all&limit=1" 2>/dev/null && break; sleep 1; done
   for want in "modules/network|terragucci/rollout/modules-network-1.4.0/wave-1|dev/oci/main.tf|source = \"oci://registry.example.com/acme/modules/network?tag=1.4.0\"" \
               "acme/network/aws|terragucci/rollout/acme-network-aws-1.4.0/wave-1|dev/reg/main.tf|version = \"1.4.0\""; do
     IFS='|' read -r name branch file line <<<"$want"

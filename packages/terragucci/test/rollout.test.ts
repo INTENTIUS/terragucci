@@ -237,6 +237,38 @@ describe("continuing every rollout in flight", () => {
     expect([c.rollouts[0]!.action, c.rollouts[0]!.reason]).toEqual(["done", "wave 3 of 3, the last, merged"]);
   }, 30_000);
 
+  it("continues a registry version pin and an oci:// tag pin, each on its own branch and in the shape it had", async () => {
+    const oci = "oci://registry.example.com/acme/modules/network";
+    const reg = "acme/network/aws";
+    const { repo, bare } = checkout(
+      write(tmp(), {
+        "terragucci.yml": 'waves:\n  canary: ["dev/*"]\n',
+        "dev/oci/main.tf": backend("dev/oci.tfstate") + `module "n" {\n  source = "${oci}?tag=1.3.0"\n}\n`,
+        "prod/oci/main.tf": backend("prod/oci.tfstate") + `module "n" {\n  source = "${oci}?tag=1.3.0"\n}\n`,
+        "dev/reg/main.tf": backend("dev/reg.tfstate") + `module "n" {\n  source  = "${reg}"\n  version = "1.3.0"\n}\n`,
+        "prod/reg/main.tf": backend("prod/reg.tfstate") + `module "n" {\n  source  = "${reg}"\n  version = "1.3.0"\n}\n`,
+      }),
+    );
+    const forge = new MemoryForge(bare);
+    for (const name of ["modules/network", reg]) await rollout(repo, { kind: "module", name, to: "1.4.0", mode: "apply", forge: () => forge });
+    const ociBranch = (n: number) => waveBranch("modules/network", "1.4.0", n);
+    const regBranch = (n: number) => waveBranch(reg, "1.4.0", n);
+    expect([ociBranch(1), regBranch(1)]).toEqual(["terragucci/rollout/modules-network-1.4.0/wave-1", "terragucci/rollout/acme-network-aws-1.4.0/wave-1"]);
+    expect([changedFiles(bare, ociBranch(1)), changedFiles(bare, regBranch(1))]).toEqual([["dev/oci/main.tf"], ["dev/reg/main.tf"]]);
+    for (const b of [ociBranch(1), regBranch(1)]) {
+      forge.merge(b);
+      forge.apply(b);
+    }
+    const c = await continueRollouts(repo, { mode: "apply", forge: () => forge });
+    expect(c.rollouts.map((r) => [r.name, r.from, r.to, r.action, r.result?.status]).sort()).toEqual([
+      ["acme/network/aws", "1.3.0", "1.4.0", "ran", "opened"],
+      ["modules/network", "1.3.0", "1.4.0", "ran", "opened"],
+    ]);
+    expect([changedFiles(bare, ociBranch(2)), changedFiles(bare, regBranch(2))]).toEqual([["prod/oci/main.tf"], ["prod/reg/main.tf"]]);
+    expect(git(bare, "show", `${ociBranch(2)}:prod/oci/main.tf`)).toContain(`source = "${oci}?tag=1.4.0"`);
+    expect(git(bare, "show", `${regBranch(2)}:prod/reg/main.tf`)).toContain('version = "1.4.0"');
+  }, 30_000);
+
   it("reads the wave count from the title when the body predates it, and leaves a closed wave stopped", async () => {
     const { repo, bare } = checkout(pinnedRepo());
     const forge = new MemoryForge(bare);
