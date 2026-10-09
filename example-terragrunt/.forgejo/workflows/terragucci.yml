@@ -2,7 +2,7 @@
 # terragucci writes this file from terragucci.yml, or from its defaults when
 # the repo has none. Change terragucci.yml and run `npx terragucci init`
 # rather than editing it here.
-# Every job runs in ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1, pinned by digest.
+# Every job runs in ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1; init pins its digest once the image is published.
 name: terragucci
 
 on:
@@ -30,7 +30,7 @@ jobs:
   check:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     env:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
@@ -58,7 +58,7 @@ jobs:
   plan:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     env:
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
@@ -164,7 +164,7 @@ jobs:
   plan-note:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: plan
     if: always() && (needs.plan.result == 'success' || needs.plan.result == 'failure') && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     env:
@@ -187,7 +187,7 @@ jobs:
   replan:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')
     concurrency:
       group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}
@@ -321,7 +321,7 @@ jobs:
   replan-note:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: replan
     if: always() && (needs.replan.result == 'success' || needs.replan.result == 'failure') && needs.replan.outputs.go == '1'
     env:
@@ -345,7 +345,7 @@ jobs:
   apply-comment:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')
     concurrency:
       group: terragucci-apply-${{ github.repository }}
@@ -502,7 +502,7 @@ jobs:
   apply-wave-1:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: check
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
@@ -638,7 +638,7 @@ jobs:
   apply-wave-2:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: apply-wave-1
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
@@ -762,7 +762,7 @@ jobs:
   apply-wave-3:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: apply-wave-2
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
@@ -886,7 +886,7 @@ jobs:
   apply-wave-4:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: apply-wave-3
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
@@ -1010,7 +1010,7 @@ jobs:
   apply-wave-5:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: apply-wave-4
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
@@ -1135,7 +1135,7 @@ jobs:
   tips:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.2-tg1.1.6-tofu1.13.1@sha256:6dad7eb02a82ee16bf9cb1cc7a354ffe788864eca91f78f49558f4cc0882bad0
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1
     needs: apply-wave-5
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
