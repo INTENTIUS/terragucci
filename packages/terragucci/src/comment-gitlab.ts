@@ -45,7 +45,7 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
-import { allowRoot, LOGIN, parseComment, SHA } from "./comment";
+import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
@@ -163,7 +163,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
     const asks = notes
       .filter((n) => Number.isInteger(n?.id) && n.system !== true && !answered.has(n.id))
       .filter((n) => typeof n.created_at === "string" && n.created_at >= since)
-      .filter((n) => parseComment(n.body) !== undefined)
+      .filter((n) => parseComment(n.body, parseOptions(env)) !== undefined)
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
     for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}) }));
   }
@@ -202,7 +202,7 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
   const broke = (reason: string): NoteOutcome => ({ ...at, ran: false, replied: false, fail: true, reason });
   const silent = (reason: string): NoteOutcome => ({ ...at, ran: false, replied: false, reason });
 
-  const parsed = parseComment(note.body)!;
+  const parsed = parseComment(note.body, parseOptions(ask.env))!;
   const user = note.author?.username;
   const uid = note.author?.id;
   if (typeof user !== "string" || !LOGIN.test(user) || !Number.isInteger(uid)) return silent("the note has no usable author");

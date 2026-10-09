@@ -12,6 +12,7 @@ prompt: |
 | Command | What it does |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
+| `import` | writes `terragucci.yml` from an `atlantis.yaml` or a `digger.yml`, and prints what became of each setting |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
@@ -63,6 +64,31 @@ What `init` writes besides the pipeline depends on the approval mode. `--approva
 | `sealed` | writes chant's `chant.workspace.json` with each wave's gate (`wave-1`, `wave-2`) under `identity.gates`, so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant); an existing file gains missing gates |
 
 [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
+
+## import
+
+```bash
+terragucci import atlantis [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import digger [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+```
+
+Reads `atlantis.yaml` (or `atlantis.yml`), or OpenTaco's `digger.yml` (or `digger.yaml`), or the file named, and writes `terragucci.yml` by the tables of [Coming from Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/). It then prints every setting the file carries under one of four headings, quoting the guide's row for each:
+
+| Heading | The setting |
+|---|---|
+| Written to terragucci.yml | became a key, such as a project's `dir` in `roots` |
+| Done by terragucci with no key | needs no key, such as `autoplan.when_modified` |
+| Not mapped | has no key here, with the guide's reason; so does a setting the guide has no row for |
+| Left out on purpose | is something terragucci never does, such as an `import` workflow, with the guide's rule and what to do instead |
+
+| Flag | Meaning |
+|---|---|
+| `--apply-when` | `pull-request` (the default, as Atlantis and OpenTaco apply before merge) or `merge`; a `digger.yml` whose `on_commit_to_default` runs `digger apply` already means `merge` |
+| `--forge` | the forge, when the remote cannot tell; on GitLab the import keeps `apply.when: merge` and writes no `locks: plan`, and on Forgejo no `apply.merge: auto`, since those need a schedule or a token it cannot name |
+| `--dry-run` | print what would be written, and write nothing |
+| `--force` | replace an existing `terragucci.yml` |
+
+It exits 2 when the file is missing or not YAML, or when `terragucci.yml` exists and `--force` is not given. A project `dir` that matches no directory with Terraform files is written and named. Run [`init`](#init) next to write the pipeline.
 
 ## reconcile
 
