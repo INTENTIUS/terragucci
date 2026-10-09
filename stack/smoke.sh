@@ -327,6 +327,7 @@ approval-used|once a wave applied under its approval, the next merge that moves 
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
 cdktn-apply|with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is|
 cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
+cdktn-migrate|a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files|
 cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
 apply-branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
 own-jobs-kept|with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes|
@@ -11541,6 +11542,97 @@ migrate_wave() { # work, log name, [layers] -> AUDIT_CODE of wave 1 over mono an
   clean_mounted "$1/wave" "$(image_tag tofu)"
 }
 
+# The cdktn-migrate claim's app: one stack per key of STACKS (JSON), each
+# holding a terraform_data resource per name, its state in BUCKET under
+# <stack>.tfstate with a lock file.
+CDKTN_MIGRATE_APP='const { App, S3Backend, TerraformStack, TerraformResource } = require("cdktn");
+const STACKS = JSON.parse(process.env.STACKS);
+class Stack extends TerraformStack {
+  constructor(scope, id, names) {
+    super(scope, id);
+    new S3Backend(this, { bucket: process.env.BUCKET, key: `${id}.tfstate`, region: "us-east-1", usePathStyle: true, useLockfile: true });
+    for (const n of names) new TerraformResource(this, n, { terraformResourceType: "terraform_data" }).addOverride("input", `cm-${n}`);
+  }
+}
+const app = new App();
+for (const [name, names] of Object.entries(STACKS)) new Stack(app, name, names);
+app.synth();
+'
+
+claim_cdktn_migrate() {
+  # A CDK Terrain app on the cdktn fixture's packages, synthesized on the
+  # host: stack mono holds terraform_data.keep and terraform_data.moved, its
+  # state in a versioned bucket of the claim's own on floci, applied by wave
+  # 1. The app then moves moved to a new stack, split, and
+  # migrations/split-moved.yml names the two stacks' roots,
+  # cdktf.out/stacks/mono and cdktf.out/stacks/split, which hold
+  # cdk.tf.json and no .tf file. stage tf-plan proves the migration; wave 1
+  # waits for that digest, and once smoke-approver approves it writes both
+  # states, plans both with no change, and applies nothing. mono.tfstate then
+  # holds keep alone and split.tfstate moved.
+  # BREAK: split names the resource moved_too, so its address is not the one
+  # the migration moves, and the proof plans a change.
+  log() { echo "[smoke cdktn-migrate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 bucket="tgcm-$STAMP" stacks="cdktf.out/stacks/mono,cdktf.out/stacks/split" planned digest mono split moved=moved
+  [ -n "${BREAK:-}" ] && moved=moved_too
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?versioning" -H 'content-type: application/xml' \
+    --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>' \
+    || { log "could not turn on versioning for $bucket"; drop_work "$work"; return 1; }
+  mkdir -p "$work/wave"
+  cp "$HERE/fixtures/cdktn/package.json" "$HERE/fixtures/cdktn/package-lock.json" "$work/wave/"
+  printf '{\n  "language": "javascript",\n  "app": "node main.js",\n  "projectId": "terragucci-smoke-cdktn-migrate",\n  "targetVersions": { "opentofu": ">=1.10.0" }\n}\n' > "$work/wave/cdktf.json"
+  printf '%s' "$CDKTN_MIGRATE_APP" > "$work/wave/main.js"
+  printf 'node_modules/\n' > "$work/wave/.gitignore"
+  printf 'binary: tofu\n' > "$work/wave/terragucci.yml"
+  synth() { (cd "$work/wave" && STACKS="$1" BUCKET="$bucket" npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; return 1; }; }
+  (cd "$work/wave" && npm ci --no-audit --no-fund >/dev/null 2>&1) || { log "npm ci failed on the host"; drop_work "$work"; return 1; }
+  synth '{"mono":["keep","moved"]}' || { drop_work "$work"; return 1; }
+  [ -f "$work/wave/cdktf.out/stacks/mono/cdk.tf.json" ] && ! ls "$work/wave/cdktf.out/stacks/mono/"*.tf >/dev/null 2>&1 || { log "mono is not a root of cdk.tf.json alone"; drop_work "$work"; return 1; }
+  audit_origin "$work"
+  migrate_wave "$work" first cdktf.out/stacks/mono
+  [ "$AUDIT_CODE" = 0 ] || { log "the first apply of mono exited $AUDIT_CODE, not 0"; rc=1; }
+  if [ $rc = 0 ]; then
+    synth "{\"mono\":[\"keep\"],\"split\":[\"$moved\"]}" || rc=1
+    mkdir -p "$work/wave/migrations"
+    printf 'moves:\n  - from: cdktf.out/stacks/mono\n    to: cdktf.out/stacks/split\n    addresses: [terraform_data.moved]\n' > "$work/wave/migrations/split-moved.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "moved goes from the mono stack to split"
+    audit_in "$work" terragucci stage tf-plan --layers "$stacks" --binary tofu > "$work/plan.log" 2>&1 || { log "stage tf-plan failed"; rc=1; }
+    cat "$work/plan.log" >&2
+    clean_mounted "$work/wave" "$image"
+    planned="$(sed -n 's/^migration split-moved: every root plans with no change against its new state; digest //p' "$work/plan.log")"
+    [ -n "$planned" ] || { log "stage tf-plan did not prove the migration"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" waits "$stacks"
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the migration"; rc=1; }
+    digest="$(sed -n 's/^migration split-moved waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] && [ "$digest" = "$planned" ] || { log "wave 1 waits for [$digest], and the plan proved [$planned]"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_approve "$work/origin.git" "$work/ledger" smoke-approver split-moved "$digest" || { log "could not approve the migration"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies "$stacks"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+    grep -q "^migration split-moved applied$" "$work/applies.log" || { log "the log does not say the migration applied"; rc=1; }
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the migration planned changes"; rc=1; }
+    mono="$(curl -fsS "$FLOCI/$bucket/mono.tfstate" | jq -r '[.resources[].name] | join(",")')"
+    split="$(curl -fsS "$FLOCI/$bucket/split.tfstate" | jq -r '[.resources[].name] | join(",")')"
+    log "mono.tfstate holds [$mono], split.tfstate [$split]"
+    [ "$mono" = keep ] && [ "$split" = moved ] || { log "mono holds [$mono] and split [$split], not keep and moved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the migration moved terraform_data.moved from the mono stack's state to split's, proved with no change and applied once approved"
+  return $rc
+}
+
 claim_migrate_resume_never() {
   # migrate-resume with gate: never in the fixture: no wave can wait, and a
   # migration still can, so init writes the resume workflow all the same, and
@@ -13115,6 +13207,7 @@ inventory            weight=150
 resource-history     weight=200
 state-versions       weight=150
 migrate-split        weight=200
+cdktn-migrate        weight=200
 migrate-backend      weight=200
 migrate-revert       weight=250
 migrate-resume       runner self! weight=300
