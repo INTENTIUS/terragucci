@@ -23,6 +23,7 @@ A root is a directory whose Terraform files declare a backend or configure a pro
 |---|---|
 | `terragucci init` | sets one repo up; `--forge` and `--binary` override detection, `--dry-run` writes nothing |
 | `terragucci reconcile --config <file>` | from a control repo, previews every project's pipeline; `--mode apply` opens a pull request in each project that changes |
+| `terragucci generate` | writes each root's backend, provider and version files from the `generate` key; `--check` fails on one that differs |
 | `terragucci plan` | plans this repo's roots in apply order; `--root <glob>` narrows it |
 
 | Exit code | Means |

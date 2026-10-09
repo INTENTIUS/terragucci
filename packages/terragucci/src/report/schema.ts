@@ -294,7 +294,36 @@ export interface ReportRoot {
   state?: ReportStateVersion;
   /** The steps that ran for it (minor 17), in the order they ran. Absent when none did. */
   steps?: ReportStep[];
+  /** The roots whose state it reads through `terraform_remote_state`, and which outputs it planned on (minor 21). Absent when it reads none. */
+  reads?: ReportRead[];
 }
+
+/**
+ * One `terraform_remote_state` block of a root that reads another root's
+ * state (minor 21). In a `tf-plan`, a root whose upstream planned in the same
+ * run plans on that plan's outputs (`planned`), each value known only once
+ * the upstream applies left unknown. A `tf-apply` wave plans after the waves
+ * before it applied, on their state (`applied`).
+ */
+export interface ReportRead {
+  upstream: string;
+  /** The block's label: a `terraform_remote_state` data block's. */
+  data: string;
+  /** `planned`: the outputs the upstream's plan in this run makes. `applied`: its state as it stands. */
+  outputs: "planned" | "applied";
+  /** With `planned`: the outputs it reads that are known only once the upstream applies. */
+  unknown?: string[];
+  /** With `applied` in a `tf-plan`: why it did not plan on the upstream's planned outputs. */
+  why?: string;
+}
+
+/**
+ * Where a wave stands (minor 21). A `tf-plan` wave is `planned`. A `tf-apply`
+ * wave is `waiting` for an approval, `applying` while it applies (or its
+ * share jobs do), then `applied`, or `refused` (its plans changed after an
+ * approval, or the policy denied a root) or `failed`.
+ */
+export type WaveState = "planned" | "waiting" | "applying" | "applied" | "refused" | "failed";
 
 /** When a step runs: before or after a root's init, plan, apply or drift (minor 17). */
 export type ReportStepWhen = `${"before" | "after"}-${"init" | "plan" | "apply" | "drift"}`;
@@ -442,6 +471,17 @@ export interface ReportWave {
   held_by_steps?: string[];
   /** The wave's monthly cost, when `cost` is on (minor 19): the sums over its roots estimated, and with `cost.approve_above` whether it waits for it. */
   cost?: ReportWaveCost;
+  /** Where the wave stands (minor 21). */
+  state?: WaveState;
+  /** The waves whose roots' state its roots read (minor 21). Absent when it reads none. */
+  reads?: number[];
+  /**
+   * A `tf-plan` wave whose plans read outputs that are known only once these
+   * waves apply (minor 21). It plans again after they apply, and waits for
+   * an approval of that plan: its review digest is null, and no approval of
+   * this run's digests applies it.
+   */
+  replans_after?: number[];
 }
 
 /** One wave's monthly cost (minor 19). */

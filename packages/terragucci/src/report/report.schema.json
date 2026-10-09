@@ -236,6 +236,21 @@
                 "seconds": { "type": "number" }
               }
             }
+          },
+          "reads": {
+            "description": "The roots whose state the root reads through terraform_remote_state, and which outputs it planned on: planned, the upstream's plan in this run, with the outputs known only once it applies under unknown; applied, its state as it stands (minor 21).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["upstream", "data", "outputs"],
+              "properties": {
+                "upstream": { "type": "string" },
+                "data": { "type": "string" },
+                "outputs": { "enum": ["planned", "applied"] },
+                "unknown": { "type": "array", "items": { "type": "string" } },
+                "why": { "type": "string" }
+              }
+            }
           }
         }
       }
@@ -296,7 +311,10 @@
               "approve_above": { "type": "number" },
               "over": { "type": "boolean" }
             }
-          }
+          },
+          "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed." },
+          "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
+          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." }
         }
       }
     },

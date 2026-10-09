@@ -10,7 +10,7 @@ import { respond } from "../src/respond";
 import { codify, driftOf, hcl, importBlocks, literal, parseImport } from "../src/respond/drift";
 import { moduleNotes, releaseNotes } from "../src/respond/notes";
 import { describeRefused, refusedDiff } from "../src/respond/refused";
-import { addCanary, canaryFor, missingLocks, pinFromLock, tipProposals } from "../src/respond/tips";
+import { addCanary, canaryFor, missingLocks, pinFromLock, SYNTH_TIPS_LEFT, tipProposals } from "../src/respond/tips";
 import { bareFrom, git, tmp, write } from "./helpers";
 import { plan, rc, RUN } from "./report-fixtures";
 
@@ -238,9 +238,18 @@ describe("respond tips: one pull request per tip", () => {
 
   it("lists every tip's pull request on a dry run", () => {
     const dir = repo();
-    const p = tipProposals(dir, ["envs/dev/app", "envs/prod/app"], "tofu", {});
+    const p = tipProposals(dir, ["envs/dev/app", "envs/prod/app"], "tofu", {}).proposals;
     expect(p.map((x) => x.branch)).toEqual(["terragucci/tip/pin-hashicorp-aws", "terragucci/tip/pin-hashicorp-random", "terragucci/tip/lock-files", "terragucci/tip/canary"]);
-    expect(tipProposals(dir, ["envs/dev/app", "envs/prod/app"], "tofu", { canary: ["envs/dev/*"] }).map((x) => x.branch)).not.toContain("terragucci/tip/canary");
+    expect(tipProposals(dir, ["envs/dev/app", "envs/prod/app"], "tofu", { canary: ["envs/dev/*"] }).proposals.map((x) => x.branch)).not.toContain("terragucci/tip/canary");
+  });
+
+  it("with synth proposes the canary alone and says why the pin and lock file tips are left out", () => {
+    const dir = repo();
+    const t = tipProposals(dir, ["envs/dev/app", "envs/prod/app"], "tofu", { synth: true });
+    expect(t.proposals.map((x) => x.branch)).toEqual(["terragucci/tip/canary"]);
+    expect([...t.proposals[0]!.files.keys()]).toEqual(["terragucci.yml"]);
+    expect(t.left).toEqual([SYNTH_TIPS_LEFT]);
+    expect(tipProposals(dir, ["envs/dev/app", "envs/prod/app"], "tofu", {}).left).toEqual([]);
   });
 });
 
@@ -331,6 +340,22 @@ describe("respond: running a response", () => {
     expect(git(bare, "show", "terragucci/drift:app/main.tf")).toContain("visibility_timeout_seconds = 45 # seconds");
     expect(git(bare, "rev-parse", "main")).toBe(git(repo, "rev-parse", "HEAD"));
     expect(forge.calls.filter((c) => c.startsWith("POST"))).toEqual(["POST https://forge.test/api/v1/repos/acme/infra/pulls"]);
+  });
+
+  it("drift: with synth the pull request is refused, naming why", async () => {
+    const { repo } = checkout({ "terragucci.yml": "forge: forgejo\nurl: https://forge.test/acme/infra\nsynth: npx cdktn synth\n", "cdktf.out/stacks/dev/cdk.tf.json": "{}" });
+    await expect(respond("drift", repo, { binary: "tofu" })).rejects.toThrow(/respond drift: the drift pull request writes each live value into a root's own files, and with synth/);
+  });
+
+  it("tips: with synth the canary alone, and no roots on disk asks for the synth command first", async () => {
+    const cfg = "forge: forgejo\nurl: https://forge.test/acme/infra\nsynth: npx cdktn synth\n";
+    const { repo } = checkout({ "terragucci.yml": cfg, "app.js": "" });
+    await expect(respond("tips", repo, { binary: "tofu" })).rejects.toThrow("respond tips found no roots: synth writes them, so run npx cdktn synth first");
+    const stack = (n: string) => JSON.stringify({ terraform: { backend: { s3: { bucket: "b", key: `${n}.tfstate` } } }, resource: { terraform_data: { x: {} } } });
+    write(repo, { "cdktf.out/stacks/dev/cdk.tf.json": stack("dev"), "cdktf.out/stacks/prod/cdk.tf.json": stack("prod") });
+    const r = await respond("tips", repo, { binary: "tofu" });
+    expect(r.proposals).toEqual([{ branch: "terragucci/tip/canary", title: "Add a canary wave: cdktf.out/stacks/dev", files: ["terragucci.yml"], state: "would-open" }]);
+    expect(r.text).toContain(SYNTH_TIPS_LEFT);
   });
 
   it("drift: attributions the stage already made are used, and the audit log is not read again", async () => {

@@ -116,6 +116,8 @@ Other changes are only reported:
 | never set in the root | it comes from a default |
 | on a resource deleted outside Terraform | the next apply makes it again |
 
+With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
+
 For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14.1 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
 <Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
@@ -178,6 +180,8 @@ Each tip is its own pull request.
 | a provider taken by a range | pins it in `required_providers` at the version the lock file holds, so the next plan changes nothing |
 | a root with no lock file | adds one written by `providers lock`, with hashes for Linux and macOS on amd64 and arm64 unless `--platform` names others |
 | no canary | adds `waves.canary` |
+
+With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 

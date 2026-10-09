@@ -301,15 +301,24 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     // A plan's waves: the digest of what each changes, which approval: pr-review binds a review to, and whether the gate will hold it.
     let t = "| Wave | Roots | Digest of its changes | When it applies |\n|---|---|---|---|\n";
     for (const w of report.waves) {
-      const when = w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
+      const again = w.replans_after?.length ? `plans again once wave ${w.replans_after.join(", ")} applies, then ` : "";
+      const when = again
+        ? `${again}${w.waits ? "waits for an approval of that plan" : "applies"}`
+        : w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
       const by = w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
-      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${when}${by} |\n`;
+      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })) }), "");
   } else if (report.waves.length > 0) {
     let t = "| Wave | Roots | Set digest | Approval |\n|---|---|---|---|\n";
-    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
+    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.replans_after?.length ? `none yet: it plans again once wave ${w.replans_after.join(", ")} applies` : w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
+  }
+  const linked = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.outputs === "planned").map((x) => ({ root: r.path, ...x })));
+  if (linked.length > 0) {
+    let t = `**Planned on the planned outputs of another root (${linked.length}):**\n\n`;
+    for (const x of linked) t += `- ${to(code(x.root), rootAnchor(x.root))} reads ${code(x.upstream)}${x.unknown?.length ? `; ${x.unknown.map(code).join(", ")} known once it applies` : ""}\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   const steps = stepsTable(report, (root) => to(code(root), rootAnchor(root)));
