@@ -328,6 +328,12 @@ export interface ProjectSettings {
    * (Grafana's Explore, Tempo, Jaeger), which the report links.
    */
   telemetry?: { headers_secret?: string; trace_url?: string };
+  /**
+   * Database units (sql.ts). `credentials` maps each variable a chant
+   * `sql.profiles` entry names (`CLICKHOUSE_PASSWORD`) to the secret that
+   * fills it: `plan` in the plan and drift jobs, `apply` in the apply jobs only.
+   */
+  sql?: { credentials?: { plan?: Record<string, string>; apply?: Record<string, string> } };
   tips?: boolean;
   modules?: { path?: string; publish?: string | string[] };
   /**
@@ -420,7 +426,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost", "sql",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -523,6 +529,23 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       }
       if (t.trace_url !== undefined && !(typeof t.trace_url === "string" && /^https?:\/\/[^\s]+$/.test(t.trace_url) && t.trace_url.includes("{trace_id}"))) {
         problems.push(`${where}.telemetry.trace_url must be an http(s) URL with {trace_id} in it, such as https://grafana.example/explore?left=...{trace_id}...`);
+      }
+    }
+  }
+  if (s.sql !== undefined) {
+    const name = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    if (!isObject(s.sql)) problems.push(`${where}.sql must be a map (settings: credentials)`);
+    else {
+      for (const k of Object.keys(s.sql)) if (k !== "credentials") problems.push(`${where}.sql.${k} is not a setting (settings: credentials)`);
+      const c = s.sql.credentials;
+      if (c !== undefined && !isObject(c)) problems.push(`${where}.sql.credentials must be a map with plan, apply or both`);
+      else if (c !== undefined) {
+        for (const [phase, map] of Object.entries(c)) {
+          if (phase !== "plan" && phase !== "apply") problems.push(`${where}.sql.credentials.${phase} is not a setting (settings: plan, apply)`);
+          else if (!isObject(map) || !Object.entries(map).every(([k, v]) => name.test(k) && typeof v === "string" && name.test(v))) {
+            problems.push(`${where}.sql.credentials.${phase} must map each variable a sql profile names to the secret that fills it, such as CLICKHOUSE_PASSWORD: CH_READER_PASSWORD`);
+          }
+        }
       }
     }
   }

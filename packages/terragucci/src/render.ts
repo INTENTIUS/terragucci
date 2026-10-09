@@ -159,6 +159,12 @@ export interface PipelineInput {
   applyRequires?: ApplyRequire[];
   /** `locks: plan`: the `pr-lock` job locks a pull request's roots from its first plan (GitHub and Forgejo). */
   locksPlan?: boolean;
+  /**
+   * Database units in the layers (sql.ts), which the check job leaves out, and
+   * `sql.credentials`: the secrets mapped into the variables their profiles
+   * name, `plan` in the plan and drift jobs and `apply` in the apply jobs.
+   */
+  sql?: { units: string[]; credentials?: { plan?: Record<string, string>; apply?: Record<string, string> } };
 }
 
 export interface RenderedPipeline {
@@ -493,7 +499,8 @@ export function movedRoots(roots: string[]): string {
     "fi",
     'moved=""',
     `for dir in ${roots.map(sh).join(" ")}; do`,
-    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi',
+    // A database unit (dir@env) moves with its project's directory.
+    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep "^${dir%@*}/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi',
     "done",
   ].join("\n");
 }
@@ -1360,7 +1367,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth);
+  // The check job formats and validates Terraform roots; a database unit is chant's, and its plan checks it.
+  const sqlUnits = new Set(input.sql?.units ?? []);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots.filter((r) => !sqlUnits.has(r)), input.synth);
+  // sql.credentials: read-only in the jobs that plan and read drift, the writer only in the jobs that apply.
+  const secretEnv = (m: Record<string, string> | undefined): Record<string, string> =>
+    Object.fromEntries(Object.entries(m ?? {}).map(([k, v]) => [k, forge === "gitlab" ? `$${v}` : `\${{ secrets.${v} }}`]));
+  const sqlPlanEnv = secretEnv(input.sql?.credentials?.plan);
+  const sqlApplyEnv = secretEnv(input.sql?.credentials?.apply);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs get the estimator's key as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
   const costEnv: Record<string, string> = input.cost ? { INFRACOST_API_KEY: forge === "gitlab" ? `$${input.cost.keySecret}` : `\${{ secrets.${input.cost.keySecret} }}` } : {};
@@ -1471,7 +1485,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv },
+      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv, ...sqlPlanEnv },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens,
       ...(tg ? forgeCache("gitlab") : {}),
@@ -1485,7 +1499,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "apply",
         image: jobImage,
         ...(i > 0 ? { needs: [applyJobs[i - 1].name] } : {}),
-        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv },
+        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv, ...sqlApplyEnv },
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-apply",
         ...idTokens,
@@ -1500,7 +1514,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("confirm", new GitLabJob({
         stage: "apply",
         image: jobImage,
-        variables: gitlabEnv,
+        variables: { ...gitlabEnv, ...sqlPlanEnv },
         rules: [new Rule({ if: onDefault })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
@@ -1512,7 +1526,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("mr-apply", new GitLabJob({
         stage: "apply",
         image: jobImage,
-        variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv },
+        variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv, ...sqlApplyEnv },
         rules: [new Rule({ if: mrApplyRule })],
         resource_group: "terragucci-apply",
         ...idTokens,
@@ -1575,7 +1589,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("drift", new GitLabJob({
         stage: "drift",
         image: jobImage,
-        variables: gitlabEnv,
+        variables: { ...gitlabEnv, ...sqlPlanEnv },
         // The comments schedule's pipelines carry TERRAGUCCI_SCHEDULE=comments; any other schedule, with or without a variable, is drift's.
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"` })],
         ...idTokens,
@@ -1691,6 +1705,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...decideEnv,
       ...costEnv,
       ...reportKeyEnv(forge, input.reports),
+      ...sqlPlanEnv,
     },
     steps: [
       ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true, undefined, true),
@@ -1719,7 +1734,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports), ...sqlPlanEnv },
     steps: [
       ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, { ...report, ...(input.agentComment ? { agentComment: true } : {}) }, true) }), true, true, undefined, true),
       new Step({
@@ -1749,7 +1764,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...sqlApplyEnv },
     ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
     steps: [
       ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true),
@@ -1827,6 +1842,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_BRANCH: "${{ github.event.repository.default_branch }}",
         ...headersEnv,
         ...notifyEnv,
+        ...sqlApplyEnv,
       },
       steps: [
         ...steps(new Step({ name: `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
@@ -1847,7 +1863,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
       permissions: { contents: "read", statuses: "write", ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      env: { TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv },
+      env: { TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv, ...sqlPlanEnv },
       steps: [
         ...steps(new Step({ name: `Plan every ${what} to confirm the merge applied`, shell: "bash", run: confirmScript(binary, layers, forge, oidc, report) }), true),
         new Step({ name: "Keep the plan report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-confirm`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
@@ -1923,6 +1939,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...headersEnv,
         ...driftDecideEnv,
         ...reportKeyEnv(forge, input.reports),
+        ...sqlPlanEnv,
       },
       steps: [
         ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true, false, awsStep),

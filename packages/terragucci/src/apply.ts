@@ -95,6 +95,7 @@ import { sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
 import { binaryEnv, terragruntExec } from "./binary-env";
+import { applySqlUnit, planSqlUnit, sqlUnitOf, type SqlUnit } from "./sql";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -398,6 +399,8 @@ interface PlannedRoot {
   error?: string;
   /** The policy's verdict on its plan, when `policy` is on. */
   policy?: ReportRootPolicy;
+  /** Set for a database unit (sql.ts): chant plans and applies it. */
+  sql?: SqlUnit;
 }
 
 /** How long a plan or an apply waits for a state lock unless the job set a `-lock-timeout` of its own. */
@@ -431,6 +434,8 @@ function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
 async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
+    const unit = sqlUnitOf(repo, root);
+    if (unit) return await planUnit(repo, unit, work, i, timing);
     return await planTimed(repo, binary, root, work, i, observer, timing, cache);
   } finally {
     observer.endRoot(timing);
@@ -465,7 +470,43 @@ async function planTimed(repo: string, binary: string, root: string, work: strin
   };
 }
 
+/**
+ * A database unit's plan, made now as a root's is, its digest taken over the
+ * plan document chant's classified changes become. A change the server cannot
+ * make in place fails the unit, so the wave applies nothing.
+ */
+async function planUnit(repo: string, unit: SqlUnit, work: string, i: number, timing: RootTiming): Promise<PlannedRoot> {
+  const env = { ...process.env };
+  const base = { root: unit.name, timing, planFile: "", env, changes: 0, destroys: 0, summary: "", sql: unit };
+  const p = await planSqlUnit(repo, unit, join(work, `sql-${i}`), { env });
+  if (!p.plan) return { ...base, error: p.error ?? "the unit did not plan" };
+  if (p.refused) return { ...base, plan: p.plan, error: `${p.error}\n${p.text ?? ""}` };
+  const part = terraformChangeSetPart({ member: unit.name, plan: p.plan, planner: "chant" });
+  return { ...base, member: { member: unit.name, planDigest: part.member.planDigest ?? "" }, plan: p.plan, changes: p.changes, destroys: p.destroys, summary: p.summary };
+}
+
 async function applyRoot(repo: string, binary: string, p: PlannedRoot, observer: StageObserver): Promise<boolean> {
+  if (p.sql) {
+    // The wave's gate passed this plan; the unit's ApplyOp makes it. A unit that plans no change runs nothing.
+    if (p.changes === 0) {
+      console.log(`applied ${p.root}: no changes`);
+      return true;
+    }
+    observer.reopen(p.timing);
+    let r: { ok: boolean; output: string };
+    try {
+      r = await applySqlUnit(repo, p.sql, { env: p.env });
+    } finally {
+      observer.endRoot(p.timing);
+    }
+    if (r.ok) {
+      console.log(`applied ${p.root}: ${[...r.output.matchAll(/applied \d+ resource\(s\)/g)].pop()?.[0] ?? "done"}`);
+      return true;
+    }
+    console.log(`FAILED ${p.root}`);
+    console.log(indent(r.output));
+    return false;
+  }
   observer.reopen(p.timing);
   let r: Run;
   try {
@@ -585,8 +626,9 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     roots: w.planned.map((p) => {
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
-      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
+      const planner = p.sql ? "chant" : plannerForBinary(binary);
+      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner, error: p.error.split("\n")[0], ...policy };
+      return { path: p.root, plan: p.plan, planner, files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
     }),
     waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}) }],
     redacted,
@@ -716,7 +758,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy">;
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy" | "sql">;
 
 /**
  * Run the policy over a wave's plans, when `policy` is on. Returns the exit
@@ -740,7 +782,7 @@ async function policyGate(
   if (governing.note) console.log(governing.note);
   if (governing.policy) {
     const runAt = runFacts(repo, policyEnv, settings.forge);
-    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
+    const found = await checkPlans(repo, governing.policy, planned.filter((p) => !p.sql).map((p) => ({ path: p.root, plan: p.plan })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
     const denied = found.failed;
     w.policy = found.policy;
     for (const p of planned) {

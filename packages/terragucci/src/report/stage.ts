@@ -51,6 +51,7 @@ import { costCommand, estimateCosts, writeCostFiles, type CostRunner } from "./c
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
+import { driftSqlUnit, findSqlUnits, planSqlUnit, sqlUnitOf, withSqlUnits, type SqlUnit } from "../sql";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
@@ -658,14 +659,17 @@ export async function runStage(stage: string, repo: string, options: StageOption
   if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) {
     return runTerragruntStage(repo, settings, options, env, log, drift);
   }
-  const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
-  const full = options.layers ?? applyLayers(repo, all);
+  // Database units (sql.ts) apply after the roots, in a layer of their own.
+  const tfRoots = options.layers ? [] : findRoots(repo, settings.roots);
+  const sqlUnits = options.layers ? [] : findSqlUnits(repo);
+  const all = options.layers ? options.layers.flat() : [...tfRoots, ...sqlUnits.map((u) => u.name)];
+  const full = options.layers ?? withSqlUnits(applyLayers(repo, tfRoots), sqlUnits);
   const layers = full
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
     .filter((l) => l.length > 0);
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
   // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
-  if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
+  if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)) && !sqlUnitOf(repo, r))) {
     throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${settings.synth ? `; the synth command (${settings.synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
   }
   // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
@@ -710,8 +714,35 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
   let redacted = 0;
 
+  /** A database unit planned with chant (sql.ts), or its drift read; a change the server cannot make in place fails it, naming the Op that makes it. */
+  const planUnit = async (unit: SqlUnit, index: number): Promise<RootOutcome> => {
+    const root = unit.name;
+    const failed = (error: string, line: string): RootOutcome => ({ root, lines: [line], input: { path: root, planner: "chant", error, preventDestroy: new Set() } });
+    if (drift) {
+      const d = await driftSqlUnit(repo, unit, { env });
+      if (!d.plan) return failed(d.error ?? "the drift was not read", `${root}: drift not read`);
+      const n = driftCount(d.plan);
+      return {
+        root, lines: [`${root}: ${n === 0 ? "no drift" : `${n} change${n === 1 ? "" : "s"} drifted`}`],
+        plan: { text: d.text, json: JSON.stringify(d.plan, null, 2) + "\n" },
+        names: driftNames(d.plan),
+        input: { path: root, plan: driftPlan(d.plan), planner: "chant", files: planFiles(root), preventDestroy: new Set() },
+      };
+    }
+    const p = await planSqlUnit(repo, unit, join(work, `sql-${index}`), { env });
+    if (!p.plan) return failed(p.error ?? "the unit did not plan", `${root}: plan failed`);
+    if (p.refused) return { ...failed(p.error!, `${root}: refused, ${p.error}`), plan: { text: p.text, json: JSON.stringify(p.plan, null, 2) + "\n" } };
+    return {
+      root, lines: [`${root}: ${p.summary}`],
+      plan: { text: p.text, json: JSON.stringify(p.plan, null, 2) + "\n" },
+      input: { path: root, plan: p.plan, planner: "chant", files: planFiles(root), preventDestroy: new Set() },
+    };
+  };
+
   /** One root planned, its outcome kept apart so the report and the log take roots in order, not in the order they finish. */
   const planRoot = async (root: string, index: number): Promise<RootOutcome> => {
+    const unit = sqlUnitOf(repo, root);
+    if (unit) return planUnit(unit, index);
     const lines: string[] = [];
     const dir = join(repo, root);
     // A root that reads the state of a root nothing has applied cannot plan: hold it back.
@@ -951,7 +982,8 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
     return undefined;
   }
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-  const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
+  // A database unit is reached by a change anywhere in its chant project.
+  const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: sqlUnitOf(repo, r)?.dir ?? r }])), files);
   const deps = rootDependencies(repo, all);
   const selected = new Set(changed);
   for (let grew = true; grew; ) {
@@ -997,7 +1029,8 @@ export async function checkPolicy(repo: string, policy: PolicySettings, items: {
  * verdict and warnings.
  */
 async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void, run: Omit<PolicyRunContext, "root"> = {}): Promise<{ inputs: RootInput[]; policy: ReportPolicy }> {
-  const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
+  // A database unit's plan is chant's, not Terraform's, so a Terraform policy does not read it.
+  const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional && i.planner !== "chant");
   const found = await checkPlans(repo, policy, checked.map((i) => ({ path: i.path, plan: i.plan })), base, trust, options, log, run);
   return {
     policy: found.policy,
@@ -1092,7 +1125,7 @@ async function finish(
     if (!parser) log("tips: the HCL parser is not installed, so the lint tips are left out (npm i -D @cdktn/hcl2json)");
     const destroying = [...new Set(report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => n.root))];
     try {
-      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}) });
+      report.tips = await repoTips(repo, all.filter((r) => !sqlUnitOf(repo, r)), { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}) });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];
@@ -1103,7 +1136,7 @@ async function finish(
   let costOutputs: Map<string, string> | undefined;
   if (!drift && settings.cost && !options.noCost) {
     const stored = report.roots.flatMap((r) => {
-      const json = plans.get(r.path)?.json;
+      const json = sqlUnitOf(repo, r.path) ? undefined : plans.get(r.path)?.json;
       return json !== undefined ? [{ root: r.path, json }] : [];
     });
     if (stored.length > 0) {
@@ -1155,7 +1188,7 @@ async function finish(
   }
   let issue: StageResult["issue"];
   if (drift) {
-    const issueOptions = { ...(names ? { names } : {}), ...(attributions ? { attributions } : {}), ...links.note };
+    const issueOptions = { ...(names ? { names } : {}), ...(attributions ? { attributions } : {}), ...links.note, ...(report.roots.some((r) => sqlUnitOf(repo, r.path)) ? { sql: true } : {}) };
     writeFileSync(join(dir, "issue.md"), renderDriftIssue(report, issueOptions));
     // `respond drift` in the same job reads who changed what from here, so the audit log is read once.
     // A reused report directory can hold the file from an earlier run, so a run that made none removes it.

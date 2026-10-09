@@ -81,6 +81,8 @@ export interface IssueOptions {
   names?: Map<string, Map<string, string>>;
   /** Per root, who changed each drifted attribute, when the run attributed them (`respond.drift: attribute`). */
   attributions?: Map<string, Attributed>;
+  /** The report holds a database unit (sql.ts): its drift is the live server against what main declares, so a change main has not applied yet shows too. */
+  sql?: boolean;
 }
 
 const SOURCE_WORD = { table: "known write", audit: "audit log", model: "model", unattributed: "unattributed" } as const;
@@ -101,7 +103,7 @@ export function renderDriftIssue(report: Report, options: IssueOptions = {}): st
   const d = drifted(report);
   const lines = [DRIFT_MARKER, ""];
   lines.push(
-    `${d.roots} of ${report.roots.length} roots have drifted from what Terraform last applied, found at ${code(run.commit.slice(0, 12))} on ${run.finished.slice(0, 10)}.` +
+    `${d.roots} of ${report.roots.length} roots ${options.sql ? "differ from what their code declares" : "have drifted from what Terraform last applied"}, found at ${code(run.commit.slice(0, 12))} on ${run.finished.slice(0, 10)}.` +
       (options.reportUrl ? (options.artifacts ? ` The full report is in the artifacts of [this run](${options.reportUrl}).` : ` [Full report](${options.reportUrl})`) : ""),
     "",
     "A drift run only reads. Correct drift with a pull request, or by applying the code as it is.",

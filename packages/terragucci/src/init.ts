@@ -25,6 +25,7 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
+import { findSqlUnits, withSqlUnits, type SqlUnit } from "./sql";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -115,6 +116,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       : detectedBinary;
 
   let rootReasons: RootReason[];
+  let sqlUnits: SqlUnit[] = [];
   let layers: string[][];
   let terragrunt: TerragruntFound | undefined;
   if (detectedTg) {
@@ -151,23 +153,27 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     };
   } else {
     rootReasons = findRootsWithReasons(repo, settings.roots);
-    if (rootReasons.length === 0) {
+    // Database units (sql.ts): one per ApplyOp a chant sql project declares for a ClickHouse or Postgres environment.
+    sqlUnits = findSqlUnits(repo);
+    if (rootReasons.length === 0 && sqlUnits.length === 0) {
       throw new ConfigError(
         (settings.roots
           ? `no directory matches roots ${JSON.stringify(settings.roots)}`
-          : "found no roots: no directory has Terraform files with a backend or a provider block") +
+          : "found no roots: no directory has Terraform files with a backend or a provider block, and no chant project with the sql lexicon has an ApplyOp for ClickHouse or Postgres") +
           // The pipeline names the roots init finds, so a synthesized root must be on disk when init runs.
           (settings.synth ? `; run the synth command (${settings.synth}) first, then init` : ""),
       );
     }
-    layers = applyLayers(repo, rootReasons.map((r) => r.root));
+    layers = withSqlUnits(rootReasons.length > 0 ? applyLayers(repo, rootReasons.map((r) => r.root)) : [], sqlUnits);
+    rootReasons = [...rootReasons, ...sqlUnits.map((u) => ({ root: u.name, reason: `ApplyOp ${u.op} applies ${u.env} (${u.target}) in ${u.dir}` }))];
   }
   const roots = rootReasons.map((r) => r.root);
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
-  if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
+  const tfRoots = roots.filter((r) => !sqlUnits.some((u) => u.name === r));
+  if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, tfRoots));
 
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
-  const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
+  const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, tfRoots);
   const version = settings.version
     ? { value: settings.version, reason: "terragucci.yml" }
     : pinned
@@ -226,6 +232,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,
+    ...(sqlUnits.length > 0 || settings.sql?.credentials ? { sql: { units: sqlUnits.map((u) => u.name), ...(settings.sql?.credentials ? { credentials: settings.sql.credentials } : {}) } } : {}),
     oidc: settings.oidc,
     tokenEnv: settings.token_env,
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),

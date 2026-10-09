@@ -84,3 +84,6 @@ stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat cost-estimate
 example-terragrunt/                       tg-*
+
+# Database units: chant sql projects planned, applied and drifted by chant.
+packages/terragucci/src/sql.ts            sql-*
