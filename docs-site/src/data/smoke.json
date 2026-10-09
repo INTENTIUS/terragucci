@@ -1039,7 +1039,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "3ff8578a"
     },
     {
       "claim": "comment-refused",
@@ -1336,7 +1336,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "3ff8578a"
     },
     {
       "claim": "audit-override",
@@ -1376,7 +1376,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "3ff8578a"
     },
     {
       "claim": "resource-history",
@@ -1393,6 +1393,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "abdef33f"
+    },
+    {
+      "claim": "state-roles",
+      "says": "with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3ff8578a"
+    },
+    {
+      "claim": "state-export",
+      "says": "terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3ff8578a"
+    },
+    {
+      "claim": "state-edges",
+      "says": "the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3ff8578a"
     },
     {
       "claim": "migrate-resume",

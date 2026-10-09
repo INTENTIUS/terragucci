@@ -150,7 +150,7 @@ dashboards: true
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, by forge | the forge token `reconcile`, `rollout` and `respond --mode apply` use |
-| `oidc` | none | plan and apply identities per cloud; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
+| `oidc` | none | plan and apply identities per cloud, and with `oidc.roles` AWS roles by root glob; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
 | `parallelism` | 3 for GitLab-managed state, else 4 | roots planned at once, and applied at once in a wave; Terragrunt uses `terragrunt.parallelism`. Each root running starts its own providers: with the AWS provider, about 800 MB each, so 4 fit a 7 GB runner and 16 need about 13 GB |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`), [`override`](/terragucci/reference/policy/#overriding-a-denial) (who may let one denied plan through, read at base; unset, nobody); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |

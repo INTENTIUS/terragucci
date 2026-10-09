@@ -16,12 +16,17 @@
  * applied commit (./run-view.ts): its roots by wave and the roots each reads,
  * and each root's state and its reads of states outside the project, which
  * match another project's roots into edges between projects.
+ *
+ * The roots that read another root's state, from edges.json
+ * (./state-edges.ts), each with its last plan against the producer's last
+ * apply.
  */
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
 import type { ReportResource } from "./schema";
 import type { ChangeRow } from "./history";
 import type { StateVersions } from "./state-versions";
+import { edgesOf, type Edge, type EdgeRun, type StateEdges } from "./state-edges";
 import { renderDoraSection, type Dora } from "./dora";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
@@ -50,6 +55,8 @@ export interface ProjectIndex {
   states?: StateVersions;
   /** The run view (run.json) of its newest applied commit, when a wave wrote one. */
   run?: RunView;
+  /** Its edges.json, when a root reads another's state or an apply changed a root. */
+  edges?: StateEdges;
 }
 
 /** One root's state on the page: where it is, whether its backend keeps versions, and the versions its applies left, newest first. */
@@ -146,8 +153,19 @@ export interface EstateProject {
   inventory?: EstateInventory;
   /** Each root's state versions, from its states.json. Absent until an apply records them. */
   states?: EstateStateRoot[];
+  /** Each cross-state edge, from its edges.json. Absent until a run records one. */
+  edges?: EstateEdge[];
   /** The run view the graph read: its commit, when a wave last wrote it, and its page when the page can link it. Absent until a wave writes one. */
   run_view?: { commit: string; updated: string; page?: string };
+}
+
+/** A run of an edge, linked to its report when the page can link it. */
+export type EstateEdgeRun = Omit<EdgeRun, "path"> & { report?: string };
+
+/** One cross-state edge on the page. */
+export interface EstateEdge extends Omit<Edge, "consumer_planned" | "producer_applied"> {
+  consumer_planned?: EstateEdgeRun;
+  producer_applied?: EstateEdgeRun;
 }
 
 /** The estate's dependency graph: every root of each project's run view by wave, and an edge from each root to each root that reads its state. */
@@ -241,6 +259,20 @@ function statesOf(st: StateVersions, base: string | undefined): EstateStateRoot[
   }));
 }
 
+/** A project's cross-state edges, each run linked to its report when the page can link it. */
+function edgesOfProject(st: StateEdges, base: string | undefined): EstateEdge[] {
+  const linked = (r: EdgeRun | undefined): EstateEdgeRun | undefined => {
+    if (!r) return undefined;
+    const { path, ...rest } = r;
+    return { ...rest, ...(base !== undefined ? { report: `${base}${path}/report.html` } : {}) };
+  };
+  return edgesOf(st).map((e) => {
+    const planned = linked(e.consumer_planned);
+    const applied = linked(e.producer_applied);
+    return { consumer: e.consumer, producer: e.producer, via: e.via, ...(planned ? { consumer_planned: planned } : {}), ...(applied ? { producer_applied: applied } : {}), status: e.status };
+  });
+}
+
 /** One project's state from its index rows. A row of another project (a top-of-prefix index) is left out. */
 export function projectState(p: ProjectIndex, now: Date): EstateProject {
   const base = dirOf(p.base);
@@ -294,6 +326,7 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     ...(p.inventory ? { inventory: inventoryOf(p.inventory, base) } : {}),
     ...(p.states ? { states: statesOf(p.states, base) } : {}),
     ...(p.run ? { run_view: { commit: p.run.commit, updated: p.run.updated, ...(base !== undefined ? { page: `${base}runs/${p.run.commit}/run.html` } : {}) } } : {}),
+    ...(p.edges && edgesOf(p.edges).length > 0 ? { edges: edgesOfProject(p.edges, base) } : {}),
   };
 }
 
@@ -477,6 +510,31 @@ ${crossList}`;
 }
 
 /**
+ * The cross-state edges section: per project, each root that reads another
+ * root's state, with its last plan against the producer's last apply that
+ * changed it. A consumer that last planned before that apply is stale.
+ */
+function edgesSection(estate: Estate, now: Date): string {
+  const projects = estate.projects.filter((p) => p.edges && p.edges.length > 0);
+  if (projects.length === 0) return `<p class="none">No root reads another root's state, or no run has recorded one yet.</p>`;
+  const ran = (r: EstateEdgeRun | undefined, what: string): string =>
+    r ? `${link(r.report, `${esc(r.stage)}${r.wave !== undefined ? ` wave ${r.wave}` : ""}`)} ${short(r.commit)} ${when(r.finished, now)}${r.version_id ? ` <code>${esc(r.version_id)}</code>` : ""}` : `<span class="none">${what}</span>`;
+  const STATUS = { stale: `<span class="warn">stale: the producer applied after this plan</span>`, current: "current", unknown: `<span class="none">unknown</span>` } as const;
+  const blocks = projects.map((p) => {
+    const byConsumer = new Map<string, EstateEdge[]>();
+    for (const e of p.edges!) byConsumer.set(e.consumer, [...(byConsumer.get(e.consumer) ?? []), e]);
+    const bodies = [...byConsumer].map(([consumer, edges]) => {
+      const head = `<tr class="head"><th colspan="4"><code>${esc(consumer)}</code> reads ${edges.length} ${edges.length === 1 ? "state" : "states"}</th></tr>`;
+      const rows = edges.map((e) => `<tr data-edge="${esc(e.consumer)} ${esc(e.producer)}" data-status="${e.status}"><td><code>${esc(e.producer)}</code> <small>${e.via === "dependency" ? "dependency" : "terraform_remote_state"}</small></td><td>${ran(e.consumer_planned, "no plan recorded")}</td><td>${ran(e.producer_applied, "no change applied")}</td><td>${STATUS[e.status]}</td></tr>`);
+      return `<tbody class="edges" data-root="${esc(consumer)}">${head}${rows.join("")}</tbody>`;
+    });
+    return `<h3>${link(p.index, esc(p.project))}</h3>
+<div class="scroll"><table><thead><tr><th>Reads</th><th>Its last plan</th><th>The producer's last apply</th><th></th></tr></thead>${bodies.join("\n")}</table></div>`;
+  });
+  return blocks.join("\n");
+}
+
+/**
  * The page. Its numbers are in the HTML, so it reads with scripts off; a
  * small script only moves the "ago" times forward while it is open, and the
  * estate JSON rides inline for a reader that wants it.
@@ -514,7 +572,7 @@ ${TACO_ICON}
 <style>${TACO_CSS}${GRAPH_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th,tbody.edges th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
 ${estate.audit ? `<p>Audit trail: <a href="${esc(estate.audit.page)}" id="audit-trail">${estate.audit.entries} ${estate.audit.entries === 1 ? "entry" : "entries"}</a>, built <time datetime="${esc(estate.audit.generated)}">${esc(estate.audit.generated)}</time>.</p>` : ""}
@@ -533,6 +591,8 @@ ${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => l
 ${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id="resource-history">${estate.history.resources} ${estate.history.resources === 1 ? "resource" : "resources"}</a>, each apply that changed one with its approver.</p>\n` : ""}${resourcesSection(estate, now)}
 <h2 id="state-versions">State versions</h2>
 ${statesSection(estate, now)}
+<h2 id="state-edges">Cross-state edges</h2>
+${edgesSection(estate, now)}
 </main>
 <script type="application/json" id="terragucci-estate">${json}</script>
 <script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime],tbody.inv th time[datetime]").forEach(function(t){var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")});var q=document.getElementById("resources-filter");if(q){q.hidden=false;q.addEventListener("input",function(){var v=q.value.toLowerCase().trim();document.querySelectorAll("tbody.inv").forEach(function(b){var n=0;b.querySelectorAll("tr[data-r]").forEach(function(r){var m=!v||r.getAttribute("data-r").indexOf(v)>=0;r.hidden=!m;if(m)n++});b.hidden=n===0})})}})()</script>

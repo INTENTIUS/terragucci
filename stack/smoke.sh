@@ -314,6 +314,9 @@ inventory|after two apply waves of the example roots the estate page lists every
 estate-graph|the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave|
 resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
 state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
+state-roles|with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state|
+state-export|terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket|
+state-edges|the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again|
 migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
 migrate-backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
 migrate-revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
@@ -12019,6 +12022,292 @@ claim_state_versions() {
   return $rc
 }
 
+# ── state access per environment, state export, cross-state edges ─────────
+state_in() { # work, command... -> as audit_in, with the docker arguments in STATE_IN_EXTRA
+  local work="$1" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
+  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    ${STATE_IN_EXTRA[@]+"${STATE_IN_EXTRA[@]}"} "$(image_tag tofu)" "$@"
+}
+
+state_roles_root() { # work, state bucket, env, [env whose state it reads]
+  local work="$1" bucket="$2" env="$3" reads="${4:-}"
+  mkdir -p "$work/wave/envs/$env/app"
+  {
+    printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "%s/app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$bucket" "$env" "$env"
+    [ -z "$reads" ] || printf '\ndata "terraform_remote_state" "up" {\n  backend = "s3"\n  config = {\n    bucket         = "%s"\n    key            = "%s/app.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n' "$bucket" "$reads"
+  } > "$work/wave/envs/$env/app/main.tf"
+}
+
+claim_state_roles() {
+  # Two environments, envs/dev/app and envs/prod/app, each with its state
+  # under its own key of one floci bucket, and oidc.roles giving each glob a
+  # plan and an apply role. config check lists each role with its roots and
+  # state key and warns about nothing. init writes the apply job's roles by
+  # glob (TERRAGUCCI_ROOT_ROLES), and one tf-apply wave over both roots, with
+  # the job's static keys and a stand-in OIDC token floci's STS answers, gives
+  # each root its own environment's apply role: a step before plan prints
+  # AWS_ROLE_ARN per root, and each root's state version is read with it.
+  # Then prod's app reads dev's state through terraform_remote_state, and
+  # config check warns that prod's roles reach dev's state, exiting 0.
+  # floci grants every role, so the claim shows which role each root runs as,
+  # not that IAM refuses another environment's key.
+  # BREAK: prod's apply role is dev's, so config check warns that one role is
+  # two environments' and prod's app applies as dev-apply.
+  log() { echo "[smoke state-roles] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 bucket="tgsr-$STAMP" out roles line env acct="arn:aws:iam::000000000000:role"
+  local prod_apply="$acct/prod-apply"
+  [ -n "${BREAK:-}" ] && prod_apply="$acct/dev-apply"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  state_roles_root "$work" "$bucket" dev
+  state_roles_root "$work" "$bucket" prod
+  cat > "$work/wave/terragucci.yml" <<YML
+forge: forgejo
+binary: tofu
+oidc:
+  roles:
+    "envs/dev/**": { plan: $acct/dev-plan, apply: $acct/dev-apply }
+    "envs/prod/**": { plan: $acct/prod-plan, apply: $prod_apply }
+steps:
+  - name: role
+    run: echo "role-check \$TG_ROOT \$AWS_ROLE_ARN"
+    before: plan
+YML
+  (cd "$work/wave" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  audit_origin "$work"
+  # config check: each role's roots and state key, and no warning.
+  out="$(cd "$work/wave" && "$TERRAGUCCI" config check --json 2>/dev/null)" || { log "config check exited $?"; rc=1; }
+  jq -c '.results | {warnings, state_access: [.state_access[]? | {role, stage, environment, roots, states}]}' <<<"$out" >&2
+  [ "$(jq -r '.results.warnings // [] | length' <<<"$out")" = 0 ] || { log "config check warns: $(jq -c '.results.warnings' <<<"$out")"; rc=1; }
+  jq -e --arg b "$bucket" --arg r "$acct/prod-apply" '[.results.state_access[] | select(.role == $r and .stage == "apply")] == [{role: $r, stage: "apply", environment: "envs/prod/**", roots: ["envs/prod/app"], states: ["s3://" + $b + "/prod/app.tfstate"], reads: []}]' <<<"$out" >/dev/null \
+    || { log "config check does not list prod-apply with envs/prod/app and its state key alone"; rc=1; }
+  # The apply job's roles by glob, as init wrote them.
+  line="$(grep -o "export TERRAGUCCI_ROOT_ROLES='[^']*dev-apply[^']*'" "$work/wave/.forgejo/workflows/terragucci.yml" | head -1)"
+  roles="${line#export TERRAGUCCI_ROOT_ROLES=\'}"; roles="${roles%\'}"
+  [ -n "$roles" ] || { log "the apply job carries no TERRAGUCCI_ROOT_ROLES"; rc=1; }
+  grep -q "export TERRAGUCCI_ROOT_ROLES='[^']*dev-plan" "$work/wave/.forgejo/workflows/terragucci.yml" || { log "the plan job carries no plan roles"; rc=1; }
+  if [ $rc = 0 ]; then
+    # A token shaped like the forge's, with the claims floci's STS reads; it answers with keys of its own.
+    node -e 'const b=(o)=>Buffer.from(JSON.stringify(o)).toString("base64url");const t=Math.floor(Date.now()/1000);process.stdout.write(b({alg:"RS256",typ:"JWT"})+"."+b({iss:"https://token.actions.githubusercontent.com",sub:"repo:smoke/roles:ref:refs/heads/main",aud:"sts.amazonaws.com",iat:t,nbf:t,exp:t+3600})+".c21va2U")' > "$work/wave/.oidc-token"
+    AUDIT_CODE=0
+    # The s3 backend asks STS for the role at AWS_ENDPOINT_URL_STS, which AWS_ENDPOINT_URL does not set for it.
+    STATE_IN_EXTRA=(-e "TERRAGUCCI_ROOT_ROLES=$roles" -e AWS_WEB_IDENTITY_TOKEN_FILE=/repo/.oidc-token -e AWS_ROLE_SESSION_NAME=smoke -e AWS_ENDPOINT_URL_STS=http://floci:4566)
+    state_in "$work" terragucci stage tf-apply --wave 1 --layers 'envs/dev/app,envs/prod/app' --binary tofu --gate never --base HEAD > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    STATE_IN_EXTRA=()
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "the wave exited $AUDIT_CODE, not 0"; rc=1; }
+    grep -q "role-check envs/dev/app $acct/dev-apply\$" "$work/run.log" || { log "envs/dev/app did not run as dev-apply"; rc=1; }
+    grep -q "role-check envs/prod/app $acct/prod-apply\$" "$work/run.log" || { log "envs/prod/app did not run as prod-apply"; rc=1; }
+    for env in dev prod; do
+      grep -q "^envs/$env/app: state s3://$bucket/$env/app.tfstate" "$work/run.log" || { log "envs/$env/app printed no state line"; rc=1; }
+    done
+    [ "$(curl -fsS -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/prod/app.tfstate")" = 200 ] || { log "prod's state is not at its key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # prod's app reads dev's state: its roles reach another environment's state.
+    state_roles_root "$work" "$bucket" prod dev
+    out="$(cd "$work/wave" && "$TERRAGUCCI" config check --json 2>/dev/null)" || { log "config check with the read exited $?"; rc=1; }
+    jq -c '.results.warnings' <<<"$out" >&2
+    jq -e --arg b "$bucket" '[.results.warnings[]? | select(startswith("oidc: envs/prod/app (envs/prod/**) reads the state of envs/dev/app (envs/dev/**)") and contains("s3://" + $b + "/dev/app.tfstate, another environment'"'"'s state"))] | length == 1' <<<"$out" >/dev/null \
+      || { log "config check does not warn that prod's roles reach dev's state"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "each environment's root ran as its own apply role, config check listed each role's state key, and it warned when prod read dev's state"
+  return $rc
+}
+
+claim_state_export() {
+  # state_versions_repo's root applies twice into a versioned floci bucket.
+  # In the CI image, as a person at a shell would: terragucci state export
+  # app --version <the first> --actor alice records a request on
+  # chant/lifecycle and exits 3 with the chant approve command. bob runs that
+  # command in a clone. The same export then writes the version to /out,
+  # mode 0600, byte for byte the version floci holds, and done.jsonl names
+  # alice, app, the version and bob. terragucci audit lists a state-export
+  # entry with who alice and what app. The export adds no object under the
+  # reports prefix but the audit trail's, none of which holds an input value,
+  # and no object there holds the state's lineage.
+  # BREAK: alice approves her own request, which does not count, so the
+  # second export waits again and writes nothing.
+  log() { echo "[smoke state-export] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="export-$STAMP" bucket="tgse-$STAMP" n v1="" v2="" digest code clone approver=bob done audit lineage key keys after added
+  [ -n "${BREAK:-}" ] && approver=alice
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/out"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?versioning" -H 'content-type: application/xml' \
+    --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>' \
+    || { log "could not turn on versioning for $bucket"; return 1; }
+  state_versions_repo "$work" "$prefix" "$bucket" "se-$STAMP-1"
+  for n in 1 2; do
+    [ $rc = 0 ] || break
+    if [ $n = 2 ]; then
+      state_versions_root "$work" "$bucket" "se-$STAMP-2"
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input 2"
+    fi
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { cat "$work/run.log" >&2; log "apply $n exited $AUDIT_CODE, not 0"; rc=1; }
+    [ $n = 1 ] && v1="$(curl -fsS -o /dev/null -D - "$FLOCI/$bucket/app.tfstate" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }')"
+    [ $n = 2 ] && v2="$(curl -fsS -o /dev/null -D - "$FLOCI/$bucket/app.tfstate" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }')"
+  done
+  [ $rc = 0 ] && { [ -n "$v1" ] && [ -n "$v2" ] && [ "$v1" != "$v2" ] || { log "the bucket holds no two versions of app.tfstate ($v1, $v2)"; rc=1; }; }
+  # The reports prefix before any export: an export adds no object to it but the audit trail's.
+  keys="$(curl -fsS "$FLOCI/$REPORT_BUCKET?list-type=2&prefix=$prefix/" | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | sort)"
+  if [ $rc = 0 ]; then
+    code=0
+    STATE_IN_EXTRA=(-v "$work/out:/out")
+    state_in "$work" terragucci state export app --version "$v1" --actor alice > "$work/ask.log" 2>&1 || code=$?
+    cat "$work/ask.log" >&2
+    [ "$code" = 3 ] || { log "the request exited $code, not 3"; rc=1; }
+    digest="$(grep -o 'chant approve tf-state-export app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "the request printed no chant approve command"; rc=1; }
+    [ -z "$(ls -A "$work/out")" ] || { log "the request wrote a file before any approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    clone="$work/approver"
+    git clone -q "$work/origin.git" "$clone"
+    (cd "$clone" && GIT_AUTHOR_NAME="$approver" GIT_AUTHOR_EMAIL="$approver@localhost" GIT_COMMITTER_NAME="$approver" GIT_COMMITTER_EMAIL="$approver@localhost" \
+      "$HERE/../node_modules/.bin/chant" approve tf-state-export app --plan "$digest" --actor "$approver") >&2 || { log "$approver could not approve the request"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    state_in "$work" sh -c 'terragucci state export app --version "$0" --actor alice --out /out/app.tfstate && stat -c "mode %a" /out/app.tfstate' "$v1" > "$work/get.log" 2>&1 || code=$?
+    STATE_IN_EXTRA=()
+    cat "$work/get.log" >&2
+    [ "$code" = 0 ] || { log "the export after $approver's approval exited $code, not 0"; rc=1; }
+    [ -f "$work/out/app.tfstate" ] || { log "no file at /out/app.tfstate"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q '^mode 600$' "$work/get.log" || { log "the file is not mode 600"; rc=1; }
+    cmp -s "$work/out/app.tfstate" <(curl -fsS "$FLOCI/$bucket/app.tfstate?versionId=$v1") || { log "the file is not version $v1 as floci holds it"; rc=1; }
+    git -C "$clone" fetch -q origin "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"
+    done="$(git -C "$clone" show "refs/remotes/origin/chant/lifecycle:_gates/tf-state-export/done.jsonl" 2>/dev/null)"
+    printf '%s\n' "$done" >&2
+    jq -se --arg v "$v1" --arg d "$digest" 'map(select(.kind == "state-export" and .root == "app" and .version_id == $v and .exportedBy == "alice" and .approvedBy == "bob" and .planDigest == $d)) | length == 1' <<<"$done" >/dev/null \
+      || { log "done.jsonl does not record alice exporting app version $v1, approved by bob"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci audit --link-hours 1 >&2 || { log "terragucci audit failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+    audit="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/audit.jsonl")" || { log "no audit.jsonl at $REPORT_BUCKET/$prefix"; rc=1; }
+    jq -c 'select(.kind == "state-export")' <<<"$audit" >&2
+    jq -se --arg v "$v1" 'map(select(.kind == "state-export" and .who == "alice" and .what == "app" and .detail.version_id == $v and .detail.approved_by == "bob")) | length == 1' <<<"$audit" >/dev/null \
+      || { log "the audit trail names no state-export of app by alice"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The export added only the audit trail to the reports prefix, and no object there holds the state's lineage;
+    # the audit trail holds no input value either (a plan report names the input, as any plan does).
+    lineage="$(jq -r '.lineage // empty' "$work/out/app.tfstate")"
+    [ -n "$lineage" ] || { log "the exported file has no lineage"; rc=1; }
+    after="$(curl -fsS "$FLOCI/$REPORT_BUCKET?list-type=2&prefix=$prefix/" | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | sort)"
+    added="$(comm -13 <(printf '%s\n' "$keys") <(printf '%s\n' "$after") | tr '\n' ' ')"
+    [ "$added" = "$prefix/audit.html $prefix/audit.json $prefix/audit.jsonl " ] || { log "the export and audit added [$added] under $prefix, not the audit trail alone"; rc=1; }
+    for key in $after; do
+      if curl -fsS "$FLOCI/$REPORT_BUCKET/$key" | grep -q "$lineage"; then log "$key holds the state's lineage"; rc=1; fi
+    done
+    for key in $added; do
+      if curl -fsS "$FLOCI/$REPORT_BUCKET/$key" | grep -q "se-$STAMP-"; then log "$key holds an input value from the state"; rc=1; fi
+    done
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "alice exported app's state version $v1 once bob approved it: the file is the version, recorded on chant/lifecycle and in the audit trail, and no state reached the bucket"
+  return $rc
+}
+
+state_edges_roots() { # work, state bucket, network's input
+  mkdir -p "$1/wave/network" "$1/wave/app"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "network.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "net" {\n  input = "%s"\n}\n\noutput "id" {\n  value = terraform_data.net.output\n}\n' "$2" "$3" > "$1/wave/network/main.tf"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\ndata "terraform_remote_state" "net" {\n  backend = "s3"\n  config = {\n    bucket         = "%s"\n    key            = "network.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = data.terraform_remote_state.net.outputs.id\n}\n' "$2" "$2" > "$1/wave/app/main.tf"
+}
+
+claim_state_edges() {
+  # Two roots in one floci bucket: network, and app, which reads network's
+  # state through terraform_remote_state. Wave 1 applies network and wave 2
+  # app; then a change to network alone applies wave 1 again. terragucci
+  # estate lists the edge app -> network as stale: app's last plan is its
+  # wave 2, older than network's last apply. A tf-plan of both roots moves
+  # app's last plan past it, and the next estate lists the edge as current.
+  # No input value reaches edges.json or the page.
+  # BREAK: the change to network is never applied, so the first estate lists
+  # the edge as current, not stale.
+  log() { echo "[smoke state-edges] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="edges-$STAMP" bucket="tgsg-$STAMP" project page html edges second="" wave
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  state_edges_roots "$work" "$bucket" "eg-$STAMP-1"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  edges_wave() { # wave number -> AUDIT_CODE
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave "$1" --layers 'network;app' --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave $1 exited $AUDIT_CODE, not 0"; rc=1; }
+  }
+  for wave in 1 2; do [ $rc = 0 ] && edges_wave "$wave"; done
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    state_edges_roots "$work" "$bucket" "eg-$STAMP-2"
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "network input 2"
+    second="$(git -C "$work/wave" rev-parse HEAD)"
+    edges_wave 1
+  fi
+  edges_page() { # -> page and html of the estate
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+    jq -c '.projects[].edges[]? | {consumer, producer, via, status, planned: .consumer_planned | {stage, wave, finished}, applied: .producer_applied | {stage, wave, commit, finished}}' <<<"$page" >&2
+  }
+  [ $rc = 0 ] && edges_page
+  if [ $rc = 0 ]; then
+    jq -e '[.projects[].edges[]? | select(.consumer == "app" and .producer == "network" and .via == "terraform_remote_state")] | length == 1' <<<"$page" >/dev/null || { log "the page lists no edge app -> network"; rc=1; }
+    jq -e '[.projects[].edges[]? | select(.consumer == "app") | .status] == ["stale"]' <<<"$page" >/dev/null || { log "the edge app -> network is not stale after network alone applied"; rc=1; }
+    jq -e --arg c "$second" '[.projects[].edges[]? | select(.consumer == "app") | (.consumer_planned.wave == 2 and .producer_applied.commit == $c and .producer_applied.wave == 1)] == [true]' <<<"$page" >/dev/null || { log "the edge does not set app's wave 2 against network's apply of $second"; rc=1; }
+    grep -q 'data-edge="app network" data-status="stale"' <<<"$html" || { log "estate.html does not show the edge as stale"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # A plan of both roots: app's last plan is now newer than network's last apply.
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-plan --layers 'network;app' --binary tofu > "$work/plan.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/plan.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "tf-plan exited $AUDIT_CODE, not 0"; rc=1; }
+    [ $rc = 0 ] && edges_page
+    [ $rc = 0 ] && { jq -e '[.projects[].edges[]? | select(.consumer == "app") | [.status, .consumer_planned.stage]] == [["current", "tf-plan"]]' <<<"$page" >/dev/null || { log "after app planned again, the edge is not current"; rc=1; }; }
+  fi
+  if [ $rc = 0 ]; then
+    project="$(jq -r '.projects[0].project' <<<"$page")"
+    edges="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/edges.json")" || { log "no edges.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+    if grep -q "eg-$STAMP-" <<<"$edges$page$html"; then log "an input value reached edges.json or the page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the estate page set app's last plan against network's last apply: stale after network alone applied, current once app planned again, with no value"
+  return $rc
+}
+
 # ── state migrations ──────────────────────────────────────────────────────
 # A root in the migrate repo: a terraform_data per name, its state <root>.tfstate
 # in the claim's state bucket (s3 backend, use_lockfile).
@@ -13911,6 +14200,9 @@ inventory            weight=150
 estate-graph         weight=200
 resource-history     weight=200
 state-versions       weight=150
+state-roles          weight=150
+state-export         weight=200
+state-edges          weight=250
 migrate-split        weight=200
 cdktn-migrate        weight=200
 migrate-backend      weight=200

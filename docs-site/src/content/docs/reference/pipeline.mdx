@@ -199,6 +199,17 @@ oidc:
 | The job sets | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Trust | an IAM OIDC provider for the issuer; each role allows `sts:AssumeRoleWithWebIdentity` on `aud` and `sub`: the pull-request and default branch subjects for plan, the default branch's alone for apply |
 
+Each environment can have its own pair of roles, chosen by the root's path:
+
+```yaml
+oidc:
+  roles:
+    "envs/prod/**": { plan: arn:aws:iam::111122223333:role/prod-plan, apply: arn:aws:iam::111122223333:role/prod-apply }
+    "envs/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
+```
+
+The job fetches its token as before and carries the stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage gives each root the role of the first glob it matches as `AWS_ROLE_ARN`: its init, plan and apply, its [steps](/terragucci/guides/run-steps/), the state version an apply records, and a [migration](/terragucci/reference/migration-files/)'s reads and writes of its state. A root no glob matches runs with `plan_role` or `apply_role`. [Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/) shows the policy each role needs and the warnings `config check` gives.
+
 </TabItem>
 <TabItem label="GCP">
 

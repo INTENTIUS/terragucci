@@ -201,6 +201,11 @@
               }
             }
           },
+          "dependencies": {
+            "description": "A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads, as plain paths in its terragrunt.hcl (minor 23). Absent when it names none.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "state": {
             "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
             "type": "object",
