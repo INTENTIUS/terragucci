@@ -124,7 +124,7 @@ dashboards: true
 | Key | Default | Meaning |
 |---|---|---|
 | `roots` | detected | globs of root directories |
-| `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts` and a `drift` schedule under `respond.drift: pull-request` are config errors, since both edit the files the command writes; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
 | `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. Plain roots only; see [Run steps around a stage](/terragucci/guides/run-steps/) |
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |

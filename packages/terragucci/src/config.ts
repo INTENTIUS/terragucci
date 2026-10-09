@@ -613,6 +613,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }
+  if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
@@ -818,6 +819,25 @@ export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and For
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
 export const WAVE_JOBS_NOT_TERRAGRUNT = "a Terragrunt wave applies its units with one run --all in one job; waves.jobs splits a wave of plain roots, so leave it unset";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
+
+/**
+ * What `synth` rules out, each because it would edit the roots the synth
+ * command writes. Those files are output, not in git: a change to them is
+ * lost at the next synth, and their source is the app's code (a CDK Terrain
+ * app's TypeScript), which terragucci does not edit.
+ */
+export const SYNTH_DRIFT_PR_SHORT = "synth writes the roots, so a live value belongs in the app that writes them, which terragucci does not edit";
+export const SYNTH_DRIFT_PR = "the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them, so the value belongs in the app that writes them, which terragucci does not edit; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
+export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there";
+
+/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, and a rollouts schedule. */
+export function synthProblems(s: ProjectSettings, where: string): string[] {
+  if (!s.synth) return [];
+  const out: string[] = [];
+  if (s.drift && responseTo(s, "drift") === "pull-request") out.push(`${where}.respond.drift: ${SYNTH_DRIFT_PR}`);
+  if (s.rollouts && responseTo(s, "rollout") !== "off") out.push(`${where}.rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
+  return out;
+}
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
 export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";

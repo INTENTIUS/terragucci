@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
-import { ConfigError, validateConfig } from "../src/config";
+import { ConfigError, SYNTH_DRIFT_PR_SHORT, synthProblems, validateConfig } from "../src/config";
 import { findRootsWithReasons } from "../src/detect";
 import { applyScript, commentApplyScript, driftScript, planFilesScript, planScript, renderPipeline, synthScript } from "../src/render";
 import { runStage } from "../src/report/stage";
@@ -61,6 +61,37 @@ describe("synth: roots a command writes", () => {
     const jobs = forge === "gitlab" ? doc : doc.jobs;
     const script = (job: any): string => (forge === "gitlab" ? job.script.join("\n") : job.steps.map((s: { run?: string }) => s.run ?? "").join("\n"));
     for (const name of ["check", "plan", "apply-wave-1"]) expect(script(jobs[name]), name).toContain(`( set -e; ${SYNTH} )`);
+  });
+
+  it.each(["github", "forgejo", "gitlab"] as const)("%s: the tips job writes the roots before respond tips reads them", (forge) => {
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, synth: SYNTH }).content;
+    const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    const job = (forge === "gitlab" ? doc : doc.jobs).tips;
+    const script: string = forge === "gitlab" ? job.script.join("\n") : job.steps.map((s: { run?: string }) => s.run ?? "").join("\n");
+    expect(script.indexOf(`( set -e; ${SYNTH} )`)).toBeGreaterThan(-1);
+    expect(script.indexOf(`( set -e; ${SYNTH} )`)).toBeLessThan(script.indexOf("terragucci respond tips"));
+    expect(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {} }).content).not.toContain("synth");
+  });
+
+  it("refuses the drift pull request and rollouts, and the drift job with attribute says why no pull request follows", () => {
+    expect(() => validateConfig({ synth: SYNTH, drift: "0 6 * * *" }, "t")).toThrow(/config\.respond\.drift: the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them/);
+    expect(() => validateConfig({ synth: SYNTH, drift: "0 6 * * *", respond: { drift: "pull-request" } }, "t")).toThrow(/set respond\.drift to attribute, .* or to off/);
+    expect(() => validateConfig({ synth: SYNTH, rollouts: "*/15 * * * *" }, "t")).toThrow(/config\.rollouts: a rollout moves a pin in each root's files or its lock file, and with synth .*; leave rollouts unset|config\.rollouts: .*, and leave rollouts unset/);
+    // A drift schedule with attribute or off, no drift schedule, rollouts off: each is accepted.
+    for (const ok of [{ drift: "0 6 * * *", respond: { drift: "attribute" } }, { drift: "0 6 * * *", respond: { drift: "off" } }, { respond: { drift: "pull-request" } }, { rollouts: "*/15 * * * *", respond: { rollout: "off" } }]) {
+      expect(() => validateConfig({ synth: SYNTH, ...ok }, "t"), JSON.stringify(ok)).not.toThrow();
+    }
+    expect(synthProblems({ synth: SYNTH, drift: "0 6 * * *" }, "config")).toHaveLength(1);
+    expect(synthProblems({ drift: "0 6 * * *", rollouts: "x" }, "config")).toEqual([]);
+
+    const base = { forge: "forgejo" as const, binary: "tofu" as const, version: "1.13.1", image: "img:1", layers, env: {}, synth: SYNTH, drift: "0 6 * * *" };
+    expect(() => renderPipeline(base)).toThrow(/respond\.drift: the drift pull request/);
+    expect(() => renderPipeline({ ...base, drift: undefined, rollouts: "*/15 * * * *" })).toThrow(/rollouts: a rollout moves a pin/);
+    const text = renderPipeline({ ...base, respond: { drift: "attribute" } }).content;
+    expect(text).toContain("terragucci stage tf-drift");
+    expect(text).not.toContain("terragucci respond drift");
+    expect(text).toContain(`terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}`);
+    expect(renderPipeline({ ...base, synth: undefined }).content).toContain("terragucci respond drift");
   });
 
   it("finds no roots when the command has not run", async () => {
