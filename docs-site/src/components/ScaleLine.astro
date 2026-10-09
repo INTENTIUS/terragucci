@@ -1,0 +1,13 @@
+---
+// One sentence on the largest run of the scale bench, from its record.
+import record from '../data/scale.json';
+
+const run = [...record.runs].sort((a, b) => b.estate.resources - a.estate.resources)[0];
+const n = (v: number) => v.toLocaleString('en-US');
+const total = run ? Math.round((run.wall_seconds.create + run.wall_seconds.plan + run.wall_seconds.change) / 60) : 0;
+---
+{run && (
+	<p>
+		The largest run of the <a href="/terragucci/reference/scale/">scale bench</a> planned and applied {n(run.estate.resources)} resources in {n(run.estate.roots)} roots across {run.estate.repos} repos, governed by one control repo: every root created, then a change to all of them planned and applied, in {total} minutes on terragucci {run.release.includes('+') ? `main at ${run.release.split('+')[1]}` : run.release}.
+	</p>
+)}
