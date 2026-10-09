@@ -3657,6 +3657,9 @@ REGO
   [ -n "${BREAK:-}" ] && check_step_unchecked "$cdir/.forgejo/workflows/terragucci.yml"
   body="$(check_step_body "$cdir/.forgejo/workflows/terragucci.yml")"
   grep -q '^choudoufu fmt -check' <<<"$body" || { log "no check step for choudoufu in the pipeline init wrote"; return 1; }
+  # init writes the published tag; this tree's own suffix (TG_IMAGE_SUFFIX) is
+  # added only when push_tree pushes the pipeline.
+  cimage="${cimage%"${TG_IMAGE_SUFFIX:-}"}"
   grep -qF "image: $cimage" "$cdir/.forgejo/workflows/terragucci.yml" || { log "the pipeline init wrote for the choudoufu repo does not run in $cimage"; return 1; }
   run_copied --rm --network terragucci -v "$cdir:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" \
@@ -11412,6 +11415,10 @@ with_lock() { # resource, command... : run the command holding the resource alon
   return $rc
 }
 
+settle_example() { # the example verified, or booted afresh when a claim left something
+  "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
+}
+
 # --list: one line per claim, "name function=yes|no group=yes|no", then exits
 # before anything touches Docker. scripts/check-smoke.mjs reads it.
 if [ "${1:-}" = --list ]; then
@@ -11753,7 +11760,9 @@ if [ "${1:-}" = --record ]; then
   done
   # Leave the example booted and clean for whoever runs next. Each claim puts
   # back what it changed, so this boots afresh only when something was left.
-  [ "$SMOKE_FORGE" != forgejo ] || "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
+  # `up --fresh` recreates floci under every run on the stack, so it waits for
+  # the stack alone: runs from other worktrees share the locks and finish first.
+  [ "$SMOKE_FORGE" != forgejo ] || with_lock stack settle_example
   disk_check "$disk_start"
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
   # The rows' order: each Forgejo claim in CLAIMS order with its GitLab row
