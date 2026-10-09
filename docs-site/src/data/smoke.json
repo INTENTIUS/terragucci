@@ -1486,9 +1486,9 @@
       "claim": "unlock-state",
       "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "beaf3d9c"
+      "commit": "c5480bff"
     },
     {
       "claim": "tip-moved",
