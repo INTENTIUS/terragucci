@@ -1,6 +1,6 @@
 ---
 title: The same shop on Terragrunt
-description: Boot the shop as 15 Terragrunt units, change a file a module reads, and watch a new unit wait for its upstream instead of planning on mock values.
+description: Boot the shop as 15 Terragrunt units, change a file a module reads, and watch a new unit plan on its upstream's planned outputs instead of mock values.
 sidebar:
   order: 9
   badge:
@@ -81,13 +81,13 @@ The plan covers the 12 service units and none of the platforms. Each unit in the
 
 ## A new unit and its upstream, in one change
 
-The `new-service` scenario adds `ledger`, which makes a bucket, and `billing`, which depends on it. Ledger has no outputs yet, so billing would plan on its `mock_outputs`.
+The `new-service` scenario adds `ledger`, which makes a bucket, and `billing`, which reads the bucket's name from it. Ledger has no outputs yet, so Terragrunt on its own would hand billing its `mock_outputs`.
 
 ```bash
 just example-terragrunt change new-service
 ```
 
-The plan job plans ledger. Billing is listed under the units planned later, because its `ledger` dependency has no outputs. Merged, wave 1 applies ledger, and wave 2 plans billing on its real outputs.
+The plan job plans ledger, then plans billing on the bucket name ledger's plan makes, `shop-tg-dev-ledger`; the note lists billing as planned on ledger's planned outputs. Merged, wave 1 applies ledger, and wave 2 plans billing again on its real outputs.
 
 Billing's dependency block has no allow-list, so its mocks could stand in for `apply`. The report's tips name it `TF041`, as for `live/prod/email`.
 

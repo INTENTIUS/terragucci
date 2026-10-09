@@ -93,6 +93,7 @@ import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, typ
 import { globMatch, remoteStateReads, rootDependencies } from "./detect";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import { wavesOf } from "./planned-outputs";
+import { gatePreview } from "./tg-preview-gate";
 import { runPath } from "./report/store";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
@@ -760,6 +761,8 @@ interface WaveRun {
   reads?: Map<string, ReportRead[]>;
   /** The waves whose roots its roots read. */
   waveReads?: number[];
+  /** A Terragrunt wave: its plans against the merged pull request's preview of them. */
+  preview?: ReportWave["preview"];
 }
 
 /** Where a wave stands, from how it ended. */
@@ -841,7 +844,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}) };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -1674,6 +1677,25 @@ async function gateWave(
 
 // ── a Terragrunt wave ────────────────────────────────────────────────────
 
+/**
+ * Say how a wave's plans differ from the preview the merged pull request's
+ * plan note showed of them (./tg-preview-gate.ts), before its gate decides.
+ * Read only, and never fails the wave.
+ */
+async function comparePreview(repo: string, options: ApplyWaveOptions, label: string, units: PlannedUnit[], w: WaveRun): Promise<void> {
+  const env = options.env ?? process.env;
+  const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
+  const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const now = new Date().toISOString();
+  const report = buildReport({
+    run: { ...runFacts(repo, env), stage: APPLY_OP, wave: options.wave, binary: options.binary, runtime: "forge", started: now, finished: now },
+    roots: units.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(options.binary) })),
+  });
+  const found = await gatePreview({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, units: report.roots.map((r) => ({ unit: r.path, plan: r.plan_digest, changes: r.changes })) });
+  for (const line of found.lines) console.log(`${label}: ${line}`);
+  if (found.preview) w.preview = found.preview;
+}
+
 /** One unit's plan in a Terragrunt wave. */
 interface PlannedUnit {
   root: string;
@@ -1839,6 +1861,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const members = changing.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const digest = waveSetDigest(members);
   console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
+  await comparePreview(repo, options, label, units, w);
   const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes, destroys }, facts, w);
   if (stop !== undefined) return stop;
   recordOverridesUsed(repo, options, changing);

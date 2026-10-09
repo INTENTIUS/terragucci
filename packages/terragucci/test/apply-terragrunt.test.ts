@@ -4,7 +4,11 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { applyWave, changesOutputs, parseLedger } from "../src/apply";
+import { buildReport } from "../src/report/build";
+import { noteMarker } from "../src/report/marker";
+import { notePreviews } from "../src/tg-preview";
 import { git, tmp, write } from "./helpers";
+import { RUN } from "./report-fixtures";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
 
@@ -181,6 +185,32 @@ describe("a Terragrunt wave behind its gate", () => {
     expect(await applyWave(work, { ...opts(tg), wave: 3, now: T(1) })).toBe(0);
     expect(tg.calls).toHaveLength(0);
     expect(out.mock.calls.flat().join("\n")).toContain("wave 3: this repo has 2 waves, so there is nothing to apply");
+  });
+
+  it("at its gate, a wave says how each unit's plan differs from the merged pull request's preview, before the approve command, and its report keeps it", async () => {
+    const { work } = setup();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const tg = fakeTerragrunt();
+    expect(await applyWave(work, { ...opts(tg, "never"), wave: 1, now: T(1) })).toBe(0);
+    // The pull request previewed live/b with another input than it plans now.
+    const was = buildReport({ run: RUN, roots: [{ path: "live/b", plan: { resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: "live/b-old" }, after_unknown: {} } }] }, planner: "tofu" }] }).roots[0]!;
+    const head = "c".repeat(40);
+    const sha = "d".repeat(40);
+    const note = noteMarker({ head, waves: [{ number: 2, digest: null, waits: true }], previews: notePreviews([{ ...was, terragrunt: { stack: "live", selection: "", provisional: true, run_result: "succeeded" }, reads: [{ upstream: "live/a", data: "a", outputs: "planned" }] }]) });
+    const fetch = (async (url: string) => {
+      const body = url.endsWith(`/commits/${sha}/pull`) ? { number: 9, head: { sha: head } } : url.includes("/issues/9/comments") ? [{ body: note }] : null;
+      return { ok: body !== null, status: body === null ? 404 : 200, json: async () => body, text: async () => "" };
+    }) as never;
+    const env = { GITHUB_REPOSITORY: "acme/live", GITHUB_SERVER_URL: "https://forgejo.example", TG_TOKEN: "t", TG_SHA: sha, FORGEJO_ACTIONS: "true" };
+    expect(await applyWave(work, { ...opts(tg), env, fetch, wave: 2, now: T(2) })).toBe(3);
+    const said = out.mock.calls.flat().join("\n");
+    const diff = "wave 2 of 2:   live/b: terraform_data.x (create): input differs from the preview";
+    expect(said).toContain("wave 2 of 2: pull request 9 previewed live/b on the planned outputs of the waves before; this unit plans differently now:");
+    expect(said).toContain(diff);
+    expect(said.indexOf(diff)).toBeLessThan(said.indexOf("chant approve tf-apply wave-2"));
+    const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
+    expect(report.waves[0].preview).toEqual({ pull_request: 9, units: [{ unit: "live/b", differences: ["terraform_data.x (create): input differs from the preview"] }] });
+    expect(readFileSync(join(work, "terragucci-report", "note.md"), "utf-8")).toContain("**Wave 2 plans differently from the preview in pull request 9 (1 of 1):**");
   });
 
   it("--rest needs --terragrunt", async () => {
