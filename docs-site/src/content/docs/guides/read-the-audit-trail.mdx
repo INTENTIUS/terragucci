@@ -1,0 +1,101 @@
+---
+title: Read the audit trail
+description: Find the record terragucci audit writes to your reports bucket, and read who approved, applied or overrode what, and which wave was refused.
+claims: [audit, audit-override, audit-refused, audit-control]
+prompt: |
+  Read https://intentius.io/terragucci/guides/read-the-audit-trail/.
+  Download audit.jsonl from the top of my reports prefix with a read-only identity and tell me, for the project and wave I name,
+  who approved it, which digest, when it applied, and any override or refusal, each with its evidence link.
+  Read only: do not run `terragucci audit` without `--check`, and write nothing to the bucket.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Each approval, apply and override in your projects, traced to the person behind it and linked to its evidence.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| [Reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) | the record and the wave reports it reads live there |
+| A `terragucci audit` step in the [estate job](/terragucci/guides/see-every-project/), before `terragucci estate` | the step writes the record ([Write it](/terragucci/reference/audit-trail/#write-it)) |
+| A read-only identity on the bucket, and `jq` | to fetch and query the record |
+
+## Storage
+
+The record is three objects at the top of your reports prefix, beside `estate.html`:
+
+| Object | Holds |
+|---|---|
+| `audit.jsonl` | one entry per line: every approval, apply, override, refusal, lock release, state export and migration |
+| `audit.html` | counts by kind, each project's ledger state, and the newest 1000 entries with their evidence links |
+| `audit.json` | the summary the estate page reads to link `audit.html` |
+
+terragucci builds it from two sources it does not hold itself: the approval ledger on each repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, and the `tf-apply` wave reports in the bucket.
+
+## Steps
+
+<Steps>
+
+1. Open the page, or fetch the record. The `terragucci audit` step's log ends with a signed link to `audit.html`; for the lines, use the store's own CLI:
+
+   ```bash
+   aws s3 cp s3://acme-terragucci/reports/audit.jsonl .
+   ```
+
+2. Find the approvals of a wave. On an `approval` entry, `who` names the approver and `digest` the plan digest it binds; `result` says how it was signed:
+
+   ```bash
+   jq -c 'select(.project == "github.com/acme/network" and .what == "wave-2") | {at, kind, who, digest, result}' audit.jsonl
+   ```
+
+   ```text
+   {"at":"2026-10-08T09:12:44.000Z","kind":"approval","who":"dana","digest":"sha256:4be1...","result":"unsigned"}
+   {"at":"2026-10-08T09:20:03.000Z","kind":"apply","who":"dana","digest":"sha256:4be1...","result":"applied"}
+   ```
+
+   Under `approval: ledger`, `who` is the name the approver gave and `detail.committed_by` is who pushed the line. Under `sealed`, `detail.signer` is the key's owner, checked against the signers file at base ([what each mode proves](/terragucci/reference/audit-trail/#kinds-and-results)).
+
+3. Match the apply to its approval. On the `apply` entry, `detail.approval` holds the `id` of the approval it applied under:
+
+   ```bash
+   jq -c 'select(.kind == "apply") | {at, project, what, who, digest, approval: .detail.approval, commit: .detail.commit}' audit.jsonl
+   ```
+
+   `evidence.url` on each entry opens the commit on `chant/lifecycle` that added the approval, or the wave's `report.html`.
+
+4. List the overrides. `who` is the person who let the plan through, and `detail.reason` why:
+
+   ```bash
+   jq -r 'select(.kind == "override") | [.at, .project, .what, .who, (.detail.rules | join(",")), .detail.reason] | @tsv' audit.jsonl
+   ```
+
+   The wave that applied under it lists the root in `detail.overrides` on its `apply` entry.
+
+5. List what did not go out:
+
+   ```bash
+   jq -r 'select(.kind == "refused" or .result == "failed") | [.at, .project, .what, .result, .evidence.url // .evidence.key] | @tsv' audit.jsonl
+   ```
+
+   On a `refused` entry, `result` gives the reason, such as `changed-after-approval`; `detail` names the roots that moved or the rules that denied.
+
+</Steps>
+
+## Check the record
+
+`--check` rebuilds the entries from the ledgers and reports and writes nothing. It exits 1 naming each entry the record lacks:
+
+```bash
+npx --yes @intentius/terragucci audit --check
+```
+
+A removed ledger line shows as `approval-revoked` or `override-revoked`, with the commit that removed it; the record keeps the line it revoked.
+
+## Next
+
+- [The audit trail](/terragucci/reference/audit-trail/) lists every kind, field and retention rule.
+- [Query the estate with SQL](/terragucci/guides/query-with-sql/) answers questions over the reports and the audit trail in SQL.
