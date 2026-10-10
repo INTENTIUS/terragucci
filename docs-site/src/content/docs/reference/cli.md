@@ -81,6 +81,7 @@ The approval mode decides what else `init` writes.
 terragucci import atlantis [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import digger [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
 ```
 
 Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), OpenTaco's `digger.yml` (or `digger.yaml`) or Terrateam's `.terrateam/config.yml`, and writes `terragucci.yml` by the tables of [Coming from Atlantis, OpenTaco or Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/). Each setting the file carries is printed under one of four headings, quoting the guide's row:
@@ -102,6 +103,8 @@ Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), OpenTaco's `digg
 It exits 2 when the file is missing or not YAML, or when `terragucci.yml` exists and `--force` is not given. A project `dir` that matches no directory with Terraform files is written and named.
 
 `import terrateam` writes no `roots`, since terragucci detects the directories Terrateam plans, and names each `dirs` key that matches no root. It reads `depends_on` against the roots' `terraform_remote_state` reads and writes `waves.canary` for an order the reads do not give ([Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam)). A `run` hook or workflow step becomes a [step](/terragucci/guides/run-steps/). Run [`init`](#init) next to write the pipeline.
+
+`import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 2 on a repo with no Terragrunt or a legacy `config.yml`.
 
 ### From a platform's workspaces
 
