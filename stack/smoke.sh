@@ -281,6 +281,7 @@ cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag ap
 apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
 cdf-rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
 cdf-rows-wait|with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value|
+cdf-drift|with binary: choudoufu a queue changed outside choudoufu on a root under live resource markers is drift: tf-drift plans the root in full, its report and one drift issue name the root and the attribute, and a run with no change closes the issue|
 cdf-rows-takeover|with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call|
 resume-approve|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
 resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
@@ -437,10 +438,10 @@ pass-secrets|with pass naming a repo secret and a repo variable, init writes the
 
 # The core claims, which SMOKE_BINARY=terraform and SMOKE_BINARY=choudoufu run
 # on that binary, each a row of its own in smoke.json.
-BINARY_CLAIMS='boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan'
-# A core claim that shows something else on a binary, because the feature is
-# refused there as a config error: <binary> <claim>|what its row shows.
-BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan
+BINARY_CLAIMS='boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan inventory resource-history estate-graph audit'
+# A core claim that shows something else on a binary: <binary> <claim>|what
+# its row shows.
+BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, each root plans in full: the queue deleted outside choudoufu is named by root in the report and one drift issue, the change waiting on main shows as drift too, and a run with no drift closes it
 terraform lock-wait|with binary: terraform a tf-apply wave whose plan meets a state lock another Terraform plan holds waits for it under the default -lock-timeout terragucci adds, the root'"'"'s plan time in the report covering the wait, and applies once the lock is released
 choudoufu unlock-state|with binary: choudoufu and a root under live resource markers, terragucci unlock-state finds no state file and no state lock: it says there is nothing to release, runs no binary, asks for no approval and records nothing'
 # The locking claims a binary runs besides the core ones: <binary> <claim>...
@@ -2565,42 +2566,6 @@ claim_highlight() {
   log "named $del (delete) and $rep (replace), both roots open; group $big folded"
 }
 
-drift_refused() {
-  # SMOKE_BINARY=choudoufu: a drift check is a refresh-only plan, which
-  # choudoufu refuses under live resource markers. The example written for
-  # choudoufu, every root under a live block and drift set, is a config
-  # error: init exits 2 and names the roots, and so does stage tf-drift in the
-  # choudoufu CI image, before any plan and with no report.
-  # BREAK: the roots keep their s3 backends (binary: choudoufu alone), so
-  # neither refuses.
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work out code=0 rc=0 want='drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and envs/dev/email, envs/dev/orders, envs/dev/payments and 12 more keep their resources under them'
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  mkdir -p "$work/tree"
-  cp -R "$EXAMPLE/." "$work/tree/"
-  if [ -n "${BREAK:-}" ]; then
-    sed 's/^binary: .*/binary: choudoufu/' "$work/tree/terragucci.yml" > "$work/terragucci.yml.new" && mv "$work/terragucci.yml.new" "$work/tree/terragucci.yml"
-  else
-    bin_tree "$work/tree" "$EX_SHOP" --names "$EX_TAG" --keep-drift || { drop_work "$work"; return 1; }
-  fi
-  grep -q '^drift:' "$work/tree/terragucci.yml" || { log "the example sets no drift"; drop_work "$work"; return 1; }
-  git -C "$work/tree" init -q -b main && git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "drift refused"
-  out="$(cd "$work/tree" && "$TERRAGUCCI" init --dry-run --forge forgejo 2>&1)" || code=$?
-  log "init exited $code: $(tail -1 <<<"$out")"
-  [ "$code" = 2 ] || { log "init exited $code, not 2"; rc=1; }
-  grep -qF "$want" <<<"$out" || { log "init does not refuse drift naming the live roots"; rc=1; }
-  out="$(IN_IMAGE="$(bin_image)" in_image "$work/tree" sh -c 'terragucci stage tf-drift --binary choudoufu 2>&1; echo "exit=$?"' 2>&1)" || true
-  code="$(grep -o 'exit=[0-9]*' <<<"$out" | tail -1 | cut -d= -f2)"
-  log "stage tf-drift exited ${code:-nothing}: $(grep -v '^exit=' <<<"$out" | tail -1)"
-  [ "$code" = 2 ] || { log "stage tf-drift exited ${code:-nothing}, not 2"; rc=1; }
-  grep -qF "$want" <<<"$out" || { log "stage tf-drift does not refuse naming the live roots"; rc=1; }
-  [ ! -e "$work/tree/terragucci-report/report.json" ] || { log "stage tf-drift wrote a report: it planned"; rc=1; }
-  drop_work "$work"
-  [ $rc = 0 ] && log "init and stage tf-drift refused drift on the live roots as a config error, before any plan"
-  return $rc
-}
-
 claim_drift() {
   # Staging orders' jobs queue is deleted from floci, outside Terraform. A
   # drift run, with an unapplied code change waiting on main, must report that
@@ -2613,10 +2578,10 @@ claim_drift() {
   # other drifted attribute to that known set. Because tag drift never clears
   # here, the close is shown on a scratch root that has no resources.
   # BREAK: the queue is not deleted, so there is no drift to name.
-  # Under choudoufu a drift check cannot run on the example's live roots, so
-  # the claim is that it is refused: drift_refused.
+  # Under choudoufu the example's roots are under live resource markers: each
+  # plans in full, since choudoufu refuses a refresh-only plan there, and the
+  # queue the plan would create again is the one reported gone.
   log() { echo "[smoke drift] $*" >&2; }
-  [ "$SMOKE_BINARY" != choudoufu ] || { drift_refused; return; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 dir issues n body root="envs/staging/orders" queue="$EX_SHOP-staging-orders-jobs"
@@ -2660,9 +2625,13 @@ claim_drift() {
     [ "$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")" = "$root module.service.aws_sqs_queue.jobs" ] \
       || { log "the deletes are not exactly $root's queue: $(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")"; rc=1; }
     # Everything else that drifted is a tag or object metadata. Anything more would be a real
-    # difference, such as dev orders' retention change that is only on main.
-    [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")" = "" ] \
-      || { log "attributes other than tags and metadata drifted: $(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")"; rc=1; }
+    # difference, such as dev orders' retention change that is only on main. Under choudoufu
+    # each live root plans in full, which cannot tell that change from one made outside it,
+    # so it is the one other attribute reported.
+    local others="" got
+    [ "$SMOKE_BINARY" != choudoufu ] || others="envs/dev/orders message_retention_seconds"
+    got="$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action != "delete") | .attributes[].path | select(IN("tags", "tags_all", "metadata") | not) | "\($p) \(.)"] | unique | join(",")' "$dir/report.json")"
+    [ "$got" = "$others" ] || { log "attributes other than tags and metadata drifted: ${got:-none}, not ${others:-none}"; rc=1; }
     issues="$(open_issues)"
     [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
     body="$(jq -r '.[0].body // ""' <<<"$issues")"
@@ -2693,7 +2662,7 @@ claim_drift() {
   # deleted; put it back, so the next claim meets the example as committed.
   if [ -n "$deleted" ]; then apply_roots "$root" || log "could not apply $root again"; fi
   [ $rc = 0 ] || return 1
-  log "$root and $queue named in the report and one issue; a pending change on main was not drift; a run with none closed the issue"
+  log "$root and $queue named in the report and one issue, the only delete; a run with none closed the issue"
 }
 
 claim_tips() {
@@ -10387,6 +10356,100 @@ claim_cdf_rows_wait() {
   return $rc
 }
 
+claim_cdf_drift() {
+  # A repo of one choudoufu estate of one SQS queue on floci, visibility
+  # timeout 30, under live resource markers, with drift set, applied. init
+  # takes drift there. The queue's timeout is then set to 77 outside
+  # choudoufu. tf-drift plans the root in full, since choudoufu refuses a
+  # refresh-only plan under live markers, and must exit 0 with the root's one
+  # change in its report, the queue's visibility_timeout_seconds, and one open
+  # drift issue naming the root and the attribute. The timeout is set back to
+  # 30 outside choudoufu, and the next run finds nothing and closes the issue.
+  # BREAK: drift keeps the refresh-only plan on the live root, which choudoufu
+  # refuses: the stage fails and no issue names the change.
+  log() { echo "[smoke cdf-drift] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local name=cdf-drift repo="$USER/cdf-drift" work estate queue bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" inner host code rc=0 issues body url
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/terragucci.mjs" report/stage.ts 'drift && !live.has(root) ? ["-refresh-only"]' 'drift ? ["-refresh-only"]' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    bundle="$work/terragucci.mjs"
+  fi
+  estate="smoke-drift-$(date +%s)-$$"
+  queue="tgs-drift-$(date +%s)-$$"
+  inner="http://${USER}:${TOKEN}@forgejo:3000/$repo.git"
+  host="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
+  cdf_visibility() { # seconds
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] && sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"$1\"}}" >/dev/null
+  }
+  cdf_in() { # log, command...
+    local out="$1"; shift
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      -e "GITHUB_REPOSITORY=$repo" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN" \
+      "$(image_tag choudoufu)" "$@" >"$out" 2>&1
+  }
+  cdf_drift_run() { # log -> exit code in code
+    code=0
+    cdf_in "$1" terragucci stage tf-drift --binary choudoufu --forge forgejo --layers estate --report-url "http://forgejo:3000/$repo/actions" || code=$?
+    clean_mounted "$work/tree"
+  }
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_repo "$name" || { log "could not make $repo"; cdf_down "$work"; return 1; }
+  mkdir -p "$work/seed"
+  rows_estate "$work/seed" "$estate" "$(rows_queue "$queue" 30)"
+  printf 'binary: choudoufu\nforge: forgejo\ndrift: "17 4 * * *"\n' >"$work/seed/terragucci.yml"
+  # init takes drift on a root under live resource markers.
+  code=0
+  (cd "$work/seed" && "$TERRAGUCCI" init --dry-run --forge forgejo >"$work/init.log" 2>&1) || code=$?
+  [ "$code" = 0 ] || { log "init with drift on a live root exited $code: $(tail -1 "$work/init.log")"; cdf_down "$work"; return 1; }
+  push_tree "$work/seed" "$repo" main "cdf-drift: the queue at 30" >/dev/null || { cdf_down "$work"; return 1; }
+  git clone -q "$host" "$work/tree" && git -C "$work/tree" remote set-url origin "$inner" || { log "could not clone $repo"; cdf_down "$work"; return 1; }
+  if ! cdf_in "$work/apply.log" sh -c 'cd estate && choudoufu init -input=false -no-color >/dev/null && choudoufu apply -auto-approve -input=false -no-color'; then
+    log "the first apply of the queue failed"; tail -20 "$work/apply.log" >&2; clean_mounted "$work/tree"; cdf_down "$work"; return 1
+  fi
+  clean_mounted "$work/tree"
+  [ "$(rows_visibility "$queue")" = 30 ] || { log "after the apply the queue's visibility timeout is '$(rows_visibility "$queue")', not 30"; cdf_down "$work"; return 1; }
+  cdf_visibility 77 || { log "could not change the queue outside choudoufu"; cdf_down "$work"; return 1; }
+  log "set $queue's visibility timeout to 77 outside choudoufu"
+  # 1. The change is drift: the report and one issue name the root and the attribute.
+  cdf_drift_run "$work/run1.log"
+  log "tf-drift exited $code: $(grep -E '^estate:' "$work/run1.log" | tail -1)"
+  [ "$code" = 0 ] || { log "tf-drift exited $code, not 0"; tail -15 "$work/run1.log" >&2; rc=1; }
+  local rep="$work/tree/terragucci-report/report.json"
+  if [ $rc = 0 ]; then
+    [ -f "$rep" ] || { log "no report"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(jq -r '[.roots[] | .path as $p | .changes[] | "\($p) \(.address) \(.action) \([.attributes[].path] | join(","))"] | join(";")' "$rep")" = "estate aws_sqs_queue.q update visibility_timeout_seconds" ] \
+      || { log "the report's drift is not the queue's visibility_timeout_seconds: $(jq -c '[.roots[] | .path as $p | .changes[] | {root: $p, address, action, attrs: [.attributes[].path]}]' "$rep")"; rc=1; }
+  fi
+  issues="$(open_issues)"
+  [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
+  body="$(jq -r '.[0].body // ""' <<<"$issues")"
+  grep -qF '`estate`' <<<"$body" && grep -qF '`visibility_timeout_seconds`' <<<"$body" || { log "the issue does not name estate and visibility_timeout_seconds"; rc=1; }
+  # 2. Put back outside choudoufu: no drift, and the issue closes.
+  if [ $rc = 0 ]; then
+    cdf_visibility 30 || { log "could not set the queue back"; rc=1; }
+    cdf_drift_run "$work/run2.log"
+    [ "$code" = 0 ] || { log "the second tf-drift exited $code, not 0"; tail -15 "$work/run2.log" >&2; rc=1; }
+    [ "$(jq '[.roots[].changes[]] | length' "$rep" 2>/dev/null)" = 0 ] || { log "the second run reports drift with the queue back at 30"; rc=1; }
+    [ "$(open_issues | jq length)" = 0 ] || { log "the drift issue is still open with no drift"; rc=1; }
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "init took drift; tf-drift planned the live root in full, named estate and visibility_timeout_seconds in the report and one issue, and closed it once the queue was back at 30"
+  return $rc
+}
+
 claim_cdf_rows_takeover() {
   # A repo of one choudoufu estate of one SQS queue on the Forgejo stack,
   # visibility timeout 30, applied; gate: never, TG_LOCK_POLL 3. The proxy
@@ -14756,6 +14819,8 @@ audit_repo() { # work, prefix -> $1/wave and $1/origin.git
   mkdir -p "$work/wave/app"
   printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "first"\n}\n' > "$work/wave/app/main.tf"
   printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  # Under SMOKE_BINARY its root is written for that binary, one estate per prefix under choudoufu.
+  bin_prepare && bin_tree "$work/wave" "$prefix" || return 1
   audit_origin "$work"
 }
 
@@ -14772,14 +14837,14 @@ audit_in() { # work, command... -> runs it in the CI image in /repo ($1/wave), w
   run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$(image_tag "${AUDIT_IMAGE:-tofu}")" "$@"
+    "$(image_tag "${AUDIT_IMAGE:-$SMOKE_BINARY}")" "$@"
 }
 
 audit_wave() { # work, gate -> AUDIT_CODE, the exit code of wave 1
   AUDIT_CODE=0
-  audit_in "$1" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate "$2" > "$1/run.log" 2>&1 || AUDIT_CODE=$?
+  audit_in "$1" terragucci stage tf-apply --wave 1 --layers app --binary "$SMOKE_BINARY" --gate "$2" > "$1/run.log" 2>&1 || AUDIT_CODE=$?
   cat "$1/run.log" >&2
-  clean_mounted "$1/wave" "$(image_tag tofu)"
+  clean_mounted "$1/wave" "$(image_tag "$SMOKE_BINARY")"
 }
 
 audit_run() { # work, flags... -> AUDIT_OUT and AUDIT_CODE of terragucci audit, run in the repo
@@ -14787,7 +14852,7 @@ audit_run() { # work, flags... -> AUDIT_OUT and AUDIT_CODE of terragucci audit, 
   AUDIT_CODE=0
   AUDIT_OUT="$(audit_in "$work" terragucci audit --link-hours 1 "$@" 2>&1)" || AUDIT_CODE=$?
   printf '%s\n' "$AUDIT_OUT" >&2
-  clean_mounted "$work/wave" "$(image_tag tofu)"
+  clean_mounted "$work/wave" "$(image_tag "$SMOKE_BINARY")"
 }
 
 audit_approve() { # origin.git, clone dir, actor, gate, [digest], [relayer] -> an approval line on chant/lifecycle: the digest given, else the gate's newest pending one; with a relayer, written by it for the actor (relayedBy)
@@ -14891,12 +14956,12 @@ claim_audit() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image rc=0 prefix="audit-$STAMP" approval missing
-  image="$(image_tag tofu)"
+  image="$(image_tag "$SMOKE_BINARY")"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
-  audit_repo "$work" "$prefix"
+  audit_repo "$work" "$prefix" || { log "the repo was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   audit_wave "$work" always
   [ "$AUDIT_CODE" = 3 ] || { log "the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; }
   if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 "" smoke-relay || { log "could not approve wave 1"; rc=1; }; fi
@@ -15131,12 +15196,14 @@ inventory_repo() { # work, prefix -> $1/wave with the two roots and the module, 
   for root in platform orders; do
     mkdir -p "$work/wave/envs/dev/$root"
     cp "$EXAMPLE/envs/dev/$root/main.tf" "$EXAMPLE/envs/dev/$root/.terraform.lock.hcl" "$work/wave/envs/dev/$root/"
-    perl -0pi -e 's/backend "s3" \{.*?\n  \}\n/backend "local" {}\n/s; s/backend = "s3"\n  config = \{.*?\n  \}/backend = "local"\n  config = {\n    path = "..\/platform\/terraform.tfstate"\n  }/s' \
+    # Under choudoufu each root stays an s3 backend, which binary-tree.py makes an estate in the record store.
+    [ "$SMOKE_BINARY" = choudoufu ] || perl -0pi -e 's/backend "s3" \{.*?\n  \}\n/backend "local" {}\n/s; s/backend = "s3"\n  config = \{.*?\n  \}/backend = "local"\n  config = {\n    path = "..\/platform\/terraform.tfstate"\n  }/s' \
       "$work/wave/envs/dev/$root/main.tf"
   done
   perl -pi -e "s/\"shop-dev-logs\"/\"shop-$env-logs\"/" "$work/wave/envs/dev/platform/main.tf"
   perl -pi -e "s/env(\s+)= \"dev\"/env\$1= \"$env\"/" "$work/wave/envs/dev/orders/main.tf"
   printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  bin_prepare && bin_tree "$work/wave" "$prefix" || return 1
   audit_origin "$work"
 }
 
@@ -15152,17 +15219,19 @@ claim_inventory() {
   log() { echo "[smoke inventory] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work image rc=0 prefix="inventory-$STAMP" project inv page html wave
-  image="$(image_tag tofu)"
+  local work image rc=0 prefix="inventory-$STAMP" project inv page html wave reg="module.service.aws_s3_object.registration"
+  # choudoufu admits no aws_s3_object under live markers: binary-tree.py keeps its content in a terraform_data.
+  [ "$SMOKE_BINARY" != choudoufu ] || reg="module.service.terraform_data.registration"
+  image="$(image_tag "$SMOKE_BINARY")"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
-  inventory_repo "$work" "$prefix"
+  inventory_repo "$work" "$prefix" || { log "the repo was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   for wave in 1 2; do
     [ $rc = 0 ] || break
     AUDIT_CODE=0
-    audit_in "$work" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform;envs/dev/orders' --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    audit_in "$work" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform;envs/dev/orders' --binary "$SMOKE_BINARY" --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
     cat "$work/run.log" >&2
     clean_mounted "$work/wave" "$image"
     [ "$AUDIT_CODE" = 0 ] || { log "wave $wave exited $AUDIT_CODE, not 0"; rc=1; }
@@ -15188,7 +15257,7 @@ claim_inventory() {
       || { log "the page lists the roots $(jq -c '[.projects[].inventory.roots[]?.root]' <<<"$page"), not envs/dev/orders and envs/dev/platform"; rc=1; }
     jq -e '[.projects[].inventory.roots[]? | select(.root == "envs/dev/platform") | .resources[] | select(.address == "aws_s3_bucket.logs" and .type == "aws_s3_bucket" and (.provider | endswith("hashicorp/aws")))] | length == 1' <<<"$page" >/dev/null \
       || { log "envs/dev/platform does not list aws_s3_bucket.logs"; rc=1; }
-    jq -e '[.projects[].inventory.roots[]? | select(.root == "envs/dev/orders") | .resources[].address] as $a | ["module.service.aws_dynamodb_table.records[0]", "module.service.aws_s3_bucket.files", "module.service.aws_s3_object.registration", "module.service.aws_sqs_queue.jobs"] - $a | length == 0' <<<"$page" >/dev/null \
+    jq -e --arg reg "$reg" '[.projects[].inventory.roots[]? | select(.root == "envs/dev/orders") | .resources[].address] as $a | ["module.service.aws_dynamodb_table.records[0]", "module.service.aws_s3_bucket.files", $reg, "module.service.aws_sqs_queue.jobs"] - $a | length == 0' <<<"$page" >/dev/null \
       || { log "envs/dev/orders does not list the service module's bucket, queue, table and registration"; rc=1; }
     jq -e '[.projects[].inventory.types[]? | select(.type == "aws_s3_bucket") | .count] == [2]' <<<"$page" >/dev/null \
       || { log "the project does not count two aws_s3_bucket: $(jq -c '[.projects[].inventory.types]' <<<"$page")"; rc=1; }
@@ -15216,9 +15285,12 @@ graph_repos() { # work, prefix, state bucket -> $1/wave and $1/origin.git, $1/bi
     perl -pi -e "s/\"shop-terraform-state\"/\"$state\"/; s/\"shop-dev-logs\"/\"shop-$env-logs\"/; s/env(\s+)= \"dev\"/env\$1= \"$env\"/" "$work/wave/envs/dev/$root/main.tf"
   done
   printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
-  audit_origin "$work"
   printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "billing/invoices.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\ndata "terraform_remote_state" "platform" {\n  backend = "s3"\n  config = {\n    bucket         = "%s"\n    key            = "envs/dev/platform.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "invoices" {\n  input = data.terraform_remote_state.platform.outputs.logs_bucket\n}\n' "$state" "$state" > "$work/billing/wave/invoices/main.tf"
   cp "$work/wave/terragucci.yml" "$work/billing/wave/terragucci.yml"
+  # Written for SMOKE_BINARY as one tree, so under choudoufu billing's read of
+  # platform's state becomes a read of the estate platform's root owns.
+  bin_prepare && bin_tree "$work" "$prefix" --config wave/terragucci.yml --config billing/wave/terragucci.yml || return 1
+  audit_origin "$work"
   audit_origin "$work/billing"
 }
 
@@ -15255,13 +15327,13 @@ claim_estate_graph() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image rc=0 prefix="graph-$STAMP" state="tg-graph-$STAMP" layers sha key view page html want got edge from to
-  image="$(image_tag tofu)"
+  image="$(image_tag "$SMOKE_BINARY")"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
   curl -fsS -o /dev/null -X PUT "$FLOCI/$state" || { log "could not make the state bucket $state"; drop_work "$work"; return 1; }
-  graph_repos "$work" "$prefix" "$state"
+  graph_repos "$work" "$prefix" "$state" || { log "the repos were not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   want="$(example_edges)"
   log "the example's edges: $(tr '\n' ';' <<<"$want")"
   [ "$(wc -l <<<"$want" | tr -d ' ')" -ge 4 ] || { log "the example names fewer than four reads of a state: $want"; rc=1; }
@@ -15270,7 +15342,7 @@ claim_estate_graph() {
   key="$prefix/repo/runs/$sha"
   if [ $rc = 0 ]; then
     AUDIT_CODE=0
-    audit_in "$work" terragucci stage tf-apply --wave 1 --layers "$layers" --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    audit_in "$work" terragucci stage tf-apply --wave 1 --layers "$layers" --binary "$SMOKE_BINARY" --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
     cat "$work/run.log" >&2
     clean_mounted "$work/wave" "$image"
     [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
@@ -15287,12 +15359,12 @@ claim_estate_graph() {
   fi
   if [ $rc = 0 ]; then
     AUDIT_CODE=0
-    audit_in "$work" terragucci stage tf-apply --wave 2 --layers "$layers" --binary tofu --gate always > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    audit_in "$work" terragucci stage tf-apply --wave 2 --layers "$layers" --binary "$SMOKE_BINARY" --gate always > "$work/run.log" 2>&1 || AUDIT_CODE=$?
     cat "$work/run.log" >&2
     clean_mounted "$work/wave" "$image"
     [ "$AUDIT_CODE" = 3 ] || { log "wave 2 exited $AUDIT_CODE, not 3 (waiting)"; rc=1; }
     AUDIT_CODE=0
-    audit_in "$work/billing" env GITHUB_REPOSITORY=smoke/billing terragucci stage tf-apply --wave 1 --layers invoices --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    audit_in "$work/billing" env GITHUB_REPOSITORY=smoke/billing terragucci stage tf-apply --wave 1 --layers invoices --binary "$SMOKE_BINARY" --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
     cat "$work/run.log" >&2
     clean_mounted "$work/billing/wave" "$image"
     [ "$AUDIT_CODE" = 0 ] || { log "billing's wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
@@ -17301,12 +17373,12 @@ claim_resource_history() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image rc=0 prefix="history-$STAMP" n who project changes hist html page id got
-  image="$(image_tag tofu)"
+  image="$(image_tag "$SMOKE_BINARY")"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
-  audit_repo "$work" "$prefix"
+  audit_repo "$work" "$prefix" || { log "the repo was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   for n in 1 2 3; do
     [ $rc = 0 ] || break
     case $n in 1) who=approver-one ;; 2) who=approver-two ;; 3) who=approver-three ;; esac
@@ -17315,6 +17387,7 @@ claim_resource_history() {
     if [ -n "${BREAK:-}" ] && [ $n = 2 ]; then
       printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s-elsewhere\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
     fi
+    bin_tree "$work/wave" "$prefix" || { log "change $n was not written for $SMOKE_BINARY"; rc=1; break; }
     git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input $n"
     audit_wave "$work" always
     [ "$AUDIT_CODE" = 3 ] || { log "change $n: the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; break; }
@@ -19546,6 +19619,7 @@ apply-per-root       runner self! weight=300
 cdf-rows-overlap     runner self! weight=250
 cdf-rows-wait        self! weight=200
 cdf-rows-takeover    runner self! weight=300
+cdf-drift            self! weight=150
 approve-command      runner self! weight=250
 tg-pr-apply          runner self! weight=300
 tg-pr-apply-lock     runner self! weight=300

@@ -100,7 +100,7 @@ drift: "0 6 * * *"
 
 | Drift job | What it does |
 |---|---|
-| Plans | each root with `-refresh-only`, so merged but unapplied code is not drift; a Terragrunt repo runs one refresh-only `terragrunt run --all` per wave |
+| Plans | each root with `-refresh-only`, so merged but unapplied code is not drift; a Terragrunt repo runs one refresh-only `terragrunt run --all` per wave. A choudoufu root under live resource markers plans in full, and what its plan would change is the drift ([Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots)) |
 | Identity | with `oidc`, the plan job's read-only role; it never applies |
 | Fails | when a root cannot be refreshed; drift alone does not fail it |
 | Report | stage `tf-drift` ([the report](/terragucci/reference/report/)), kept as an artifact |
