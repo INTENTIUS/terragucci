@@ -172,17 +172,19 @@ The picked claims run plain and under `BREAK=1`, six at a time with the locks `C
 ### Capturing one step or all of them
 
 ```bash
-just tutorial-capture              # every step whose smoke claims pass, from a fresh boot
+just tutorial-capture              # every step whose smoke claims pass, from a fresh example
 just capture --list                # each step: what it needs, the files it writes, what they show
 just capture check                 # one step; several names capture several
 just capture --reuse wave-refused  # one step on the example as it is running now
 ```
 
+A capture holds the whole stack alone (`stack!` in the shared lock directory, `stack/locks.sh`), as an exclusive claim does: it waits for the claims running from any worktree, and claims started after it wait for it. It never tears the stack down: its boot makes the example's repo afresh and wipes floci (`just example up --fresh`), and the Forgejo every worktree's token works against stays up. Before the first step it checks that the CI image the example's pipeline pins has every `terragucci` command the pipeline runs; a pipeline ahead of its published image fails its plan-note job on every pull request, and every note picture would show a pull request without a note.
+
 The steps run in a fixed order (`STEPS` in `stack/tutorial-capture.sh`), each starting where the one before it left the example, so pull request and run numbers are the same on every capture. A step needs one of three things:
 
 | Needs | Steps | Captured alone, the script |
 |---|---|---|
-| `fresh` | boot | starts the stack from nothing, as the step itself does |
+| `fresh` | boot | makes the example afresh, as the step itself does |
 | `chain` | first-pr, check, one-note, wave-waiting, wave-refused, pin | boots the example fresh and replays every step before it without recording anything, so its numbers match a full capture |
 | `booted` | report, drift, see-runs | resets a running example to its committed state, or boots one |
 
@@ -190,9 +192,11 @@ The steps run in a fixed order (`STEPS` in `stack/tutorial-capture.sh`), each st
 
 A step writes nothing when it took fewer screenshots than its `STEPS` row lists (a page it could not find): its files stay as committed, the step is named, and the capture fails at the end. A screenshot that differs from the committed one only in Forgejo's relative times ("2 minutes ago") is the same screenshot: `stack/png-same.mjs` compares the two with a tolerance (1% of pixels, `TERRAGUCCI_SHOT_TOLERANCE`), and the committed file and its hash stay.
 
-Screenshots of a job log or a note are found from the forge, never from a fixed number: a job by the run on its branch's head commit (`run_on`, `job_page`), a note by its `<!-- terragucci:plan` marker (`note_page`), a pull request by the number the command printed. The check step is the exception: after the example's check job fails, its fmt job pushes `tofu fmt`'s fix to the branch, so the failed job is found from the push run on the commit the scenario pushed (`push_run`). `shot` takes a height when 860 pixels cut a note or log off, and a URL with a `#fragment` opens at that element. A Forgejo job page is taken by `stack/shot.mjs` (Node 22 or later, over Chrome's DevTools protocol), which hides the "Workflow warnings" box, opens the step `shot` names and scrolls to the first log line matching its pattern. A step that stops the capture is named in the last line, and a failed request names its URL.
+Screenshots of a job log or a note are found from the forge, never from a fixed number: a job by the run on its branch's head commit (`run_on`, `job_page`), a note by its `<!-- terragucci:plan` marker (`note_page`), a pull request by the number the command printed. The check step is the exception: after the example's check job fails, its fmt job pushes `tofu fmt`'s fix to the branch, so the failed job is found from the push run on the commit the scenario pushed (`push_run`). A step checks what its pictures show before it takes them: a plan note needs its pull request's plan-note job to have passed and the note to be there (`note_ready`), and a pull request's run has to have ended as the page says; a step that fails its check writes nothing, and the capture fails at the end.
 
-The report step plans three scenarios of the example in its tofu CI image, each against its base commit, with `reports.bucket` naming the floci bucket `terragucci-reports`. Its four screenshots (the module bump's `report.html`, its prod payments row, that root's `plan.txt`, and the project's `index.html`) are served by floci's S3 endpoint. The drift step deletes the queue, dispatches the pipeline's drift job through the Forgejo API and photographs the issue it keeps, then resets the example.
+Every picture is `stack/shot.mjs`'s (Node 22 or later, over Chrome's DevTools protocol), at `deviceScaleFactor` 2, cropped to an element's own box: a comment, a note, a pull request's description, a diff, a job's panel (from one log line to another with `--from` and `--until`), a report section, or a dashboard's panels. Its flags say what the page opens first (`--expand` a job step, `--open` a `<details>`, `--click` a button) and where the picture ends (`--fit`, `--through`, `--until`). Every hook must find what it names, or no picture is written. A picture more than half blank (rows of one colour in runs of 20 CSS pixels or more, `stack/png.mjs`) is refused and kept as `<name>.blank.png` to look at; a step that shows an airy page passes its own `--blank-max`. `scripts/png-compress.mjs` turns each picture into a palette PNG before its hash is recorded.
+
+The report step plans four scenarios of the example in its tofu CI image, each against its base commit, with `reports.bucket` naming the floci bucket `terragucci-reports`; the last is the module bump with the destroy beside it. Its four screenshots (that run's `report.html` from its destroys through its groups, its prod payments row, that root's `plan.txt`, and the project's `index.html`) are served by floci's S3 endpoint. The drift step deletes the queue, dispatches the pipeline's drift job through the Forgejo API and photographs the issue it keeps, then resets the example.
 
 ### What makes a capture stale
 

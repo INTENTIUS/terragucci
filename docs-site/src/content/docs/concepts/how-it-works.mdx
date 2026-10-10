@@ -4,7 +4,6 @@ description: The path of a change from pull request to plan note, merge, waves, 
 ---
 
 import { Steps } from '@astrojs/starlight/components';
-import Shot from '../../../components/Shot.astro';
 
 `npx terragucci init` writes a pipeline file for your forge; its CI runs everything in terragucci's image. It needs no server or hosted service and keeps state in your backend. The package is Apache-2.0.
 
@@ -20,21 +19,15 @@ Each step names its stage and the identity it runs with. Every step runs on GitH
 
 2. The plan note: `tf-plan` posts one grouped comment naming every destroy and replacement, and sets `terragucci/plan`. `/terragucci plan` re-plans from a comment; on GitLab it needs the [`comments`](/terragucci/reference/config/#keys) schedule.
 
-   <Shot step="one-note" view="pull" alt="The plan note on a module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" />
-
 3. The merge: any push to the default branch runs `tf-apply` with the apply identity, one push at a time. Under the default `on-destroy` gate only a wave that destroys or replaces waits. With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), a writer's `/terragucci apply` comment applies the open head instead (on GitLab, with the `comments` schedule). The [guide](/terragucci/guides/apply-before-merge/) lists what it refuses.
 
 4. The waves: `tf-apply` runs one job per [wave](/terragucci/concepts/glossary/#wave), `waves.canary` roots first, then dependency order. With [`waves.jobs`](/terragucci/concepts/waves-and-approvals/), a large wave gets a job that decides it and share jobs that apply it. Each wave plans after the previous one applied.
 
 5. The approval: no stage runs. A waiting job exits 3 and prints the approve command for its [set digest](/terragucci/concepts/glossary/#set-digest). A person runs `terragucci approve` to record an approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), using their push access to that branch; under `approval: pr-review` a review of the head also counts. Under `approval: sealed` the approval also carries a seal that must verify against `.chant/allowed_signers` from the commit before the applied one.
 
-   <Shot step="wave-waiting" view="log" alt="Wave 4's apply job stopped with exit code 3, printing the chant approve command with the wave's set digest" />
-
 6. The apply: `tf-apply`, with the apply identity. `terragucci approve` restarts the waiting wave, as do a rerun of the job, a push, and a `/terragucci apply` comment (on GitLab, with the `comments` schedule). The wave re-plans and refuses on a changed digest, and never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#ignored-comments) runs nothing.
 
 7. Drift: with `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only` under the plan identity and keeps one issue updated, closing it when drift is gone. It never applies.
-
-   <Shot step="drift" view="issue" alt="The open issue titled terragucci: drift found, listing the root that drifted and the queue that no longer exists" />
 
 </Steps>
 
