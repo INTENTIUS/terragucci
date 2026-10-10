@@ -95,7 +95,12 @@ packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-appl
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard replan-dispatch
 packages/terragucci/src/import/guide.ts   import-atlantis import-terrateam import-tg-scale comment-*
 packages/terragucci/src/import/terrateam.ts import-terrateam
-packages/terragucci/src/import/           import-atlantis import-terrateam import-hcp import-scalr import-tg-scale
+packages/terragucci/src/import/spacelift.ts import-spacelift
+packages/terragucci/src/import/env0.ts    import-env0
+packages/terragucci/src/import/platform.ts import-spacelift import-env0
+packages/terragucci/src/import/spacelift-env0-guide.ts import-spacelift import-env0
+packages/terragucci/src/import/hcl.ts     import-spacelift import-env0
+packages/terragucci/src/import/           import-atlantis import-terrateam import-spacelift import-env0 import-hcp import-scalr import-tg-scale
 packages/terragucci/src/import/terragrunt-scale.ts import-tg-scale
 
 # Reports and what reads them.
