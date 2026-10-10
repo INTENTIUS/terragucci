@@ -19,9 +19,15 @@ import {
   pinnedTerragrunt,
   literalDependencies,
   refineWaves,
+  stackOfUnit,
+  unitStack,
   unitWaves,
   walkUnits,
 } from "../src/terragrunt";
+import { explicitStacksLine } from "../src/report/views";
+import { detectShape } from "../src/shape";
+import { resolveRepo } from "../src/config";
+import type { Report } from "../src/report/schema";
 import { rc } from "./report-fixtures";
 import { git, tmp, write } from "./helpers";
 
@@ -147,6 +153,50 @@ describe("detection", () => {
 
   it("plain roots and a module cache are not Terragrunt", () => {
     expect(detectTerragrunt(write(tmp(), { "net/main.tf": "", "net/.terragrunt-cache/x/terragrunt.hcl": "" }))).toBeUndefined();
+  });
+
+  it("names the explicit stack that generates a unit, and a unit's parent directory otherwise", () => {
+    expect(stackOfUnit("live/stk/.terragrunt-stack/base")).toBe("live/stk");
+    expect(stackOfUnit(".terragrunt-stack/base")).toBe(".");
+    expect(stackOfUnit("live/dev/app")).toBe("live/dev");
+    expect(unitStack("live/stk/.terragrunt-stack/base")).toEqual({ stack: "live/stk", stack_file: "live/stk/terragrunt.stack.hcl" });
+    expect(unitStack("live/dev/app")).toEqual({ stack: "live/dev" });
+  });
+
+  it("walks into a stack's generated units, with their edges", () => {
+    const repo = write(tmp(), {
+      "root.hcl": "",
+      "live/stk/terragrunt.stack.hcl": "",
+      "live/stk/.terragrunt-stack/base/terragrunt.hcl": unit(),
+      "live/stk/.terragrunt-stack/top/terragrunt.hcl": unit(["base"]),
+    });
+    expect(walkUnits(repo)).toEqual([
+      { path: "live/stk/.terragrunt-stack/base", dependencies: [] },
+      { path: "live/stk/.terragrunt-stack/top", dependencies: ["live/stk/.terragrunt-stack/base"] },
+    ]);
+  });
+
+  it("the Terragrunt shape sends an edit to a generated unit to its stack file, and prepares the stack only when a unit is not generated yet", async () => {
+    const repo = write(tmp(), { "root.hcl": "", "live/stk/terragrunt.stack.hcl": "", "live/dev/app/terragrunt.hcl": unit() });
+    const shape = detectShape(repo, resolveRepo({}));
+    expect(shape.sourceOf("live/stk/.terragrunt-stack/base")).toBe("live/stk/terragrunt.stack.hcl");
+    expect(shape.sourceOf("live/dev/app")).toBe("live/dev/app");
+    const ran: string[][] = [];
+    const exec: TerragruntExec = async (_c, args) => (ran.push([...args]), { code: 0, stdout: args[0] === "--version" ? "terragrunt version v1.1.6" : "", stderr: "" });
+    expect(await shape.prepareRoots({ roots: ["live/dev/app"], exec })).toEqual([]);
+    expect(ran).toEqual([]);
+    await shape.prepareRoots({ roots: ["live/stk/.terragrunt-stack/base"], exec });
+    expect(ran.some((a) => a[0] === "stack" && a[1] === "generate")).toBe(true);
+  });
+
+  it("the plan note names each explicit stack and the units it generates", () => {
+    const roots = [
+      { path: "live/stk/.terragrunt-stack/top", terragrunt: unitStack("live/stk/.terragrunt-stack/top") },
+      { path: "live/stk/.terragrunt-stack/base", terragrunt: unitStack("live/stk/.terragrunt-stack/base") },
+      { path: "live/dev/app", terragrunt: unitStack("live/dev/app") },
+    ];
+    expect(explicitStacksLine({ roots } as unknown as Report)).toBe("Explicit stacks: `live/stk/terragrunt.stack.hcl` generates `base`, `top`.");
+    expect(explicitStacksLine({ roots: roots.slice(2) } as unknown as Report)).toBeUndefined();
   });
 
   it("names the explicit stacks", () => {
@@ -543,7 +593,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(25);
+    expect(r.report.minor).toBe(29);
     // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
@@ -652,8 +702,8 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(calls.filter((c) => c[0] === "run" && c[1] === "--all").every((c) => calls.some((d) => d[0] === "render" && c.includes(`{./${argOf(d, "--working-dir")}}`)))).toBe(true);
   });
 
-  it("against a base, only the affected units plan, each with its reason, and their dependents wait", async () => {
-    const repo = liveRepo();
+  it("with dependents: follow, against a base only the affected units plan, each with its reason, and their dependents wait", async () => {
+    const repo = liveRepo({ "terragucci.yml": "terragrunt:\n  dependents: follow\n" });
     const calls: string[][] = [];
     const exec = fakeTerragrunt({ calls, affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", layers: [["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]], terragruntExec: exec, env: {} }, () => {});
@@ -663,8 +713,18 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: false }]);
   });
 
-  it("the blast radius holds the changed unit and every unit that depends on it, and the note lists them", async () => {
+  it("by default, against a base the dependents of a changed unit are previewed, provisional and outside every wave", async () => {
     const repo = liveRepo();
+    const exec = fakeTerragrunt({ affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", layers: [["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.roots.map((u) => [u.path, u.terragrunt?.provisional])).toEqual([["live/dev/app", true], ["live/dev/vpc", false]]);
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"]]);
+    expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: true }]);
+  });
+
+  it("the blast radius holds the changed unit and every unit that depends on it, and the note lists them", async () => {
+    // follow, so live/dev/app is not previewed and the note says it is not planned in this run.
+    const repo = liveRepo({ "terragucci.yml": "terragrunt:\n  dependents: follow\n" });
     const exec = fakeTerragrunt({ affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", terragruntExec: exec, env: {} }, () => {});
     expect(r.report.blast).toEqual({ roots: ["live/dev/vpc"], downstream: [{ root: "live/dev/app", reads: ["live/dev/vpc"], depth: 1, wave: 2, planned: false }] });
