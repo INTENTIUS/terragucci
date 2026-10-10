@@ -59,7 +59,7 @@ const pillars = [
 	<section class="tg-landing not-content">
 		<Taco scale={2} class="hero-taco" />
 		<h1 class="wordmark">TERRAGUCCI</h1>
-		<p class="claim">Plans, gated applies and drift for Terraform and OpenTofu, in your own CI, open source under Apache-2.0.</p>
+		<p class="claim">Sophisticated automation for Terraform</p>
 	</section>
 	<DoorPicker />
 	<ul class="tg-pillars not-content">
@@ -90,27 +90,36 @@ const pillars = [
 	.tg-landing :global(.hero-taco img) {
 		width: 96px;
 	}
-	.wordmark {
+	.tg-landing .wordmark {
 		margin: 0;
 		font-family: var(--tg-display);
-		font-weight: 600;
+		font-weight: 500;
 		font-size: clamp(1.25rem, 3.5vw, 1.6rem);
-		letter-spacing: 0.14em;
+		letter-spacing: 0.32em;
 		line-height: 1;
 		color: var(--sl-color-white);
 		/* Optical centre: the tracking adds space after the last letter. */
-		padding-left: 0.14em;
+		padding-left: 0.32em;
 	}
 	.claim {
+		display: grid;
+		justify-items: center;
+		gap: 0.9rem;
 		margin: 0;
-		max-width: 46rem;
 		font-family: var(--tg-display);
-		font-weight: 500;
-		font-size: var(--sl-text-base);
+		font-weight: 400;
+		font-size: 0.78rem;
 		line-height: 1.3;
-		letter-spacing: -0.015em;
-		color: var(--sl-color-gray-2);
-		text-wrap: balance;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	/* A gold hairline between the wordmark and the line under it. */
+	.claim::before {
+		content: '';
+		width: 2.5rem;
+		height: 1px;
+		background: var(--tg-gold);
 	}
 	.tg-agent {
 		padding-block: 0;
@@ -149,7 +158,7 @@ const pillars = [
 		gap: 0.75rem;
 		align-content: start;
 		border: 1px solid var(--tg-rule);
-		border-top: 3px solid var(--tg-accent);
+		border-top: 1px solid var(--tg-gold);
 		border-radius: 0.5rem;
 		background: var(--tg-panel);
 		min-width: 0;

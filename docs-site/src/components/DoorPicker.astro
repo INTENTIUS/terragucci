@@ -142,7 +142,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 <style>
 	.tg-doors {
 		display: grid;
-		gap: 1rem;
+		gap: 1.25rem;
 		max-width: 64rem;
 		margin: 0 auto 3rem;
 		font-size: var(--sl-text-sm);
@@ -162,7 +162,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 		color: var(--sl-color-white);
 		background: var(--tg-panel);
 		border: 1px solid var(--tg-rule);
-		border-top: 3px solid var(--tg-rule);
+		border-top: 2px solid var(--tg-rule);
 		border-radius: 0.6rem;
 		cursor: pointer;
 	}
@@ -182,11 +182,12 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 		color: var(--sl-color-gray-3);
 	}
 	.tile:hover {
-		border-color: var(--tg-accent);
+		border-color: var(--tg-gold);
 	}
 	.tile[aria-pressed='true'] {
-		background: var(--sl-color-accent-low);
-		border-color: var(--tg-accent);
+		border-color: var(--tg-rule);
+		border-top-color: var(--tg-gold);
+		box-shadow: inset 0 0 0 1px var(--tg-gold);
 	}
 	.tile[aria-pressed='true'] img {
 		opacity: 1;
@@ -255,7 +256,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 		padding: 1rem;
 		background: var(--tg-panel);
 		border: 1px solid var(--tg-rule);
-		border-top: 3px solid var(--tg-accent);
+		border-top: 1px solid var(--tg-gold);
 		border-radius: 0.6rem;
 	}
 	.h.from {
@@ -380,8 +381,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	}
 	.role:hover,
 	.role:focus-visible {
-		background: var(--sl-color-accent-low);
-		border-color: var(--tg-accent);
+		border-color: var(--tg-gold);
 	}
 	@media (max-width: 52rem) {
 		.tiles {

@@ -36,6 +36,7 @@
 	--tg-accent: #56a8ec;   /* waiting, links, the one highlight */
 	--tg-ok: #e4e4e7;       /* applied: strong neutral, labelled */
 	--tg-warn: #f2894a;     /* destroy, refused: vermillion */
+	--tg-gold: #c9a96e;     /* fine details only: hairlines, the picked tile */
 	--tg-panel: #121215;
 	--tg-rule: #27272a;
 }
@@ -58,6 +59,7 @@
 	--tg-accent: #0a64c2;
 	--tg-ok: #27272a;
 	--tg-warn: #b94700;
+	--tg-gold: #9a7b3f;
 	--tg-panel: #fafafa;
 	--tg-rule: #e4e4e7;
 }
@@ -225,11 +227,9 @@ code, pre, kbd, samp {
 	font-weight: 500;
 }
 
-/* The header logo sits on the same tile as every other taco. */
+/* The header logo: the taco's art is transparent, so it sits on the page itself. */
 .site-title img {
-	background: var(--tg-taco-ground);
 	padding: 4px 6px;
-	border-radius: 6px;
 	box-sizing: content-box;
 }
 
