@@ -36,16 +36,6 @@ export default defineConfig({
 	base: '/terragucci',
 	// Pages that moved keep their old address.
 	redirects: {
-		'/rooms/agents': '/terragucci/for/agents/',
-		'/rooms/atmos': '/terragucci/for/atmos/',
-		'/rooms/cdk-terrain': '/terragucci/for/cdk-terrain/',
-		'/rooms/choudoufu': '/terragucci/for/choudoufu/',
-		'/rooms/evaluate': '/terragucci/for/evaluate/',
-		'/rooms/many-repos': '/terragucci/for/many-repos/',
-		'/rooms/plain-roots': '/terragucci/for/plain-roots/',
-		'/rooms/security': '/terragucci/for/security/',
-		'/rooms/terragrunt': '/terragucci/for/terragrunt/',
-		'/rooms/terramate': '/terragucci/for/terramate/',
 		'/getting-started/overview': '/terragucci/getting-started/',
 		'/getting-started/binaries': '/terragucci/guides/use-a-binary/',
 		'/getting-started/config': '/terragucci/reference/config/',
