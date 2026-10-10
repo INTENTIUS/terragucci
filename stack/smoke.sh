@@ -6955,6 +6955,20 @@ lock_file() { # repo -> _locks/tf-apply.json on chant/lifecycle, empty when ther
   api "$URL/api/v1/repos/$1/raw/_locks%2Ftf-apply.json?ref=chant%2Flifecycle" 2>/dev/null || true
 }
 
+runs_done() { # repo, sha, event -> waits until the head has a run of event and every run on it has finished; prints each
+  local i runs=""
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    runs="$(api "$URL/api/v1/repos/$1/actions/runs?head_sha=$2" 2>/dev/null | jq -c '[.workflow_runs[] | {id, event: .trigger_event, status}]' 2>/dev/null || true)"
+    if jq -e --arg e "$3" 'any(.[]; .event == $e) and all(.[]; .status | IN("success", "failure", "cancelled", "skipped"))' <<<"${runs:-[]}" >/dev/null 2>&1; then
+      log "the runs on ${2:0:8}: $(jq -r 'map("\(.id) \(.event) \(.status)") | join(", ")' <<<"$runs")"
+      return 0
+    fi
+    sleep 3
+  done
+  log "the runs on ${2:0:8} did not finish: ${runs:-none}"
+  return 1
+}
+
 last_reply() { # repo, number -> the last reply terragucci posted on it
   api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
 }
@@ -6966,7 +6980,10 @@ claim_plan_lock() {
   # the reply names canary/one and A, planned by its author. /terragucci unlock
   # on A releases it, and /terragucci plan on B then takes it.
   # BREAK: locks: plan is left out of terragucci.yml, so there is no pr-lock
-  # job and B is never answered as locked.
+  # job and B is never answered as locked. With no job that could post
+  # terragucci/lock, the claim reads B's status once every run on B's head has
+  # finished, rather than waiting out the lock timeout for a status that
+  # cannot come.
   log() { echo "[smoke plan-lock] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -6990,7 +7007,12 @@ claim_plan_lock() {
     [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; rc=1; }
   fi
   pr_b="$(pr_open "$repo" change-b "plan-lock: b")" || { drop_work "$work"; return 1; }
-  got="$(wait_lock_status "$repo" "$head_b" failure)"
+  if [ -n "${BREAK:-}" ]; then
+    runs_done "$repo" "$head_b" pull_request || log "B's runs did not finish"
+    got="$(lock_status "$repo" "$head_b")"
+  else
+    got="$(wait_lock_status "$repo" "$head_b" failure)"
+  fi
   reply="$(last_reply "$repo" "$pr_b")"
   log "B ($pr_b): terragucci/lock ${got:-none}; reply: ${reply:-none}"
   [ "${got%% *}" = failure ] || { log "terragucci/lock on B did not fail"; rc=1; }
