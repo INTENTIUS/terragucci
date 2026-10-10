@@ -1022,6 +1022,8 @@ export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and For
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
 /** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
 /** Why `roots` is refused in an Atmos repo. */
+/** Why `roots` is refused in a Terramate repo. */
+export const ROOTS_NOT_TERRAMATE = "a Terramate repo's roots are the stacks terramate list names, so remove roots and leave a stack out with a .tmskip file in its directory";
 export const ROOTS_NOT_ATMOS = "an Atmos repo's roots are the instances atmos describe stacks lists, so remove roots and leave an instance out with metadata.enabled: false";
 export const ROOTS_NOT_TERRAGRUNT = "a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";

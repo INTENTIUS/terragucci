@@ -1516,11 +1516,14 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
   const deps = rootDependencies(repo, all);
+  // shape: order edges. A Terramate stack's dependents plan with it: the stacks its after, before, nesting or inputs put after it (../terramate.ts).
+  const order = atmosDependencies(repo, all);
+  const upstreams = (root: string): string[] => [...new Set([...(deps.get(root) ?? []), ...(order.get(root) ?? [])])];
   const selected = new Set(changed);
   for (let grew = true; grew; ) {
     grew = false;
-    for (const [root, reads] of deps) {
-      if (!selected.has(root) && [...reads].some((d) => selected.has(d))) {
+    for (const root of new Set([...deps.keys(), ...order.keys()])) {
+      if (!selected.has(root) && upstreams(root).some((d) => selected.has(d))) {
         selected.add(root);
         grew = true;
       }
@@ -1528,7 +1531,9 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   }
   for (const r of changed) log(`affected: ${r} changed`);
   for (const r of [...selected].filter((r) => !changed.includes(r)).sort()) {
-    log(`affected: ${r} reads the state of ${[...deps.get(r)!].filter((d) => selected.has(d)).sort().join(", ")}`);
+    const reads = [...(deps.get(r) ?? [])].filter((d) => selected.has(d)).sort();
+    const after = [...(order.get(r) ?? [])].filter((d) => selected.has(d) && !reads.includes(d)).sort();
+    log(`affected: ${r} ${[...(reads.length ? [`reads the state of ${reads.join(", ")}`] : []), ...(after.length ? [`depends on ${after.join(", ")}`] : [])].join(" and ")}`);
   }
   log(`affected: ${changed.length} of ${roots.length} roots against ${base}, ${selected.size - changed.length} dependents after them`);
   return new Set([...selected].filter((r) => roots.includes(r)));

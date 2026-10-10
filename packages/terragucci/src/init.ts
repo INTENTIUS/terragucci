@@ -23,6 +23,7 @@ import {
   PROJECT_FILE_KEYS,
   resolveRepo,
   ROOTS_NOT_ATMOS,
+  ROOTS_NOT_TERRAMATE,
   ROOTS_NOT_TERRAGRUNT,
   responseTo,
   type Approval,
@@ -45,6 +46,7 @@ import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
 import { ATMOS_VERSION, ATMOS_WRITE, atmosInstances, describeStacks, detectAtmos, instanceWaves } from "./atmos";
+import { terramateShape } from "./terramate";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 
@@ -66,6 +68,8 @@ export interface InitOptions {
   terragrunt?: string;
   /** The `atmos` executable `atmos describe stacks` runs. Default: `TERRAGUCCI_ATMOS`, then `atmos` on the path. */
   atmos?: string;
+  /** The `terramate` executable that lists the stacks. Default: `TERRAGUCCI_TERRAMATE`, then `terramate` on the path. */
+  terramate?: string;
   /** The repo's name, for a new chant.workspace.json. Default: the origin remote's last path segment, then the directory's name. */
   name?: string;
 }
@@ -90,6 +94,16 @@ export interface AtmosFound {
   version: string;
 }
 
+/** What `init` found in a Terramate repo. */
+export interface TerramateFound {
+  /** The marker that turned Terramate mode on. */
+  reason: string;
+  /** The Terramate release the jobs install. */
+  version: string;
+  /** Stacks that hold no Terraform, so are no roots. */
+  skipped: string[];
+}
+
 export interface FileChange {
   path: string;
   /** `removed`: a file an earlier init wrote, which the config no longer asks for. */
@@ -106,6 +120,8 @@ export interface InitResult {
   terragrunt?: TerragruntFound;
   /** Set when the repo is an Atmos repo: `roots` are its instances (`<stack>/<component>`) and `layers` their waves. */
   atmos?: AtmosFound;
+  /** Set when the repo is a Terramate repo: `roots` are its stacks and `layers` the waves of their order. */
+  terramate?: TerramateFound;
   binary: { value: Binary; reason: string };
   image?: string;
   version: { value: string; reason: string };
@@ -161,6 +177,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const detectedAtmos = detectAtmos(repo);
   if (settings.atmos && !detectedAtmos) throw new ConfigError("terragucci.yml has an atmos block, but the repo has no atmos.yaml at its root");
   if (detectedAtmos && tgMode) throw new ConfigError(`the repo has ${detectedAtmos} and ${detectedTg!.reason}; terragucci runs an Atmos repo or a Terragrunt repo, not both`);
+  // shape: the Terramate shape, resolved once (./terramate.ts).
+  const tmShape = terramateShape(repo, options.terramate ? { terramate: options.terramate } : {});
+  if (tmShape && (tgMode || detectedAtmos)) {
+    throw new ConfigError(`the repo has ${tmShape.reason} and ${detectedAtmos ?? detectedTg!.reason}; terragucci runs a Terramate repo, an Atmos repo or a Terragrunt repo, one at a time`);
+  }
 
   // In Terragrunt mode the binary is what Terragrunt calls, and the units carry no .tf files to read it from.
   const detectedBinary = detectBinary(repo, []);
@@ -174,7 +195,17 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   let layers: string[][];
   let terragrunt: TerragruntFound | undefined;
   let atmos: AtmosFound | undefined;
-  if (detectedAtmos) {
+  let terramate: TerramateFound | undefined;
+  if (tmShape) {
+    // shape: a stack that holds Terraform is a root, and Terramate's order cuts the waves (./terramate.ts).
+    const refused = (["roots", "synth", "drift-pr", "rollouts"] as const).map((f) => tmShape.refuses(f, settings)).find((r) => r);
+    if (refused) throw new ConfigError(refused);
+    const found = await tmShape.discover(settings);
+    rootReasons = found.roots;
+    layers = found.layers;
+    notes.push(...found.notes);
+    terramate = { reason: tmShape.reason, version: tmShape.version, skipped: found.skipped };
+  } else if (detectedAtmos) {
     // An instance is a root: the stacks say which, so the plain rule (a backend or a provider block) is off.
     if (settings.roots) throw new ConfigError(ROOTS_NOT_ATMOS);
     if (settings.synth) throw new ConfigError(`synth is for roots a command writes; an Atmos repo's jobs write its instances with ${ATMOS_WRITE}, so remove synth`);
@@ -331,11 +362,13 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.synth ? { synth: settings.synth } : {}),
     // An Atmos repo's jobs install Atmos and write the instances before they read them.
     ...(atmos ? { synth: ATMOS_WRITE, atmos: { version: atmos.version } } : {}),
+    // shape: a Terramate repo's jobs install Terramate, check the generated code and write each stack's edges before they read the stacks.
+    ...(terramate && tmShape ? { synth: tmShape.prepare, terramate: { version: terramate.version } } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
     ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command, ...(settings.cost !== true && settings.cost.approve_above !== undefined ? { approveAbove: true } : {}) } } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
-    ...(!tgInput && !atmos && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
+    ...(!tgInput && !atmos && !terramate /* shape: canary is in the layers */ && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     ...(settings.waves?.jobs && settings.waves.jobs > 1 ? { waveJobs: settings.waves.jobs } : {}),
     gate: settings.gate,
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
@@ -394,7 +427,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
 
   // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
-  const decl = declaration(repo, tgMode || atmos ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
+  const decl = declaration(repo, tgMode || atmos || terramate /* shape */ ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
   if (decl) files.push(decl);
   // Under sealed, the first signers line can come from the person's own git signing key.
   if (approval.value === "sealed") {
@@ -454,6 +487,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     const token = settings.token_env ?? "GITLAB_TOKEN";
     notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, the plan job stops if it does, the comments job posts the plan notes, and no fmt job commits formatting`);
   }
+  // shape: canary note for Terramate stacks.
+  if (settings.waves?.canary?.length && terramate) {
+    notes.push("waves.canary is set; the canary stacks' layers apply first, then the layers of the rest, each wave behind its gate");
+  }
   if (settings.waves?.canary?.length && atmos) {
     notes.push("waves.canary is set; the canary instances' layers apply first, then the layers of the rest, each wave behind its gate");
   }
@@ -472,7 +509,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
 }
 
 /** The first line of the terragucci.yml a control repo writes into a project, so a later run knows it may rewrite it. */
@@ -622,7 +659,10 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
   const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
   const tg = r.terragrunt;
   const lines = [
-    r.atmos
+    r.terramate
+      ? `found Terramate (${r.terramate.reason}): ${plural(r.roots.length, "stack")} in ${plural(r.layers.length, "wave")} from terramate list and the stacks' order, ` +
+        `terramate ${r.terramate.version}, ${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`
+      : r.atmos
       ? `found Atmos (${r.atmos.reason}): ${plural(r.roots.length, "instance")} in ${plural(r.layers.length, "wave")} from atmos describe stacks, ` +
         `atmos ${r.atmos.version} calling ${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`
       : tg
@@ -647,6 +687,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     layers: r.layers,
     ...(r.terragrunt ? { terragrunt: r.terragrunt } : {}),
     ...(r.atmos ? { atmos: r.atmos } : {}),
+    ...(r.terramate ? { terramate: r.terramate } : {}),
     binary: r.binary,
     version: r.version,
     ...(r.pins.length > 0 ? { pins: r.pins } : {}),
