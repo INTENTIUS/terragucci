@@ -148,6 +148,14 @@ describe("apply concurrency", () => {
     }
   });
 
+  it("forgejo: each push to the default branch runs in a group of its own commit, so a later push neither cancels nor waits for an earlier one", () => {
+    const group = body(render("forgejo")).concurrency;
+    expect(group["cancel-in-progress"]).toBe(false);
+    expect(group.group).toContain("github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && format('{0}-{1}', github.ref, github.sha) || github.ref }}");
+    // Comments and dispatches keep their pull request's group, and another branch's pushes wait for each other as before.
+    expect(group.group).toMatch(/^terragucci-\$\{\{ github\.event_name == 'issue_comment' && format\('comment-\{0\}'/);
+  });
+
   it.each(FORGES)("%s: a push's wave stands down for a newer push once it may apply, and says the newer push superseded it", (forge) => {
     for (const wave of [1, 2]) {
       const script = applyScript("tofu", layers, forge, undefined, { wave });

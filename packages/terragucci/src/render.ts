@@ -2220,10 +2220,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // applying, unless the workflow names a concurrency group. A group that does
     // not cancel makes a later run wait instead.
     // A pull_request_target run's ref is the default branch's, so with locks: plan it gets a group of its own pull request's.
+    // shape: unless one apply at a time is the rule (a repo-wide scope), each push to the default branch gets a group of its own
+    // commit, so a later push's run neither cancels nor waits for an earlier one's: their waves apply side by side, kept apart per
+    // root by the backend's state lock (with choudoufu by the rows each holds), and a wave a newer push superseded stands down.
     ...(forge === "forgejo"
-      ? { concurrency: { group: locksPlan || ephemeral
-        ? `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}`
-        : `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.ref }}`, "cancel-in-progress": false } }
+      ? { concurrency: { group: `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || ${locksPlan || ephemeral ? "github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || " : ""}${repoWide ? "" : "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && format('{0}-{1}', github.ref, github.sha) || "}github.ref }}`, "cancel-in-progress": false } }
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
