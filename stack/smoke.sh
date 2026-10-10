@@ -17116,7 +17116,8 @@ claim_migrate_backend_tfe() {
   # wave 1 into a bucket of the claim's own, which gives a real state. A TFE
   # API (stack/fixtures/tfe-api/tfe.mjs, HTTPS with a certificate the job
   # trusts through NODE_EXTRA_CA_CERTS) serves that state as the current
-  # version of workspace acme/app-prod, sv-0002, over an older sv-0001. A
+  # version of workspace acme/app-prod, sv-0002, over sv-0001, the same
+  # resources at the serial before. A
   # commit points app's backend block at tgmt-new-<stamp> and adds
   # migrations/move-app.yml, whose from is a cloud workspace on that host.
   # Wave 1 reads the workspace with the token in TF_TOKEN_<host>, proves the
@@ -17155,7 +17156,7 @@ claim_migrate_backend_tfe() {
   fi
   if [ $rc = 0 ]; then
     curl -fsS "$FLOCI/$seed/app.tfstate" -o "$work/app.tfstate" || rc=1
-    jq -c '.serial -= 1 | .resources = [.resources[] | select(.name == "keep")]' "$work/app.tfstate" | curl -fsS -o /dev/null -X POST --data-binary @- "$ctl/versions" || rc=1
+    jq -c '.serial -= 1' "$work/app.tfstate" | curl -fsS -o /dev/null -X POST --data-binary @- "$ctl/versions" || rc=1
     curl -fsS -o /dev/null -X POST --data-binary @"$work/app.tfstate" "$ctl/versions" || rc=1
     [ $rc = 0 ] || log "could not give the workspace its versions"
   fi

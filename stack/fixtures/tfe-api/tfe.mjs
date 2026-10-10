@@ -3,7 +3,7 @@
 // workspace's state, and nothing else. One organization, acme, with one
 // workspace, app-prod (ws-app).
 //
-//   node tfe.mjs        HTTPS on :8443 with /tfe/cert.pem and /tfe/key.pem,
+//   node tfe.mjs        HTTPS on :443 with /tfe/cert.pem and /tfe/key.pem,
 //                       control over HTTP on :8080
 //
 // Every API call needs `Authorization: Bearer $TOKEN`. Discovery at
@@ -69,7 +69,7 @@ https({ cert: readFileSync("/tfe/cert.pem"), key: readFileSync("/tfe/key.pem") }
     return send(res, 200, workspace());
   }
   return send(res, 404, { errors: [{ status: "404", title: "not found" }] });
-}).listen(8443);
+}).listen(443);
 
 http(async (req, res) => {
   const path = new URL(req.url, "http://x").pathname;

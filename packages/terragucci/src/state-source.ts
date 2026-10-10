@@ -128,7 +128,8 @@ export function workspaceSource(backend: string, host: string, org: string, name
     try {
       r = await fetchFn(url, { method, headers, ...(body ? { body } : {}) });
     } catch (e) {
-      throw new ConfigError(`${location}: ${method} ${new URL(url).pathname} failed: ${(e as Error).message}`);
+      const cause = (e as Error & { cause?: { message?: string } }).cause?.message;
+      throw new ConfigError(`${location}: ${method} ${new URL(url).pathname} failed: ${(e as Error).message}${cause ? ` (${cause})` : ""}`);
     }
     return { status: r.status, text: await r.text() };
   };
