@@ -13,7 +13,7 @@
  * The engine is `node:sqlite`, the SQLite that Node.js builds in (22.13 and
  * later need no flag), so the bundle carries no engine of its own: a WASM
  * build of SQLite or DuckDB would add from 0.6 MB to several MB to a bundle
- * held under 1.25 MB (scripts/bundle-check.mjs). It is loaded only by this
+ * held under 1.5 MB (scripts/bundle-check.mjs). It is loaded only by this
  * command, so no other command prints its experimental warning.
  *
  * Nothing is written: the database lives in memory, takes `PRAGMA
