@@ -248,11 +248,57 @@ function attr(body: string, name: string): string | undefined {
   return body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
 }
 
-/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code. */
+const objectOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+/** A block in Terraform's JSON syntax: an object, or a list of objects whose first is taken. */
+const firstOf = (v: unknown): Record<string, unknown> | undefined => objectOf(Array.isArray(v) ? v[0] : v);
+const stringOf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+/**
+ * The backend and the `terraform_remote_state` blocks of a file in Terraform's
+ * JSON syntax, as CDK Terrain writes them: `terraform.backend.<type>` and
+ * `data.terraform_remote_state.<name>.config`, each a block or a list of them.
+ */
+function jsonState(raw: string): { own?: StateRef; reads: RemoteRead[] } {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return { reads: [] };
+  }
+  let own: StateRef | undefined;
+  const reads: RemoteRead[] = [];
+  const top = objectOf(doc);
+  for (const t of Array.isArray(top?.terraform) ? top.terraform : [top?.terraform]) {
+    const backends = objectOf(objectOf(t)?.backend) ?? {};
+    for (const type of Object.keys(backends)) {
+      const b = firstOf(backends[type]);
+      const key = stringOf(b?.key) ?? stringOf(b?.prefix) ?? stringOf(b?.path);
+      if (key) own = { bucket: stringOf(b?.bucket), key };
+    }
+  }
+  for (const d of Array.isArray(top?.data) ? top.data : [top?.data]) {
+    const blocks = objectOf(objectOf(d)?.terraform_remote_state) ?? {};
+    for (const [name, v] of Object.entries(blocks)) {
+      const b = firstOf(v);
+      const config = objectOf(b?.config);
+      const key = stringOf(config?.key) ?? stringOf(config?.prefix) ?? stringOf(config?.path);
+      if (key) reads.push({ name, bucket: stringOf(config?.bucket), key, repeated: b?.count !== undefined || b?.for_each !== undefined });
+    }
+  }
+  return { ...(own ? { own } : {}), reads };
+}
+
+/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code (HCL, or Terraform's JSON syntax). */
 export function stateOf(repo: string, root: string): { own?: StateRef; reads: RemoteRead[] } {
   let own: StateRef | undefined;
   const reads: RemoteRead[] = [];
   for (const f of tfFiles(join(repo, root))) {
+    if (isJson(f)) {
+      const j = jsonState(readFileSync(f, "utf-8"));
+      if (j.own) own = j.own;
+      reads.push(...j.reads);
+      continue;
+    }
     const text = stripComments(readFileSync(f, "utf-8"));
     for (const m of text.matchAll(/\bbackend\s+"[^"]+"\s*\{/g)) {
       const body = blockBody(text, m.index!);

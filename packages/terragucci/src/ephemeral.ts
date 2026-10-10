@@ -33,11 +33,25 @@
  * only the binary resolves. A suffixed key is a state of its own that the
  * backend block, the lock file and the bucket listing all name plainly.
  *
+ * A Terragrunt unit's key comes from its `remote_state` block, which
+ * terragucci does not rewrite: the block's key reads
+ * `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`, which is empty everywhere but
+ * here, where it is `-pr-<n>` (the terragucci.hcl that `generate` writes does
+ * this for every unit). Each unit is prepared by Terragrunt (`terragrunt run
+ * -- init`) with the suffix set, so a `dependency` block reads the copy of its
+ * upstream too, and before anything plans the backend the binary was
+ * initialised with must carry the suffix: a key that does not is refused, so
+ * a copy never plans, applies or destroys at a unit's own key.
+ *
+ * With `synth` the roots are not in git: the synth command runs in the head's
+ * checkout, as every other job runs it, before the roots are found, and again
+ * in the applied commit's checkout before a destroy.
+ *
  * With `reports` set, `ephemeral.json` beside the project's index lists the
  * live copies and their expiry, and the estate page shows them.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
@@ -48,8 +62,6 @@ import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import {
   ConfigError,
-  EPHEMERAL_NOT_SYNTH,
-  EPHEMERAL_NOT_TERRAGRUNT,
   EPHEMERAL_TTL,
   findConfig,
   loadConfig,
@@ -59,8 +71,9 @@ import {
   type ResolvedSettings,
   type TerragucciConfig,
 } from "./config";
-import { applyLayers, backendBlock, detectBinary, findRoots } from "./detect";
+import { applyLayers, backendBlock, detectBinary, findRoots, globMatch } from "./detect";
 import { call, type Fetch } from "./forge";
+import { unitPlace } from "./migrate";
 import { RootBinaries } from "./pins";
 import { storeFromEnv } from "./report/bucket";
 import { targetFromEnv } from "./report/drift";
@@ -69,7 +82,7 @@ import { runFacts } from "./report/stage";
 import { updateJson } from "./report/store";
 import { rootRoleEnv } from "./roles";
 import { sealRefusal } from "./seal";
-import { detectTerragrunt } from "./terragrunt";
+import { detectTerragrunt, discoverUnits, generateStacks, unitWaves } from "./terragrunt";
 
 export const EPHEMERAL_OP = "tf-ephemeral";
 export const EPHEMERAL_LEDGER = `_gates/${EPHEMERAL_OP}.jsonl`;
@@ -101,6 +114,68 @@ export function suffixedKey(key: string, suffix: string): string {
 
 /** The backends whose state key a copy can be given, and the attribute that holds it. */
 export const KEY_ATTRIBUTE: Record<string, string> = { s3: "key", azurerm: "key", gcs: "prefix", local: "path" };
+
+/**
+ * The variable a Terragrunt unit's `remote_state` key reads for the copy's
+ * suffix: `-pr-<n>` while a copy plans, applies or is destroyed, and unset
+ * (so empty) in every other job.
+ */
+export const EPHEMERAL_SUFFIX_ENV = "TERRAGUCCI_EPHEMERAL_SUFFIX";
+
+/** What a unit's remote_state key adds to read the suffix: `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`. */
+export const SUFFIX_READ = `get_env("${EPHEMERAL_SUFFIX_ENV}", "")`;
+
+/** How to make a Terragrunt repo's keys take the suffix, for an error that says they do not. */
+export const SUFFIX_HOW = `make the remote_state block's key read the suffix, as in key = "\${path_relative_to_include()}/terraform\${${SUFFIX_READ}}.tfstate", or let terragucci generate write the backend into terragucci.hcl, which does`;
+
+/**
+ * Whether the remote_state blocks of a Terragrunt repo read the suffix: some
+ * `.hcl` file holds a remote_state block, and every one that does names
+ * TERRAGUCCI_EPHEMERAL_SUFFIX. The prepared backend is checked again per unit
+ * (unitBackend), so this is the early, plain refusal.
+ */
+export function remoteStateReadsSuffix(repo: string): { ok: true } | { ok: false; why: string } {
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith(".") || name === "node_modules") continue;
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else if (name.endsWith(".hcl")) files.push(abs);
+    }
+  };
+  walk(repo);
+  const blocks = files.filter((f) => /^\s*remote_state\s*\{/m.test(readFileSync(f, "utf-8").replace(/(^|[^:"$])(#|\/\/).*$/gm, "$1")));
+  if (blocks.length === 0) return { ok: false, why: "no .hcl file in the repo holds a remote_state block, so no unit's key can take the suffix" };
+  const missing = blocks.filter((f) => !readFileSync(f, "utf-8").includes(EPHEMERAL_SUFFIX_ENV)).map((f) => f.slice(repo.length + 1));
+  return missing.length ? { ok: false, why: `the remote_state block in ${missing.join(", ")} does not read ${EPHEMERAL_SUFFIX_ENV}, so a copy would plan at the unit's own key` } : { ok: true };
+}
+
+/**
+ * The backend the binary was initialised with in a prepared unit's working
+ * directory, from `.terraform/terraform.tfstate`: its type, the attribute
+ * that holds the key, the key, and where that is. Undefined when there is none.
+ */
+export function unitBackend(dir: string, env: NodeJS.ProcessEnv = {}): { type: string; attribute: string; key: string; location: string } | undefined {
+  const file = join(dir, env.TF_DATA_DIR ?? ".terraform", "terraform.tfstate");
+  let doc: { backend?: { type?: unknown; config?: Record<string, unknown> } };
+  try {
+    doc = JSON.parse(readFileSync(file, "utf-8")) as typeof doc;
+  } catch {
+    return undefined;
+  }
+  const type = typeof doc.backend?.type === "string" ? doc.backend.type : undefined;
+  const attribute = type ? KEY_ATTRIBUTE[type] : undefined;
+  const config = doc.backend?.config ?? {};
+  const key = attribute && typeof config[attribute] === "string" ? (config[attribute] as string) : undefined;
+  if (!type || !attribute || key === undefined) return type ? { type, attribute: attribute ?? "", key: "", location: "" } : undefined;
+  const str = (k: string): string | undefined => (typeof config[k] === "string" ? (config[k] as string) : undefined);
+  const location = type === "s3" && str("bucket") ? `s3://${str("bucket")}/${key}` : type === "gcs" && str("bucket") ? `gs://${str("bucket")}/${key}` : type === "azurerm" && str("container_name") ? `${str("storage_account_name") ?? "azure"}/${str("container_name")}/${key}` : key;
+  return { type, attribute, key, location };
+}
+
+/** Whether a key carries a copy's suffix as suffixedKey puts it. */
+export const carriesSuffix = (key: string, suffix: string): boolean => new RegExp(`-${suffix}(\\.tfstate)?/*$`).test(key);
 
 /** The `-backend-config` a root's copy is initialised with: its backend's key attribute, suffixed. Throws ConfigError for a root no copy can be made of. */
 export function copyBackend(dir: string, root: string, suffix: string): { type: string; attribute: string; key: string; location: string } {
@@ -256,6 +331,8 @@ interface CopyPlan {
   root: string;
   binary: string;
   env: NodeJS.ProcessEnv;
+  /** Where the binary runs: the root, or the unit's working directory as Terragrunt prepared it. */
+  dir: string;
   location: string;
   planFile: string;
   member?: WaveMember;
@@ -264,39 +341,92 @@ interface CopyPlan {
   error?: string;
 }
 
-/** Init a root's copy under its suffixed key and plan it (a destroy with `destroy`). */
-async function planCopy(code: string, root: string, suffix: string, binaries: RootBinaries, work: string, i: number, env: NodeJS.ProcessEnv, exec: EphemeralExec, destroy: boolean): Promise<CopyPlan> {
-  const dir = join(code, root);
+/** A unit whose prepared backend does not carry the suffix: refused, as a config error. */
+export class SuffixRefused extends ConfigError {}
+
+/** A Terragrunt repo's copy: the units are prepared by Terragrunt with the suffix set. */
+interface UnitCopy {
+  terragrunt: string;
+}
+
+/**
+ * Prepare a unit's copy: `terragrunt run -- init` with the suffix in
+ * TERRAGUCCI_EPHEMERAL_SUFFIX, then the backend the binary was initialised
+ * with, which must carry the suffix. Throws ConfigError when it does not.
+ */
+async function prepareUnit(code: string, unit: string, suffix: string, binary: string, env: NodeJS.ProcessEnv, work: string, tg: UnitCopy): Promise<{ dir: string; env: NodeJS.ProcessEnv; location: string }> {
+  const unitEnv: NodeJS.ProcessEnv = {
+    ...env,
+    [EPHEMERAL_SUFFIX_ENV]: `-${suffix}`,
+    // The auth provider resolves a unit's path from the checkout it runs in, which is the head's, not the job's.
+    TERRAGUCCI_REPO: code,
+    TG_DOWNLOAD_DIR: mkdtempSync(join(work, "tg-")),
+  };
+  const place = await unitPlace(code, unit, binary, unitEnv, work, { path: tg.terragrunt });
+  const b = unitBackend(place.dir, place.env);
+  if (!b) throw new SuffixRefused(`${unit}: Terragrunt prepared it with no backend the binary recorded, so its copy has no key of its own; ${SUFFIX_HOW}`);
+  if (!b.attribute) throw new SuffixRefused(`${unit}'s backend is ${b.type}, and ephemeral gives a copy its own state key on ${Object.keys(KEY_ATTRIBUTE).join(", ")} backends only`);
+  if (!carriesSuffix(b.key, suffix)) throw new SuffixRefused(`${unit}: its ${b.type} backend's ${b.attribute} is ${b.key || "empty"} with ${EPHEMERAL_SUFFIX_ENV} set, which is the unit's own state, so its copy is refused; ${SUFFIX_HOW}`);
+  return { dir: place.dir, env: place.env, location: b.location };
+}
+
+/** Init a root's copy under its suffixed key and plan it (a destroy with `destroy`). A unit is prepared by Terragrunt instead (`tg`). */
+async function planCopy(code: string, root: string, suffix: string, binaries: RootBinaries, work: string, i: number, env: NodeJS.ProcessEnv, exec: EphemeralExec, destroy: boolean, tg?: UnitCopy): Promise<CopyPlan> {
   const rootEnv = rootRoleEnv(env, root);
   const planFile = join(work, `${i}.tfplan`);
-  const backend = copyBackend(dir, root, suffix);
-  const base = { root, binary: binaries.binary, env: rootEnv, location: backend.location, planFile, changes: 0, destroys: 0 };
   let binary: string;
   try {
     binary = (await binaries.resolve(root)).path;
   } catch (e) {
-    return { ...base, error: (e as Error).message };
+    return { root, binary: binaries.binary, env: rootEnv, dir: join(code, root), location: "", planFile, changes: 0, destroys: 0, error: (e as Error).message };
   }
-  const init = exec(binary, ["init", "-input=false", "-no-color", "-reconfigure", `-backend-config=${backend.attribute}=${backend.key}`], dir, rootEnv);
-  if (init.status !== 0) return { ...base, binary, error: `init failed\n${tail(init.out)}` };
-  const plan = exec(binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", rootEnv), ...(destroy ? ["-destroy"] : []), `-out=${planFile}`], dir, rootEnv);
-  if (plan.status !== 0) return { ...base, binary, error: `plan failed\n${tail(plan.out)}` };
-  const show = exec(binary, ["show", "-json", planFile], dir, rootEnv);
+  let dir = join(code, root);
+  let runEnv = rootEnv;
+  let location: string;
+  if (tg) {
+    let prepared: Awaited<ReturnType<typeof prepareUnit>>;
+    try {
+      prepared = await prepareUnit(code, root, suffix, binary, rootEnv, work, tg);
+    } catch (e) {
+      if (e instanceof SuffixRefused) throw e;
+      return { root, binary, env: rootEnv, dir, location: "", planFile, changes: 0, destroys: 0, error: (e as Error).message };
+    }
+    ({ dir, location } = prepared);
+    runEnv = prepared.env;
+  } else {
+    const backend = copyBackend(dir, root, suffix);
+    location = backend.location;
+    const init = exec(binary, ["init", "-input=false", "-no-color", "-reconfigure", `-backend-config=${backend.attribute}=${backend.key}`], dir, rootEnv);
+    if (init.status !== 0) return { root, binary, env: rootEnv, dir, location, planFile, changes: 0, destroys: 0, error: `init failed\n${tail(init.out)}` };
+  }
+  const base = { root, binary, env: runEnv, dir, location, planFile, changes: 0, destroys: 0 };
+  const plan = exec(binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", runEnv), ...(destroy ? ["-destroy"] : []), `-out=${planFile}`], dir, runEnv);
+  if (plan.status !== 0) return { ...base, error: `plan failed\n${tail(plan.out)}` };
+  const show = exec(binary, ["show", "-json", planFile], dir, runEnv);
   let json: unknown;
   try {
     json = JSON.parse(show.stdout);
   } catch {
-    return { ...base, binary, error: `show -json printed no plan\n${tail(show.out)}` };
+    return { ...base, error: `show -json printed no plan\n${tail(show.out)}` };
   }
   const part = terraformChangeSetPart({ member: root, plan: json, planner: plannerForBinary(binary) });
   const changed = part.entries.filter((e) => e.action !== "no-op" && e.action !== "read");
   return {
     ...base,
-    binary,
     member: { member: root, planDigest: part.member.planDigest ?? "" },
     changes: changed.length,
     destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
   };
+}
+
+/**
+ * Run the synth command in a checkout, so its roots are there to copy: from
+ * the checkout's root, with the job's environment less the forge's tokens.
+ * Returns the output's tail when it fails.
+ */
+export function runSynth(command: string, dir: string, env: NodeJS.ProcessEnv): { ok: true } | { ok: false; out: string } {
+  const p = spawnSync("sh", ["-c", command], { cwd: dir, encoding: "utf-8", env: binaryEnv(env), maxBuffer: 256 * 1024 * 1024 });
+  return p.status === 0 ? { ok: true } : { ok: false, out: tail(`${p.stdout ?? ""}${p.stderr ?? ""}${p.error ? p.error.message : ""}`) };
 }
 
 // ── settings ──────────────────────────────────────────────────────────────
@@ -306,6 +436,8 @@ export interface EphemeralOptions {
   /** The ref terragucci.yml is read from. Default: the checkout's own, which is the default branch's in the pipeline's jobs. */
   base?: string;
   binary?: string;
+  /** The terragrunt executable, in a Terragrunt repo. Default: TERRAGUCCI_TERRAGRUNT, then terragrunt on the path. */
+  terragrunt?: string;
   /** Who the record names. Default: the forge's actor for the job, else terragucci. */
   actor?: string;
   env?: NodeJS.ProcessEnv;
@@ -319,6 +451,10 @@ export interface EphemeralOptions {
 interface Ready {
   settings: ResolvedSettings;
   roots: string[];
+  /** A Terragrunt repo: its units are copied through Terragrunt, with the suffix in TERRAGUCCI_EPHEMERAL_SUFFIX. */
+  terragrunt?: UnitCopy;
+  /** The command that writes the roots, run in each checkout before its roots are read. */
+  synth?: string;
   ttl: number;
   forge: ForgeName;
   binary: string;
@@ -346,12 +482,11 @@ async function ready(repo: string, options: EphemeralOptions): Promise<Ready> {
   const settings = resolveRepo(config);
   const e = settings.ephemeral;
   if (!e || !Array.isArray(e.roots) || e.roots.length === 0) throw new ConfigError(`terragucci.yml${options.base ? ` at ${options.base}` : ""} names no ephemeral roots; set ephemeral.roots`);
-  if (settings.terragrunt !== undefined || detectTerragrunt(repo)) throw new ConfigError(`ephemeral: ${EPHEMERAL_NOT_TERRAGRUNT}`);
-  if (settings.synth) throw new ConfigError(`ephemeral: ${EPHEMERAL_NOT_SYNTH}`);
+  const terragrunt: UnitCopy | undefined = settings.terragrunt !== undefined || detectTerragrunt(repo) ? { terragrunt: options.terragrunt ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt" } : undefined;
   const forge: ForgeName = settings.forge ?? (env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
-  const binary = options.binary ?? settings.binary ?? detectBinary(repo, findRoots(repo, e.roots)).value;
+  const binary = options.binary ?? settings.binary ?? (terragrunt ? "tofu" : detectBinary(repo, findRoots(repo, e.roots)).value);
   const actor = options.actor || env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || "terragucci";
-  return { settings, roots: e.roots, ttl: ttlMs(e.ttl ?? EPHEMERAL_TTL) ?? ttlMs(EPHEMERAL_TTL)!, forge, binary, ...(configPath ? { configPath } : {}), env, log, exec: options.exec ?? runBinary, actor };
+  return { settings, roots: e.roots, ...(terragrunt ? { terragrunt } : {}), ...(settings.synth ? { synth: settings.synth } : {}), ttl: ttlMs(e.ttl ?? EPHEMERAL_TTL) ?? ttlMs(EPHEMERAL_TTL)!, forge, binary, ...(configPath ? { configPath } : {}), env, log, exec: options.exec ?? runBinary, actor };
 }
 
 function readRecords(repo: string): EphemeralRecord[] {
@@ -433,6 +568,32 @@ async function writeList(repo: string, r: Ready, pr: number, row: EphemeralRow |
   }
 }
 
+/**
+ * The roots of a checkout that `ephemeral.roots` names, in the order they
+ * apply: plain roots by their terraform_remote_state reads, Terragrunt units
+ * by their dependency blocks (as discovery finds them, explicit stacks
+ * generated first). With synth, the command runs first, since git holds no
+ * root. Undefined, with why, when the synth command fails.
+ */
+async function copyRoots(dir: string, r: Ready, label: string): Promise<string[] | undefined> {
+  if (r.synth) {
+    r.log(`${label}: synth: ${r.synth}`);
+    const ran = runSynth(r.synth, dir, r.env);
+    if (!ran.ok) {
+      r.log(`${label}: the synth command failed, so there are no roots to copy\n${ran.out}`);
+      return undefined;
+    }
+  }
+  if (r.terragrunt) {
+    const found = await discoverUnits(dir, { exclude: r.settings.terragrunt?.exclude ?? [], binary: r.binary, terragrunt: r.terragrunt.terragrunt });
+    const picked = new Set(found.units.filter((u) => r.roots.some((g) => globMatch(g, u.path))).map((u) => u.path));
+    const units = found.units.filter((u) => picked.has(u.path)).map((u) => ({ path: u.path, dependencies: u.dependencies.filter((d) => picked.has(d)) }));
+    return unitWaves(units).flat();
+  }
+  const found = findRoots(dir, r.roots);
+  return found.length ? applyLayers(dir, found).flat() : [];
+}
+
 // ── up ────────────────────────────────────────────────────────────────────
 
 export interface UpOptions extends EphemeralOptions {
@@ -453,17 +614,21 @@ export async function ephemeralUp(repo: string, options: UpOptions): Promise<num
   const code = checkoutPull(repo, r.forge, pr, options.head, r.log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-ephemeral-plans-"));
   try {
-    const found = findRoots(code.dir, r.roots);
-    if (found.length === 0) {
-      r.log(`${label}: no root at ${code.commit.slice(0, 8)} matches ephemeral.roots (${r.roots.join(", ")}), so it gets no copy`);
+    const roots = await copyRoots(code.dir, r, label);
+    if (!roots) return EPHEMERAL_EXIT.failed;
+    if (roots.length === 0) {
+      r.log(`${label}: no ${r.terragrunt ? "unit" : "root"} at ${code.commit.slice(0, 8)} matches ephemeral.roots (${r.roots.join(", ")}), so it gets no copy`);
       return EPHEMERAL_EXIT.done;
     }
-    const roots = applyLayers(code.dir, found).flat();
+    if (r.terragrunt) {
+      const reads = remoteStateReadsSuffix(code.dir);
+      if (!reads.ok) throw new SuffixRefused(`ephemeral: ${reads.why}; ${SUFFIX_HOW}`);
+    }
     r.log(`${label}: its copy of ${roots.join(", ")} under the state keys suffixed -${suffix}, from ${code.commit.slice(0, 8)}`);
     const binaries = new RootBinaries(code.dir, r.binary, r.settings.version, r.env);
     const plans: CopyPlan[] = [];
     for (const [i, root] of roots.entries()) {
-      const p = await planCopy(code.dir, root, suffix, binaries, work, i, r.env, r.exec, false);
+      const p = await planCopy(code.dir, root, suffix, binaries, work, i, r.env, r.exec, false, r.terragrunt);
       plans.push(p);
       r.log(p.error ? `${root}: ${p.error}` : `${root}: ${p.changes} to change at ${p.location}`);
     }
@@ -536,7 +701,7 @@ export async function ephemeralUp(repo: string, options: UpOptions): Promise<num
     }
     const results: EphemeralRecord["roots"] = [];
     for (const p of plans) {
-      const a = r.exec(p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], join(code.dir, p.root), p.env);
+      const a = r.exec(p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.dir, p.env);
       results.push({ root: p.root, location: p.location, result: a.status === 0 ? "applied" : "failed" });
       r.log(a.status === 0 ? `applied ${p.root} at ${p.location}` : `FAILED ${p.root}\n${tail(a.out)}`);
       if (a.status !== 0) break;
@@ -600,18 +765,32 @@ async function destroyCopy(repo: string, r: Ready, pr: number, reason: "closed" 
     const binaries = new RootBinaries(code.dir, r.binary, r.settings.version, r.env);
     const results: EphemeralRecord["roots"] = [];
     const members: WaveMember[] = [];
+    // With synth, the roots the copy was applied from are written again from its commit; an explicit stack's units are generated.
+    let synthFailed = false;
+    if (r.synth) {
+      const ran = runSynth(r.synth, code.dir, r.env);
+      if (!ran.ok) r.log(`${label}: the synth command failed\n${ran.out}`);
+      synthFailed = !ran.ok;
+    }
+    if (r.terragrunt) {
+      try {
+        await generateStacks(code.dir, { binary: r.binary, terragrunt: r.terragrunt.terragrunt });
+      } catch (e) {
+        r.log(`${label}: ${(e as Error).message}`);
+      }
+    }
     // Later roots read earlier ones' state, so the copy is destroyed in reverse.
     const roots = [...live.roots].reverse();
     for (const [i, root] of roots.entries()) {
       const location = live.locations[root] ?? "";
-      if (!existsSync(join(code.dir, root))) {
-        r.log(`FAILED ${root}: the directory is gone from ${code.commit.slice(0, 8)}, so its copy at ${location} cannot be planned`);
+      if (synthFailed || !existsSync(join(code.dir, root))) {
+        r.log(`FAILED ${root}: ${synthFailed ? "the synth command failed" : "the directory is gone"} at ${code.commit.slice(0, 8)}, so its copy at ${location} cannot be planned`);
         results.push({ root, location, result: "failed" });
         continue;
       }
       let p: CopyPlan;
       try {
-        p = await planCopy(code.dir, root, live.suffix, binaries, work, i, r.env, r.exec, true);
+        p = await planCopy(code.dir, root, live.suffix, binaries, work, i, r.env, r.exec, true, r.terragrunt);
       } catch (e) {
         r.log(`FAILED ${root}: ${(e as Error).message}`);
         results.push({ root, location, result: "failed" });
@@ -624,7 +803,7 @@ async function destroyCopy(repo: string, r: Ready, pr: number, reason: "closed" 
       }
       members.push(p.member!);
       r.log(`${root}: the destroy plan removes ${p.destroys} at ${p.location}`);
-      const a = r.exec(p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], join(code.dir, root), p.env);
+      const a = r.exec(p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.dir, p.env);
       results.push({ root, location: p.location, result: a.status === 0 ? "destroyed" : "failed" });
       r.log(a.status === 0 ? `destroyed ${root}'s copy at ${p.location}` : `FAILED ${root}\n${tail(a.out)}`);
     }
