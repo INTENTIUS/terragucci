@@ -277,6 +277,7 @@ pr-review-status|with approval: pr-review terragucci/approval on the head of a p
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
+cdf-resume|with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
 cdf-rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
@@ -9566,17 +9567,20 @@ HCL
 # One stage run in a checkout, in the CI image of BIN (choudoufu or tofu),
 # with its S3 calls sent to the proxy, as the container NAME. OVERRIDE, when
 # not empty, is a Linux build mounted over the image's binary. The run's
-# output goes to LOG.
+# output goes to LOG. CDF_BUNDLE is the terragucci bundle to run,
+# CDF_COMMAND a command to run in place of stage, and CDF_RUN_ARGS more
+# docker run arguments.
 cdf_run() { # dir log name bin override stage-args...
-  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0
+  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="${CDF_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}" rc=0
   local -a mount=()
   shift 5
   [ -n "$over" ] && mount=(-v "$over:/usr/local/bin/$bin:ro")
+  mount+=(${CDF_RUN_ARGS[@]+"${CDF_RUN_ARGS[@]}"})
   run_copied --rm --name "$name" --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" ${mount[@]+"${mount[@]}"} \
     -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$(image_tag "$bin")" terragucci stage "$@" >"$logf" 2>&1 || rc=$?
+    "$(image_tag "$bin")" terragucci "${CDF_COMMAND:-stage}" "$@" >"$logf" 2>&1 || rc=$?
   clean_mounted "$dir"
   return $rc
 }
@@ -9592,6 +9596,14 @@ cdf_values() { # estate
     done
     curl -fsS "$FLOCI/$CDF_RECORDS/cdf-concurrency/$estate/terraform.tfstate" 2>/dev/null || true
   } | grep -oE '(left|right)-[0-9]|seed|from-[ab]' | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+# When the record of terraform_data.<name> in an estate was last written.
+cdf_record_version() { # estate name
+  local key k
+  key="$(cdf_keys "$1" | grep '/terraform_data/' | while read -r k; do [ "$(jq -Rr 'split("/") | last | (try @base64d catch .)' <<<"$k")" = "$2" ] && echo "$k"; done | head -1)"
+  [ -n "$key" ] || return 0
+  curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=$(jq -rn --arg k "$key" '$k | @uri')" | grep -o '<LastModified>[^<]*</LastModified>' | head -1 | sed -E 's#</?LastModified>##g'
 }
 
 # The record keys an estate has, one per line.
@@ -9925,6 +9937,116 @@ HCL
   fi
   cdf_down "$work"
   [ $rc = 0 ] && log "the killed wave left a record for first, whose apply had returned, and none for second; the next plan creates second only"
+  return $rc
+}
+
+claim_cdf_resume() {
+  # One choudoufu estate of two terraform_data behind gate always, its
+  # checkout's origin a bare repo: first, and second, which depends on first
+  # and whose local-exec provisioner, the first time it runs, leaves a mark and
+  # sleeps. Wave 1 waits; smoke-approver approves its digest; wave 1 runs
+  # again and is killed once the mark is there, so first's apply returned and
+  # second's did not. terragucci resume must name wave 1 as an approved apply
+  # that stopped, and wave 1 run once more must apply second alone, under that
+  # approval: exit 0, no pending fact or approval added to the ledger, first's
+  # record the one the killed run wrote, and both recorded at the end.
+  # TG_LOCK_STALE=1: the killed run is in a container that is gone, which
+  # only the age of its lease says here.
+  # BREAK: the wave never resumes a stopped apply, so its plan of second alone
+  # waits for an approval of its own.
+  log() { echo "[smoke cdf-resume] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" pid i digest keys got rc=0 v1 v2
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/terragucci.mjs" apply.ts 'if (ctx.resume && decision.status === "waiting" && decision.spent) {' 'if (false) {' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    bundle="$work/terragucci.mjs"
+  fi
+  estate="smoke-resume-$STAMP-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_estate "$work/wave" "$estate" "$(cat <<'HCL'
+resource "terraform_data" "first" {
+  input = "first"
+}
+
+resource "terraform_data" "second" {
+  input      = "second"
+  depends_on = [terraform_data.first]
+
+  provisioner "local-exec" {
+    command = "test -e /repo/second-started || { touch /repo/second-started && sleep 900; }"
+  }
+}
+HCL
+)"
+  printf 'second-started\nterragucci-resume.env\n' >>"$work/wave/.gitignore"
+  audit_origin "$work"
+  CDF_RUN_ARGS=(-v "$work/origin.git:/origin.git" -e TG_LOCK_STALE=1)
+  CDF_BUNDLE="$bundle"
+  # An approval line on the ledger, as chant approve writes it.
+  approve_wave() { # digest
+    git clone -q -b chant/lifecycle "$work/origin.git" "$work/ledger" || return 1
+    sleep 1
+    printf '%s\n' "$(jq -cn --arg d "$1" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "smoke-approver", timestamp: $t, planDigest: $d}')" >>"$work/ledger/_gates/tf-apply.jsonl"
+    git -C "$work/ledger" -c user.name=smoke-approver -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "approve wave-1" && git -C "$work/ledger" push -q origin chant/lifecycle
+  }
+  ledger_lines() { git --git-dir="$work/origin.git" show chant/lifecycle:_gates/tf-apply.jsonl 2>/dev/null | grep -c "\"kind\":\"$1\"" || true; }
+  if cdf_run "$work/wave" "$work/waits.log" "$CDF_ALIAS-waits" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate always; then
+    log "wave 1 applied without waiting"; tail -20 "$work/waits.log" >&2; rc=1
+  fi
+  digest="$(sed -n 's/^wave 1 of 1 waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+  [ $rc = 0 ] && [ -z "$digest" ] && { log "wave 1 printed no digest to approve"; tail -20 "$work/waits.log" >&2; rc=1; }
+  [ $rc = 0 ] && { approve_wave "$digest" || { log "could not approve $digest"; rc=1; }; }
+  if [ $rc = 0 ]; then
+    ( cdf_run "$work/wave" "$work/killed.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate always ) >/dev/null 2>&1 &
+    pid=$!
+    started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
+    for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    if ! started; then
+      log "second's provisioner never started"; tail -20 "$work/killed.log" >&2; rc=1
+    fi
+    docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "approved by smoke-approver for this digest" "$work/killed.log" || { log "the killed run did not apply under the approval"; tail -20 "$work/killed.log" >&2; rc=1; }
+    keys="$(cdf_keys "$estate" | grep '/terraform_data/' | jq -Rr 'split("/") | last | (try @base64d catch .)' | tr '\n' ' ')"
+    log "records after the kill: ${keys:-none}"
+    grep -q first <<<"$keys" && ! grep -q second <<<"$keys" || { log "the kill did not leave a record of first alone"; rc=1; }
+    v1="$(cdf_record_version "$estate" first)"
+  fi
+  if [ $rc = 0 ]; then
+    CDF_COMMAND=resume cdf_run "$work/wave" "$work/resume.log" "$CDF_ALIAS-resume" choudoufu "" --forge forgejo --out terragucci-resume.env || true
+    sed 's/^/[resume] /' "$work/resume.log" >&2
+    [ -s "$work/wave/terragucci-resume.env" ] || { log "terragucci resume wrote no commit to apply"; rc=1; }
+    grep -q "the apply of wave 1, approved by smoke-approver for $digest, stopped before it finished; the wave applies the rest" "$work/resume.log" \
+      || { log "terragucci resume did not name wave 1 as an approved apply that stopped"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    if ! cdf_run "$work/wave" "$work/resumed.log" "$CDF_ALIAS-resumed" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate always; then
+      log "wave 1 run again did not apply"; tail -30 "$work/resumed.log" >&2; rc=1
+    fi
+    got="$(grep -E "^wave 1 of 1: (the apply of|set digest)" "$work/resumed.log" | tr '\n' ' ')"
+    log "wave 1 run again: $got"
+    grep -q "stopped before it finished; 1 of its 2 changes are done in the records, and these plans make the other 1, so that approval covers them" "$work/resumed.log" \
+      || { log "wave 1 did not resume under the approval of $digest"; rc=1; }
+    grep -q "^estate: Plan: 1 to add, 0 to change, 0 to destroy" "$work/resumed.log" || { log "wave 1 run again did not plan second alone"; rc=1; }
+    grep -q "^applied estate: Resources: 1 added, 0 changed, 0 destroyed" "$work/resumed.log" || { log "wave 1 run again did not apply one resource"; rc=1; }
+    [ "$(ledger_lines resolution)" = 1 ] || { log "the ledger holds $(ledger_lines resolution) approvals, not the one"; rc=1; }
+    [ "$(ledger_lines pending)" = 1 ] || { log "the ledger holds $(ledger_lines pending) pending facts, not the one wave 1 asked first"; rc=1; }
+    v2="$(cdf_record_version "$estate" first)"
+    [ -n "$v1" ] && [ "$v1" = "$v2" ] || { log "first's record moved from version '$v1' to '$v2': it was written again"; rc=1; }
+    keys="$(cdf_keys "$estate" | grep '/terraform_data/' | jq -Rr 'split("/") | last | (try @base64d catch .)' | sort | tr '\n' ' ')"
+    grep -q first <<<"$keys" && grep -q second <<<"$keys" || { log "records at the end: ${keys:-none}, not first and second"; rc=1; }
+  fi
+  CDF_RUN_ARGS=(); CDF_BUNDLE=""
+  cdf_down "$work"
+  [ $rc = 0 ] && log "the killed wave's approved apply resumed under the same approval: terragucci resume named it, and the wave applied second alone, first's record untouched"
   return $rc
 }
 
@@ -20577,6 +20699,7 @@ cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
 cdf-killed-records   weight=90
+cdf-resume           weight=150
 apply-per-root       runner self! weight=300
 cdf-rows-overlap     runner self! weight=250
 cdf-rows-wait        self! weight=200
