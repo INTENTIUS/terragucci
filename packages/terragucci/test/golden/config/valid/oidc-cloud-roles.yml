@@ -1,0 +1,14 @@
+oidc:
+  gcp:
+    workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
+    plan_service_account: tg-plan@shop.iam.gserviceaccount.com
+    apply_service_account: tg-apply@shop.iam.gserviceaccount.com
+    roles:
+      "envs/prod/**": { plan: prod-plan@shop.iam.gserviceaccount.com, apply: prod-apply@shop.iam.gserviceaccount.com }
+  azure:
+    tenant_id: tenant-0001
+    subscription_id: sub-0002
+    plan_client_id: client-plan
+    apply_client_id: client-apply
+    roles:
+      "envs/prod/**": { plan: client-prod-plan, apply: client-prod-apply }

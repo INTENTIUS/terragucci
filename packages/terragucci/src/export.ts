@@ -23,11 +23,14 @@
  * `terragucci audit` lists each record as a `state-export` entry.
  *
  * The record holds the version id and the digest of what was written, never
- * a state's contents. It reads states in s3 backends that keep versions, and
- * GitLab-managed states (./gitlab-state.ts), whose version id is the serial.
- * A GitLab request with `--version` checks it with a HEAD; one without reads
- * the current state for its serial, which GitLab answers no other way, and
- * keeps nothing else of it. It refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
+ * a state's contents. It reads states in backends that keep versions: s3
+ * (bucket versioning), gcs (object versioning, a version is a generation),
+ * azurerm (blob versioning, or the snapshots an apply's version record
+ * takes when the backend sets `snapshot = true`), and GitLab-managed states
+ * (./gitlab-state.ts), whose version id is the serial. A GitLab request with
+ * `--version` checks it with a HEAD; one without reads the current state for
+ * its serial, which GitLab answers no other way, and keeps nothing else of
+ * it. It refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
  * migration prepares one (unitPlace): Terragrunt inits it, and the backend is
  * the one that init recorded in the directory Terragrunt ran the binary in.
  */
@@ -39,12 +42,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { appendLifecycle, appendPending, readLedger, type PendingRecord, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
-import { READS_VERSIONS, stateClient, stateObject, type StateObject } from "./backend";
+import { isStored, READS_VERSIONS, stateObject, stateStore, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
 import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
 import { currentSerial, hasVersion, readVersion } from "./gitlab-state";
-import type { S3Fetch, S3Target } from "./report/s3";
+import type { StoreFetch } from "./report/object-store";
 import { sealRefusal } from "./seal";
 
 export const EXPORT_OP = "tf-state-export";
@@ -100,7 +103,7 @@ export interface ExportOptions {
   exec?: BinaryExec;
   /** How a Terragrunt unit is prepared (MigrateOptions.terragrunt). */
   terragrunt?: MigrateOptions["terragrunt"];
-  fetch?: S3Fetch;
+  fetch?: StoreFetch;
   now?: string;
   log?: (line: string) => void;
 }
@@ -193,14 +196,14 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   } finally {
     rmSync(data, { recursive: true, force: true });
   }
-  if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace(READS_VERSIONS, "exports state from s3 backends and GitLab-managed state")}`);
+  if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace(READS_VERSIONS, "exports state from s3, gcs and azurerm backends and GitLab-managed state")}`);
   let location: string;
   let version = options.version;
   let download: (v: string) => Promise<string | undefined>;
   if ("gitlab" in object) {
     // GitLab keeps each version by serial: the version id is the serial.
     const gl = object.gitlab;
-    const fetchFn = options.fetch ?? (globalThis.fetch as unknown as S3Fetch);
+    const fetchFn = options.fetch ?? (globalThis.fetch as unknown as StoreFetch);
     location = object.location;
     const gitlab = async <T>(call: () => Promise<T>): Promise<T> => {
       try {
@@ -220,19 +223,19 @@ export async function exportState(repo: string, options: ExportOptions): Promise
     }
     download = (v) => gitlab(() => readVersion(gl, v, fetchFn));
   } else {
-    if (object.backend !== "s3" || !("target" in object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3 state by its id`);
-    const s3 = object as Extract<StateObject, { target: S3Target }>;
-    location = `s3://${s3.bucket}/${s3.key}`;
-    const client = stateClient(s3, options.fetch);
+    if (!isStored(object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3, gcs or azurerm state by its id`);
+    const store = await stateStore(object, options.fetch);
+    location = store.location;
     if (!version) {
-      const head = await client.head(s3.key);
-      if (!head.exists) throw new ConfigError(`state export: ${location} holds no state`);
-      if (!head.versionId) throw new ConfigError(`state export: ${s3.bucket} keeps no versions, so there is no version id to export; turn on bucket versioning`);
-      version = head.versionId;
-    } else if (!(await client.hasVersion(s3.key, version))) {
+      // The version there now; an azurerm backend that keeps snapshots and no versions gets one, which names it.
+      const now = await store.version(true);
+      if (!now.exists) throw new ConfigError(`state export: ${location} holds no state`);
+      if (!now.versionId) throw new ConfigError(`state export: ${location} keeps no versions, so there is no version id to export: ${now.off ?? "the store gave none"}`);
+      version = now.versionId;
+    } else if (!(await store.hasVersion(version))) {
       throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
     }
-    download = (v) => client.readVersion(s3.key, v);
+    download = (v) => store.readVersion(v);
   }
 
   const ledger = readLedger(repo, EXPORT_LEDGER);

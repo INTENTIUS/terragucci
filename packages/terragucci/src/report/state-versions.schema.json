@@ -16,7 +16,7 @@
         "properties": {
           "root": { "type": "string" },
           "backend": { "type": "string", "description": "The backend the root initialised: s3, local, gcs and so on." },
-          "location": { "type": "string", "description": "s3://<bucket>/<key>, or the local file's path in the root." },
+          "location": { "type": "string", "description": "s3://<bucket>/<key>, gs://<bucket>/<key>, az://<account>/<container>/<key>, or the local file's path in the root." },
           "versioning": { "enum": ["on", "off", "unknown"], "description": "As the newest apply found it." },
           "note": { "type": "string", "description": "Why the version could not be read, or what off means for this backend." },
           "checked": { "type": "string", "description": "When the newest apply that recorded the root finished." },

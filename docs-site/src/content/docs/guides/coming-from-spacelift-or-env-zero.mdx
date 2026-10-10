@@ -1,11 +1,11 @@
 ---
 title: Coming from Spacelift or env zero
 description: Each Spacelift and env zero concept, the terragucci key or job that does the same work, how to move managed state into your own bucket, and what has no equivalent.
-claims: [pass-secrets, runner-label]
+claims: [pass-secrets, runner-label, import-spacelift, import-env0]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-spacelift-or-env-zero/.
-  From `.spacelift/config.yml`, `env0.yml` and any `spacelift_*` or `env0_*` resources in the repo, list each stack or environment, its directory, version, hooks and dependencies. Propose a directory per stack or environment where one directory serves several.
-  Write terragucci.yml for what the concepts table maps: `version`, `env` for values that are not secret, `steps` for hooks, and `policy` for plan policies with `input.terraform` changed to `input`. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the policies and the generated pipeline.
+  Run `npx terragucci import spacelift --dry-run` (or `import env0 --dry-run` for env zero) and report what it would write, each setting it lists as not mapped, and each stack or environment it names as sharing a directory. Propose a directory per stack or environment where one directory serves several.
+  Run the import without `--dry-run`, then add `policy` for plan policies with `input.terraform` changed to `input`. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the policies and the generated pipeline.
   List the secrets I must recreate and add their names under `pass`; list each policy with no counterpart, and each stack or environment whose state the platform manages.
   Do not change a `cloud` or `backend` block, do not run `init -migrate-state`, `state pull` or `state push`, and do not create secrets: a person moves the state.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
@@ -17,31 +17,57 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Each stack or environment becomes a root with its own state in your bucket. The jobs `init` writes run in your forge's CI; there is no account and no server, and every record lands in your git and bucket.
 
+## Import
+
+```bash
+npx terragucci import spacelift   # reads .spacelift/config.yml and the spacelift_* resources
+npx terragucci import env0        # reads env0-discovery.yml, each env0.yml and the env0_* resources
+```
+
+Each command writes `terragucci.yml` from what the repo holds: the runtime config or discovery file, and the admin code that declares the stacks or environments, read from every `.tf` file in the repo. It reads no API, so a stack, context or variable that exists only on the platform is not in it. Each setting is printed under one of the headings of [`terragucci import`](/terragucci/reference/cli/#import), quoting the terragucci cell of its row in the table below. `--dry-run` prints what would be written.
+
+| Read from | Spacelift | env zero |
+|---|---|---|
+| A root per | `spacelift_stack` resource or `stacks` entry, at its `project_root` | environment, at its `env0_template`'s `path`, else the root its first variable file is in |
+| `binary` and `version` | `terraform_workflow_tool`, `terraform_version`, `opentofu_version`; a version per root glob when the stacks differ | the template's `type`, `terraform_version`, `opentofu_version` |
+| `steps` | each hook list, for the roots of the stacks that run it, with attached contexts' hooks around the stack's own | `env0.yml`'s `deploy` steps, for the root the file is in |
+| `waves.after` | `spacelift_stack_dependency`, unless the roots' `terraform_remote_state` reads already give the order | |
+| `env` | `stack_defaults.environment`, and a variable that is not `write_only` on a context every stack gets | a variable that is not sensitive on no environment or template; an `echo NAME=value >> $ENV0_ENV` line |
+| `pass.secrets` | each `write_only` variable's name, the provider's default | each sensitive variable's name, `TF_VAR_` first for a Terraform variable |
+| `gate: always` | every stack's `autodeploy` off, the provider's default | every environment's `requiresApproval` on, or `approve_plan_automatically` off |
+| `drift` | `spacelift_drift_detection`'s schedule | `driftDetectionCron`, `drift_detection_cron` and `env0_environment_drift_detection` |
+| `ephemeral` | | the roots of environments with a `ttl`, or in a project whose policy's `default_ttl` gives one, which becomes `ephemeral.ttl` |
+| Named, nothing written | managed state, policies, mounted files, workspaces, runner images, worker pools, cloud integrations | the remote backend, workspaces, variable files outside the root, variable sets, credentials, agents |
+
+Neither import moves state; a [state move](#state-move) does, one root at a time.
+
 ## Concepts
 
-| Spacelift | env zero | terragucci |
-|---|---|---|
-| Stack | environment | a [root](/terragucci/concepts/glossary/#root): one directory, one state |
-| Several stacks on one project root | several environments from one template | a directory per stack or environment, each with its backend key and `terraform.tfvars`, calling a shared module |
-| Managed state | env zero's remote backend | a key in your S3 bucket, moved by a [backend move](#state-move) |
-| Your own backend | your own S3 backend | the same backend; nothing moves |
-| Context: environment variables | variables | [`env`](/terragucci/reference/config/#keys) for values; CI secrets named under [`pass`](#variables) for the rest |
-| Context: mounted files | | files committed in the root, such as `terraform.tfvars` |
-| Cloud integration | credentials | [`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc): a plan role and an apply role per cloud |
-| Terraform version per stack | version per environment | [`version`](/terragucci/reference/config/#a-version-per-root) per root glob, or the root's `.terraform-version` |
-| Hooks (`before_plan`, `after_apply`, ...) | custom flows (`env0.yml`) | [`steps`](/terragucci/guides/run-steps/) before or after `init`, `plan`, `apply` and `drift` |
-| Plan policy | approval policy (OPA) | [`policy`](/terragucci/reference/policy/) over each plan, with [cost](/terragucci/guides/estimate-cost/#cost-in-the-policy) in `input.cost` |
-| Approval policy | approval policy, manual approval | [`gate`](/terragucci/reference/stages/#gate-policy) and [approval modes](/terragucci/guides/approve-a-wave/#approval-modes); [`cost.approve_above`](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount) |
-| Push and trigger policies | triggers | the [generated pipeline](/terragucci/getting-started/): a pull request plans the roots its files reach; merge applies them |
-| Stack dependencies, output references | workflows | [waves](/terragucci/concepts/waves-and-approvals/#linked-roots): a root that reads another through `terraform_remote_state` applies in a later wave |
-| Login policy, spaces | RBAC | your forge's permissions and cloud IAM ([access and identity](/terragucci/standards/access-and-identity/)) |
-| Notification policy | notifications | [`notify`](/terragucci/guides/notify-a-chat-channel/): Slack, Teams or a signed webhook |
-| Drift detection | drift detection | [`drift`](/terragucci/guides/turn-on-drift-checks/), a cron schedule, and a pull request for drift on a literal |
-| | environment TTL | [ephemeral environments](/terragucci/guides/ephemeral-environments/) per pull request, with a TTL |
-| | cost monitoring | [`cost`](/terragucci/guides/estimate-cost/): an estimate per plan, not billed spend |
-| Private workers | self-hosted agents | your CI's runners, your own ones by label with [`runner`](/terragucci/guides/add-to-a-repo/#self-hosted-runners) |
-| Module registry | module registry | [a module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) in your bucket |
-| Run history | deployment log | the [report](/terragucci/guides/keep-reports-in-a-bucket/) per run and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+| Concept | Spacelift | env zero | terragucci |
+|---|---|---|---|
+| Root | stack | environment | a [root](/terragucci/concepts/glossary/#root): one directory, one state; an import writes `roots` from the stacks' project roots or the environments' template paths |
+| Shared code | several stacks on one project root | several environments from one template | a directory per stack or environment, each with its backend key and `terraform.tfvars`, calling a shared module |
+| Workspace | `terraform_workspace` | `workspaceName`, `workspace` | none: each root is a directory with one state |
+| Managed state | managed state, `manage_state` | env zero's remote backend, `isRemoteBackend` | a key in your S3 bucket, moved by a [backend move](#state-move); an import names each stack or environment whose state moves |
+| Own backend | your own backend | your own S3 backend | the same backend; nothing moves |
+| Variables | context and stack environment variables | variables | [`env`](/terragucci/reference/config/#keys) for values every root gets; a secret's name under [`pass`](#variables), whose value you create as a CI secret; a root's own values in its `terraform.tfvars` |
+| Files | context and stack mounted files | | files committed in the root, such as `terraform.tfvars` |
+| Cloud credentials | cloud integration | credentials | [`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc): a plan role and an apply role per cloud |
+| Version | `terraform_version`, `opentofu_version`, `terraform_workflow_tool` | a template's `type`, `terraform_version`, `opentofu_version` | `binary`, and [`version`](/terragucci/reference/config/#a-version-per-root) for every root or per root glob, or the root's `.terraform-version` |
+| Hooks | hooks: `before_init`, `after_plan`, `before_apply` and the rest | custom flows (`env0.yml`) | [`steps`](/terragucci/guides/run-steps/) before or after `init`, `plan`, `apply` and `drift`, for the roots the hook ran in; nothing runs at a destroy or a task |
+| Runner image | `runner_image` | | `image`: one image for every job, built FROM the terragucci image for the binary |
+| Plan policy | plan policy | approval policy (OPA) | [`policy`](/terragucci/reference/policy/) over each plan, with [cost](/terragucci/guides/estimate-cost/#cost-in-the-policy) in `input.cost` |
+| Approval | approval policy, `autodeploy` off | approval policy, `requiresApproval` | [`gate`](/terragucci/reference/stages/#gate-policy) and [approval modes](/terragucci/guides/approve-a-wave/#approval-modes); [`cost.approve_above`](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount); an import writes `gate: always` when every stack or environment waits for an approval |
+| Triggers | push and trigger policies, project globs | triggers, `continuousDeployment`, `pullRequestPlanDeployments` | the [generated pipeline](/terragucci/getting-started/): a pull request plans the roots its files reach; merge applies them |
+| Order | stack dependencies, output references | workflows | [waves](/terragucci/concepts/waves-and-approvals/#linked-roots): a root that reads another through `terraform_remote_state` applies in a later wave; an import writes `waves.after` for a stack dependency the reads do not give |
+| Access | login policy, spaces | RBAC | your forge's permissions and cloud IAM ([access and identity](/terragucci/standards/access-and-identity/)) |
+| Notifications | notification policy | notifications | [`notify`](/terragucci/guides/notify-a-chat-channel/): Slack, Teams or a signed webhook |
+| Drift | drift detection | drift detection, `driftDetectionCron` | [`drift`](/terragucci/guides/turn-on-drift-checks/), one cron schedule over every root, and a pull request for drift on a literal; it never reconciles |
+| TTL | | environment TTL | [ephemeral environments](/terragucci/guides/ephemeral-environments/) per pull request, with a TTL; an import writes `ephemeral` for the environments that expire |
+| Cost | | cost monitoring | [`cost`](/terragucci/guides/estimate-cost/): an estimate per plan, not billed spend |
+| Workers | private workers, `worker_pool_id` | self-hosted agents | your CI's runners, your own ones by label with [`runner`](/terragucci/guides/add-to-a-repo/#self-hosted-runners) |
+| Module registry | module registry | module registry | [a module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) in your bucket |
+| Run history | run history | deployment log | the [report](/terragucci/guides/keep-reports-in-a-bucket/) per run and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 
 ## Steps
 
@@ -59,7 +85,7 @@ Each stack or environment becomes a root with its own state in your bucket. The 
 
 3. Move each managed state into the bucket ([state move](#state-move)), one root at a time, before its backend change merges.
 
-4. Copy the variables ([variables](#variables)), hooks and policies ([policies](#policies)).
+4. Run the [import](#import) for the settings it maps, then copy what it names as not mapped: the variables ([variables](#variables)) and the policies ([policies](#policies)).
 
 5. Write the pipeline and open a pull request:
 
@@ -211,7 +237,7 @@ pass:
 | On the platform | In terragucci today |
 |---|---|
 | State move | a backend move or by hand, as above |
-| Stack and environment settings | no importer reads `.spacelift/config.yml`, `env0.yml` or the platforms' APIs; `terragucci.yml` is written by hand or by an agent from this page |
+| Stack and environment settings | [`terragucci import`](#import) reads the repo's files and admin code, not the platforms' APIs; what lives only on the platform is copied by hand |
 | Tasks (ad hoc commands) | none; state changes come through pull requests |
 | Drift reconciliation | the drift job reports and opens a pull request for drift on a literal; it never applies to put the code back |
 | Push, trigger, login and task policies | no counterpart; see [policies](#policies) |

@@ -4,6 +4,7 @@ description: Why a change goes out in waves, what an approval binds, and when a 
 ---
 
 import Shot from '../../../components/Shot.astro';
+import ApplyProgress from '../../../components/ApplyProgress.astro';
 
 A shared module change goes out in batches, each after the last; a batch waits only when the [gate policy](#waiting-waves) holds it.
 
@@ -104,6 +105,14 @@ Below the waves the page has two more parts:
 | Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
 
 A wave that waited shows the plan that asked for the approval and the later plan that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
+
+### Progress
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave's column also follows each resource its plans change while it applies:
+
+<ApplyProgress />
+
+The wave reads its estate's records every 5 seconds (`TG_PROGRESS_SECONDS`), not the apply's output. A resource is done once its record is written or removed, which choudoufu does as each resource's apply returns. It is in flight once the resources it depends on are done, and waiting before that. A resource with no record of its own is done when its root's apply returns. While a wave applies, the page reloads every 15 seconds, the job writes the same list to `terragucci-report/progress.json`, `run.json` carries it in `waves[].progress`, and the [estate page](/terragucci/guides/see-every-project/) shows the counts.
 
 ### Blast radius in the plan note
 

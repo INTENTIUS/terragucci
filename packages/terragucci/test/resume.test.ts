@@ -38,6 +38,34 @@ describe("resumable", () => {
   });
 });
 
+describe("resumable, an approved apply that stopped", () => {
+  const applied = (m: number, extra: Record<string, unknown> = {}) => ({ version: 1 as const, kind: "applied" as const, op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice", timestamp: T(m), runId: "41", holder: "41", changes: [], ...extra });
+  const finished = (m: number, result: "applied" | "failed") => ({ version: 1 as const, kind: "finished" as const, op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", applied: T(m), result, timestamp: T(m + 1) });
+  const base = { pending: [pending("wave-2", "jcs1-sha256:aa", 0)], resolutions: [resolution("wave-2", "jcs1-sha256:aa", 5)] };
+
+  it("names a wave whose apply under an approval recorded its changes and never how it ended", () => {
+    expect(resumable(ledger({ ...base, applied: [applied(7)] }), T(8))).toEqual([{ wave: 2, digest: "jcs1-sha256:aa", by: "alice", runId: "41", stopped: { holder: "41", at: T(7) } }]);
+  });
+
+  it("leaves a wave whose apply ended, failed included, recorded no changes, or planned again since", () => {
+    expect(resumable(ledger({ ...base, applied: [applied(7)], finished: [finished(7, "applied")] }), T(9))).toEqual([]);
+    expect(resumable(ledger({ ...base, applied: [applied(7)], finished: [finished(7, "failed")] }), T(9))).toEqual([]);
+    expect(resumable(ledger({ ...base, applied: [applied(7, { changes: undefined })] }), T(9))).toEqual([]);
+    expect(resumable(ledger({ ...base, pending: [...base.pending, pending("wave-2", "jcs1-sha256:bb", 9)], applied: [applied(7)] }), T(10))).toEqual([]);
+  });
+
+  it("resumes it once the run that applied is gone, and not while it runs", async () => {
+    const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t" };
+    const l = ledger({ ...base, applied: [applied(7)] });
+    const none = forge({});
+    const seen: string[] = [];
+    const step = (state: "alive" | "dead") => resumeStep({ ledger: l, forge: "github", sha: "d".repeat(40), env, now: T(8), fetch: none.fetch, liveness: async (h) => (seen.push(h.run), state) });
+    expect(await step("alive")).toMatchObject({ kind: "none" });
+    expect(await step("dead")).toMatchObject({ kind: "apply", sha: "d".repeat(40), waves: [{ wave: 2, stopped: { holder: "41" } }] });
+    expect(seen).toEqual(["41", "41"]);
+  });
+});
+
 describe("resumable, a state migration", () => {
   const mig = (l: Partial<GateLedger>): GateLedger => ledger(l);
   it("resumes wave 1 for a migration whose newest digest an approval names, until wave 1 applied under it", () => {
@@ -72,7 +100,7 @@ describe("resumeStep", () => {
     // A direct push: no pull request, the apply still runs.
     const none = forge({});
     expect(await resumeStep({ ledger: approved, forge: "github", sha: SHA, env, now: T(6), fetch: none.fetch })).toMatchObject({ kind: "apply", sha: SHA });
-    expect(await resumeStep({ ledger: ledger({}), forge: "github", sha: SHA, env, now: T(6), fetch: none.fetch })).toEqual({ kind: "none", why: "no wave waits with an approval that stands" });
+    expect(await resumeStep({ ledger: ledger({}), forge: "github", sha: SHA, env, now: T(6), fetch: none.fetch })).toEqual({ kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" });
   });
 
   it("on GitLab retries the newest push pipeline's first unsuccessful apply job when its wave's approval stands", async () => {
