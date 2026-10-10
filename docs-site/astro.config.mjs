@@ -208,7 +208,7 @@ export default defineConfig({
 				{ label: 'Coming from Spacelift or env zero', slug: 'guides/coming-from-spacelift-or-env-zero' },
 				{ label: 'Validation', slug: 'reference/validation' },
 				{ label: 'Scale', slug: 'reference/scale' },
-				{ label: 'Changes in 0.4.4', slug: 'reference/whats-new' },
+				{ label: 'Changes in 0.4.5', slug: 'reference/whats-new' },
 			],
 		}),
 	],
