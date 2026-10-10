@@ -282,10 +282,18 @@ try {
     const below = b.until ? 0 : margin;
     clip = { x, y, width, height: opts.fit || opts.through || opts.until ? Math.ceil(b.top + b.height + below) - y : +opts.height, scale: 1 };
   }
-  const { data } = await page("Page.captureScreenshot", clip ? { format: "png", clip, captureBeyondViewport: true } : { format: "png" });
-  const png = Buffer.from(data, "base64");
+  // A dashboard can still be drawing its panels when its loading bars are
+  // gone: a picture that comes out blank there is taken again, a few times.
+  const grafana = (await page("Runtime.evaluate", { expression: "!!window.grafanaBootData", returnByValue: true })).result?.value;
+  let png, blank;
+  for (let attempt = 0; ; attempt++) {
+    const { data } = await page("Page.captureScreenshot", clip ? { format: "png", clip, captureBeyondViewport: true } : { format: "png" });
+    png = Buffer.from(data, "base64");
+    blank = blankShare(decode(png), Math.round(20 * dpr), clip ? Math.round(margin * dpr) : 0);
+    if (blank <= +opts["blank-max"] || !grafana || attempt >= 5) break;
+    await sleep(5000);
+  }
   ws.close();
-  const blank = blankShare(decode(png), Math.round(20 * dpr), clip ? Math.round(margin * dpr) : 0);
   if (blank > +opts["blank-max"]) {
     writeFileSync(opts.out.replace(/\.png$/, "") + ".blank.png", png);
     die(`${opts.url}: the picture is ${Math.round(blank * 100)}% blank (at most ${Math.round(+opts["blank-max"] * 100)}%); it is kept as ${opts.out.replace(/\.png$/, "")}.blank.png`);

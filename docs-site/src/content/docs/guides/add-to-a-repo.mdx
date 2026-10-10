@@ -194,7 +194,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    git push -u origin add-terragucci
    ```
 
-   <Shot step="github" view="note" alt="terragucci's plan note on a GitHub pull request: one instance in one group, no destroys, the slowest data sources, wave 2 with its set digest and approval not requested, and the change to module.service.terraform_data.jobs" />
+   <Shot step="github" view="note" alt="terragucci's plan note on a GitHub pull request: one instance in one group, no destroys, the slowest resources, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
 
    </TabItem>
    <TabItem label="GitLab">
@@ -206,7 +206,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    git push -u origin add-terragucci
    ```
 
-   <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, a reminder that drift checks are overdue, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
+   <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
 
    </TabItem>
    <TabItem label="Forgejo">
@@ -247,14 +247,14 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
 
    A failed check fails the pipeline:
 
-   <Shot step="gitlab" view="check" alt="A GitLab check job for a change pushed without tofu fmt: its log shows the diff tofu fmt would make to envs/dev/orders/locals.tf, and the job failed with exit code 1" />
+   <Shot step="gitlab" view="check" alt="A GitLab check job's log for a change pushed without tofu fmt: the diff tofu fmt would make to envs/dev/orders/locals.tf" />
 
    </TabItem>
    <TabItem label="Forgejo">
 
    Turn on status checks in the default branch's protection rule, with `terragucci/plan` as the pattern.
 
-   <Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" />
+   <Shot step="statuses" view="checks" alt="A pull request's checks in Forgejo, all successful: the plan job, terragucci/plan with its counts of roots, groups and destroys, the plan-note job and the check" />
 
    The failed check is a red cross on the commit, and the fmt job pushes the formatting after it:
 

@@ -25,7 +25,7 @@ The plan job writes the report for every pull request and merge request. Its not
   <TabItem label="GitLab">
     Kept with the job's artifacts and linked from the note as the HTML report. The merge-request widget reads `gitlab-terraform.json`.
 
-    <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, a reminder that drift checks are overdue, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
+    <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
   </TabItem>
   <TabItem label="Forgejo">
     The same as GitHub.
@@ -128,7 +128,7 @@ Presigned links live 7 days at most. An S3 link signed with a role's session sto
 
 ## Open and folded sections
 
-<Shot step="report" view="top" alt="The top of an HTML report for a change to a shared module: twelve roots, the roots to read first, and eleven identical plans folded into one group" optional />
+<Shot step="report" view="top" alt="The top of a plan report for a shared-module change with a destroy beside it: the destroy named on its own, two outliers to read first, and ten identical roots folded into one group" optional />
 
 | Item | Shown as |
 |---|---|

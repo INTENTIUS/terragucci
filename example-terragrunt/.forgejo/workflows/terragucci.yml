@@ -346,7 +346,7 @@ jobs:
   fmt:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1@sha256:a05537a3ef96cf0594c7fe5ca4c42b479fb7cb0352b1e1aaa87caf7db616c305
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.4-tg1.1.6-tofu1.13.1@sha256:00a919b7045844e2d8654b48beb9ee44e0f4b0aab50f997e680b3e3703e71fe3
     needs: check
     if: always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
     env:

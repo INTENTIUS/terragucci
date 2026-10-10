@@ -342,15 +342,26 @@ OUT
           sched="$(api -X POST "$P/pipeline_schedules" --data-urlencode "description=terragucci drift" \
             --data-urlencode "ref=main" --data-urlencode "cron=$cron" --data-urlencode "active=true" | jq -r .id)"
         fi
-        before="$(api "$P/pipelines?source=schedule&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+        # The pipeline this schedule started, by the schedule's own record: the
+        # comments schedule starts schedule pipelines on main's head too, so
+        # neither the newest schedule pipeline nor the head's is the drift run.
+        before="$(api "$P/pipeline_schedules/$sched" | jq -r '.last_pipeline.id // 0')"
         api -o /dev/null -X POST "$P/pipeline_schedules/$sched/play"
         for _ in $(seq 1 60); do
-          id="$(api "$P/pipelines?source=schedule&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+          id="$(api "$P/pipeline_schedules/$sched" | jq -r '.last_pipeline.id // 0')"
           [ "$id" -gt "$before" ] && break
           sleep 2
         done
         [ "$id" -gt "$before" ] || fail "the drift schedule started no pipeline"
-        wait_pipeline "$(api "$P/pipelines/$id" | jq -r .sha)" schedule
+        deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} ))
+        while :; do
+          PIPE_STATUS="$(api "$P/pipelines/$id" | jq -r .status)"
+          case "$PIPE_STATUS" in success|failed|canceled|skipped) break ;; esac
+          [ "$(date +%s)" -lt "$deadline" ] || fail "drift pipeline $id is still $PIPE_STATUS after ${TERRAGUCCI_VALIDATE_TIMEOUT:-900}s"
+          sleep 3
+        done
+        PIPE_ID="$id" PIPE_URL="$URL/$REPO/-/pipelines/$id"
+        log "drift pipeline $id: $PIPE_STATUS ($PIPE_URL)"
         issue="$(api "$P/issues?state=opened&order_by=created_at&sort=desc" | jq -r '.[0].web_url // empty' | browser_url)"
         printf '\n  Drift run  %s (%s)\n  Issue      %s\n' "$PIPE_URL" "$PIPE_STATUS" "${issue:-none}"
         exit 0
