@@ -42,11 +42,13 @@
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { posix } from "node:path";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
+import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
 import type { Fetch } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
@@ -286,6 +288,56 @@ export function reachedRoots(repo: string, git: Git, from: string, to: string, l
 /** Changed files that reach no unit: documentation. */
 const READS_NOTHING = /\.md$/i;
 
+/** What a pull request reaches and locks: its roots, units or instances, and why it is every one, when it is. */
+export interface Reach {
+  units: string[];
+  every?: string;
+  /** What the units are called in a reply. */
+  kind: "root" | "unit" | "instance";
+}
+
+/**
+ * The Atmos instances a change from `from` to `to` reaches, read from git and
+ * from the instances `terragucci atmos write` left in the checkout. A changed
+ * file under an instance's component directory reaches the instances of that
+ * component. Any other file (a stack manifest, a catalog, `atmos.yaml`) can
+ * change any instance's vars or backend, and no Atmos runs on a pull request's
+ * files before a review, so it reaches every instance, and `every` says why.
+ * Markdown files reach nothing. Instances that depend on a reached one follow.
+ */
+export function reachedInstances(repo: string, git: Git, from: string, to: string, layers: string[][], after?: WavesAfter): Reach {
+  const all = [...new Set(layers.flat())].sort();
+  const diff = git(["diff", "--name-only", "--no-renames", `${from}...${to}`]);
+  if (diff.status !== 0) return { units: all, every: "git could not list the files it changes", kind: "instance" };
+  const files = diff.stdout.split("\n").map((l) => l.trim()).filter((f) => f && !READS_NOTHING.test(f));
+  const component = new Map(all.map((r) => [r, atmosEdges(join(repo, r))?.component?.replace(/\/+$/, "")]));
+  const selected = new Set<string>();
+  for (const f of files) {
+    const owners = all.filter((r) => { const c = component.get(r); return c !== undefined && f.startsWith(`${c}/`); });
+    if (owners.length === 0) return { units: all, every: `it changes \`${f}\`, which can change any Atmos instance`, kind: "instance" };
+    for (const r of owners) selected.add(r);
+  }
+  const deps = rootOrder(repo, all, after);
+  for (const [r, ups] of atmosDependencies(repo, all)) for (const u of ups) (deps.get(r) ?? deps.set(r, new Set()).get(r)!).add(u);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [root, reads] of deps) {
+      if (!selected.has(root) && [...reads].some((d) => selected.has(d))) {
+        selected.add(root);
+        grew = true;
+      }
+    }
+  }
+  return { units: [...selected].sort(), kind: "instance" };
+}
+
+/** The roots, units or instances a change reaches, by the repo's shape. */
+export function reached(repo: string, git: Git, from: string, to: string, layers: string[][], o: { terragrunt?: boolean; after?: WavesAfter } = {}): Reach {
+  if (o.terragrunt) return { ...reachedUnits(git, from, to, layers), kind: "unit" };
+  if (detectAtmos(repo)) return reachedInstances(repo, git, from, to, layers, o.after);
+  return { units: reachedRoots(repo, git, from, to, layers, o.after), kind: "root" };
+}
+
 /**
  * The Terragrunt units a change from `from` to `to` reaches, read from git
  * alone. No Terragrunt runs: the files are the pull request's, and a lock can
@@ -423,11 +475,11 @@ async function openHead(i: OpenInput): Promise<OpenHead | ApplyCommentDecision> 
 /**
  * Take the locks of the roots (in a Terragrunt repo, the units) a pull
  * request reaches. A refusal names every root another open pull request
- * holds. `every` is set when a Terragrunt change locks every unit, and says why.
+ * holds. `every` is set when a change locks every Terragrunt unit or Atmos instance, and says why.
  */
-async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[]; every?: string } | ApplyCommentDecision> {
+async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[]; every?: string; kind: Reach["kind"] } | ApplyCommentDecision> {
   const repo = i.repo ?? process.cwd();
-  const reach = i.terragrunt ? reachedUnits(i.git, h.remote, h.sha, i.layers) : { units: reachedRoots(repo, i.git, h.remote, h.sha, i.layers, i.after) };
+  const reach = reached(repo, i.git, h.remote, h.sha, i.layers, { ...(i.terragrunt ? { terragrunt: true } : {}), ...(i.after ? { after: i.after } : {}) });
   const roots = reach.units;
   let locked;
   try {
@@ -442,11 +494,11 @@ async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Prom
     const what = how === "lock" ? "locked" : "applied";
     return i.refuse(`${describeHeld(locked.held)}, so pull request ${i.number} is not ${what}. It ${how === "lock" ? "locks" : "applies"} once that pull request merges or closes, or someone with write access comments \`/terragucci unlock\` on it`);
   }
-  return { roots, ...(reach.every ? { every: reach.every } : {}) };
+  return { roots, kind: reach.kind, ...(reach.every ? { every: reach.every } : {}) };
 }
 
-/** The reply's words for a Terragrunt change that locks every unit. */
-const everyUnit = (number: number, why: string): string => `pull request ${number} locks every unit: ${why}`;
+/** The reply's words for a change that locks every unit (Terragrunt) or instance (Atmos). */
+const everyUnit = (number: number, why: string, kind: Reach["kind"] = "unit"): string => `pull request ${number} locks every ${kind}: ${why}`;
 
 const isDecision = (x: object): x is ApplyCommentDecision => "go" in x;
 
@@ -457,8 +509,8 @@ async function decideLock(i: OpenInput): Promise<ApplyCommentDecision> {
   const l = await lockRoots(i, h, "lock");
   if (isDecision(l)) return l;
   const text = l.roots.length
-    ? `${l.every ? `${everyUnit(i.number, l.every)}. ` : ""}locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for pull request ${i.number} at ${short(h.sha)}, for ${i.user}; nothing was applied. The locks hold until it merges or closes, or someone with write access comments \`/terragucci unlock\``
-    : `pull request ${i.number} reaches no ${i.terragrunt ? "unit" : "root"}, so nothing is locked`;
+    ? `${l.every ? `${everyUnit(i.number, l.every, l.kind)}. ` : ""}locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for pull request ${i.number} at ${short(h.sha)}, for ${i.user}; nothing was applied. The locks hold until it merges or closes, or someone with write access comments \`/terragucci unlock\``
+    : `pull request ${i.number} reaches no ${l.kind}, so nothing is locked`;
   await i.reply(text);
   return { go: false, reason: text };
 }
@@ -564,7 +616,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
       }
       return stop(`pull request ${number} moved since this event; its next run locks the new head`);
     }
-    const reach = o.terragrunt ? reachedUnits(git, remote, sha, o.layers) : { units: reachedRoots(repoDir, git, remote, sha, o.layers, o.after) };
+    const reach = reached(repoDir, git, remote, sha, o.layers, { ...(o.terragrunt ? { terragrunt: true } : {}), ...(o.after ? { after: o.after } : {}) });
     const author = typeof pr?.user?.login === "string" && LOGIN.test(pr.user.login) ? pr.user.login : "its author";
     let locked;
     try {
@@ -579,9 +631,9 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
       return stop(text);
     }
     const holds = locked.taken.length ? `holds ${locked.taken.join(", ")}` : `reaches no ${what}`;
-    await status(sha, "success", reach.every ? `${holds}: every ${what}` : holds);
+    await status(sha, "success", reach.every ? `${holds}: every ${reach.kind}` : holds);
     const freed = locked.released?.length ? `; released ${locked.released.join(", ")}, which its head no longer reaches` : "";
-    return stop(`pull request ${number} at ${short(sha)} ${holds}${freed}${reach.every ? ` (${everyUnit(number, reach.every)})` : ""}`);
+    return stop(`pull request ${number} at ${short(sha)} ${holds}${freed}${reach.every ? ` (${everyUnit(number, reach.every, reach.kind)})` : ""}`);
   };
 
   // A push to a branch: the fmt job, once it has committed the formatting with the job's own token (a push that
@@ -791,7 +843,7 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
   const l = await lockRoots(i, h, "apply");
   if (isDecision(l)) return l;
   // The apply's own reply comes at the end of its run; a lock on every unit is said before it starts.
-  if (l.every && !i.again) await i.reply(`${everyUnit(number, l.every)}. Applying its head ${short(sha)}`);
+  if (l.every && !i.again) await i.reply(`${everyUnit(number, l.every, l.kind)}. Applying its head ${short(sha)}`);
 
   const through = i.wave !== undefined ? ` through wave ${i.wave}` : "";
   const what = l.roots.length ? `, locking ${l.roots.join(", ")}` : "";

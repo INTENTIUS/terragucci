@@ -257,7 +257,7 @@ terramate-pr-apply-lock|with apply.when: pull-request in a Terramate repo, a pul
 terramate-sharing|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
 terramate-stale|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
 atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
-atmos-pr-apply-lock|with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instance it changes, and a second pull request that changes that instance is refused with the instance and the holder named, its state left as the first applied it|
+atmos-pr-apply-lock|with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instances it reaches (every instance, for a change to a stack manifest), and a second pull request that changes one is refused with the instance and the holder named, its state left as the first applied it|
 atmos-refuse|config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
@@ -8539,6 +8539,14 @@ shape_pr_apply_lock() { # name fixture root edit-fn state-fn
   pr_b="$(pr_open "$repo" change-b "$name: b")" || return 1
   { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || return 1
   reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
+  # A change that locks every root says so before it applies; the apply's own reply comes at the end of its run.
+  if grep -q "locks every" <<<"$reply"; then
+    local seen i
+    seen="$(pr_replies "$repo" "$pr_a")"
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do [ "$(pr_replies "$repo" "$pr_a")" -gt "$seen" ] && break; sleep 3; done
+    log "A ($pr_a) first said: $reply"
+    reply="$(api "$URL/api/v1/repos/$repo/issues/$pr_a/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty')"
+  fi
   log "A ($pr_a): ${reply:-no reply}; $root holds $("$state")"
   grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
   [ $rc = 1 ] || [ "$("$state")" = a ] || { log "$root does not hold A's value after A applied"; rc=1; }
@@ -8552,7 +8560,7 @@ shape_pr_apply_lock() { # name fixture root edit-fn state-fn
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
     log "B ($pr_b) while A holds the lock: ${reply:-no reply}; $root holds $("$state")"
-    grep -q "\`$root\` is locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds on $root"; rc=1; }
+    grep -qE "\`$root\`[^;]* (is|are) locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds on $root"; rc=1; }
     [ "$("$state")" = a ] || { log "$root moved while A held it"; rc=1; }
   fi
   api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-$name?purge=true" 2>/dev/null || true
@@ -8563,7 +8571,8 @@ shape_pr_apply_lock() { # name fixture root edit-fn state-fn
 claim_atmos_pr_apply_lock() {
   # shape_pr_apply_lock on the Atmos fixture: A gives prod's app 4 replicas
   # and B 5, so both change the instance prod/app, whose state is in the
-  # bucket atmos-pr-apply-lock under app/prod.
+  # bucket atmos-pr-apply-lock under app/prod. A change to a stack manifest
+  # reaches every instance (reachedInstances), so A locks all four.
   log() { echo "[smoke atmos-pr-apply-lock] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -18733,7 +18742,7 @@ unlock_live() {
   # unlock-state finds a lock to release.
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work estate pid i keys out code=0 got rc=0 lockobj=""
+  local work estate pid i keys held out code=0 got rc=0 lockobj=""
   docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
@@ -18781,7 +18790,8 @@ HCL
     keys="$(cdf_keys "$estate")"
     log "records after the kill: $(grep '/terraform_data/' <<<"$keys" | jq -Rr 'split("/") | last | (try @base64d catch .)' | tr '\n' ' ')"
     grep '/terraform_data/' <<<"$keys" | jq -Rr 'split("/") | last | (try @base64d catch .)' | grep -q first || { log "the killed wave left no record for terraform_data.first"; rc=1; }
-    ! grep -qiE 'lock' <<<"$keys" || { log "the record store holds a lock object: $(grep -iE 'lock' <<<"$keys" | head -3 | tr '\n' ' ')"; rc=1; }
+    held="$(sed "s#^tofu-records/$estate/##" <<<"$keys" | grep -iE '(^|/)[^/]*lock[^/]*$' || true)"
+    [ -z "$held" ] || { log "the record store holds a lock object: $(head -3 <<<"$held" | tr '\n' ' ')"; rc=1; }
   fi
   out="$(run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/a:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
     -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \

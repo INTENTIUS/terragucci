@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decideApplyComment, decidePlanLock, mergePullRequest, reachedUnits, type Git } from "../src/comment-apply";
+import { decideApplyComment, decidePlanLock, mergePullRequest, reached, reachedInstances, reachedUnits, type Git } from "../src/comment-apply";
 import type { Fetch } from "../src/forge";
 import { describeHeld, LOCKS_PATH, parseLocks, readLocks, releaseLocks, takeLocks } from "../src/locks";
 import { backend, git, tmp, write } from "./helpers";
@@ -382,6 +382,72 @@ describe("apply.when: pull-request in a Terragrunt repo", () => {
     const lock = setup("/terragucci lock", { pr: OPEN(r.head) });
     await decideApplyComment({ ...o, env: lock.env, fetch: lock.fetch });
     expect(replies(lock)[0]).toMatch(/^terragucci: pull request 7 locks every unit: .*\. locked `live\/canary\/one`, `live\/fleet\/three`, `live\/fleet\/two` for pull request 7/);
+  });
+});
+
+describe("apply.when: pull-request in an Atmos repo", () => {
+  const atmosLayers = [["dev/vpc", "prod/vpc"], ["dev/app", "prod/app"]];
+  const edges = (component: string, deps: string[] = []): string => JSON.stringify({ component, dependencies: deps, reads: [] });
+  /** origin with the Atmos fixture's files, a branch `feature` with `change`, and a checkout of main where `terragucci atmos write` left the instances. */
+  const atmosRepos = (change: Record<string, string>, written = true): ReturnType<typeof repos> => {
+    const dir = tmp("tg-pr-apply-atmos-");
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", "-b", "main", origin);
+    const work = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", work);
+    git(work, "remote", "add", "origin", origin);
+    write(work, {
+      "atmos.yaml": "base_path: .\n",
+      ".gitignore": "/dev/\n/prod/\n",
+      "README.md": "# stacks\n",
+      "stacks/deploy/prod.yaml": "vars:\n  stage: prod\n",
+      "components/terraform/vpc/main.tf": "# vpc\n",
+      "components/terraform/app/main.tf": "# app\n",
+    });
+    commit(work, "base");
+    git(work, "push", "-q", "origin", "main");
+    git(work, "checkout", "-q", "-b", "feature");
+    write(work, change);
+    const head = commit(work, "change");
+    git(work, "push", "-q", "origin", "feature");
+    git(work, "checkout", "-q", "main");
+    git(work, "fetch", "-q", "origin");
+    if (written) {
+      for (const stack of ["dev", "prod"]) {
+        write(work, {
+          [`${stack}/vpc/.terragucci-atmos.json`]: edges("components/terraform/vpc"),
+          [`${stack}/app/.terragucci-atmos.json`]: edges("components/terraform/app", [`${stack}/vpc`]),
+        });
+      }
+    }
+    return { work, origin, head, git: (args) => spawnSync("git", args, { cwd: work, encoding: "utf-8" }) as ReturnType<Git> };
+  };
+  const reach = (change: Record<string, string>, written = true) => {
+    const r = atmosRepos(change, written);
+    return reachedInstances(r.work, r.git, "origin/main", r.head, atmosLayers);
+  };
+
+  it("a change to a component reaches its instances and the instances that depend on them", () => {
+    expect(reach({ "components/terraform/app/main.tf": "# app 2\n" })).toEqual({ units: ["dev/app", "prod/app"], kind: "instance" });
+    expect(reach({ "components/terraform/vpc/main.tf": "# vpc 2\n", "README.md": "# more\n" })).toEqual({ units: ["dev/app", "dev/vpc", "prod/app", "prod/vpc"], kind: "instance" });
+  });
+
+  it("a stack manifest reaches every instance, and says which file", () => {
+    expect(reach({ "stacks/deploy/prod.yaml": "vars:\n  stage: prod\n  replicas: 4\n" })).toEqual({
+      units: ["dev/app", "dev/vpc", "prod/app", "prod/vpc"],
+      every: "it changes `stacks/deploy/prod.yaml`, which can change any Atmos instance",
+      kind: "instance",
+    });
+  });
+
+  it("with no instances written, a component change reaches every instance too", () => {
+    expect(reach({ "components/terraform/app/main.tf": "# app 2\n" }, false).every).toBe("it changes `components/terraform/app/main.tf`, which can change any Atmos instance");
+  });
+
+  it("reached picks the Atmos reach in a repo with atmos.yaml, and plain roots elsewhere", () => {
+    const r = atmosRepos({ "stacks/deploy/prod.yaml": "vars: {}\n" });
+    expect(reached(r.work, r.git, "origin/main", r.head, atmosLayers).kind).toBe("instance");
+    expect(reached(r.work, r.git, "origin/main", r.head, atmosLayers, { terragrunt: true }).kind).toBe("unit");
   });
 });
 

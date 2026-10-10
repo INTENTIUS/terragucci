@@ -1,0 +1,197 @@
+---
+// The locking claims, from the smoke record (smoke.json) and the github.com
+// rows of the validation record. tier="terragucci": each layer by repo shape,
+// one column per forge and binary, a gap where no claim has run. tier="choudoufu":
+// choudoufu's own claims, one result each.
+import smoke from '../data/smoke.json';
+import validation from '../data/validation.json';
+
+interface Props {
+	tier: 'terragucci' | 'choudoufu';
+}
+const { tier } = Astro.props;
+
+type Row = { claim: string; says: string; verdict: string; break: string | null; forge?: string; binary?: string };
+const rows = smoke.claims as Row[];
+const github = (validation.claims as Row[]).filter((c) => c.forge === 'github.com');
+
+// A smoke row with no forge is Forgejo's, and with no binary OpenTofu's.
+const find = (claim: string, forge: string, binary: string): Row | undefined =>
+	rows.find((c) => c.claim === claim && (c.forge ?? 'forgejo') === forge && (c.binary ?? 'tofu') === binary);
+
+const COLUMNS = [
+	{ key: 'forgejo tofu', label: 'Forgejo, OpenTofu' },
+	{ key: 'forgejo terraform', label: 'Forgejo, Terraform' },
+	{ key: 'gitlab tofu', label: 'GitLab, OpenTofu' },
+	{ key: 'github tofu', label: 'GitHub, OpenTofu' },
+] as const;
+type Column = (typeof COLUMNS)[number]['key'];
+
+const cell = (claim: string | null, col: Column): Row | undefined => {
+	if (!claim) return undefined;
+	if (col === 'github tofu') return github.find((c) => c.claim === claim);
+	const [forge, binary] = col.split(' ');
+	return find(claim, forge!, binary!);
+};
+
+// Each layer's claims by repo shape. A null claim is a shape the layer has no claim for yet.
+type Spec = { layer: string; shape: string; claim: string | null; skip?: Column[] };
+const SPEC: Spec[] = [
+	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'pr-apply-lock' },
+	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'pr-close-release' },
+	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'pr-lock' },
+	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'plan-lock' },
+	{ layer: 'Pull request locks', shape: 'Terragrunt', claim: 'tg-pr-apply-lock' },
+	{ layer: 'Pull request locks', shape: 'Terragrunt', claim: 'tg-lock-fanout' },
+	{ layer: 'Pull request locks', shape: 'Atmos', claim: 'atmos-pr-apply-lock' },
+	{ layer: 'Pull request locks', shape: 'Terramate', claim: 'terramate-pr-apply-lock' },
+	{ layer: 'Pull request locks', shape: 'CDK Terrain', claim: null },
+	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply-serial' },
+	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply-per-root' },
+	{ layer: 'Applies kept apart', shape: 'Terragrunt, Atmos, Terramate, CDK Terrain', claim: null },
+	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'refuse' },
+	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'audit-refused' },
+	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'approve-plan' },
+	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'pr-apply-stale' },
+	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'note-stale' },
+	{ layer: 'Stale plans', shape: 'Terragrunt', claim: 'tg-gate-refuse' },
+	{ layer: 'Stale plans', shape: 'Atmos', claim: 'atmos-from-plan' },
+	{ layer: 'Stale plans', shape: 'Terramate, CDK Terrain', claim: null },
+	{ layer: 'Lock waits', shape: 'Plain roots', claim: 'plan-no-lock' },
+	// The OpenTofu row of lock-wait runs choudoufu on a backend that locks, so it is listed with choudoufu's claims.
+	{ layer: 'Lock waits', shape: 'Plain roots', claim: 'lock-wait', skip: ['forgejo tofu'] },
+	{ layer: 'Lock waits', shape: 'Terragrunt', claim: 'tg-spans' },
+	{ layer: 'Releasing a state lock', shape: 'Plain roots', claim: 'unlock-state' },
+	{ layer: 'Releasing a state lock', shape: 'Terragrunt, Atmos, Terramate, CDK Terrain', claim: null },
+];
+
+// choudoufu's claims: [claim, forge, binary].
+const CDF: [string, string, string][] = [
+	['cdf-concurrency', 'forgejo', 'tofu'],
+	['cdf-write-race', 'forgejo', 'tofu'],
+	['cdf-rows-overlap', 'forgejo', 'tofu'],
+	['cdf-rows-wait', 'forgejo', 'tofu'],
+	['cdf-rows-takeover', 'forgejo', 'tofu'],
+	['cdf-killed-records', 'forgejo', 'tofu'],
+	['unlock-state', 'forgejo', 'choudoufu'],
+	['lock-wait', 'forgejo', 'tofu'],
+	['cdf-iam', 'forgejo', 'tofu'],
+	['cdf-shared-bucket', 'forgejo', 'tofu'],
+];
+
+const state = (c: Row | undefined): { cls: string; text: string } => {
+	if (!c) return { cls: 'gap', text: 'not proven' };
+	if (c.verdict === 'pass' && c.break === 'caught') return { cls: 'proven', text: 'proven' };
+	if (c.verdict === 'pass') return { cls: 'pass', text: 'passes' };
+	if (c.verdict === 'pending') return { cls: 'gap', text: 'not recorded' };
+	return { cls: 'fail', text: 'fails' };
+};
+
+const layers = [...new Set(SPEC.map((s) => s.layer))];
+const cdf = CDF.map(([claim, forge, binary]) => ({ claim, row: find(claim, forge, binary) }));
+---
+{tier === 'terragucci' ? (
+	<div class="tg-locking not-content">
+		<table>
+			<thead>
+				<tr><th>Layer</th><th>Repo shape</th><th>Claim</th>{COLUMNS.map((c) => <th>{c.label}</th>)}</tr>
+			</thead>
+			<tbody>
+				{layers.map((layer) => SPEC.filter((s) => s.layer === layer).map((s, i, group) => (
+					<tr class={i === 0 ? 'first' : ''}>
+						{i === 0 && <th scope="rowgroup" rowspan={group.length}>{layer}</th>}
+						<td>{s.shape}</td>
+						<td>{s.claim ? <code>{s.claim}</code> : <span class="none">none yet</span>}</td>
+						{COLUMNS.map((col) => {
+							const v = s.skip?.includes(col.key) ? state(undefined) : state(cell(s.claim, col.key));
+							return <td class={v.cls}>{v.text}</td>;
+						})}
+					</tr>
+				)))}
+			</tbody>
+		</table>
+		<p class="legend"><span class="proven">proven</span> passes, and fails when broken · <span class="pass">passes</span> passes, no broken run on that forge · <span class="gap">not proven</span> no claim has run</p>
+	</div>
+) : (
+	<div class="tg-locking not-content">
+		<table>
+			<thead>
+				<tr><th>Claim</th><th>What it shows</th><th>Result</th></tr>
+			</thead>
+			<tbody>
+				{cdf.map(({ claim, row }) => {
+					const v = state(row);
+					return (
+						<tr>
+							<td><code>{claim}</code></td>
+							<td>{row?.says ?? ''}</td>
+							<td class={v.cls}>{v.text}</td>
+						</tr>
+					);
+				})}
+			</tbody>
+		</table>
+	</div>
+)}
+
+<style>
+	.tg-locking {
+		overflow-x: auto;
+		margin: 1.5rem 0;
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.85rem;
+	}
+	th {
+		text-align: left;
+		font-weight: 500;
+		font-size: 0.78rem;
+		color: var(--sl-color-gray-3);
+		padding: 0.45rem 0.6rem 0.45rem 0;
+		border-bottom: 1px solid var(--tg-rule);
+		vertical-align: top;
+	}
+	tbody th {
+		color: var(--sl-color-white);
+		font-weight: 600;
+		font-size: 0.85rem;
+	}
+	td {
+		padding: 0.45rem 0.6rem 0.45rem 0;
+		border-bottom: 1px solid var(--tg-rule);
+		vertical-align: top;
+	}
+	code {
+		font-family: var(--sl-font-mono);
+		font-size: 0.85em;
+		white-space: nowrap;
+	}
+	td.proven,
+	td.pass,
+	td.gap,
+	td.fail {
+		white-space: nowrap;
+	}
+	.proven {
+		color: var(--sl-color-white);
+		font-weight: 500;
+	}
+	.pass {
+		color: var(--tg-accent);
+	}
+	.gap,
+	.none {
+		color: var(--sl-color-gray-4);
+	}
+	.fail {
+		color: var(--tg-warn);
+		font-weight: 600;
+	}
+	.legend {
+		margin: 0.6rem 0 0;
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+	}
+</style>
