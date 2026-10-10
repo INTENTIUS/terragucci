@@ -702,8 +702,8 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(calls.filter((c) => c[0] === "run" && c[1] === "--all").every((c) => calls.some((d) => d[0] === "render" && c.includes(`{./${argOf(d, "--working-dir")}}`)))).toBe(true);
   });
 
-  it("against a base, only the affected units plan, each with its reason, and their dependents wait", async () => {
-    const repo = liveRepo();
+  it("with dependents: follow, against a base only the affected units plan, each with its reason, and their dependents wait", async () => {
+    const repo = liveRepo({ "terragucci.yml": "terragrunt:\n  dependents: follow\n" });
     const calls: string[][] = [];
     const exec = fakeTerragrunt({ calls, affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", layers: [["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]], terragruntExec: exec, env: {} }, () => {});
@@ -713,8 +713,18 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: false }]);
   });
 
-  it("the blast radius holds the changed unit and every unit that depends on it, and the note lists them", async () => {
+  it("by default, against a base the dependents of a changed unit are previewed, provisional and outside every wave", async () => {
     const repo = liveRepo();
+    const exec = fakeTerragrunt({ affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", layers: [["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.roots.map((u) => [u.path, u.terragrunt?.provisional])).toEqual([["live/dev/app", true], ["live/dev/vpc", false]]);
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"]]);
+    expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: true }]);
+  });
+
+  it("the blast radius holds the changed unit and every unit that depends on it, and the note lists them", async () => {
+    // follow, so live/dev/app is not previewed and the note says it is not planned in this run.
+    const repo = liveRepo({ "terragucci.yml": "terragrunt:\n  dependents: follow\n" });
     const exec = fakeTerragrunt({ affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", terragruntExec: exec, env: {} }, () => {});
     expect(r.report.blast).toEqual({ roots: ["live/dev/vpc"], downstream: [{ root: "live/dev/app", reads: ["live/dev/vpc"], depth: 1, wave: 2, planned: false }] });

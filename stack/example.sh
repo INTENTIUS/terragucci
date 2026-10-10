@@ -165,7 +165,7 @@ case "$CMD" in
     started=$(date +%s)
     if [ -n "$FRESH" ]; then
       log "wiping floci and the example repo…"
-      docker restart terragucci-floci >/dev/null
+      docker restart "${TG_PROJECT:-terragucci}-floci" >/dev/null
       until curl -s -o /dev/null "$FLOCI/"; do sleep 1; done
       api -o /dev/null -X DELETE "$URL/api/v1/repos/$REPO" 2>/dev/null || true
     fi

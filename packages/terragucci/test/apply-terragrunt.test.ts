@@ -246,6 +246,31 @@ describe("a Terragrunt wave behind its gate", () => {
     expect(out.mock.calls.flat().join("\n")).toContain("no unit applies from hotfix, so there is nothing to apply");
   });
 
+  it("lets Terragrunt bootstrap the backend (TG_BACKEND_BOOTSTRAP) when generate gives a unit disable_init: false, and only then", async () => {
+    const seen = async (config: string | undefined): Promise<(string | undefined)[]> => {
+      const { work } = setup();
+      if (config !== undefined) {
+        write(work, { "terragucci.yml": config });
+        git(work, "add", "-A");
+        git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "config");
+      }
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const tg = fakeTerragrunt();
+      const envs: (string | undefined)[] = [];
+      const exec: TerragruntExec = (file, args, options) => {
+        if (args[0] === "run") envs.push(options.env.TG_BACKEND_BOOTSTRAP);
+        return tg.exec(file, args, options);
+      };
+      expect(await applyWave(work, { ...opts({ ...tg, exec }, "never"), wave: 1, now: T(1) })).toBe(0);
+      return envs;
+    };
+    const backend = 'generate:\n  backend:\n    s3: { bucket: state, key: "{root}.tfstate", region: us-east-1 }\n';
+    // The wave's plan and its apply both bootstrap.
+    expect(await seen(`${backend}  disable_init: false\n`)).toEqual(["true", "true"]);
+    expect(await seen(backend)).toEqual([undefined, undefined]);
+    expect(await seen(undefined)).toEqual([undefined, undefined]);
+  });
+
   it("--rest needs --terragrunt", async () => {
     await expect(applyWave(tmp(), { wave: 1, layers: [["a"]], binary: "tofu", gate: "never", rest: true })).rejects.toThrow(/needs --terragrunt/);
   });

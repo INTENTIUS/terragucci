@@ -9,6 +9,13 @@ terragucci 0.4.4 is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub rel
 |---|---|
 | Each repo | `npx @intentius/terragucci@0.4.4 init`, then merge the pipeline it writes |
 
+## Since 0.4.4
+
+| What | Where |
+|---|---|
+| Changed default: a pull request that changes a Terragrunt unit also previews the units that depend on it, provisional and outside every digest. Set `terragrunt.dependents: follow` to keep the old behaviour | [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block) |
+| `generate.disable_init: false` writes `disable_init = false` in `terragucci.hcl`, and the apply job has Terragrunt create the state bucket | [Generate backend and provider files](/terragucci/guides/generate-root-files/#bucket-bootstrap) |
+
 ## Security
 
 | What | Where |

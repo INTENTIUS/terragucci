@@ -34,8 +34,19 @@
  *   a pipeline on a protected default branch needs a token that may merge
  *   there. A merged merge request has nothing to apply: it applied before it
  *   merged.
+ * - With `agent.comment` (`--agent`), `/terragucci agent <ask>` on an open
+ *   merge request of this project starts a pipeline on the default branch
+ *   whose `agent` and `agent-push` jobs run the agent and push its change to
+ *   the source branch (gitlab-agent.ts). Each job reads the merge request and
+ *   the note again first.
  * - Otherwise `/terragucci lock` and `/terragucci unlock` are answered as
  *   unsupported, and so is `/terragucci agent`.
+ *
+ * With `review.agent` (`--review`), each open merge request whose head's plan
+ * job has ended and has no review of that head gets one: the poll starts the
+ * review's pipeline on the default branch and says so in the review note.
+ * Those pipelines start with the job's own CI_JOB_TOKEN, so they run as the
+ * user the comments schedule runs as.
  *
  * With `gitlab.token: protected` (`--plan-notes`), before the notes of each
  * open merge request the poll posts its plan note and `terragucci/plan`
@@ -49,6 +60,7 @@ import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
+import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, startDefaultPipeline, startReview, type ReviewStart } from "./gitlab-agent";
 import { postPlanNote, type PlanNoteOutcome } from "./plan-note-gitlab";
 
 /** How far back the poll reads: merge requests updated, and notes written, in this many minutes. */
@@ -97,12 +109,18 @@ export interface GitLabPollOptions {
   planNotes?: boolean;
   /** The directory the plan job keeps its report in. Default terragucci-report. */
   reportDir?: string;
+  /** `agent.comment`: a `/terragucci agent <ask>` note starts the agent's pipeline. */
+  agent?: boolean;
+  /** `review.agent`: start the review of each open merge request's head once its plan ended. */
+  review?: boolean;
 }
 
 export interface GitLabPoll {
   outcomes: NoteOutcome[];
   /** The plan notes and statuses posted, or that failed to post. */
   plans?: PlanNoteOutcome[];
+  /** The reviews started, or that failed to start. */
+  reviews?: ReviewStart[];
   /** Set when the poll could not list the merge requests or their notes. */
   fail?: string;
 }
@@ -140,6 +158,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
 
   const outcomes: NoteOutcome[] = [];
   const plans: PlanNoteOutcome[] = [];
+  const reviews: ReviewStart[] = [];
   const planContext = { api, id, me, apiUrl: t.api!, token: t.token, fetch: doFetch, reportDir: o.reportDir ?? "terragucci-report" };
   for (const mr of mrs) {
     const iid = mr?.iid;
@@ -148,7 +167,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
     try {
       notes = (await api("GET", `/projects/${id}/merge_requests/${iid}/notes?order_by=created_at&sort=desc&per_page=100`)) as any[];
     } catch (e) {
-      return { outcomes, plans, fail: `could not read the notes of !${iid} (${(e as Error).message})` };
+      return { outcomes, plans, reviews, fail: `could not read the notes of !${iid} (${(e as Error).message})` };
     }
     if (!Array.isArray(notes)) continue;
     // The plan first, so a `/terragucci apply` answered below finds terragucci/plan on the head.
@@ -165,9 +184,13 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
       .filter((n) => typeof n.created_at === "string" && n.created_at >= since)
       .filter((n) => parseComment(n.body, parseOptions(env)) !== undefined)
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
-    for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}) }));
+    for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: true } : {}) }));
+    if (o.review) {
+      const started = await startReview({ api, id, me, base, env, fetch: doFetch }, mr, notes);
+      if (started) reviews.push(started);
+    }
   }
-  return { outcomes, plans };
+  return { outcomes, plans, reviews };
 }
 
 interface Ask {
@@ -184,6 +207,8 @@ interface Ask {
   when?: ApplyWhen;
   requires?: readonly ApplyRequire[];
   wait?: (ms: number) => Promise<void>;
+  /** `agent.comment` is set. */
+  agent?: boolean;
 }
 
 async function answer(ask: Ask): Promise<NoteOutcome> {
@@ -218,12 +243,29 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
   if (typeof level !== "number" || level < DEVELOPER) return silent(`${user} is below Developer on the project, so the note is ignored`);
 
   if (parsed.kind === "refused") return reply(parsed.reason);
-  if (parsed.kind === "agent") return reply("`/terragucci agent` does not run on GitLab: a merge request note starts no job that could push to its branch");
+  if (parsed.kind === "agent" && !ask.agent) return reply("the agent command is off in this project; `agent.comment` in terragucci.yml turns it on");
   if ((parsed.kind === "lock" || parsed.kind === "unlock") && !prMode) {
     return reply(`\`/terragucci ${parsed.kind}\` does not run here: this project applies after merge, so merge requests take no locks`);
   }
 
   const fork = mr.source_project_id !== undefined && mr.target_project_id !== undefined && mr.source_project_id !== mr.target_project_id;
+
+  // agent.comment: the agent runs in a pipeline of the default branch, whose jobs read the merge request and the note again.
+  if (parsed.kind === "agent") {
+    if (mr.state !== "opened") return reply(`!${iid} is not open, so the agent does not run`);
+    if (fork) return reply("a merge request from a fork gets no agent: its branch is not this project's to push to");
+    if (mr.source_branch === base) return reply(`!${iid}'s source branch is the default branch, and an agent never pushes there`);
+    const sha = mr.sha;
+    if (typeof sha !== "string" || !SHA.test(sha)) return broke(`!${iid}'s head is not a commit`);
+    let pipeline: { web_url?: string };
+    try {
+      pipeline = await startDefaultPipeline(ask.env, ask.fetch, { [AGENT_MR_VAR]: String(iid), [AGENT_NOTE_VAR]: String(note.id), [AGENT_HEAD_VAR]: sha });
+    } catch (e) {
+      return broke(`could not start the agent's pipeline on ${base} for !${iid} (${(e as Error).message})`);
+    }
+    const link = typeof pipeline?.web_url === "string" && /^https?:\/\//.test(pipeline.web_url) ? ` ${pipeline.web_url}` : "";
+    return reply(`started pipeline${link} on ${base} to run the agent on !${iid}'s head ${short(sha)} for ${user}; it reads !${iid} and this note again before the agent runs, and pushes what the agent changes to \`${String(mr.source_branch)}\``, true);
+  }
 
   // apply.when: pull-request: an open merge request's apply, lock and unlock run in a pipeline of the default branch.
   if (prMode && parsed.kind !== "plan") {
@@ -333,14 +375,18 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
   } catch (e) {
     return broke(`could not read the jobs of pipeline ${pipeline.id} (${(e as Error).message})`);
   }
+  // A wave's own job, then its share jobs when waves.jobs splits it (share 0 is the wave's job).
   const waves = (Array.isArray(jobs) ? jobs : [])
-    .map((j) => ({ j, n: Number(/^apply-wave-([1-9][0-9]*)$/.exec(String(j?.name))?.[1]) }))
+    .map((j) => {
+      const m = /^apply-wave-([1-9][0-9]*)(?:-share-([1-9][0-9]*))?$/.exec(String(j?.name));
+      return { j, n: Number(m?.[1]), s: m?.[2] ? Number(m[2]) : 0 };
+    })
     .filter((w) => Number.isInteger(w.n))
-    .sort((a, b) => a.n - b.n);
+    .sort((a, b) => a.n - b.n || a.s - b.s);
   if (waves.length === 0) return reply(`pipeline ${pipeline.id} at ${short(sha)} has no apply jobs, so there is nothing to retry`);
   const next = waves.find((w) => w.j.status !== "success");
   if (!next) return reply(`every wave of !${iid}'s merge commit ${short(sha)} already applied`);
-  const name = `apply-wave-${next.n}`;
+  const name = String(next.j.name);
   if (["created", "pending", "running", "waiting_for_resource", "preparing", "scheduled"].includes(next.j.status)) {
     return reply(`${name} at ${short(sha)} is ${next.j.status} already, so it is not retried`);
   }

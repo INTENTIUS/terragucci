@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { resolveProject, resolveRepo, validateConfig, type ResolvedSettings } from "../src/config";
-import { checkGenerated, combineGenerate, GENERATED_MARKER, includesGenerated, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
+import { backendBootstrap, checkGenerated, combineGenerate, GENERATED_MARKER, includesGenerated, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
 import { init } from "../src/init";
 import { checkScript } from "../src/render";
 import { bareFrom, git, tmp, write } from "./helpers";
@@ -275,6 +275,39 @@ terraform {
       expect(hcl).toContain('config  = { path = "/s/live/prod/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate" }');
     });
 
+    it("writes disable_init = false in remote_state when generate sets disable_init: false, and the apply job bootstraps the backend", () => {
+      const dir = tgRepo('generate:\n  disable_init: false\n  backend:\n    s3: { bucket: state, key: "{root}.tfstate", region: us-east-1 }\n');
+      generate(dir);
+      const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
+      expect(hcl).toContain("remote_state {\n  backend      = local.terragucci_unit.backend\n  disable_init = false\n");
+      expect(hcl).not.toContain("terragucci_unit.disable_init");
+      expect(backendBootstrap(dir, settingsOf(dir))).toBe(true);
+      expect(checkGenerated(dir, settingsOf(dir)).ok).toBe(true);
+    });
+
+    it("gives each unit its own disable_init when the levels differ, and bootstraps when any unit has false", () => {
+      const dir = tgRepo('generate:\n  backend:\n    s3: { bucket: state, key: "{root}.tfstate", region: us-east-1 }\n  dirs:\n    "live/prod/*":\n      disable_init: false\n');
+      generate(dir);
+      const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
+      expect(hcl).toContain('    "live/dev/app" = {\n      backend      = "s3"\n      config       = { bucket = "state", key = "live/dev/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate", region = "us-east-1" }\n      disable_init = true\n    }');
+      expect(hcl).toMatch(/"live\/prod\/app" = \{[\s\S]*?disable_init = false\n    \}/);
+      expect(hcl).toContain("  disable_init = local.terragucci_unit.disable_init\n");
+      expect(backendBootstrap(dir, settingsOf(dir))).toBe(true);
+      // A root's own true over its glob's false: no unit has false, so no bootstrap.
+      const back = tgRepo('generate:\n  backend:\n    s3: { bucket: state, key: "{root}.tfstate", region: us-east-1 }\n  dirs:\n    "live/prod/*":\n      disable_init: false\n  roots:\n    live/prod/app:\n      disable_init: null\n');
+      expect(backendBootstrap(back, settingsOf(back))).toBe(false);
+      generate(back);
+      expect(readFileSync(join(back, "terragucci.hcl"), "utf-8")).toContain("  disable_init = true\n");
+    });
+
+    it("refuses disable_init with no backend, for a plain root, and as anything but a boolean", () => {
+      const none = tgRepo("generate:\n  disable_init: false\n  required_version: \">= 1.6\"\n");
+      expect(() => planGenerate(none, settingsOf(none))).toThrow("generate sets disable_init for live/dev/app, live/dev/web, live/prod/app and gives no unit a backend, so terragucci.hcl writes no remote_state for it; give the units a backend, or remove disable_init");
+      const plain = repo('roots: ["envs/*/*"]\ngenerate:\n  disable_init: false\n  backend:\n    s3: { bucket: b, key: k, region: us-east-1 }\n');
+      expect(() => planGenerate(plain, settingsOf(plain))).toThrow("generate sets disable_init for envs/dev/app, which is a plain root; disable_init is the remote_state setting terragucci.hcl writes for Terragrunt units, so remove it");
+      expect(() => validateConfig({ generate: { disable_init: "no" } }, "t")).toThrow(/config\.generate\.disable_init must be true, false or null/);
+    });
+
     it("is refused with synth: a Terragrunt repo's units are its own, and with synth alone generate names the CDK Terrain constructs", () => {
       const dir = tgRepo();
       expect(() => planGenerate(dir, { ...settingsOf(dir), synth: "npx cdktn synth" })).toThrow(/^synth: synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth/);
@@ -374,13 +407,13 @@ terraform {
       problems = (e as { problems: string[] }).problems;
     }
     expect(problems).toEqual([
-      "config.generate.other is not a setting (settings: backend, providers, required_version, dirs, roots)",
+      "config.generate.other is not a setting (settings: backend, providers, required_version, disable_init, dirs, roots)",
       "config.generate.backend must name one backend type and its arguments, such as backend: { s3: { bucket: acme-state } }, or be null",
       "config.generate.providers.AWS! is not a provider name; use its local name, such as aws, or aws.<alias> for an aliased configuration",
       "config.generate.providers.aws.alias: name an aliased configuration aws.west instead",
       "config.generate.providers.aws.source must be a string",
       'config.generate.required_version must be a version constraint, such as ">= 1.6", or null',
-      'config.generate.dirs["envs/*"].dirs is not a setting (settings: backend, providers, required_version)',
+      'config.generate.dirs["envs/*"].dirs is not a setting (settings: backend, providers, required_version, disable_init)',
     ]);
   });
 

@@ -29,8 +29,10 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-forgejo}"
-STATE="$HERE/.state"
-COMPOSE=(docker compose -f "$HERE/docker-compose.yml" --project-name terragucci)
+# shellcheck source=instance.sh
+. "$HERE/instance.sh"
+STATE="$TG_STATE"
+COMPOSE=(docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT")
 
 FORGEJO_PORT="${TERRAGUCCI_FORGEJO_PORT:-3300}"
 FLOCI_PORT="${TERRAGUCCI_FLOCI_PORT:-4580}"
@@ -39,7 +41,7 @@ GITLAB_PORT="${TERRAGUCCI_GITLAB_PORT:-8939}"
 FOUNTAIN_PORT="${TERRAGUCCI_FOUNTAIN_PORT:-4010}"
 FORGEJO_URL="http://localhost:${FORGEJO_PORT}"
 FLOCI_URL="http://localhost:${FLOCI_PORT}"
-NETWORK="terragucci"
+NETWORK="$TG_NETWORK"
 
 # A throwaway instance on localhost; these never leave the machine.
 ADMIN_USER="terragucci-admin"
@@ -267,7 +269,7 @@ if [ "$PROFILE" = "gitlab" ]; then
   . "$HERE/gitlab-boot.sh"
   GL_URL="http://localhost:${GITLAB_PORT}"
   GL_TOKEN="glpat-terragucci-local-0001"
-  GL_CONTAINER=terragucci-gitlab GL_NETWORK="$NETWORK" GL_CACHE_VOLUME=terragucci-job-cache GL_RUNNER=terragucci-docker \
+  GL_CONTAINER="$TG_PROJECT-gitlab" GL_NETWORK="$NETWORK" GL_CACHE_VOLUME=terragucci-job-cache GL_RUNNER=terragucci-docker \
     gitlab_boot
   write_env gitlab \
     "TERRAGUCCI_GITLAB_URL=$GL_URL" \
@@ -301,7 +303,7 @@ token_works() {
   [ -n "$1" ] && [ "$(curl -fsS -H "Authorization: token $1" "$FORGEJO_URL/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null)" = "$ADMIN_USER" ]
 }
 TOKEN=""
-for env in "$STATE/forgejo.env" $(git -C "$HERE" worktree list --porcelain 2>/dev/null | sed -n 's|^worktree \(.*\)|\1/stack/.state/forgejo.env|p'); do
+for env in "$STATE/forgejo.env" $(git -C "$HERE" worktree list --porcelain 2>/dev/null | sed -n "s|^worktree \(.*\)|\1/stack/$(basename "$STATE")/forgejo.env|p"); do
   [ -f "$env" ] || continue
   t="$(sed -n 's/^export TERRAGUCCI_FORGEJO_TOKEN=//p' "$env")"
   if token_works "$t"; then

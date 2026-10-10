@@ -327,40 +327,40 @@ export function riskOf(review: string): Risk | "unknown" {
   return found;
 }
 
-/** The note's marker: the head reviewed and the risk. */
-export function reviewMarker(head: string, risk: Risk | "unknown"): string {
-  return `${REVIEW_MARK}${JSON.stringify({ head, risk })} -->`;
+/** The note's marker: the head reviewed and the risk, and on GitLab the review job a wave checks the verdict in. */
+export function reviewMarker(head: string, risk: Risk | "unknown", job?: number): string {
+  return `${REVIEW_MARK}${JSON.stringify({ head, risk, ...(job !== undefined ? { job } : {}) })} -->`;
 }
 
 /** A note's marker, or undefined. */
-export function parseReviewMarker(body: unknown): { head: string; risk: Risk | "unknown" } | undefined {
+export function parseReviewMarker(body: unknown): { head: string; risk: Risk | "unknown"; job?: number } | undefined {
   if (typeof body !== "string" || !body.startsWith(REVIEW_MARK)) return undefined;
   const m = /^<!-- terragucci:review (\{[^\n]*?\}) -->/.exec(body);
   if (!m) return undefined;
   try {
-    const v = JSON.parse(m[1]!) as { head?: unknown; risk?: unknown };
+    const v = JSON.parse(m[1]!) as { head?: unknown; risk?: unknown; job?: unknown };
     if (typeof v.head !== "string" || !SHA.test(v.head)) return undefined;
     const risk = (RISKS as readonly string[]).includes(v.risk as string) ? (v.risk as Risk) : "unknown";
-    return { head: v.head, risk };
+    return { head: v.head, risk, ...(Number.isInteger(v.job) && (v.job as number) > 0 ? { job: v.job as number } : {}) };
   } catch {
     return undefined;
   }
 }
 
 /** The note's body. The review is the model's text: it is shown, never trusted, and no marker of it survives. */
-export function reviewNoteBody(o: { head: string; review: string; rc: string; instructions: string }): string {
+export function reviewNoteBody(o: { head: string; review: string; rc: string; instructions: string; job?: number; what?: string }): string {
   const ok = o.rc === "0";
   const risk = verdictOf(o);
   const text = cut(o.review.replace(/<!--/g, "&lt;!--").trim(), MAX_REVIEW, "review");
   const [from, changed] = o.instructions.trim().split(/\s+/);
   const lines = [
-    reviewMarker(o.head, risk),
+    reviewMarker(o.head, risk, o.job),
     `### terragucci review of \`${o.head.slice(0, 8)}\``,
     "",
     `Risk: **${risk}**. A model compared the title and description with the diff, the plan note and the policy results. This note approves nothing.`,
   ];
   if (from === "none") lines.push("", "> The default branch has no review instructions, so the model had only terragucci's.");
-  if (changed === "changed") lines.push("", "> This pull request changes the review instructions. The review used the default branch's; the change's take effect once it merges.");
+  if (changed === "changed") lines.push("", `> This ${o.what ?? "pull request"} changes the review instructions. The review used the default branch's; the change's take effect once it merges.`);
   lines.push("");
   if (!ok) lines.push(`The review command stopped with ${/^\d+$/.test(o.rc) ? `exit code ${o.rc}` : "no exit code"}; the review job's log has its output.`, "");
   if (text) lines.push(text);
