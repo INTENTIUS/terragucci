@@ -303,13 +303,22 @@ job-cache-prune:
     docker volume rm terragucci-job-cache
     echo "  ✓ terragucci-job-cache removed"
 
-[doc("Run the tutorial's steps against the example and record their output and screenshots.")]
+[doc("Run the tutorial's steps against the example on the capture stack and record their output and screenshots.")]
 tutorial-capture:
-    stack/tutorial-capture.sh
+    TG_STACK="${TG_STACK:-capture}" stack/tutorial-capture.sh
 
-[doc("Capture tutorial steps on demand: `just capture <step>...`, `just capture --reuse <step>` on the running example, `just capture --list`.")]
+[doc("Capture tutorial steps on demand, on the capture stack: `just capture <step>...`, `just capture --reuse <step>` on the running example, `just capture --list`.")]
 capture *args:
-    stack/tutorial-capture.sh {{args}}
+    TG_STACK="${TG_STACK:-capture}" stack/tutorial-capture.sh {{args}}
+
+[doc("Remove the capture stack (compose project terragucci-capture) and its state; the shared stack is left alone.")]
+capture-stack-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available, so there is no stack to remove."; exit 0
+    fi
+    TG_STACK=capture stack/down.sh
 
 [doc("Fail when HEAD would undo a commit BASE already has, as a rebase that keeps a stale file does: the pull request check.")]
 diff-guard base="origin/main" head="HEAD":
