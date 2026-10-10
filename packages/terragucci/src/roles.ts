@@ -21,7 +21,8 @@
  * identity that reaches another environment's state.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { globMatch, rootDependencies, stateOf, type StateRef } from "./detect";
 import type { OidcSettings, RolePair } from "./config";
 
@@ -144,17 +145,30 @@ interface CloudRoles {
   /** The pair every other root takes, and what the config calls it. */
   fallback?: { name: string; pair: RolePair };
   scheme: string;
+  /** The backend whose states the identity reaches: a GCP service account a gcs state, an Azure client an azurerm one. Absent for AWS, which lists every state. */
+  backend?: string;
+}
+
+/** The backend type a root's `.tf` files name, or undefined. */
+function backendType(repo: string, root: string): string | undefined {
+  const dir = join(repo, root);
+  if (!existsSync(dir)) return undefined;
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".tf"))) {
+    const m = /\bbackend\s+"([^"]+)"/.exec(readFileSync(join(dir, f), "utf-8"));
+    if (m) return m[1];
+  }
+  return undefined;
 }
 
 /** The identities of `cloud` in `oidc`, or undefined when it names none by glob. */
 function cloudRoles(oidc: OidcSettings, cloud: "aws" | "gcp" | "azure"): CloudRoles | undefined {
   if (cloud === "gcp") {
     const g = oidc.gcp;
-    return g?.roles ? { cloud, key: "oidc.gcp", roles: g.roles, fallback: { name: "plan_service_account/apply_service_account", pair: { plan: g.plan_service_account, apply: g.apply_service_account } }, scheme: "gs://" } : undefined;
+    return g?.roles ? { cloud, key: "oidc.gcp", roles: g.roles, fallback: { name: "plan_service_account/apply_service_account", pair: { plan: g.plan_service_account, apply: g.apply_service_account } }, scheme: "gs://", backend: "gcs" } : undefined;
   }
   if (cloud === "azure") {
     const a = oidc.azure;
-    return a?.roles ? { cloud, key: "oidc.azure", roles: a.roles, fallback: { name: "plan_client_id/apply_client_id", pair: { plan: a.plan_client_id, apply: a.apply_client_id } }, scheme: "" } : undefined;
+    return a?.roles ? { cloud, key: "oidc.azure", roles: a.roles, fallback: { name: "plan_client_id/apply_client_id", pair: { plan: a.plan_client_id, apply: a.apply_client_id } }, scheme: "", backend: "azurerm" } : undefined;
   }
   return { key: "oidc", roles: oidc.roles ?? {}, ...(oidc.plan_role && oidc.apply_role ? { fallback: { name: "plan_role/apply_role", pair: { plan: oidc.plan_role, apply: oidc.apply_role } } } : {}), scheme: "s3://" };
 }
@@ -183,7 +197,9 @@ export function stateAccess(repo: string, roots: string[], oidc: OidcSettings, k
     if (!env) warnings.push(`oidc: ${root} matches no oidc.roles glob, and oidc names no plan_role and apply_role, so it plans and applies with no AWS role`);
   }
   const pairOf = (env: string): RolePair => (env === fallback ? spec.fallback!.pair : roles[env]!);
-  const states = new Map(roots.map((r) => [r, known ? { own: known.states.get(r) } : stateOf(repo, r)]));
+  // A GCP service account reaches gcs states and an Azure client azurerm ones: a root on another backend's state is reached by another identity.
+  const ours = (r: string): boolean => !spec.backend || known !== undefined || backendType(repo, r) === spec.backend;
+  const states = new Map(roots.map((r) => [r, known ? { own: known.states.get(r) } : ours(r) ? stateOf(repo, r) : { own: undefined }]));
   // State files only: a choudoufu estate's outputs are records, not a state the role reaches.
   const deps = known?.reads ?? rootDependencies(repo, roots, { estates: false });
   const via = known?.via ?? "terraform_remote_state";
@@ -198,7 +214,7 @@ export function stateAccess(repo: string, roots: string[], oidc: OidcSettings, k
     for (const r of members) {
       for (const up of deps.get(r) ?? []) {
         const upEnv = envOf.get(up);
-        if (upEnv === env) continue;
+        if (upEnv === env || !ours(up)) continue;
         const at = states.get(up)?.own;
         const loc = at ? where(at) : up;
         if (!reads.includes(loc)) reads.push(loc);

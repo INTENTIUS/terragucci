@@ -506,7 +506,7 @@ terragucci.yml: ok
 approval: ledger (the default)
 ```
 
-With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) in a repo of plain roots, it reads each root's backend and `terraform_remote_state` blocks and prints a line per role and stage with the state that role reaches. Every glob in `oidc.roles` is an environment, and the unmatched roots form one more under `plan_role` and `apply_role`. Each warning goes to stderr.
+With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) in a repo of plain roots, it reads each root's backend and `terraform_remote_state` blocks and prints a line per role and stage with the state that role reaches. Every glob in `oidc.roles` is an environment, and the unmatched roots form one more under `plan_role` and `apply_role`. `oidc.gcp.roles` and `oidc.azure.roles` get the same lines and warnings, marked `gcp` or `azure`, for the `gcs` or `azurerm` states their roots keep. Each warning goes to stderr.
 
 | Warning | When |
 |---|---|
@@ -584,7 +584,7 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 
 | Flag | Meaning |
 |---|---|
-| `<root>` | the root whose state to export, with an `s3` backend in a bucket that keeps versions: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
+| `<root>` | the root whose state to export, with a backend that keeps versions (an `s3` bucket with versioning, a `gcs` bucket with object versioning, an `azurerm` account with blob versioning or a backend with `snapshot = true`): a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
 | `--version` | the version id, as the estate page's State versions section lists it; the bucket's current version by default |
 | `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |
@@ -608,7 +608,7 @@ An approval by the person who asked does not count. A request exports once; anot
 terragucci unlock-state <root> [--actor <name>] [--binary <b>] [--config <file>]
 ```
 
-Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes. A comment never runs it. Run it at a shell with:
+Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes, a `gcs` backend's lock object, or an `azurerm` backend's lease on the state blob. A comment never runs it. Run it at a shell with:
 
 - the backend's credentials;
 - the forge token in the variable `token_env` names (by default `FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN`);

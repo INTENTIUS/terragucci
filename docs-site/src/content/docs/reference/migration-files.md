@@ -47,10 +47,10 @@ backends:
 | Key | Holds |
 |---|---|
 | `backends[].root` | a root whose backend block, in the same change, names the new backend |
-| `backends[].from.backend` | where the state is now: `s3`, `local`, `remote`, `cloud` or `file` |
-| `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least |
+| `backends[].from.backend` | where the state is now: `s3`, `gcs`, `azurerm`, `local`, `remote`, `cloud` or `file` |
+| `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least; for `gcs`, `bucket`; for `azurerm`, `storage_account_name`, `container_name` and `key` |
 
-For `s3` and `local`, the job reads the state through the root with the old backend in an override file. It writes the state unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+For `s3`, `gcs`, `azurerm` and `local`, the job reads the state through the root with the old backend in an override file. It writes the state unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
 
 ### Workspaces
 
@@ -113,7 +113,7 @@ restores:
 | Key | Holds |
 |---|---|
 | `revert` | the migration it puts back |
-| `restores[].version_id` | the version to put back, read from the bucket by its id; `null` for a root that had no state, which gets an empty one |
+| `restores[].version_id` | the version to put back, read by its id; `null` for a root that had no state, which gets an empty one |
 | `restores[].from_version_id` | the version the migration left; a state at any other version is refused, since putting the old one back would undo that later change too |
 
 The revert goes through the same proof, gate and lock as any migration, so revert the code of the migration in the same change. A backend move is put back with a backend move the other way. The command refuses a root on a local backend or a bucket that kept no version, since it has nothing to put back.

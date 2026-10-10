@@ -13,7 +13,7 @@ Two changes can meet on one root at the same time. A plan can also stop matching
 
 ## Backend state lock
 
-Your backend gives one lock per state file, held while a binary writes it: an S3 backend with `use_lockfile`, a DynamoDB table, GitLab-managed state. That is what a plain repo with a CI script, or a Terragrunt `run --all`, works with. It keeps two writers off one state file. It does not decide which change goes first, and it does not check that a plan still matches.
+Your backend gives one lock per state file, held while a binary writes it: an S3 backend with `use_lockfile`, a DynamoDB table, a GCS lock object, an Azure blob lease, GitLab-managed state. That is what a plain repo with a CI script, or a Terragrunt `run --all`, works with. It keeps two writers off one state file. It does not decide which change goes first, and it does not check that a plan still matches.
 
 ## terragucci layers
 
