@@ -15,6 +15,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { rootRoleEnv } from "../roles";
+import { workspaceEnv } from "../backend";
+import { effectiveSynth } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
@@ -909,16 +911,18 @@ export async function runStage(stage: string, repo: string, options: StageOption
     .filter((l) => l.length > 0);
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
   // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
+  // An Atmos repo's instances are written by terragucci atmos write, its synth when terragucci.yml names none.
+  const synth = effectiveSynth(repo, settings.synth);
   if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
-    throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${settings.synth ? `; the synth command (${settings.synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
+    throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${synth ? `; the synth command (${synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
   }
   // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
   const base = drift ? undefined : (options.base ?? baseRef(env));
   // Roots a synth command writes are not in git, so no diff names them: the command runs on the base too, and the roots whose output differs plan.
   const notices: string[] = [];
   let selected: Set<string> | undefined;
-  if (base && settings.synth) {
-    const synthed = await synthAffected(repo, base, settings.synth, layers.flat(), rootDependencies(repo, all), env, log);
+  if (base && synth) {
+    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log);
     selected = synthed.selected;
     notices.push(synthed.notice);
   } else if (base) {
@@ -1033,7 +1037,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
     let bin = binariesOf(root).expected(root);
     let path = binary;
     // The root's own role, when `oidc.roles` names one (../roles.ts).
-    const rootEnv = rootRoleEnv(binEnv, root);
+    // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
+    const rootEnv = workspaceEnv(rootRoleEnv(binEnv, root), dir);
     const run = (...args: string[]) =>
       observer.commandAsync(timing, path, args, rootEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
     const ran: ReportStep[] = [];
@@ -1172,7 +1177,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       await eachLimited(ups, limit.value, async (up) => {
         // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
         const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
-        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), rootRoleEnv(binEnv, up), initTurn));
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), workspaceEnv(rootRoleEnv(binEnv, up), join(repo, up)), initTurn));
       });
       const first = index;
       index += layer.length;

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { ConfigError } from "./config";
 
-export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign";
+export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign" | "atmos";
 
 /** The Infracost release a plan job installs for `cost:`. */
 export const INFRACOST_VERSION = "0.10.45";
@@ -68,6 +68,12 @@ export function release(tool: Tool, version: string, a = arch()): Release {
     const base = `https://github.com/sigstore/cosign/releases/download/v${version}`;
     const file = `cosign-linux-${a}`;
     return { url: `${base}/${file}`, sums: `${base}/cosign_checksums.txt`, file, kind: "binary" };
+  }
+  if (tool === "atmos") {
+    // A bare binary per platform, listed in the release's SHA256SUMS.
+    const base = `https://github.com/cloudposse/atmos/releases/download/v${version}`;
+    const file = `atmos_${version}_linux_${a}`;
+    return { url: `${base}/${file}`, sums: `${base}/atmos_${version}_SHA256SUMS`, file, kind: "binary" };
   }
   if (tool === "choudoufu") {
     const base = `https://github.com/INTENTIUS/choudoufu/releases/download/v${version}`;

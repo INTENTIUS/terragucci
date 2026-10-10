@@ -1,0 +1,94 @@
+---
+title: Use Atmos
+description: Add terragucci to an Atmos repo, where each component instance is a root that plans and applies in its own workspace, and dependencies decide the waves.
+claims: [atmos-waves, atmos-workspace]
+prompt: |
+  Read https://intentius.io/terragucci/guides/use-atmos/.
+  Run `npx terragucci init --dry-run --json`, list the instances and waves it found,
+  tell me about any instance it refused and why, and open a pull request with the pipeline.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A pipeline whose roots are your [Atmos](https://atmos.tools) component instances, one per stack and component, applied a dependency layer at a time behind the same gate as plain roots.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| An `atmos.yaml` at the repo root | `init` detects Atmos from it |
+| Atmos on the path, or `TERRAGUCCI_ATMOS` naming it | `init` runs `atmos describe stacks` |
+| A remote backend for each instance, such as `s3` | each job starts from a fresh checkout |
+| terragucci installed ([Get your first plan note](/terragucci/getting-started/)) | `init` writes the pipeline |
+
+## Steps
+
+<Steps>
+
+1. Run init.
+
+   ```bash
+   npx terragucci init --dry-run
+   ```
+
+   It prints the instances and how many waves they make:
+
+   ```text
+   found Atmos (atmos.yaml): 4 instances in 2 waves from atmos describe stacks, ...
+   ```
+
+2. Write the pipeline.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   Commit it and open a pull request.
+
+</Steps>
+
+## Instances
+
+| What | How |
+|---|---|
+| A root | one instance, named `<stack>/<component>`, such as `prod/vpc` |
+| Which instances | every Terraform instance `atmos describe stacks` lists, less abstract ones (`metadata.type: abstract`) and disabled ones (`metadata.enabled: false`) |
+| `roots` and `synth` | refused: the stacks decide the roots |
+| An instance that sets `env` or `generate` | refused; move the setting into the component's Terraform, or disable the instance |
+
+## Waves
+
+| What | How |
+|---|---|
+| Order | `dependencies.components`, and `settings.depends_on`; an entry with no `stack` means the instance's own stack |
+| Each wave | one dependency layer, in its own apply job behind its own gate |
+| A dependency on a disabled instance | holds nothing back |
+| A dependency no stack deploys, or a cycle | `init` stops and names it |
+| `waves.canary` | the canary instances' layers go first |
+
+## Jobs
+
+Every job installs Atmos 1.230.1, checked against the release's `SHA256SUMS`, then runs `terragucci atmos write` before it reads the roots.
+
+| `terragucci atmos write` | |
+|---|---|
+| Reads | `atmos describe stacks` |
+| Writes | the component's Terraform to `<stack>/<component>`, with the varfile, backend and provider override Atmos generates for that instance |
+| Local module sources | a `../` source outside the component is rewritten to reach the same directory from the copy |
+| A directory of your repo at `<stack>/<component>` | refused |
+
+These directories are made in the job. If you run `terragucci atmos write` yourself, add them to `.gitignore`.
+
+## Workspaces
+
+Each instance plans and applies in the Terraform workspace Atmos names for it, never `default`. With an `s3` backend its state is at `<workspace_key_prefix>/<workspace>/<key>`, as Atmos keeps it.
+
+The jobs run `atmos describe stacks` before they get any cloud credential, so a stack that reads state with `!terraform.state`, `!terraform.output` or `!store` fails there.
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Use Terragrunt](/terragucci/guides/use-terragrunt/), the same model for units

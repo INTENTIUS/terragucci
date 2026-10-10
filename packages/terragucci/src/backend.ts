@@ -58,6 +58,21 @@ export function initialisedBackend(dir: string, env: NodeJS.ProcessEnv = process
   }
 }
 
+/**
+ * The file a root names its Terraform workspace in. terragucci writes it in
+ * each Atmos instance's directory (./atmos.ts), and the stages run the binary
+ * there with `TF_WORKSPACE` set to it.
+ */
+export const WORKSPACE_FILE = ".terragucci-workspace";
+
+/** `env` with `TF_WORKSPACE` set to the workspace the root at `dir` names in its WORKSPACE_FILE; `env` as it is when it names none. */
+export function workspaceEnv(env: NodeJS.ProcessEnv, dir: string): NodeJS.ProcessEnv {
+  const file = join(dir, WORKSPACE_FILE);
+  if (!existsSync(file)) return env;
+  const ws = readFileSync(file, "utf-8").trim();
+  return ws ? { ...env, TF_WORKSPACE: ws } : env;
+}
+
 /** The workspace the binary runs in: `TF_WORKSPACE`, else the one `workspace select` recorded, else `default`. */
 export function workspaceOf(dir: string, env: NodeJS.ProcessEnv = process.env): string {
   if (env.TF_WORKSPACE) return env.TF_WORKSPACE;
