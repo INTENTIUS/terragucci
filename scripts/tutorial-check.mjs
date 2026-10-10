@@ -18,8 +18,8 @@ const pages = join(root, "docs-site/src/content/docs/tutorial");
 const data = join(root, "docs-site/src/data/tutorial");
 const shots = join(root, "docs-site/src/assets/tutorial");
 const smoke = JSON.parse(readFileSync(join(root, "docs-site/src/data/smoke.json"), "utf8"));
-// A page's claims are the Forgejo rows; a GitLab row carries forge: "gitlab".
-const verdict = Object.fromEntries(smoke.claims.filter((c) => (c.forge ?? "forgejo") === "forgejo").map((c) => [c.claim, c.verdict]));
+// A page's claims are the OpenTofu rows on Forgejo; a GitLab row carries forge: "gitlab", and a Terraform or choudoufu row binary.
+const verdict = Object.fromEntries(smoke.claims.filter((c) => (c.forge ?? "forgejo") === "forgejo" && !c.binary).map((c) => [c.claim, c.verdict]));
 
 // The same hash stack/tutorial-capture.sh writes: each file under example/,
 // in byte order, as its path, a NUL, then its content. In the pipeline the
@@ -82,15 +82,16 @@ function checkCaptures(label, text) {
   }
 }
 
-// A tutorial page or a guide. A published one names its smoke claims in
-// `claims:`, and each must pass. A guide must carry the line: `claims: []`
-// says that no recorded claim backs it.
+// A tutorial page, a guide or a concept page. A published one names its smoke
+// claims in `claims:`, and each must pass. A guide must carry the line:
+// `claims: []` says that no recorded claim backs it.
 let checked = 0;
 const guides = join(root, "docs-site/src/content/docs/guides");
+const concepts = join(root, "docs-site/src/content/docs/concepts");
 function checkDir(dir, kind) {
   for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
     if (!/\.mdx?$/.test(name)) continue;
-    const label = kind === "guide" ? `guides/${name}` : name;
+    const label = kind === "guide" ? `guides/${name}` : kind === "concept" ? `concepts/${name}` : name;
     const text = readFileSync(join(dir, name), "utf8");
     const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
     if (/^draft:\s*true\s*$/m.test(front)) {
@@ -111,9 +112,10 @@ function checkDir(dir, kind) {
 }
 checkDir(pages, "page");
 checkDir(guides, "guide");
+checkDir(concepts, "concept");
 // Every other page that embeds a capture or a screenshot.
 const docs = join(root, "docs-site/src/content/docs");
-for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/")).sort()) {
+for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/") && !p.startsWith(concepts + "/")).sort()) {
   checkCaptures(relative(docs, file), readFileSync(file, "utf8"));
 }
 if (problems.length) {

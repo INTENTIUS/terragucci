@@ -57,8 +57,6 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
 
-<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
-
 The binary exports to a loopback receiver, OTLP over HTTP only, which forwards batches to your collector.
 
 ## Timings
@@ -95,7 +93,7 @@ choudoufu adds two more:
 
 ### State lock waits
 
-With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait is a `State lock wait` span with its attempts, listed in the report and carried by `terragucci_lock_wait_seconds`.
+With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait is a `State lock wait` span with its attempts, listed in the report and carried by `terragucci_lock_wait_seconds`. An estate with a record store takes no lock, so it shows no waits ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 | Run | State lock wait |
 |---|---|
@@ -188,17 +186,13 @@ The nine dashboards are the six below and one for each of the three SLOs.
 | Runs | the slowest roots, root applies and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
 | One per SLO | the SLI against its objective, the error budget left and the burn rates |
 
-<Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
-
-<Shot step="see-runs" view="changes" alt="The Change review dashboard for the example: the module bump's pull request changed 12 roots in 3 groups, and changes by action over the last hour, mostly no-ops and updates" />
-
-<Shot step="see-runs" view="estate" alt="The Estate dashboard for the example: 15 roots in the project, run with tofu and the terragucci version that sent them, no module pins, and one tip by rule, terragucci-shared-module" />
+<Shot step="see-runs" view="estate" alt="The Estate dashboard's first row for the example: 15 roots in the project, run with tofu by terragucci 0.4.4" />
 
 ### SLOs and alerts
 
 The SLOs, over 28 days: plans finish within ten minutes 95% of the time, wave applies succeed 99%, drift is corrected within a day 90%.
 
-<Shot step="see-runs" view="slos" alt="The plan time SLO dashboard for the example: the SLI over 28 days at 100% against a 95% objective, all of the error budget left, no burn-rate alert firing, and the burn rate by alert window" />
+<Shot step="see-runs" view="slos" alt="The plan time SLO dashboard's tiles for the example: the SLI over 28 days at 100% against a 95% objective, all of the error budget left, and no burn-rate alert firing" />
 
 | Alert | Fires when |
 |---|---|

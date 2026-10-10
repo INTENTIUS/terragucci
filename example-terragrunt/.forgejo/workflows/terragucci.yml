@@ -13,6 +13,16 @@ on:
   issue_comment:
     types:
       - created
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The number of a pull request to re-plan
+        required: false
+        type: string
+      root:
+        description: One root of it to re-plan, a path from the repository root
+        required: false
+        type: string
 
 env:
   TF_IN_AUTOMATION: '1'
@@ -23,7 +33,7 @@ env:
   TG_PROVIDER_CACHE: '1'
 
 concurrency:
-  group: terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}
+  group: terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '') && format('comment-{0}', github.event.inputs.pr) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -189,9 +199,9 @@ jobs:
     runs-on: docker
     container:
       image: ghcr.io/intentius/terragucci-terragrunt:0.4.4-tg1.1.6-tofu1.13.1@sha256:00a919b7045844e2d8654b48beb9ee44e0f4b0aab50f997e680b3e3703e71fe3
-    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')
+    if: (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
     concurrency:
-      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}
+      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}
       cancel-in-progress: false
     outputs:
       go: '${{ steps.decide.outputs.go }}'

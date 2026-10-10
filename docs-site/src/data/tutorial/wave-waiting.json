@@ -4,7 +4,7 @@
   "commands": [
     {
       "cmd": "just example change destroy",
-      "output": "[example] pushed change/destroy at 965fa8b8\n[example] run 8 for 965fa8b8 (pull_request): failure (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for 965fa8b8 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (failure)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/destroy at 3dad91eb\n[example] run 8 for 3dad91eb (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for 3dad91eb (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
       "exit": 0
     },
     {
@@ -14,9 +14,9 @@
     }
   ],
   "shots": {
-    "pull-light": "009258118db0ff7b",
-    "pull-dark": "f3e9a38ef80bd382",
-    "log-light": "6295486973c3566c",
-    "log-dark": "e5e07e67e3f2342a"
+    "note-light": "4122d7f641e49666",
+    "note-dark": "8b53dbc83ad5ce09",
+    "log-light": "d11a57e20f5b353e",
+    "log-dark": "3a64d8430b2fc839"
   }
 }

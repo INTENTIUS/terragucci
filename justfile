@@ -258,6 +258,10 @@ gitlab-lab *args:
 gitlab-claims +names:
     SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
 
+[doc("Run the core smoke claims on terraform or choudoufu, plain and under BREAK=1, in parallel, and write that binary's rows into smoke.json. Names pick some of them; none runs them all.")]
+binary-claims binary *names:
+    SMOKE_BINARY={{binary}} stack/smoke.sh {{ if names == "" { "" } else { "--only '" + names + "'" } }} --record docs-site/src/data/smoke.json
+
 [doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
 see-runs:
     stack/see-runs.sh

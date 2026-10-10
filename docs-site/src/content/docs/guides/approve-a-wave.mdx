@@ -108,21 +108,21 @@ Works on every forge. GitLab's merge request approvals name no commit, so there 
    <Tabs syncKey="forge">
    <TabItem label="GitHub">
 
-   The waiting wave's job ends with a red cross, exit code 3:
+   The waiting wave's job fails with exit code 3, and its log ends with the command:
 
-   <Shot step="github" view="waiting" alt="A GitHub Actions run on main after a destroy merged: check and apply-wave-1 to apply-wave-3 green, apply-wave-4 stopped with a red cross while it waits for an approval" />
+   <Captured step="github" cmd="gh run view --log-failed  # wave 4" />
 
    </TabItem>
    <TabItem label="GitLab">
 
    The waiting wave's job fails with exit code 3, and its log ends with the command:
 
-   <Shot step="gitlab" view="waiting" alt="The log of apply-wave-4 on GitLab after a destroy merged: wave 4 of 4 plans eight roots, one of them with a destroy, waits for an approval of its set digest, prints the chant approve tf-apply wave-4 command with --sign, and the job fails with exit code 3 while apply-wave-1 to apply-wave-3 passed" />
+   <Shot step="gitlab" view="waiting" alt="The log of apply-wave-4 on GitLab after a destroy merged: wave 4 of 4 plans eight roots, one of them with a destroy, waits for an approval of its set digest, and prints the chant approve tf-apply wave-4 command with --sign" />
 
    </TabItem>
    <TabItem label="Forgejo">
 
-   <Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo with terragucci's plan note, which lists the destroy at the top" optional />
+   <Shot step="wave-waiting" view="note" alt="The plan note on the destroy pull request in Forgejo: the records table of staging email named under destroys, and wave 4 waiting for an approval, with the chant approve command for its digest" optional />
    <Shot step="wave-waiting" view="log" alt="The apply job's log: the wave waits, exit code 3, and the chant approve command with the plan digest" optional />
    <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
@@ -200,7 +200,7 @@ Works on every forge. GitLab's merge request approvals name no commit, so there 
 
    <Shot step="approved" view="reply" alt="terragucci's reply to /terragucci apply on the merged module bump pull request in Forgejo: it applied waves 1, 2, 3 and 4 of the pull request at its merge commit, and links the run" />
 
-   <Shot step="approved" view="log" alt="The apply-comment job's log: wave 4 of 4 plans eight roots with 11 changes and 1 destroy, its approval mode is sealed, it is approved by terragucci-admin for this digest, each root applies, and wave 4 of 4 applied" />
+   <Shot step="approved" view="log" alt="The apply-comment job's log from wave 4's set digest, 11 changes and 1 destroy: approved by terragucci-admin for this digest, each of the eight roots applied, and wave 4 of 4 applied" />
 
    The report then shows the wave as approved, linked to its record.
 
@@ -282,8 +282,6 @@ Protection keeps history from being rewritten.
 ## If the wave refuses instead
 
 If any root's plan changed between your approval and the apply, the wave applies nothing ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)). After a wave has applied, the next change waits for a new approval.
-
-<Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, and the roots whose plans moved" optional />
 
 ## Next
 

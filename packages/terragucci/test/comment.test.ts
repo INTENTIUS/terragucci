@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { allowRoot, decideComment, fromAtlantis, parseComment } from "../src/comment";
+import { allowRoot, decideComment, fromAtlantis, parseComment, readDispatch } from "../src/comment";
 import { COMMENT_TABLE, LEFT_OUT_TABLE } from "../src/import/guide";
 import type { Fetch } from "../src/forge";
 import { tmp } from "./helpers";
@@ -351,5 +351,69 @@ describe("decideComment for an agent comment", () => {
     const s = setup({ comment: ask, permission: "read", pr: pr(), event });
     expect((await decideComment({ layers, env: s.env, fetch: s.fetch })).go).toBe(false);
     expect(s.sent.some((x) => x.method === "POST")).toBe(false);
+  });
+});
+
+describe("a re-plan by workflow_dispatch", () => {
+  /** A dispatch event as GitHub and Forgejo write it: inputs, the sender, and on Forgejo a repository whose permissions are all false. */
+  function dispatch(inputs: Record<string, unknown>, o: { permission?: string; sender?: string; repo?: string; pr?: any } = {}) {
+    const s = setup({ comment: "", permission: o.permission, pr: o.pr });
+    const file = join(tmp("tg-dispatch-"), "event.json");
+    writeFileSync(file, JSON.stringify({ inputs, ref: "refs/heads/main", workflow: "terragucci.yml", sender: { login: o.sender ?? "dev" }, repository: { full_name: o.repo ?? "acme/infra", permissions: { admin: false, push: false, pull: false } } }));
+    return { ...s, env: { ...s.env, GITHUB_EVENT_PATH: file, GITHUB_EVENT_NAME: "workflow_dispatch" } };
+  }
+
+  it("reads pr and root from the inputs, through the comment grammar", () => {
+    expect(readDispatch({ pr: "7" })).toEqual({ pr: 7, parsed: { kind: "plan" } });
+    expect(readDispatch({ pr: "7", root: " envs/dev/app " })).toEqual({ pr: 7, parsed: { kind: "plan", root: "envs/dev/app" } });
+    expect(readDispatch({ pr: "7", root: "" })).toEqual({ pr: 7, parsed: { kind: "plan" } });
+    expect(readDispatch({ pr: "7", root: "$(id)" })).toMatchObject({ parsed: { kind: "refused" } });
+    expect(readDispatch({ pr: "7", root: "a\n/terragucci apply" })).toMatchObject({ parsed: { kind: "refused" } });
+    for (const empty of [{}, { pr: "" }, null, undefined, { root: "envs/dev/app" }]) expect(readDispatch(empty)).toBeUndefined();
+    for (const pr of ["0", "07", "-1", "7;id", "$(id)", "1e3", "7 8", true, {}]) expect(readDispatch({ pr }), String(pr)).toHaveProperty("error");
+  });
+
+  it("on GitHub, re-plans the pull request for a dispatcher who can write, as a comment would", async () => {
+    const s = dispatch({ pr: "7", root: "envs/dev/app" });
+    expect(await decideComment({ layers, env: s.env, fetch: s.fetch })).toMatchObject({ go: true, pr: 7, sha: "a".repeat(40), base: "main", root: "envs/dev/app" });
+    expect(s.sent.map((x) => x.path)).toEqual(["repos/acme/infra/collaborators/dev/permission", "repos/acme/infra/pulls/7"]);
+  });
+
+  it("on GitHub, a dispatcher who can only read gets nothing", async () => {
+    const s = dispatch({ pr: "7" }, { permission: "read" });
+    expect(await decideComment({ layers, env: s.env, fetch: s.fetch })).toMatchObject({ go: false, reason: "dev has no write access, so the dispatch is ignored" });
+    expect(s.sent.some((x) => x.method === "POST")).toBe(false);
+  });
+
+  it("on Forgejo, whose dispatch API refuses anyone without write access, re-plans without asking for a permission", async () => {
+    const s = dispatch({ pr: "7" }, { permission: "403" });
+    expect(await decideComment({ layers, env: s.env, fetch: s.fetch, forge: "forgejo" })).toMatchObject({ go: true, pr: 7 });
+    expect(s.sent.some((x) => x.path.includes("/permission"))).toBe(false);
+    const other = dispatch({ pr: "7" }, { repo: "evil/infra" });
+    expect((await decideComment({ layers, env: other.env, fetch: other.fetch, forge: "forgejo" })).go).toBe(false);
+    expect(other.sent).toEqual([]);
+  });
+
+  it("the comment's guards hold: an unknown root is answered on the pull request, a fork and a closed pull request are not planned", async () => {
+    const root = dispatch({ pr: "7", root: "envs/nope" });
+    expect(await decideComment({ layers, env: root.env, fetch: root.fetch })).toMatchObject({ go: false, reason: "envs/nope is not a root of this repository" });
+    expect(root.sent.find((x) => x.method === "POST")?.path).toBe("repos/acme/infra/issues/7/comments");
+    const fork = dispatch({ pr: "7" }, { pr: { state: "open", head: { sha: "a".repeat(40), repo: { full_name: "evil/infra" } }, base: { ref: "main" } } });
+    expect((await decideComment({ layers, env: fork.env, fetch: fork.fetch })).go).toBe(false);
+    const closed = dispatch({ pr: "7" }, { pr: { state: "closed", head: { sha: "a".repeat(40), repo: { full_name: "acme/infra" } }, base: { ref: "main" } } });
+    expect((await decideComment({ layers, env: closed.env, fetch: closed.fetch })).go).toBe(false);
+  });
+
+  it("a dispatch with no pr is not a re-plan, and one whose pr is not a number fails the job before any call", async () => {
+    const drift = dispatch({ pr: "" });
+    expect(await decideComment({ layers, env: drift.env, fetch: drift.fetch })).toMatchObject({ go: false, reason: "the dispatch names no pull request" });
+    const bad = dispatch({ pr: "7;id" });
+    expect(await decideComment({ layers, env: bad.env, fetch: bad.fetch })).toMatchObject({ go: false, fail: true });
+    expect([...drift.sent, ...bad.sent]).toEqual([]);
+  });
+
+  it("the agent job never runs on a dispatch", async () => {
+    const s = dispatch({ pr: "7" });
+    expect((await decideComment({ layers: [], env: s.env, fetch: s.fetch, forge: "forgejo", agent: "run" })).go).toBe(false);
   });
 });

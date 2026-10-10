@@ -210,6 +210,7 @@ export async function synthAffected(
   deps: Map<string, Set<string>>,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
+  order: Map<string, Set<string>> = new Map(),
 ): Promise<SynthSelection> {
   const everyRoot = (why: string): SynthSelection => {
     log(`every root: ${why}`);
@@ -231,10 +232,12 @@ export async function synthAffected(
     }
     const { changed, unchanged } = compareSynthesized(dir, repo, roots);
     const selected = new Set(changed.keys());
+    // A dependent: a root that reads a selected root's state, or (an Atmos instance) depends on one.
+    const upstreams = (root: string): string[] => [...new Set([...(deps.get(root) ?? []), ...(order.get(root) ?? [])])];
     for (let grew = true; grew; ) {
       grew = false;
-      for (const [root, reads] of deps) {
-        if (roots.includes(root) && !selected.has(root) && [...reads].some((d) => selected.has(d))) {
+      for (const root of new Set([...deps.keys(), ...order.keys()])) {
+        if (roots.includes(root) && !selected.has(root) && upstreams(root).some((d) => selected.has(d))) {
           selected.add(root);
           grew = true;
         }
@@ -242,7 +245,11 @@ export async function synthAffected(
     }
     for (const [root, why] of changed) log(`affected: ${root} differs from the base (${why})`);
     const dependents = [...selected].filter((r) => !changed.has(r)).sort();
-    for (const r of dependents) log(`affected: ${r} reads the state of ${[...deps.get(r)!].filter((d) => selected.has(d)).sort().join(", ")}`);
+    for (const r of dependents) {
+      const reads = [...(deps.get(r) ?? [])].filter((d) => selected.has(d)).sort();
+      const after = [...(order.get(r) ?? [])].filter((d) => selected.has(d) && !reads.includes(d)).sort();
+      log(`affected: ${r} ${[...(reads.length ? [`reads the state of ${reads.join(", ")}`] : []), ...(after.length ? [`depends on ${after.join(", ")}`] : [])].join(" and ")}`);
+    }
     const skipped = unchanged.filter((r) => !selected.has(r));
     log(`affected: ${changed.size} of ${roots.length} synthesized roots differ from ${base}, ${plural(dependents.length, "dependent")} after them, ${skipped.length} unchanged and not planned`);
     return {

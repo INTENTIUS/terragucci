@@ -22,6 +22,7 @@ import {
   BUILT_IN,
   PROJECT_FILE_KEYS,
   resolveRepo,
+  ROOTS_NOT_ATMOS,
   ROOTS_NOT_TERRAGRUNT,
   responseTo,
   type Approval,
@@ -30,7 +31,7 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
+import { applyLayers, detectBinary, detectForge, detectVersion, driftRefusal, findRootsWithReasons, liveRoots, type RootReason } from "./detect";
 import { terragruntStepsRefusal } from "./steps";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
@@ -43,6 +44,7 @@ import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, ty
 import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
+import { ATMOS_VERSION, ATMOS_WRITE, atmosInstances, describeStacks, detectAtmos, instanceWaves } from "./atmos";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 
@@ -62,6 +64,8 @@ export interface InitOptions {
   dryRun?: boolean;
   /** The `terragrunt` executable discovery runs. Default: `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
   terragrunt?: string;
+  /** The `atmos` executable `atmos describe stacks` runs. Default: `TERRAGUCCI_ATMOS`, then `atmos` on the path. */
+  atmos?: string;
   /** The repo's name, for a new chant.workspace.json. Default: the origin remote's last path segment, then the directory's name. */
   name?: string;
 }
@@ -78,6 +82,14 @@ export interface TerragruntFound {
   stacks: string[];
 }
 
+/** What `init` found in an Atmos repo. */
+export interface AtmosFound {
+  /** The marker that turned Atmos mode on. */
+  reason: string;
+  /** The Atmos release the jobs install. */
+  version: string;
+}
+
 export interface FileChange {
   path: string;
   /** `removed`: a file an earlier init wrote, which the config no longer asks for. */
@@ -92,6 +104,8 @@ export interface InitResult {
   layers: string[][];
   /** Set when the repo is a Terragrunt repo: `roots` are its units and `layers` its waves. */
   terragrunt?: TerragruntFound;
+  /** Set when the repo is an Atmos repo: `roots` are its instances (`<stack>/<component>`) and `layers` their waves. */
+  atmos?: AtmosFound;
   binary: { value: Binary; reason: string };
   image?: string;
   version: { value: string; reason: string };
@@ -144,6 +158,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError("terragucci.yml has a terragrunt block, but the repo has no root.hcl, terragrunt.hcl or terragrunt.stack.hcl");
   }
   const tgMode = detectedTg !== undefined;
+  const detectedAtmos = detectAtmos(repo);
+  if (settings.atmos && !detectedAtmos) throw new ConfigError("terragucci.yml has an atmos block, but the repo has no atmos.yaml at its root");
+  if (detectedAtmos && tgMode) throw new ConfigError(`the repo has ${detectedAtmos} and ${detectedTg!.reason}; terragucci runs an Atmos repo or a Terragrunt repo, not both`);
 
   // In Terragrunt mode the binary is what Terragrunt calls, and the units carry no .tf files to read it from.
   const detectedBinary = detectBinary(repo, []);
@@ -156,7 +173,17 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   let rootReasons: RootReason[];
   let layers: string[][];
   let terragrunt: TerragruntFound | undefined;
-  if (detectedTg) {
+  let atmos: AtmosFound | undefined;
+  if (detectedAtmos) {
+    // An instance is a root: the stacks say which, so the plain rule (a backend or a provider block) is off.
+    if (settings.roots) throw new ConfigError(ROOTS_NOT_ATMOS);
+    if (settings.synth) throw new ConfigError(`synth is for roots a command writes; an Atmos repo's jobs write its instances with ${ATMOS_WRITE}, so remove synth`);
+    const instances = atmosInstances(await describeStacks(repo, options.atmos ? { atmos: options.atmos } : {}));
+    if (instances.length === 0) throw new ConfigError(`found no Atmos instances (${detectedAtmos} turned Atmos mode on): atmos describe stacks lists no Terraform component that is neither abstract nor disabled`);
+    rootReasons = instances.map((i) => ({ root: i.path, reason: `atmos describe stacks: ${i.componentPath} in workspace ${i.workspace}` }));
+    layers = instanceWaves(instances, settings.waves?.canary);
+    atmos = { reason: detectedAtmos, version: settings.atmos?.version ?? ATMOS_VERSION };
+  } else if (detectedTg) {
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};
     if (settings.roots) throw new ConfigError(ROOTS_NOT_TERRAGRUNT);
@@ -206,6 +233,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
 
+  const noDrift = settings.drift && !tgMode ? driftRefusal(binary.value, liveRoots(repo, roots)) : undefined;
+  if (noDrift) throw new ConfigError(noDrift);
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.
@@ -300,11 +329,13 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(rollouts ? { rollouts } : {}),
     ...(settings.synth ? { synth: settings.synth } : {}),
+    // An Atmos repo's jobs install Atmos and write the instances before they read them.
+    ...(atmos ? { synth: ATMOS_WRITE, atmos: { version: atmos.version } } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
     ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command, ...(settings.cost !== true && settings.cost.approve_above !== undefined ? { approveAbove: true } : {}) } } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
-    ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
+    ...(!tgInput && !atmos && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     ...(settings.waves?.jobs && settings.waves.jobs > 1 ? { waveJobs: settings.waves.jobs } : {}),
     gate: settings.gate,
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
@@ -363,7 +394,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
 
   // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
-  const decl = declaration(repo, tgMode ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
+  const decl = declaration(repo, tgMode || atmos ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
   if (decl) files.push(decl);
   // Under sealed, the first signers line can come from the person's own git signing key.
   if (approval.value === "sealed") {
@@ -423,6 +454,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     const token = settings.token_env ?? "GITLAB_TOKEN";
     notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, the plan job stops if it does, the comments job posts the plan notes, and no fmt job commits formatting`);
   }
+  if (settings.waves?.canary?.length && atmos) {
+    notes.push("waves.canary is set; the canary instances' layers apply first, then the layers of the rest, each wave behind its gate");
+  }
   if (settings.waves?.canary?.length && terragrunt) {
     notes.push("waves.canary is set; the canary units' layers apply first, then the layers of the rest, each wave behind its gate");
   }
@@ -438,7 +472,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
 }
 
 /** The first line of the terragucci.yml a control repo writes into a project, so a later run knows it may rewrite it. */
@@ -588,7 +622,10 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
   const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
   const tg = r.terragrunt;
   const lines = [
-    tg
+    r.atmos
+      ? `found Atmos (${r.atmos.reason}): ${plural(r.roots.length, "instance")} in ${plural(r.layers.length, "wave")} from atmos describe stacks, ` +
+        `atmos ${r.atmos.version} calling ${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`
+      : tg
       ? `found Terragrunt (${tg.reason}): ${plural(r.roots.length, "unit")} in ${plural(r.layers.length, "wave")} from ${tg.source}, ` +
         `terragrunt ${tg.version.value} (${tg.version.reason}) calling ${r.binary.value} ${r.version.value} (${r.binary.reason}), ` +
         `parallelism ${tg.parallelism.value} (${tg.parallelism.reason}), forge ${r.forge.value} (${r.forge.reason})`
@@ -609,6 +646,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     roots: r.rootReasons.map(({ root, reason }) => ({ path: root, reason })),
     layers: r.layers,
     ...(r.terragrunt ? { terragrunt: r.terragrunt } : {}),
+    ...(r.atmos ? { atmos: r.atmos } : {}),
     binary: r.binary,
     version: r.version,
     ...(r.pins.length > 0 ? { pins: r.pins } : {}),

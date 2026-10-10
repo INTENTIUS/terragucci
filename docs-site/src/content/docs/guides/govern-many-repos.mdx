@@ -1,7 +1,7 @@
 ---
 title: Govern many repos from one place
 description: List your projects in a control repo and let terragucci open a pull request in each one that needs a change.
-claims: [reconcile]
+claims: [reconcile, reconcile-mixed]
 prompt: |
   Read https://intentius.io/terragucci/guides/govern-many-repos/.
   In this control repo, write terragucci.yml with the projects I name, run `npx terragucci config check`, then run the preview, `npx terragucci reconcile --config terragucci.yml`, and show me its output for each project.
@@ -86,9 +86,9 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
 
    Each project gets a pull request instead of a push to its main branch, and current projects are left alone; `--mode apply` runs no `terraform apply`. The exit code is 1 when any project failed.
 
-   <Shot step="reconcile" view="pull" alt="The pull request reconcile opened in a Forgejo project with no pipeline, terragucci: update the pipeline: its body says the control repo's config changed what the pipeline should be and that it adds .forgejo/workflows/terragucci.yml, the project's own plan note below it, and the merge" />
+   <Shot step="reconcile" view="pull" alt="The description of the pull request reconcile opened in a Forgejo project with no pipeline: the control repo's config changed what the pipeline should be, so it adds .forgejo/workflows/terragucci.yml and terragucci.yml, for the project to review and merge" />
 
-   <Shot step="reconcile" view="files" alt="That pull request's files, with .forgejo/workflows/terragucci.yml added in full: the generated pipeline, its triggers and its check job pinned by digest" />
+   <Shot step="reconcile" view="files" alt="That pull request's files: the start of the generated .forgejo/workflows/terragucci.yml, its triggers and its check job pinned by digest, and the two-line terragucci.yml naming the token" />
 
 5. Merge in each project.
 

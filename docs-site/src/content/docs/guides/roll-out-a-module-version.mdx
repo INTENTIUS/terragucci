@@ -60,7 +60,7 @@ Every root that pins the module moved to the new version through one pull reques
 
    `--mode apply` writes to the forge and runs no `terraform apply`; roots apply after the merge. It opens one pull request for the canary wave, or the first in dependency order. Only that wave's files change, and each pin keeps its shape.
 
-   <Shot step="pin" view="pull" alt="The rollout's wave 1 pull request on the local Forgejo, opened for the four dev service roots" optional />
+   <Shot step="pin" view="pull" alt="The description of the rollout's wave 1 pull request: modules/service 1.0.0 to 1.1.0 for the four dev service roots, and wave 2 opening once they have merged and applied" optional />
 
 4. Review and merge it. The apply stage runs on the merge commit.
 

@@ -77,6 +77,14 @@ export interface StateAccess {
 const where = (s: StateRef): string => (s.bucket ? `s3://${s.bucket}/${s.key}` : s.key);
 const DEFAULT_ENV = "plan_role/apply_role";
 
+/** Roots whose states and reads are known without reading their code: an Atmos repo's instances, from its stacks. */
+export interface KnownStates {
+  states: Map<string, StateRef | undefined>;
+  reads: Map<string, Set<string>>;
+  /** How a root reads another's state, for the warning. */
+  via: string;
+}
+
 /**
  * Which state each role reaches, from the roots' code. Each `oidc.roles` glob
  * is an environment, and the roots no glob matches are one more, with
@@ -84,7 +92,7 @@ const DEFAULT_ENV = "plan_role/apply_role";
  * share, each root that reads another environment's state, and each root
  * left with no role.
  */
-export function stateAccess(repo: string, roots: string[], oidc: OidcSettings): StateAccess {
+export function stateAccess(repo: string, roots: string[], oidc: OidcSettings, known?: KnownStates): StateAccess {
   const roles = oidc.roles ?? {};
   const globs = Object.keys(roles);
   const envOf = new Map<string, string | undefined>();
@@ -96,8 +104,10 @@ export function stateAccess(repo: string, roots: string[], oidc: OidcSettings): 
     if (!env) warnings.push(`oidc: ${root} matches no oidc.roles glob, and oidc names no plan_role and apply_role, so it plans and applies with no AWS role`);
   }
   const pairOf = (env: string): RolePair => (env === DEFAULT_ENV ? { plan: oidc.plan_role!, apply: oidc.apply_role! } : roles[env]!);
-  const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
-  const deps = rootDependencies(repo, roots);
+  const states = new Map(roots.map((r) => [r, known ? { own: known.states.get(r) } : stateOf(repo, r)]));
+  // State files only: a choudoufu estate's outputs are records, not a state the role reaches.
+  const deps = known?.reads ?? rootDependencies(repo, roots, { estates: false });
+  const via = known?.via ?? "terraform_remote_state";
   const envs = [...new Set([...envOf.values()].filter((e): e is string => e !== undefined))];
   // Every environment configured, also one no root is in yet.
   for (const g of globs) if (!envs.includes(g)) envs.push(g);
@@ -114,7 +124,7 @@ export function stateAccess(repo: string, roots: string[], oidc: OidcSettings): 
         const loc = at ? where(at) : up;
         if (!reads.includes(loc)) reads.push(loc);
         const pair = pairOf(env);
-        warnings.push(`oidc: ${r} (${env}) reads the state of ${up} (${upEnv ?? "no role"}) through terraform_remote_state, so ${pair.plan} and ${pair.apply} reach ${loc}, another environment's state`);
+        warnings.push(`oidc: ${r} (${env}) reads the state of ${up} (${upEnv ?? "no role"}) through ${via}, so ${pair.plan} and ${pair.apply} reach ${loc}, another environment's state`);
       }
     }
     for (const stage of ["plan", "apply"] as const) out.push({ role: pairOf(env)[stage], stage, environment: env, roots: members, states: [...new Set(own)].sort(), reads: reads.sort() });

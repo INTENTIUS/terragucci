@@ -23,7 +23,7 @@ A Terragrunt directory with a `terragrunt.hcl`; terragucci lists units with `ter
 
 ### layer
 
-A step of the dependency order set by `terraform_remote_state` reads or Terragrunt `dependency` blocks. `init --dry-run` counts them; `tf-plan` plans one at a time.
+A step of the dependency order set by `terraform_remote_state` reads, choudoufu's `terraform_estate_outputs` reads or Terragrunt `dependency` blocks. `init --dry-run` counts them; `tf-plan` plans one at a time.
 
 ### wave
 
@@ -95,8 +95,8 @@ The OpenTofu fork from the team behind terragucci ([Choose your binary](/terragu
 
 | Feature | What it does |
 |---|---|
-| State | no state file: one record per resource in an S3 backend |
-| Writes | each record write is conditional, so concurrent applies settle at the API with no lock table or database |
+| State | one record per resource in an S3 backend; the state file is a cache, never the record of what you own |
+| Writes | each record write is conditional, so two writes to one record settle at the API, with no lock table or database ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)) |
 | Tags | each resource carries its identity as a tag the next plan reads back |
 | Stages | `tf-check` also runs its live check, and wave reports show state lock waits |
 

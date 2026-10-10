@@ -63,6 +63,31 @@ function check({ file, table, forge, fn, groups }) {
 const forgejo = check({ file: "smoke.sh", table: "CLAIMS", forge: "forgejo", fn: "claim_", groups: "CLAIM_GROUPS" });
 const gitlab = check({ file: "smoke-gitlab.sh", table: "GITLAB_CLAIMS", forge: "gitlab", fn: "gitlab_claim_", groups: "GITLAB_CLAIM_GROUPS" });
 
+// BINARY_CLAIMS names Forgejo claims, and SMOKE_BINARY=terraform and
+// choudoufu list exactly those, in CLAIMS order.
+{
+  const src = readFileSync(script, "utf8");
+  const m = src.match(/\nBINARY_CLAIMS='([^']*)'/);
+  if (!m) errors.push("no BINARY_CLAIMS=' in stack/smoke.sh");
+  else {
+    const core = m[1].split(/\s+/).filter(Boolean);
+    const all = execFileSync("bash", [script, "--list"], { encoding: "utf8", env: { ...process.env, SMOKE_FORGE: "forgejo" } })
+      .split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
+    for (const n of core) if (!all.includes(n)) errors.push(`BINARY_CLAIMS names ${n}, which is not in CLAIMS`);
+    for (const binary of ["terraform", "choudoufu"]) {
+      let out = "";
+      try {
+        out = execFileSync("bash", [script, "--list"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SMOKE_FORGE: "forgejo", SMOKE_BINARY: binary } });
+      } catch (e) {
+        errors.push(`SMOKE_BINARY=${binary} smoke.sh --list failed: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
+      }
+      const listed = out.split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
+      const want = all.filter((n) => core.includes(n));
+      if (listed.join(" ") !== want.join(" ")) errors.push(`SMOKE_BINARY=${binary} lists ${listed.join(" ")}, not ${want.join(" ")}`);
+    }
+  }
+}
+
 if (errors.length) {
   for (const e of errors) console.error(`check-smoke: ${e}`);
   process.exit(1);

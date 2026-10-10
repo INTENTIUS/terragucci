@@ -4,7 +4,6 @@ description: Each stage's inputs, permissions and outputs.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
-import Shot from '../../../components/Shot.astro';
 
 Every stage takes the root directories and the binary.
 
@@ -86,8 +85,6 @@ FAILED generate: 1 generated file out of line with terragucci.yml; run terragucc
 
 With [`policy`](/terragucci/reference/policy/) set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target. The log is kept as `terragucci-check/report.md`.
 
-<Shot step="check" view="log" alt="A failed check job in a Forgejo run. The format step is expanded and shows a diff of envs/dev/orders/locals.tf, where the alignment of the team line differs, followed by a runner exit code 3. The later jobs of the pipeline are skipped." />
-
 ## Drift
 
 A cron schedule in `drift` adds a `drift` job that runs on it.
@@ -114,7 +111,7 @@ drift: "0 6 * * *"
 
 | Forge | Issue token | Schedule |
 |---|---|---|
-| GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` |
+| GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` with no `pr` |
 | GitLab | `token_env`, `api` scope | CI/CD > Schedules, by hand |
 
 ### Overdue drift checks
@@ -139,19 +136,11 @@ A schedule can stop with no error: GitHub turns a scheduled workflow off after 6
 
 A forge that does not answer leaves a line in the log, and the plan goes on.
 
-<Shot step="drift" view="issue" alt="The open issue titled terragucci: drift found, filed by the Forgejo Actions bot. It says 1 of 15 roots has drifted and lists envs/staging/orders with one object, an SQS queue, that no longer exists." />
-
 ## Gated waves
 
 A wave the [gate policy](#gate-policy) holds waits for an approval bound to its set digest; under the default `on-destroy` only a wave that destroys or replaces waits. A changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
 
-A waiting wave prints its set digest and approval command and exits 3:
-
-<Shot step="wave-waiting" view="log" alt="The log of the apply-wave-4 job. Eight roots are planned, one with 1 change and 1 destroy, and the log prints the wave's set digest and the approval command to run before running the job again. The job ends with exit code 3." />
-
-A wave whose plans changed since approval applies nothing and exits 4:
-
-<Shot step="wave-refused" view="log" alt="The log of the apply-wave-4 job after a refusal. It says the wave changed after it was approved, so nothing was applied, lists the approved and the new digest, and the changes per root. The job ends with exit code 4." />
+A waiting wave prints its set digest and approval command and exits 3; a wave whose plans changed since approval applies nothing and exits 4.
 
 ## State migrations
 
@@ -230,8 +219,6 @@ A changed module is published at the version these rules give; [Responses](/terr
 ## The grouped summary
 
 `tf-plan` and `tf-drift` group identical changes and name every destroy, replacement and refusal. See [the plan report](/terragucci/reference/report/).
-
-<Shot step="one-note" view="pull" alt="A pull request with one plan note from the bot. The note says 12 roots, 2 groups, 0 destroys or replacements, shows a table of two waves with their set digests, and lists a group of 11 roots with an identical change and an outlier group of 1 root." />
 
 ## Gate policy
 

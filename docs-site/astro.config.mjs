@@ -47,6 +47,7 @@ export default defineConfig({
 		'/guides/keep-reports-in-s3': '/terragucci/guides/keep-reports-in-a-bucket/',
 		'/guides/add-to-gitlab': '/terragucci/guides/add-to-a-repo/',
 		'/guides/add-to-forgejo': '/terragucci/guides/add-to-a-repo/',
+		'/concepts/locking-per-resource': '/terragucci/concepts/locking-and-staleness/',
 	},
 	integrations: [
 		starlight({
@@ -135,6 +136,7 @@ export default defineConfig({
 								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
+								{ label: 'Use Atmos', slug: 'guides/use-atmos' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
 								{ label: 'Approve from Slack and Teams', slug: 'guides/approve-from-chat' },
@@ -186,7 +188,7 @@ export default defineConfig({
 						{ label: 'Waves and approvals', slug: 'concepts/waves-and-approvals' },
 						{ label: 'Plan grouping', slug: 'concepts/why-plans-are-grouped' },
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
-						{ label: 'Locking per resource', slug: 'concepts/locking-per-resource' },
+						{ label: 'Locking and staleness with choudoufu', slug: 'concepts/locking-and-staleness' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
