@@ -138,6 +138,7 @@ import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
+import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
 import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
@@ -322,6 +323,25 @@ export interface AppliedRecord {
   timestamp: string;
   runId?: string;
   commit?: string;
+  /** The run applying, as the rows name it (./apply-rows.ts), so the resume job can ask whether it is gone. */
+  holder?: string;
+  /** Each change the plans make, when every root that changes something applies per resource: a stopped apply resumes from them (./remainder.ts). */
+  changes?: ApprovedChange[];
+  /** The digest of the approved plans whose stopped apply this one resumes. */
+  resumes?: string;
+}
+
+/** How the apply an applied record with `changes` started ended, in the same file. A killed apply writes none. */
+export interface FinishedRecord {
+  version: 1;
+  kind: "finished";
+  op: string;
+  gate: string;
+  planDigest: string;
+  /** The applied record's timestamp. */
+  applied: string;
+  result: "applied" | "failed";
+  timestamp: string;
 }
 
 export interface GateLedger {
@@ -329,6 +349,8 @@ export interface GateLedger {
   resolutions: ResolutionRecord[];
   /** The approvals a wave applied under; absent reads as none. */
   applied?: AppliedRecord[];
+  /** How those applies ended, for the ones that recorded their changes. */
+  finished?: FinishedRecord[];
 }
 
 /** The lines of an `applied.jsonl` file. Malformed lines are skipped. */
@@ -338,6 +360,20 @@ export function parseApplied(text: string): AppliedRecord[] {
     try {
       const r = JSON.parse(line) as Record<string, unknown>;
       if (r.version === 1 && r.kind === "applied" && typeof r.gate === "string" && typeof r.planDigest === "string" && typeof r.approvedAt === "string") out.push(r as unknown as AppliedRecord);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+/** The finished lines of an `applied.jsonl` file. Malformed lines are skipped. */
+export function parseFinished(text: string): FinishedRecord[] {
+  const out: FinishedRecord[] = [];
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    try {
+      const r = JSON.parse(line) as Record<string, unknown>;
+      if (r.version === 1 && r.kind === "finished" && typeof r.gate === "string" && typeof r.planDigest === "string" && typeof r.applied === "string" && (r.result === "applied" || r.result === "failed")) out.push(r as unknown as FinishedRecord);
     } catch {
       continue;
     }
@@ -376,7 +412,7 @@ export type GateDecision =
    * nothing new is recorded. `spent` names the newest approval of another
    * digest that a wave applied under, which therefore does not refuse.
    */
-  | { status: "waiting"; standing?: PendingRecord; spent?: { approved: string; by: string } }
+  | { status: "waiting"; standing?: PendingRecord; spent?: { approved: string; by: string; at: string } }
   /** An approval stands for another digest. `standing` as for waiting. */
   | { status: "refused"; approved: string | undefined; by: string; standing?: PendingRecord };
 
@@ -411,7 +447,7 @@ export function decideGate(ledger: GateLedger, gate: string, digest: string, now
   if (matched) return { status: "approved", by: matched.resolvedBy, at: matched.timestamp };
   const standing = latest && at(latest.expiresAt) > at(now) && samePlanDigest(latest.planDigest, digest) ? latest : undefined;
   if (mismatched) return { status: "refused", approved: mismatched.planDigest, by: mismatched.resolvedBy, ...(standing ? { standing } : {}) };
-  return { status: "waiting", ...(standing ? { standing } : {}), ...(used ? { spent: { approved: used.planDigest!, by: used.resolvedBy } } : {}) };
+  return { status: "waiting", ...(standing ? { standing } : {}), ...(used ? { spent: { approved: used.planDigest!, by: used.resolvedBy, at: used.timestamp } } : {}) };
 }
 
 /** The roots whose plan digest differs between the approved members and the ones planned now. */
@@ -451,7 +487,8 @@ export function readLedger(repo: string, path: string = LEDGER_PATH): GateLedger
   const show = git(repo, ["show", `${REMOTE_REF}:${path}`]);
   const ledger = parseLedger(show.status === 0 ? show.stdout : "");
   const applied = git(repo, ["show", `${REMOTE_REF}:${appliedPathFor(path)}`]);
-  return { ...ledger, applied: parseApplied(applied.status === 0 ? applied.stdout : "") };
+  const text = applied.status === 0 ? applied.stdout : "";
+  return { ...ledger, applied: parseApplied(text), finished: parseFinished(text) };
 }
 
 /**
@@ -479,7 +516,7 @@ export function appendResolution(repo: string, record: ResolutionRecord): void {
 }
 
 /** Append lines to the ledger (`path`, the waves' file by default) and push them in one commit, as appendPending does. */
-function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | AppliedRecord[], files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
+function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | AppliedRecord[] | FinishedRecord, files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
   appendLifecycle(repo, path, (Array.isArray(record) ? record : [record]).map((r) => JSON.stringify(r)), files, message);
 }
 
@@ -978,6 +1015,8 @@ interface WaveRun {
   ended?: string;
   /** The roots whose plan changes something. */
   changedRoots?: string[];
+  /** The applied record that named each change its apply makes: the apply records how it ended beside it. */
+  appliedUnder?: AppliedRecord;
 }
 
 /**
@@ -1278,9 +1317,10 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   const heldBySteps = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
   for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: step ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
-  const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys, heldBySteps }, facts, w);
+  const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys, heldBySteps, resume: shares.length === 1 }, facts, w);
   if (held !== undefined) return held;
   recordOverridesUsed(repo, options, planned);
+  if (changes === 0 && shares.length === 1 && (gate !== "never" || w.waveCost)) closeStopped(repo, label, wave, options.now);
 
   if (shares.length > 1) {
     // The share jobs apply: this job hands them the digest of every plan it decided on, and applies nothing itself.
@@ -1324,6 +1364,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     await progress?.stop();
     await hold.release();
   }
+  finishApplied(repo, label, w, ok.includes(false) ? "failed" : "applied", options.now);
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
   if (ok.includes(false)) {
@@ -1333,6 +1374,36 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   }
   console.log(`${label} applied`);
   return EXIT.applied;
+}
+
+/**
+ * A wave with nothing left to change whose last approved apply stopped
+ * before it finished: something else applied the rest, so that apply is
+ * recorded as finished and the resume job leaves the wave alone. Never fails
+ * the wave.
+ */
+function closeStopped(repo: string, label: string, wave: number, now?: string): void {
+  try {
+    const ledger = readLedger(repo);
+    const gate = waveGate(wave);
+    const last = (ledger.applied ?? []).filter((a) => a.gate === gate).reduce<AppliedRecord | undefined>((n, a) => (!n || at(a.timestamp) >= at(n.timestamp) ? a : n), undefined);
+    if (!last?.changes || finishOf(ledger, last)) return;
+    appendRecord(repo, { version: 1, kind: "finished", op: APPLY_OP, gate, planDigest: last.planDigest, applied: last.timestamp, result: "applied", timestamp: now ?? new Date().toISOString() }, {}, `Apply applied: ${APPLY_OP} ${gate}`, APPLIED_PATH);
+    console.log(`${label}: the apply of ${last.planDigest} stopped before it finished, and nothing of it is left to apply`);
+  } catch {
+    // The resume job runs the wave again, which finds nothing to apply.
+  }
+}
+
+/** Record how the apply under an approval that named its changes ended; a killed one never gets here, and the resume job applies the rest. Never fails the wave. */
+function finishApplied(repo: string, label: string, w: WaveRun, result: FinishedRecord["result"], now?: string): void {
+  const a = w.appliedUnder;
+  if (!a) return;
+  try {
+    appendRecord(repo, { version: 1, kind: "finished", op: APPLY_OP, gate: a.gate, planDigest: a.planDigest, applied: a.timestamp, result, timestamp: now ?? new Date().toISOString() }, {}, `Apply ${result}: ${APPLY_OP} ${a.gate}`, APPLIED_PATH);
+  } catch (e) {
+    console.log(`${label}: how its apply ended was not recorded (${(e as Error).message}); the resume job may apply what is left again, and each change it makes is one the approval covered`);
+  }
 }
 
 /**
@@ -1845,7 +1916,7 @@ function recordOverridesUsed(repo: string, options: ApplyWaveOptions, applying: 
 async function gateWave(
   repo: string,
   options: ApplyWaveOptions,
-  ctx: { label: string; roots: string[]; planned: WavePlan[]; members: WaveMember[]; digest: string; changes: number; destroys: number; heldBySteps?: string[] },
+  ctx: { label: string; roots: string[]; planned: WavePlan[]; members: WaveMember[]; digest: string; changes: number; destroys: number; heldBySteps?: string[]; resume?: boolean },
   facts: WaveFacts,
   w: WaveRun,
 ): Promise<number | undefined> {
@@ -1882,6 +1953,22 @@ async function gateWave(
       });
     }
     let decision = decideGate(ledger, name, digest, now);
+    // A plain wave whose approved apply stopped before it finished: plans that are the rest of the approved ones apply under that approval (./remainder.ts).
+    const plans = planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary }));
+    let resumes: string | undefined;
+    if (ctx.resume && decision.status === "waiting" && decision.spent) {
+      const stopped = stoppedApply(ledger, name, decision.spent.at);
+      if (stopped?.changes) {
+        const c = coverRemainder(stopped.changes, plans);
+        if (c.covered) {
+          console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished; ${c.done.length} of its ${stopped.changes.length} change${stopped.changes.length === 1 ? "" : "s"} are done in the records, and these plans make the other ${c.remaining.length}, so that approval covers them`);
+          resumes = stopped.planDigest;
+          decision = { status: "approved", by: decision.spent.by, at: decision.spent.at };
+        } else {
+          console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished, but ${c.why}, so these plans need an approval of their own`);
+        }
+      }
+    }
     // Under pr-review the merged pull request's approving review of its head counts, when it reviewed these plans.
     let moved: Extract<ReviewOutcome, { kind: "moved" }> | undefined;
     if (decision.status === "waiting" && mode === "pr-review") {
@@ -1918,7 +2005,8 @@ async function gateWave(
       const env = options.env ?? process.env;
       const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
       const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-      appendRecord(repo, {
+      const changes = ctx.resume ? approvedChanges(plans) : undefined;
+      const record: AppliedRecord = {
         version: 1,
         kind: "applied",
         op: APPLY_OP,
@@ -1929,7 +2017,11 @@ async function gateWave(
         timestamp: now,
         ...(runId ? { runId } : {}),
         ...(commit ? { commit } : {}),
-      }, {}, `Applied under approval: ${APPLY_OP} ${name}`, APPLIED_PATH);
+        ...(changes ? { holder: rowHolder(env).run, changes } : {}),
+        ...(resumes ? { resumes } : {}),
+      };
+      appendRecord(repo, record, {}, `Applied under approval: ${APPLY_OP} ${name}`, APPLIED_PATH);
+      if (changes) w.appliedUnder = record;
     } else {
       if (decision.status === "waiting" && decision.spent) {
         console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);

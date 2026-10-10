@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, decidedPath, parseApplied as readApplied, waveShares, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
@@ -84,7 +84,7 @@ describe("decideGate", () => {
 
   it("an approval of another digest that a wave applied under is spent: the wave waits, and nothing new is standing", () => {
     const l = ledger({ pending: [pending("wave-1", "d1", 1)], resolutions: [resolution("wave-1", "d1", 2)], applied: [applied("wave-1", "d1", 2)] });
-    expect(decideGate(l, "wave-1", "d2", T(4))).toEqual({ status: "waiting", spent: { approved: "d1", by: "alice" } });
+    expect(decideGate(l, "wave-1", "d2", T(4))).toEqual({ status: "waiting", spent: { approved: "d1", by: "alice", at: T(2) } });
   });
 
   it("a spent approval still lets the wave apply its own digest again, as a re-run after a failed apply does", () => {
@@ -426,6 +426,86 @@ describe("a wave behind its gate", () => {
     git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "approve");
     git(clone, "push", "-q", "origin", "chant/lifecycle");
   }
+
+  describe("an approved choudoufu apply that stopped before it finished", () => {
+    const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} });
+    const ledgerOf = (origin: string) => parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
+    const appliedText = (origin: string) => git(origin, "show", `chant/lifecycle:${APPLIED_PATH}`);
+    const create = (name: string, input: string) => ({ address: `terraform_data.${name}`, mode: "managed", type: "terraform_data", name, change: { actions: ["create"], before: null, after: { input }, after_unknown: {} } });
+    /** Root a's plan: these changes, its records holding `recorded`. */
+    const planA = (work: string, changes: unknown[], recorded: string[] = []) =>
+      writeFileSync(join(work, "..", "plans", "a.json"), JSON.stringify({ resource_changes: changes, prior_state: { values: { root_module: { resources: recorded.map((address) => ({ address, mode: "managed", values: {} })) } } } }));
+    /** A fake choudoufu: FAKE, whose apply fails while $FAIL exists. */
+    function choudoufu(work: string): string {
+      const bin = join(work, "..", "choudoufu");
+      writeFileSync(bin, FAKE.replace('apply) echo', 'apply) [ -e "$FAIL" ] && { echo "Error: the apply of terraform_data.second failed"; exit 1; }; echo'));
+      chmodSync(bin, 0o755);
+      vi.stubEnv("FAIL", join(work, "..", "fail"));
+      return bin;
+    }
+    /** Wave 1 plans first and second, waits, is approved, and its apply fails after first was recorded. */
+    async function stopped(): Promise<{ work: string; origin: string; bin: string; log: string; digest: string }> {
+      const { work, origin, log } = setup();
+      const bin = choudoufu(work);
+      planA(work, [create("first", "1"), create("second", "2")]);
+      expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+      const digest = ledgerOf(origin).pending[0]!.planDigest!;
+      approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+      writeFileSync(join(work, "..", "fail"), "");
+      expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(1);
+      renameSync(join(work, "..", "fail"), join(work, "..", "fail.off"));
+      return { work, origin, bin, log, digest };
+    }
+
+    it("records each change it approved, and that the apply failed", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { origin, digest } = await stopped();
+      const text = appliedText(origin);
+      const [applied] = parseApplied(text);
+      expect(applied).toMatchObject({ planDigest: digest, approvedAt: T(2), changes: [{ root: "a", address: "terraform_data.first", actions: "create" }, { root: "a", address: "terraform_data.second", actions: "create" }] });
+      expect(text).toContain(`"kind":"finished","op":"tf-apply","gate":"wave-1","planDigest":"${digest}","applied":"${T(3)}","result":"failed"`);
+    });
+
+    it("applies the rest under the same approval once first is in the records, and records that it resumed", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, digest } = await stopped();
+      planA(work, [create("second", "2")], ["terraform_data.first"]);
+      lines.length = 0;
+      expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(0);
+      expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished; 1 of its 2 changes are done in the records, and these plans make the other 1, so that approval covers them`);
+      expect(ledgerOf(origin).pending).toHaveLength(1);
+      expect(ledgerOf(origin).resolutions).toHaveLength(1);
+      const resumed = parseApplied(appliedText(origin)).at(-1)!;
+      expect(resumed).toMatchObject({ approvedAt: T(2), approvedBy: "alice", resumes: digest, changes: [{ address: "terraform_data.second" }] });
+      expect(resumed.planDigest).not.toBe(digest);
+      expect(appliedText(origin)).toContain(`"applied":"${T(4)}","result":"applied"`);
+    });
+
+    it("waits for an approval of its own when a remaining change moved since the approval", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, digest } = await stopped();
+      planA(work, [create("second", "3")], ["terraform_data.first"]);
+      expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
+      expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished, but a terraform_data.second is a change the approved plans did not make, so these plans need an approval of their own`);
+      expect(ledgerOf(origin).pending).toHaveLength(2);
+    });
+
+    it("leaves a stock binary's wave to wait for an approval of the plans it makes", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { work, origin, bin, log } = setup();
+      planA(work, [create("first", "1"), create("second", "2")]);
+      expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+      approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: ledgerOf(origin).pending[0]!.planDigest! });
+      expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
+      expect(parseApplied(appliedText(origin))[0]).not.toHaveProperty("changes");
+      planA(work, [create("second", "2")], ["terraform_data.first"]);
+      writeFileSync(log, "");
+      expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
+      expect(readFileSync(log, "utf-8")).toBe("");
+    });
+  });
 
   describe("cost.approve_above", () => {
     const yml = (amount: number) => `gate: never\ncost:\n  command: node cost.mjs\n  approve_above: ${amount}\n`;
