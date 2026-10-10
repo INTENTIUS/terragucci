@@ -104,7 +104,11 @@ case "${1:-}" in
       ($order | split("\n") | map(split("|") | .[0] + " " + .[1])) as $ord
       | (($old + $new) | group_by(.forge + " " + .claim) | map(last))
       | sort_by(. as $r | ($ord | index($r.forge + " " + $r.claim)) // 99)')"
-    jq -n --argjson c "$merged" '{claims: $c}' > "$out"
+    # recorded: the day each forge's rows were last written, so a forge this
+    # run left alone keeps its own date.
+    was='{}'; [ -f "$out" ] && was="$(jq '.recorded // {}' "$out")"
+    jq -n --argjson c "$merged" --argjson was "$was" --arg at "$(date -u +%Y-%m-%d)" --arg forges "$forges" \
+      '{recorded: ($was + ($forges | split(" ") | map(select(. != "")) | map({key: ., value: $at}) | from_entries)), claims: $c}' > "$out"
     echo "wrote $out" >&2
     exit $rc
     ;;

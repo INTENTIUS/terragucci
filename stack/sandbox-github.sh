@@ -2409,7 +2409,7 @@ EOF
     rows="$(prove_rows)"
     write_prove
     if [ -n "$record" ] && [ -n "$BREAK" ]; then
-      jq --argjson rows "$rows" '.claims |= (
+      jq --argjson rows "$rows" --arg at "$(date -u +%Y-%m-%d)" '.recorded["github.com"] = $at | .claims |= (
         [.[] | select(.forge == "github.com") | .claim] as $had
         | map(if .forge == "github.com" then (.claim as $c | ([$rows[] | select(.claim == $c)] | first) as $b | if $b then .break = $b.break else . end) else . end)
         | (map(.forge == "github.com") | rindex(true) // (length - 1)) as $i
@@ -2417,7 +2417,7 @@ EOF
       cp "$WORK/record" "$record"
       log "wrote the github.com breaks into $record"
     elif [ -n "$record" ]; then
-      jq --argjson rows "$rows" '.claims |= (
+      jq --argjson rows "$rows" --arg at "$(date -u +%Y-%m-%d)" '.recorded["github.com"] = $at | .claims |= (
         [.[] | select(.forge == "github.com")] as $old | ($old | map(.claim)) as $had
         | ([$old[] | . as $r | ([$rows[] | select(.claim == $r.claim)] | first | if . == null then null else .break = $r.break end) // $r] + [$rows[] | select(.claim | IN($had[]) | not)]) as $gh
         | [.[] | select(.forge != "github.com")]
