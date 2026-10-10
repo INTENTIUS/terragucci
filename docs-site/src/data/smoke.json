@@ -318,7 +318,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-waves",
@@ -358,7 +358,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-mock-trap",
@@ -811,7 +811,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0c494d98"
+      "commit": "8b686e63"
     },
     {
       "claim": "atmos-affected",
@@ -843,7 +843,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0c494d98"
+      "commit": "8b686e63"
     },
     {
       "claim": "atmos-version",
@@ -860,6 +860,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-refuse",
+      "says": "config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
     },
     {
       "claim": "policy-source",
@@ -1827,7 +1835,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-migrate",
@@ -1835,7 +1843,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-refused",
@@ -1843,7 +1851,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "apply-branches",
@@ -1949,7 +1957,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-state-versions",
@@ -1965,7 +1973,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-drift-attribute",
@@ -2013,7 +2021,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "79c43672"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-apply-branches",
@@ -2176,6 +2184,38 @@
       "commit": "7c2ff19c"
     },
     {
+      "claim": "tg-ephemeral-pr",
+      "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
+    },
+    {
+      "claim": "cdktn-ephemeral",
+      "says": "with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
+    },
+    {
+      "claim": "cdktn-generate",
+      "says": "with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
+    },
+    {
+      "claim": "cdktn-linked",
+      "says": "a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
       "claim": "image",
       "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
       "needs": null,
@@ -2198,38 +2238,6 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "4db5e993"
-    },
-    {
-      "claim": "tg-ephemeral-pr",
-      "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "e67a400c"
-    },
-    {
-      "claim": "cdktn-ephemeral",
-      "says": "with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "e67a400c"
-    },
-    {
-      "claim": "cdktn-generate",
-      "says": "with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "e67a400c"
-    },
-    {
-      "claim": "cdktn-linked",
-      "says": "a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "e67a400c"
     },
     {
       "claim": "mr-widget",
