@@ -33,7 +33,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ConfigError, type ResolvedSettings } from "./config";
-import { KEY_ATTRIBUTE, SUFFIX_READ } from "./ephemeral";
+import { HTTP_LOCK_ATTRIBUTES, KEY_ATTRIBUTE, SUFFIX_READ } from "./ephemeral";
 import { findRoots, globMatch } from "./detect";
 import { IDENT, isMap, overlayLevel, type GenerateLevel, type GenerateSettings } from "./generate-config";
 import { versionGlobs } from "./pins";
@@ -427,7 +427,8 @@ export function renderTerragrunt(units: Map<string, RootSettings>): string | und
 
 /**
  * A unit's backend config as terragucci.hcl gives it: the attribute that holds
- * the state key (`key`, gcs's `prefix`, local's `path`) reads
+ * the state key (`key`, gcs's `prefix`, local's `path`, http's `address` and
+ * its lock addresses) reads
  * TERRAGUCCI_EPHEMERAL_SUFFIX, which is empty but in an ephemeral copy's run,
  * where it is `-pr-<n>`, before a closing `.tfstate` or at the end. So the
  * key is the one terragucci.yml gives everywhere else, and every unit can be
@@ -440,7 +441,15 @@ function backendConfig(backend: NonNullable<RootSettings["backend"]>): string {
   const marker = "\u0000terragucci-suffix\u0000";
   const k = key.replace(/\/+$/, "");
   const marked = /\.tfstate$/.test(k) ? k.replace(/\.tfstate$/, `${marker}.tfstate`) : `${k}${marker}`;
-  return hclValue({ ...backend.config, [attribute!]: marked }).replace(marker, () => `\${${SUFFIX_READ}}`);
+  const config: Record<string, unknown> = { ...backend.config, [attribute!]: marked };
+  // A GitLab state's lock is `<address>/lock`: its state name takes the suffix too, so a copy locks its own state.
+  if (backend.type === "http") {
+    for (const name of HTTP_LOCK_ATTRIBUTES) {
+      const v = backend.config[name];
+      if (typeof v === "string" && /\/lock\/?$/.test(v)) config[name] = v.replace(/\/lock\/?$/, `${marker}/lock`);
+    }
+  }
+  return hclValue(config).replaceAll(marker, () => `\${${SUFFIX_READ}}`);
 }
 
 /**

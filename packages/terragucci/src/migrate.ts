@@ -56,7 +56,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { stateClient, stateObject, type StateObject } from "./backend";
+import { READS_VERSIONS, stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch, S3Target } from "./report/s3";
@@ -556,7 +556,8 @@ function jsonCloud(doc: unknown): boolean {
 
 /** Which backends a migration writes to, or why not. */
 function backendRefusal(root: string, o: StateObject): string | undefined {
-  if ("unsupported" in o) return `${root}: ${o.unsupported.replace("reads state versions from", "migrates state in")}`;
+  if ("unsupported" in o) return `${root}: ${o.unsupported.replace(READS_VERSIONS, "migrates state in s3 and local backends")}`;
+  if ("gitlab" in o) return `${root}: its state is GitLab-managed (${o.location}), and terragucci migrates state in s3 and local backends`;
   if (o.backend === "s3" && !(o as { lockfile: boolean }).lockfile) return `${root}: its s3 backend takes no lock file (use_lockfile = true), so a migration could not hold its lock`;
   return undefined;
 }

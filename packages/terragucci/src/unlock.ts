@@ -8,7 +8,8 @@
  * checking that the job is really gone. This command does that instead:
  *
  *   1. It inits the root and reads the lock: the lock file the S3 backend's
- *      `use_lockfile` takes, `<key>.tflock`, with its ID, who took it and when.
+ *      `use_lockfile` takes, `<key>.tflock`, or the lock of a GitLab-managed
+ *      state, with its ID, who took it and when.
  *   2. It asks the forge which of the repository's runs are still running or
  *      waiting. A run that began before the lock was taken may be the one
  *      holding it, so while any such run is alive the lock is not released.
@@ -17,7 +18,9 @@
  *      its ID: `chant approve tf-unlock <root> --plan <digest>` approves that
  *      lock and no other. Under `approval: sealed` only a sealed approval counts.
  *   4. Approved, it checks again that no such run is alive, releases the lock
- *      with the binary's `force-unlock` of that ID, and records who released
+ *      with the binary's `force-unlock` of that ID (on GitLab, a release of
+ *      that ID on its lock endpoint, which GitLab refuses for any other
+ *      lock), and records who released
  *      which lock, under whose approval, in `_gates/tf-unlock/done.jsonl`,
  *      which `terragucci audit` reads.
  *
@@ -32,6 +35,7 @@ import { appendLifecycle, appendPending, decideGate, readLedger, type GateLedger
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
+import { probeLock, releaseLock, shownUrl, type GitLabFetch } from "./gitlab-state";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "./detect";
 import { detectShape } from "./shape";
@@ -140,7 +144,7 @@ export interface UnlockOptions {
   now?: string;
   /** The forge's HTTP calls, for tests. */
   fetch?: Fetch;
-  /** The S3 calls, for tests. */
+  /** The backend's calls (S3, or GitLab's state API), for tests. */
   s3Fetch?: S3Fetch;
   /** Runs the binary in the root, for tests. */
   exec?: (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => { status: number; out: string };
@@ -194,13 +198,70 @@ const describeLock = (l: LockInfo): string => `lock ${l.ID}${l.Operation ? `, ${
 
 const describeRun = (r: LiveRun): string => `run ${r.id} (${r.status}${r.started ? `, began ${r.started}` : ""})${r.url ? ` ${r.url}` : ""}`;
 
-/** The S3 state a root's lock file guards, or why this command cannot read its lock. */
-function lockedObject(root: string, o: StateObject): Extract<StateObject, { target: S3Target }> {
-  if ("unsupported" in o) throw new ConfigError(`${root}: ${o.unsupported}; unlock-state reads the lock file of an s3 backend`);
-  if (o.backend === "local") throw new ConfigError(`${root} keeps its state in a local file, whose lock goes with the process that took it; unlock-state releases the lock file of an s3 backend`);
+const RELEASES = "unlock-state releases the lock file of an s3 backend and the lock of a GitLab-managed state";
+
+/** The state a root's lock guards (an s3 lock file, or GitLab's lock), or why this command cannot read its lock. */
+function lockedObject(root: string, o: StateObject): Extract<StateObject, { target: S3Target }> | Extract<StateObject, { gitlab: unknown }> {
+  if ("unsupported" in o) throw new ConfigError(`${root}: ${o.unsupported}; ${RELEASES}`);
+  if (o.backend === "local") throw new ConfigError(`${root} keeps its state in a local file, whose lock goes with the process that took it; ${RELEASES}`);
+  if ("gitlab" in o) {
+    if (!o.gitlab.lockAddress) throw new ConfigError(`${root}: its http backend names no lock_address (TF_HTTP_LOCK_ADDRESS), so it takes no lock`);
+    if (!o.gitlab.unlockAddress) throw new ConfigError(`${root}: its http backend names no unlock_address (TF_HTTP_UNLOCK_ADDRESS), so no lock it takes can be released`);
+    return o as Extract<StateObject, { gitlab: unknown }>;
+  }
   const s3 = o as Extract<StateObject, { target: S3Target }>;
   if (!s3.lockfile) throw new ConfigError(`${root}: its s3 backend takes no lock file (use_lockfile = true)${s3.dynamodb ? ", only a DynamoDB lock," : ""} and unlock-state releases the lock file`);
   return s3;
+}
+
+/** How a root's lock is read and released. */
+interface HeldLock {
+  location: string;
+  /** The lock info's text, or undefined when no lock is held. */
+  read(): Promise<string | undefined>;
+  /** Release the lock with this ID, and check it is gone. */
+  release(id: string): Promise<void>;
+}
+
+/**
+ * An s3 lock file is read from the bucket and released by the binary's
+ * `force-unlock`. GitLab's lock is read by asking for it (./gitlab-state.ts:
+ * a free one is taken and released at once) and released by its ID on the
+ * unlock address, which GitLab refuses when another lock holds the state.
+ */
+function heldLock(rel: string, object: ReturnType<typeof lockedObject>, binary: string, dir: string, env: NodeJS.ProcessEnv, exec: NonNullable<UnlockOptions["exec"]>, options: UnlockOptions): HeldLock {
+  if ("gitlab" in object) {
+    const gl = object.gitlab;
+    const fetchFn = (options.s3Fetch ?? globalThis.fetch) as unknown as GitLabFetch;
+    const location = shownUrl(gl.lockAddress!);
+    const asked = async <T>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call();
+      } catch (e) {
+        throw new ConfigError(`${rel}: ${(e as Error).message}`);
+      }
+    };
+    return {
+      location,
+      read: () => asked(() => probeLock(gl, fetchFn)),
+      release: async (id) => {
+        await asked(() => releaseLock(gl, id, fetchFn));
+        const after = await asked(() => probeLock(gl, fetchFn));
+        if (after && parseLockInfo(after)?.ID === id) throw new ConfigError(`${rel}: GitLab released lock ${id}, and ${location} still holds it`);
+      },
+    };
+  }
+  const location = `s3://${object.bucket}/${lockKey(object.key)}`;
+  const client = stateClient(object, options.s3Fetch);
+  return {
+    location,
+    read: () => client.get(lockKey(object.key)),
+    release: async (id) => {
+      const unlock = exec(binary, ["force-unlock", "-force", "-no-color", id], dir, env);
+      if (unlock.status !== 0) throw new ConfigError(`${rel}: ${binary} force-unlock ${id} failed:\n${tail(unlock.out)}`);
+      if ((await client.head(lockKey(object.key))).exists) throw new ConfigError(`${rel}: ${binary} force-unlock ran, and ${location} is still there`);
+    },
+  };
 }
 
 /**
@@ -233,9 +294,9 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
   if (init.status !== 0) throw new ConfigError(`${rel}: ${binary} init failed:\n${tail(init.out)}`);
   const object = lockedObject(rel, stateObject(dir, shape.rootEnv(rel, env)));
-  const location = `s3://${object.bucket}/${lockKey(object.key)}`;
-  const client = stateClient(object, options.s3Fetch);
-  const text = await client.get(lockKey(object.key));
+  const held = heldLock(rel, object, binary, dir, env, exec, options);
+  const location = held.location;
+  const text = await held.read();
   if (text === undefined) {
     log(`${rel}: no lock is held on ${location}; nothing to release`);
     return { code: UNLOCK_EXIT.released, location };
@@ -324,9 +385,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
     for (const r of still) log(`  ${describeRun(r)}`);
     return { code: UNLOCK_EXIT.refused, lock, location, digest, alive: still };
   }
-  const unlock = exec(binary, ["force-unlock", "-force", "-no-color", lock.ID], dir, env);
-  if (unlock.status !== 0) throw new ConfigError(`${rel}: ${binary} force-unlock ${lock.ID} failed:\n${tail(unlock.out)}`);
-  if ((await client.head(lockKey(object.key))).exists) throw new ConfigError(`${rel}: ${binary} force-unlock ran, and ${location} is still there`);
+  await held.release(lock.ID);
   const actor = options.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
   const record: UnlockRecord = {
     version: 1,

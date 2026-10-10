@@ -65,7 +65,7 @@ describe("where a root's state is", () => {
   });
 
   it("names any other backend as one it does not read versions from", () => {
-    expect(stateObject(initialised("gcs", { bucket: "b", prefix: "p" }), ENV)).toMatchObject({ backend: "gcs", unsupported: expect.stringContaining("s3 and local") });
+    expect(stateObject(initialised("gcs", { bucket: "b", prefix: "p" }), ENV)).toMatchObject({ backend: "gcs", unsupported: expect.stringContaining("s3, local and GitLab-managed http backends") });
   });
 });
 
@@ -116,9 +116,9 @@ describe("the version an apply leaves", () => {
     expect(await stateVersion(initialised("kubernetes", { secret_suffix: "net", namespace: "infra" }), ENV)).toMatchObject({ backend: "kubernetes", versioning: "off", location: "kubernetes:infra/net" });
     expect(await stateVersion(initialised("consul", { address: "consul:8500", path: "tf/net" }), ENV)).toMatchObject({ backend: "consul", versioning: "off", location: "consul:consul:8500/tf/net" });
     expect(await stateVersion(initialised("http", { address: "https://state.example.com/net" }), ENV)).toMatchObject({ backend: "http", versioning: "off", note: expect.stringContaining("names no versions") });
-    // GitLab's state API keeps each version by serial: there is history, unread.
-    const gitlab = await stateVersion(initialised("http", { address: "https://gitlab.com/api/v4/projects/42/terraform/state/net" }), ENV);
-    expect(gitlab).toMatchObject({ backend: "http", versioning: "unknown", note: expect.stringContaining("GitLab keeps each version") });
+    // GitLab's state API keeps each version by serial, which is read (gitlab-state.test.ts); a GitLab that cannot be read is unknown.
+    const gitlab = await stateVersion(initialised("http", { address: "https://gitlab.com/api/v4/projects/42/terraform/state/net" }), ENV, headOnly(401).fetch);
+    expect(gitlab).toMatchObject({ backend: "http", location: "https://gitlab.com/api/v4/projects/42/terraform/state/net", versioning: "unknown", note: expect.stringContaining("GitLab answered 401") });
     expect(await stateVersion(initialised("gcs", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "gcs", versioning: "unknown", note: "a gcs backend can keep versions of the state, which terragucci does not read" });
     expect(await stateVersion(initialised("remote", { organization: "acme", workspaces: [{ name: "net" }] }), ENV)).toMatchObject({ backend: "remote", versioning: "unknown", location: "remote:app.terraform.io/acme/net" });
     // A refusal elsewhere (export, migrations) still names the backend it does not read.

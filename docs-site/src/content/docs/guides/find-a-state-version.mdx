@@ -1,7 +1,7 @@
 ---
 title: Find the state version an apply left
 description: Each apply wave records the version id of each root's state from your bucket's versioning, and the estate page lists them per root, so you know which version to go back to.
-claims: [state-versions, tg-state-versions]
+claims: [state-versions, tg-state-versions, gl-state-versions]
 prompt: |
   Read https://intentius.io/terragucci/guides/find-a-state-version/.
   Find the S3 buckets this repo's roots keep their state in, check whether each has versioning on, and write the commands that would turn it on as a file for me to review. Open a pull request.
@@ -23,13 +23,13 @@ After each `tf-apply` wave, the version id of each root's state, next to the run
 | the estate page | a State versions section, per project and root, newest first |
 | the [audit trail](/terragucci/reference/audit-trail/) | `detail.state_versions` on the wave's `apply` entry |
 
-terragucci reads only the state object's metadata, with an S3 `HEAD` request; it never copies or stores a state's contents.
+terragucci reads only the state object's metadata, with an S3 `HEAD` request; it never copies or stores a state's contents. GitLab answers a state's serial only with the state itself, so on [GitLab-managed state](#gitlab-managed-state) terragucci reads the state and keeps only the serial.
 
 ## Prerequisites
 
 | You need | Why |
 |---|---|
-| Roots with an `s3` backend, on AWS S3 or an S3-compatible store | the version id is S3's `x-amz-version-id` |
+| Roots with an `s3` backend, on AWS S3 or an S3-compatible store, or on GitLab-managed state | the version id is S3's `x-amz-version-id`, or GitLab's serial |
 | [Reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) | `states.json` and the estate page live there |
 | The [estate page](/terragucci/guides/see-every-project/), to see the list | the page reads `states.json` |
 
@@ -41,7 +41,7 @@ Other roots are listed with what terragucci knows:
 |---|---|
 | a bucket with versioning off | versions are off: S3 keeps only the latest state |
 | a `local`, `pg`, `kubernetes` or `consul` backend, or an `http` backend other than GitLab's | versions are off: each write replaces the state |
-| a backend that keeps versions terragucci does not read (`gcs`, `azurerm`, `remote`, GitLab-managed state) | versions not read, naming why |
+| a backend that keeps versions terragucci does not read (`gcs`, `azurerm`, `remote`) | versions not read, naming why |
 | a Terragrunt unit with no `remote_state` block that runs from Terragrunt's cache | versions not read, naming why |
 
 In `report.json` and `states.json`, `versioning` is `off` for the first two rows and `unknown` for the last two.
@@ -72,6 +72,16 @@ In `report.json` and `states.json`, `versioning` is `off` for the first two rows
 
 </Steps>
 
+## GitLab-managed state
+
+A root on GitLab-managed state is an `http` backend whose `address` is a project's state API, `<api>/projects/<id>/terraform/state/<name>`, in the block or `TF_HTTP_ADDRESS`. The apply job reads the state with the backend's own credentials, `TF_HTTP_USERNAME` and `TF_HTTP_PASSWORD` ([GitLab-managed state](/terragucci/reference/pipeline/#gitlab-managed-state)), and logs its serial:
+
+```text
+envs/dev/platform: state https://gitlab.example.com/api/v4/projects/42/terraform/state/dev-platform version 7
+```
+
+GitLab keeps each version by serial, so no setting turns versions on.
+
 ## Go back to a version
 
 Restoring a state version is a state write outside the gate, so take it through review like any other change. With the version id from the page:
@@ -81,6 +91,13 @@ aws s3api get-object --bucket acme-state --key envs/dev/platform.tfstate \
   --version-id 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY restore.tfstate
 tofu -chdir=envs/dev/platform state push -force restore.tfstate
 tofu -chdir=envs/dev/platform plan
+```
+
+On GitLab-managed state, download the version by its serial with a token that can read the project's state:
+
+```bash
+curl --fail --user "$TF_HTTP_USERNAME:$TF_HTTP_PASSWORD" -o restore.tfstate \
+  https://gitlab.example.com/api/v4/projects/42/terraform/state/dev-platform/versions/7
 ```
 
 `state push` takes the backend's lock while it writes. The older state lacks resources created after it, so the plan shows them as creates. Applying it would make a second copy of each. Import them, or remove them from the cloud, before the next wave applies the root.

@@ -275,6 +275,17 @@ terraform {
       expect(hcl).toContain('config  = { path = "/s/live/prod/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate" }');
     });
 
+    it("gives a GitLab state's name the suffix in its address and its lock addresses", () => {
+      const st = "https://gitlab.test/api/v4/projects/42/terraform/state/dev-app";
+      const dir = tgRepo(`generate:\n  backend:\n    s3: { bucket: b, key: "{root}.tfstate", region: us-east-1 }\n  roots:\n    "live/dev/app":\n      backend:\n        http: { address: "${st}", lock_address: "${st}/lock", unlock_address: "${st}/lock" }\n`);
+      generate(dir);
+      const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
+      const s = 'https://gitlab.test/api/v4/projects/42/terraform/state/dev-app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}';
+      expect(hcl).toContain(`address = "${s}"`);
+      expect(hcl).toContain(`lock_address = "${s}/lock"`);
+      expect(hcl).toContain(`unlock_address = "${s}/lock"`);
+    });
+
     it("writes disable_init = false in remote_state when generate sets disable_init: false, and the apply job bootstraps the backend", () => {
       const dir = tgRepo('generate:\n  disable_init: false\n  backend:\n    s3: { bucket: state, key: "{root}.tfstate", region: us-east-1 }\n');
       generate(dir);
