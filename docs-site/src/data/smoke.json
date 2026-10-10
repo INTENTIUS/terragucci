@@ -1102,7 +1102,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fd59fd2a"
+      "commit": "77c1fba3"
+    },
+    {
+      "claim": "cdf-resume",
+      "says": "with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "77c1fba3"
     },
     {
       "claim": "cdf-iam",
