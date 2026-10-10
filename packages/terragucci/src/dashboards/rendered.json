@@ -5311,7 +5311,7 @@
         "          severity: ticket",
         "        annotations:",
         "          summary: wave {{ $labels.wave }} of {{ $labels.project }} has waited for an approval longer than 7919002s",
-        "          description: Its apply job printed the chant approve command for its digest.",
+        "          description: Its apply job printed the terragucci approve command for its digest.",
         "      - alert: TerragucciApplyFailed",
         "        expr: sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1h)) > 0",
         "        labels:",

@@ -92,7 +92,7 @@ export const OVERRIDE_FILE = "terragucci_migrate_override.tf";
 /** The plan record a waiting migration keeps beside the ledger, so a refusal can say what moved. */
 export const keptPath = (name: string, digest: string): string => `_gates/${MIGRATE_OP}/${name}/${digest.replace(":", "_")}.json`;
 /** The command that approves a migration's digest. */
-export const migrateApproveCommand = (name: string, digest: string, sealed = false): string => `chant approve ${MIGRATE_OP} ${name} --plan ${digest}${sealed ? " --sign" : ""}`;
+export const migrateApproveCommand = (name: string, digest: string, sealed = false): string => `terragucci approve ${name} --plan ${digest}${sealed ? " --sign" : ""}`;
 
 /** Exit codes, as `stage tf-apply` gives them. */
 const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;

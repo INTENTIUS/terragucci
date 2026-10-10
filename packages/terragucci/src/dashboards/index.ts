@@ -452,7 +452,7 @@ export function pipelineAlerts(s: Required<DashboardSettings>): RuleGroupEntity 
         alert: "TerragucciWaveWaiting",
         expr: `time() - (${wavesWaiting(any)}) > ${seconds(s.wave_wait)}`,
         labels: { severity: "ticket" },
-        annotations: { summary: `wave {{ $labels.wave }} of {{ $labels.project }} has waited for an approval longer than ${s.wave_wait}`, description: "Its apply job printed the chant approve command for its digest." },
+        annotations: { summary: `wave {{ $labels.wave }} of {{ $labels.project }} has waited for an approval longer than ${s.wave_wait}`, description: "Its apply job printed the terragucci approve command for its digest." },
       },
       {
         alert: "TerragucciApplyFailed",

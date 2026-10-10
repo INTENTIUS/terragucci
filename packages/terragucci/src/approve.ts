@@ -26,11 +26,26 @@
  * waiting, wave or migration, it needs no argument, and `--plan` finds a
  * migration by its digest as it finds a wave. Then it resumes wave 1.
  *
+ * `terragucci approve export|unlock <root> --plan <digest>` and
+ * `terragucci approve ephemeral <pr> --plan <digest>` approve the other gates
+ * a person answers: a state export request (./export.ts), the release of a
+ * state lock (./unlock.ts) and a pull request's ephemeral copy
+ * (./ephemeral.ts). Each checks that the gate's newest request waits for
+ * that digest, then runs `chant approve <op> <gate> --plan <digest>`. The
+ * keyword form needs the root or pull request after it, so a migration named
+ * export, unlock or ephemeral is still approved by `terragucci approve
+ * <migration>` alone.
+ *
+ * chant runs from the @intentius/chant package terragucci depends on, so
+ * installing terragucci is enough (chantCommand).
+ *
  * A person runs either, at a shell: chant refuses a gate approval made over
  * MCP or ACP, whatever wraps it.
  */
 import { spawnSync } from "node:child_process";
-import { delimiter, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
@@ -39,6 +54,9 @@ import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { originOf, resumeAfterApproval } from "./resume";
 import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
+import { EXPORT_LEDGER, EXPORT_OP } from "./export";
+import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
+import { EPHEMERAL_LEDGER, EPHEMERAL_OP, ephemeralGate } from "./ephemeral";
 
 export interface WaitingWave {
   wave: number;
@@ -93,7 +111,7 @@ export interface ApproveOptions {
   sign?: string | true;
   actor?: string;
   dryRun?: boolean;
-  /** The chant executable. Default: chant from node_modules/.bin, then the path. */
+  /** The chant executable. Default: the bin of the installed @intentius/chant package, else chant from node_modules/.bin, then the path. */
   chant?: string;
   /** `--no-resume`: approve only, and leave the wave to the resume job or a re-run. Default: resume it with the approver's token. */
   resume?: boolean;
@@ -253,12 +271,45 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
   return { code, command, migration: m };
 }
 
+/**
+ * The chant bin of the @intentius/chant package installed with terragucci:
+ * found from terragucci's own file upward, then from `from` upward, through
+ * each node_modules/@intentius/chant/package.json and its `bin.chant`. The
+ * package exports no ./package.json, so it is read from disk, not resolved.
+ * Undefined when neither place has it.
+ */
+export function installedChant(from: string[] = [dirname(fileURLToPath(import.meta.url))]): string | undefined {
+  for (const start of from) {
+    for (let dir = resolve(start); ; ) {
+      const manifest = join(dir, "node_modules", "@intentius", "chant", "package.json");
+      if (existsSync(manifest)) {
+        try {
+          const bin = (JSON.parse(readFileSync(manifest, "utf-8")) as { bin?: string | Record<string, string> }).bin;
+          const rel = typeof bin === "string" ? bin : bin?.chant;
+          if (rel && existsSync(resolve(dirname(manifest), rel))) return resolve(dirname(manifest), rel);
+        } catch {
+          // An unreadable manifest: look further up.
+        }
+      }
+      const up = dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  return undefined;
+}
+
+/** The chant executable approve runs: `o.chant`, else the installed package's bin, else `chant` on the path. */
+export function chantCommand(repo: string, o: { chant?: string } = {}): string {
+  return o.chant ?? installedChant([dirname(fileURLToPath(import.meta.url)), repo]) ?? "chant";
+}
+
 /** Run chant with `args` from the repo, node_modules/.bin first on the path. Returns its exit code. */
 function runChant(repo: string, args: string[], command: string, o: { chant?: string; env?: NodeJS.ProcessEnv }, log: (line: string) => void): number {
   log(`running: ${command}`);
   const env = o.env ?? process.env;
-  const r = spawnSync(o.chant ?? "chant", args, { cwd: repo, stdio: "inherit", env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
-  if (r.error) throw new ConfigError(`could not run chant (${r.error.message}); install it with npm i -D @intentius/chant, or run: ${command}`);
+  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+  if (r.error) throw new ConfigError(`could not record the approval (${r.error.message}): the @intentius/chant package that @intentius/terragucci installs with itself is missing; install terragucci again with npm i -D @intentius/terragucci`);
   return r.status ?? 1;
 }
 
@@ -305,5 +356,68 @@ export async function overrideDenial(repo: string, o: OverrideOptions): Promise<
   }
   const code = runChant(repo, args, command, o, log);
   if (code === 0) log(`overrode the denial of ${o.root}; run its wave again and it applies this plan, if policy.override at base lists you`);
+  return { code, command };
+}
+
+/** The gates `terragucci approve <keyword> <target>` answers besides waves, migrations and overrides. */
+export const GATE_KEYWORDS = {
+  export: { op: EXPORT_OP, ledger: EXPORT_LEDGER, what: "the state export of", next: (t: string) => `the person who asked runs terragucci state export ${t} again to download it` },
+  unlock: { op: UNLOCK_OP, ledger: UNLOCK_LEDGER, what: "releasing the state lock of", next: (t: string) => `run terragucci unlock-state ${t} again to release it` },
+  ephemeral: { op: EPHEMERAL_OP, ledger: EPHEMERAL_LEDGER, what: "the ephemeral copy of", next: () => "run the pull request's ephemeral job again, or push to it" },
+} as const;
+export type GateKeyword = keyof typeof GATE_KEYWORDS;
+
+/** Whether approve's arguments are the keyword form: export, unlock or ephemeral followed by its root or pull request. */
+export const isGateKeyword = (args: string[]): args is [GateKeyword, string, ...string[]] => args.length >= 2 && Object.hasOwn(GATE_KEYWORDS, args[0]!) && args[1] !== "";
+
+export interface GateApproveOptions extends Omit<ApproveOptions, "wave" | "resume" | "fetch"> {
+  kind: GateKeyword;
+  /** The root (export, unlock) or the pull request, `<n>` or `pr-<n>` (ephemeral). */
+  target: string;
+}
+
+/**
+ * Approve a state export, a lock release or a pull request's copy: check the
+ * gate's newest request waits for `plan`, then run chant approve for it.
+ * Returns chant's exit code (0 for a dry run), or 1 with no command when the
+ * request waiting is for another digest or there is none.
+ */
+export async function approveGate(repo: string, o: GateApproveOptions): Promise<{ code: number; command: string }> {
+  const log = o.log ?? ((l: string) => console.log(l));
+  const g = GATE_KEYWORDS[o.kind];
+  const usage = o.kind === "ephemeral" ? "terragucci approve ephemeral <pr> --plan <digest>" : `terragucci approve ${o.kind} <root> --plan <digest>`;
+  let gate = o.target;
+  if (o.kind === "ephemeral") {
+    const pr = Number(/^(?:pr-)?(\d+)$/.exec(o.target)?.[1]);
+    if (!Number.isInteger(pr) || pr < 1) throw new ConfigError(`approve ephemeral takes the pull request's number, not ${JSON.stringify(o.target)}: ${usage}`);
+    gate = ephemeralGate(pr);
+  }
+  const plan = o.plan?.trim();
+  if (!plan || !/^\S+$/.test(plan)) throw new ConfigError(`approve ${o.kind} needs --plan <digest>, the digest its request printed: ${usage}`);
+  const ledger = readLedger(repo, g.ledger);
+  // Each person's export request stands on its own, so any request for the root may be the one; a lock or a copy waits only for its newest digest.
+  const requests = ledger.pending.filter((p) => p.gate === gate && p.planDigest).sort((a, b) => at(b.timestamp) - at(a.timestamp));
+  const newest = (o.kind === "export" ? requests.find((p) => samePlanDigest(p.planDigest, plan)) : undefined) ?? requests[0];
+  if (!newest) {
+    log(`not approved: nothing waits for an approval of ${g.what} ${gate} on chant/lifecycle`);
+    return { code: 1, command: "" };
+  }
+  if (!samePlanDigest(newest.planDigest, plan)) {
+    log(`not approved: ${g.what} ${gate} waits for ${newest.planDigest}, not ${plan}. What it asks moved since that digest; read the new request, then approve its digest`);
+    return { code: 1, command: "" };
+  }
+  const configPath = findConfig(repo);
+  const mode: Approval = checkoutApproval(repo, configPath ? await loadConfig(configPath) : {})?.mode ?? "ledger";
+  log(`${g.what} ${gate} waits for an approval of ${newest.planDigest}${newest.description ? ` (${newest.description})` : ""}, since ${newest.timestamp}`);
+  if (at(newest.expiresAt) < Date.now()) log(`  its pending fact expired at ${newest.expiresAt}`);
+  const sign = o.sign ?? (mode === "sealed" ? true : undefined);
+  const args = ["approve", g.op, gate, "--plan", newest.planDigest!, ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
+  const command = `chant ${args.map(quote).join(" ")}`;
+  if (o.dryRun) {
+    log(`would run: ${command}`);
+    return { code: 0, command };
+  }
+  const code = runChant(repo, args, command, o, log);
+  if (code === 0) log(`approved ${g.what} ${gate}; ${g.next(o.kind === "ephemeral" ? gate : o.target)}`);
   return { code, command };
 }

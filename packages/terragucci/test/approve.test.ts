@@ -1,13 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { realpathSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { approve, describeMigration, describeStored, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
+import { approve, approveGate, chantCommand, describeMigration, describeStored, installedChant, isGateKeyword, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
 import { keptPath } from "../src/migrate";
 import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
 import { decideOverride, OVERRIDE_LEDGER, overrideDigest, recordedDenials } from "../src/override";
 import { git, tmp, twoRootRepo, write } from "./helpers";
+import { EXPORT_LEDGER, exportApproveCommand } from "../src/export";
+import { UNLOCK_LEDGER, unlockApproveCommand } from "../src/unlock";
+import { EPHEMERAL_LEDGER, ephemeralApproveCommand } from "../src/ephemeral";
+import { migrateApproveCommand } from "../src/migrate";
+import { approveCommand } from "../src/report/marker";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
 const pending = (gate: string, digest: string, h: number) => ({ version: 1, kind: "pending", op: "tf-apply", gate, timestamp: T(h), expiresAt: T(h + 48), planDigest: digest, description: `${gate}: a` });
@@ -254,5 +259,88 @@ describe("init --signer", () => {
     git(dir, "remote", "add", "origin", "https://github.com/acme/infra.git");
     expect((await init(dir, { binary: "tofu", approval: "sealed" })).notes.join("\n")).toMatch(/terragucci init --signer/);
     expect(() => signerLine(dir, "two words")).toThrow(/not a principal/);
+  });
+});
+
+describe("terragucci approve export|unlock|ephemeral", () => {
+  const D = "jcs1-sha256:" + "e".repeat(64);
+  const request = (op: string, gate: string, digest: string, h: number) => ({ version: 1, kind: "pending", op, gate, timestamp: T(h), expiresAt: T(h + 48), planDigest: digest, description: `${gate}: asked` });
+  function checkout(files: Record<string, string>, config: Record<string, string> = {}): string {
+    const dir = tmp("tg-approve-gate-");
+    const origin = join(dir, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", origin]);
+    const life = join(dir, "life");
+    git(dir, "init", "-q", "-b", "chant/lifecycle", life);
+    write(life, files);
+    git(life, "add", "-A");
+    git(life, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger");
+    git(life, "push", "-q", origin, "chant/lifecycle");
+    const work = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", work);
+    write(work, config);
+    git(work, "remote", "add", "origin", origin);
+    return work;
+  }
+
+  it("every hint a gate prints is a terragucci approve command", () => {
+    expect(approveCommand(2, D)).toBe(`terragucci approve wave-2 --plan ${D}`);
+    expect(approveCommand(2, D, true)).toBe(`terragucci approve wave-2 --plan ${D} --sign`);
+    expect(migrateApproveCommand("split-b", D)).toBe(`terragucci approve split-b --plan ${D}`);
+    expect(exportApproveCommand("envs/prod", D, true)).toBe(`terragucci approve export envs/prod --plan ${D} --sign`);
+    expect(unlockApproveCommand("envs/prod", D)).toBe(`terragucci approve unlock envs/prod --plan ${D}`);
+    expect(ephemeralApproveCommand(7, D)).toBe(`terragucci approve ephemeral 7 --plan ${D}`);
+  });
+
+  it("is the keyword form only with a root or pull request after the keyword, so a migration named export stays reachable", () => {
+    expect(isGateKeyword(["export", "envs/prod"])).toBe(true);
+    expect(isGateKeyword(["ephemeral", "7"])).toBe(true);
+    expect(isGateKeyword(["export"])).toBe(false);
+    expect(isGateKeyword(["unlock"])).toBe(false);
+    expect(isGateKeyword(["wave-2"])).toBe(false);
+    expect(isGateKeyword(["split-b", "x"])).toBe(false);
+  });
+
+  it("runs chant approve for the export request's digest, with --sign under approval: sealed", async () => {
+    const work = checkout({ [EXPORT_LEDGER]: jsonl(request("tf-state-export", "envs/prod", D, 1)) }, { "terragucci.yml": "approval: sealed\n" });
+    const lines: string[] = [];
+    const r = await approveGate(work, { kind: "export", target: "envs/prod", plan: D, actor: "github:bob", dryRun: true, log: (l) => void lines.push(l) });
+    expect(r).toEqual({ code: 0, command: `chant approve tf-state-export envs/prod --plan ${D} --actor github:bob --sign` });
+    expect(lines.at(-1)).toBe(`would run: ${r.command}`);
+    const fake = join(work, "..", "chant.sh");
+    write(join(work, ".."), { "chant.sh": `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(join(work, "..", "args"))}\n` });
+    execFileSync("chmod", ["+x", fake]);
+    const said: string[] = [];
+    expect((await approveGate(work, { kind: "export", target: "envs/prod", plan: D, chant: fake, log: (l) => void said.push(l) })).code).toBe(0);
+    expect(readFileSync(join(work, "..", "args"), "utf-8").trim().split("\n")).toEqual(["approve", "tf-state-export", "envs/prod", "--plan", D, "--sign"]);
+    expect(said.at(-1)).toMatch(/terragucci state export envs\/prod again/);
+  });
+
+  it("approves a lock's newest digest and a pull request's copy by its number, and nothing else", async () => {
+    const old = "jcs1-sha256:" + "0".repeat(64);
+    const work = checkout({
+      [UNLOCK_LEDGER]: jsonl(request("tf-unlock", "app", old, 1), request("tf-unlock", "app", D, 2)),
+      [EPHEMERAL_LEDGER]: jsonl(request("tf-ephemeral", "pr-7", D, 1)),
+    });
+    expect((await approveGate(work, { kind: "unlock", target: "app", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve tf-unlock app --plan ${D}`);
+    const stale: string[] = [];
+    expect(await approveGate(work, { kind: "unlock", target: "app", plan: old, dryRun: true, log: (l) => void stale.push(l) })).toEqual({ code: 1, command: "" });
+    expect(stale[0]).toContain(`waits for ${D}, not ${old}`);
+    expect((await approveGate(work, { kind: "ephemeral", target: "7", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve tf-ephemeral pr-7 --plan ${D}`);
+    expect((await approveGate(work, { kind: "ephemeral", target: "pr-7", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve tf-ephemeral pr-7 --plan ${D}`);
+    expect((await approveGate(work, { kind: "ephemeral", target: "8", plan: D, dryRun: true, log: () => {} })).code).toBe(1);
+    await expect(approveGate(work, { kind: "ephemeral", target: "seven", plan: D, dryRun: true, log: () => {} })).rejects.toThrow(/pull request's number/);
+    await expect(approveGate(work, { kind: "unlock", target: "app", dryRun: true, log: () => {} })).rejects.toThrow(/needs --plan <digest>/);
+  });
+});
+
+describe("the chant approve runs", () => {
+  it("is the bin of the @intentius/chant package installed with terragucci, before any chant on the path", () => {
+    const dir = tmp("tg-chant-bin-");
+    write(dir, { "node_modules/@intentius/chant/package.json": JSON.stringify({ name: "@intentius/chant", bin: { chant: "./bin/chant" } }), "node_modules/@intentius/chant/bin/chant": "#!/bin/sh\n", "a/b/c/.keep": "" });
+    expect(realpathSync(installedChant([join(dir, "a", "b", "c")])!)).toBe(realpathSync(join(dir, "node_modules/@intentius/chant/bin/chant")));
+    expect(installedChant([tmp("tg-no-chant-")])).toBeUndefined();
+    expect(chantCommand(dir, { chant: "/x/chant" })).toBe("/x/chant");
+    // From this checkout, the package the repo installs.
+    expect(chantCommand(tmp("tg-anywhere-"))).toMatch(/@intentius[\\/]chant[\\/]bin[\\/]chant$/);
   });
 });
