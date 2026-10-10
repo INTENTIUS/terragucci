@@ -121,8 +121,8 @@ jobs:
           retention-days: 30
   sandbox-break:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
-    needs: sandbox-modules
+    timeout-minutes: 180
+    needs: sandbox-reports
     if: always()
     concurrency:
       group: terragucci-sandbox
@@ -162,7 +162,7 @@ jobs:
           docker info --format '{{.RegistryConfig.Mirrors}}'
       - name: Use the newest published release
         run: echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"
-      - name: Prove the locking claims under BREAK on the sandbox
+      - name: Prove the locking and report claims under BREAK on the sandbox
         env:
           TERRAGUCCI_SANDBOX_TOKEN: '${{ secrets.TERRAGUCCI_SANDBOX_TOKEN }}'
         run: just sandbox prove --break
@@ -171,7 +171,7 @@ jobs:
         run: |
           f="/tmp/terragucci-sandbox/prove.json"
           [ -f "$f" ] || exit 0
-          { echo "Release $(jq -r .release "$f"), the locking claims under BREAK"; echo; echo "| Claim | Break |"; echo "|---|---|"; jq -r '.claims[] | "| \(.claim) | \(.break) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "Release $(jq -r .release "$f"), the locking and report claims under BREAK"; echo; echo "| Claim | Break |"; echo "|---|---|"; jq -r '.claims[] | "| \(.claim) | \(.break) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Reset the sandbox
         if: always()
         env:
@@ -318,6 +318,74 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sandbox-prove-pull-request
+          path: |
+            /tmp/terragucci-sandbox/prove.json
+            /tmp/terragucci-sandbox/logs/
+          if-no-files-found: ignore
+          retention-days: 30
+  sandbox-reports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: sandbox-modules
+    if: always()
+    concurrency:
+      group: terragucci-sandbox
+      cancel-in-progress: false
+    env:
+      TERRAGUCCI_SANDBOX_DIR: /tmp/terragucci-sandbox
+    steps:
+      - name: Check the sandbox token
+        env:
+          TERRAGUCCI_SANDBOX_TOKEN: '${{ secrets.TERRAGUCCI_SANDBOX_TOKEN }}'
+        run: |
+          if [ -z "$TERRAGUCCI_SANDBOX_TOKEN" ]; then
+            echo "::error::The repo secret TERRAGUCCI_SANDBOX_TOKEN is not set. Add a token that can push to INTENTIUS/terragucci-sandbox and administer it: a fine-grained token on that repo with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or a classic token with repo and workflow, from an admin of the repo."
+            exit 1
+          fi
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Install
+        run: npm ci
+      - name: Pull Docker Hub images through a mirror
+        run: |
+          conf=/etc/docker/daemon.json
+          { sudo cat "$conf" 2>/dev/null || echo '{}'; } | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$conf"
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
+      - name: Use the newest published release
+        run: echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"
+      - name: Prove the reports phase on the sandbox
+        env:
+          TERRAGUCCI_SANDBOX_TOKEN: '${{ secrets.TERRAGUCCI_SANDBOX_TOKEN }}'
+        run: just sandbox prove reports
+      - name: List the verdicts
+        if: always()
+        run: |
+          f="/tmp/terragucci-sandbox/prove.json"
+          [ -f "$f" ] || exit 0
+          { echo "Release $(jq -r .release "$f"), phase reports"; echo; echo "| Claim | Result |"; echo "|---|---|"; jq -r '.claims[] | "| \(.claim) | \(.verdict) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Reset the sandbox
+        if: always()
+        env:
+          TERRAGUCCI_SANDBOX_TOKEN: '${{ secrets.TERRAGUCCI_SANDBOX_TOKEN }}'
+        run: '[ -z "$TERRAGUCCI_SANDBOX_TOKEN" ] || just sandbox reset'
+      - name: Keep the verdicts and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sandbox-prove-reports
           path: |
             /tmp/terragucci-sandbox/prove.json
             /tmp/terragucci-sandbox/logs/
