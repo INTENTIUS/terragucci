@@ -446,6 +446,21 @@ export interface ProjectSettings {
   /** Environment variables every job gets. Values only, never secrets. */
   env?: Record<string, string>;
   /**
+   * The runner each generated job runs on: a label, a list of labels the
+   * runner must all carry, or on GitHub a runner group; or a map of
+   * `default`, `plan`, `apply` and `drift` to one of those. Rendered as
+   * `runs-on` on GitHub and Forgejo and as `tags` on GitLab. Unset, the jobs
+   * run where they always have.
+   */
+  runner?: RunnerSettings;
+  /**
+   * The names of CI secrets and variables the jobs that plan, apply and check
+   * drift get as environment variables of the same name, such as
+   * TF_VAR_db_password: never their values. GitHub and Forgejo; GitLab hands
+   * every job its CI/CD variables already, so there the key changes nothing.
+   */
+  pass?: PassSettings;
+  /**
    * The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, such as a collector's API
    * key, and `trace_url`: a link to a run's trace with `{trace_id}` in it
    * (Grafana's Explore, Tempo, Jaeger), which the report links.
@@ -543,6 +558,81 @@ export function responseTo(settings: ProjectSettings, event: RespondEvent): stri
   return settings.respond?.[event] ?? RESPONSES[event][0];
 }
 
+/** One runner: a label, every label of a list, or a GitHub runner group with any labels its runners must also carry. */
+export type RunnerSpec = string | string[] | { group: string; labels?: string[] };
+
+/** `runner`: one runner for every job, or one per stage over a default. */
+export type RunnerSettings = RunnerSpec | Partial<Record<RunnerStage | "default", RunnerSpec>>;
+
+/** The stages `runner` can name apart; every other job runs on `default`. */
+export const JOB_STAGES = ["plan", "apply", "drift"] as const;
+export type RunnerStage = (typeof JOB_STAGES)[number];
+
+/** `pass`: secret and variable names handed to the jobs as environment variables. */
+export interface PassSettings {
+  secrets?: string[];
+  vars?: string[];
+}
+
+/** Whether `runner` is a map of stage to runner, rather than one runner. */
+export function runnerByStage(v: RunnerSettings): v is Partial<Record<RunnerStage | "default", RunnerSpec>> {
+  return isObject(v) && !("group" in v);
+}
+
+const JOB_LABEL = /^[^\s,]+$/;
+const JOB_STAGE_KEYS = ["default", ...JOB_STAGES];
+
+function runnerSpecProblems(v: unknown, where: string, forge: unknown): string[] {
+  const label = (x: unknown): boolean => typeof x === "string" && JOB_LABEL.test(x);
+  const labels = (x: unknown): boolean => Array.isArray(x) && x.length > 0 && x.every(label) && new Set(x).size === x.length;
+  if (typeof v === "string") return label(v) ? [] : [`${where} must be a runner label, such as self-hosted, with no spaces or commas`];
+  if (Array.isArray(v)) return labels(v) ? [] : [`${where} must be a list of distinct runner labels, such as [self-hosted, linux]`];
+  if (!isObject(v) || !("group" in v)) return [`${where} must be a runner label, a list of labels, or a map with group`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (k !== "group" && k !== "labels") out.push(`${where}.${k} is not a setting (settings: group, labels)`);
+  if (!(typeof v.group === "string" && v.group.trim() !== "")) out.push(`${where}.group must name a GitHub runner group`);
+  if (v.labels !== undefined && !labels(v.labels)) out.push(`${where}.labels must be a list of distinct runner labels`);
+  if (forge !== undefined && forge !== "github") out.push(`${where}.group: runner groups are GitHub's; on ${String(forge)} give a label or a list of labels`);
+  return out;
+}
+
+/** The problems with `runner`, for `forge` when it is known. */
+export function runnerProblems(v: unknown, where: string, forge?: unknown): string[] {
+  if (!runnerByStage(v as RunnerSettings)) return runnerSpecProblems(v, where, forge);
+  const m = v as Record<string, unknown>;
+  if (Object.keys(m).length === 0) return [`${where} must name a runner, or map ${JOB_STAGE_KEYS.join(", ")} to one`];
+  return Object.entries(m).flatMap(([k, spec]) => (JOB_STAGE_KEYS.includes(k) ? runnerSpecProblems(spec, `${where}.${k}`, forge) : [`${where}.${k} is not a setting (settings: ${JOB_STAGE_KEYS.join(", ")}, or group and labels for one GitHub runner group)`]));
+}
+
+/** Names `pass` refuses: the forges refuse a secret under these prefixes, and terragucci sets the rest in the jobs itself. */
+const PASS_RESERVED_PREFIXES = ["GITHUB_", "GITEA_", "FORGEJO_", "TG_", "TERRAGUCCI_"];
+const PASS_RESERVED = ["TF_IN_AUTOMATION", "TF_INPUT"];
+
+/** The problems with `pass`: lists of secret and variable names, each a name a job's environment takes, none listed twice or set by `env` too. */
+export function passProblems(v: unknown, where: string, env?: unknown): string[] {
+  if (!isObject(v)) return [`${where} must be a map (settings: secrets, vars)`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (k !== "secrets" && k !== "vars") out.push(`${where}.${k} is not a setting (settings: secrets, vars)`);
+  const seen = new Set<string>();
+  for (const k of ["secrets", "vars"] as const) {
+    const list = v[k];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || list.length === 0) {
+      out.push(`${where}.${k} must be a list of ${k === "secrets" ? "secret" : "variable"} names, such as [TF_VAR_db_password]`);
+      continue;
+    }
+    for (const name of list) {
+      if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) out.push(`${where}.${k}: ${JSON.stringify(name)} is not a name; give the name of the ${k === "secrets" ? "secret" : "variable"}, such as TF_VAR_db_password, never its value`);
+      else if (PASS_RESERVED_PREFIXES.some((p) => name.toUpperCase().startsWith(p)) || PASS_RESERVED.includes(name)) out.push(`${where}.${k}: ${name} is reserved: the forge refuses a secret named ${PASS_RESERVED_PREFIXES.slice(0, 3).join(", ")}..., and terragucci sets ${PASS_RESERVED_PREFIXES.slice(3).join(", ")}..., ${PASS_RESERVED.join(" and ")} itself`);
+      else if (seen.has(name)) out.push(`${where}: ${name} is listed twice; a job gets one variable of that name`);
+      else if (isObject(env) && name in env) out.push(`${where}: env sets ${name} too; set it in env or pass it, not both`);
+      seen.add(name as string);
+    }
+  }
+  if (v.secrets === undefined && v.vars === undefined) out.push(`${where} must list secrets or vars`);
+  return out;
+}
+
 /** `cost: true`, or the secret holding the estimator's key and the command to run instead of Infracost. */
 export type CostSettings = true | { key_secret?: string; command?: string; approve_above?: number };
 
@@ -632,7 +722,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -737,6 +827,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
   if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
   if (s.ephemeral !== undefined) checkEphemeral(s.ephemeral, `${where}.ephemeral`, problems, s);
+  if (s.runner !== undefined) problems.push(...runnerProblems(s.runner, `${where}.runner`, s.forge));
+  if (s.pass !== undefined) problems.push(...passProblems(s.pass, `${where}.pass`, s.env));
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }

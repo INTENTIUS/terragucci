@@ -1,7 +1,7 @@
 ---
 title: Add terragucci to a repo
 description: Write the pipeline for GitHub, GitLab or Forgejo, give it a token and cloud roles, require its status, and get a plan note on the next pull request.
-claims: [boot, check, affected, fork-no-plan]
+claims: [boot, check, affected, fork-no-plan, runner-label]
 prompt: |
   Read https://intentius.io/terragucci/guides/add-to-a-repo/ and https://intentius.io/terragucci/getting-started/agents/.
   Set up terragucci in this repository for its forge.
@@ -28,7 +28,7 @@ A plan note and a `terragucci/plan` status on every pull request or merge reques
 |---|---|---|---|
 | Pipeline file | `.github/workflows/terragucci.yml` | `.gitlab/terragucci.yml`, included from `.gitlab-ci.yml` | `.forgejo/workflows/terragucci.yml` |
 | Hosts `init` knows | github.com | gitlab.com, `gitlab.*` | codeberg.org, `forgejo.*`, `gitea.*` |
-| Runner | Actions enabled | one that runs Docker images | Actions enabled, a runner labelled `docker` |
+| Runner | Actions enabled | one that runs Docker images | Actions enabled, a runner labelled `docker` or the one [`runner`](#self-hosted-runners) names |
 | Token | the run's `github.token` | `GITLAB_TOKEN` variable, `api` scope | the run's own token |
 | Cloud roles over OIDC | GitHub's identity token | `id_tokens` | Forgejo 15 and Runner 12.5 or later |
 | Require | `terragucci/plan` in branch protection | "Pipelines must succeed" | `terragucci/plan` in branch protection |
@@ -36,6 +36,18 @@ A plan note and a `terragucci/plan` status on every pull request or merge reques
 | Two pushes' applies | side by side | side by side | side by side, each push to the default branch in a group of its own commit |
 
 Self-managed GitLab works the same. See [applies side by side](/terragucci/reference/pipeline/#applies-side-by-side).
+
+## Self-hosted runners
+
+```yaml
+runner:
+  default: [self-hosted, linux]
+  apply: [self-hosted, prod]
+```
+
+Every job then asks for a runner with both labels of its stage: `runs-on` on GitHub and Forgejo, `tags` on GitLab. Here the apply jobs run on runners labelled `prod`, such as ones inside the network the apply role reaches, and every other job on the rest. `runner: [self-hosted, linux]` alone puts every job on one set. On GitHub, `group: <name>` picks a runner group.
+
+Each job runs in terragucci's image, so the runner must start containers: Docker on a GitHub runner, the Docker executor on GitLab, a `docker://` label on Forgejo. Run `npx terragucci init` to write the labels in; [Runners](/terragucci/reference/config/#runners) has the rest.
 
 ## Agent features
 
