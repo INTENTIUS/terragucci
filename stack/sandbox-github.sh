@@ -499,7 +499,7 @@ github.com|tips|the plan note counts the tips the run report holds, and each tip
 github.com|comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed
 github.com|comment-apply|/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused
 github.com|policy-override|a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing
-github.com|apply-serial|two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and applies nothing beside it, none is cancelled, and each commit ends with a terragucci/apply success
+github.com|apply-serial|two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and the newer applies the tree, none is cancelled, and each commit ends with a terragucci/apply success
 github.com|explain-refusal|after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step
 github.com|approve-command|terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing
 github.com|pr-apply-lock|with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock
@@ -991,15 +991,16 @@ claim_pr_lock_fmt() {
 }
 
 # apply-serial: module-bump merges, and once its wave 1 is applying the
-# orders-note pull request merges too. No apply of one run overlaps one of
-# the other, except a wave that stood down for the newer push (it applied
-# nothing), none is cancelled, and each commit ends with one
-# terragucci/apply success, the older one's saying it was superseded.
+# orders-note pull request merges too. The older run stands down for the
+# newer push: its commit's terragucci/apply says it was superseded, while
+# the newer one's applies the tree. None is cancelled, and wave 1 of the
+# older run starts first. Waves of the two runs may run side by side (roots
+# take turns at their state lock), so their times are listed, not compared.
 # BREAK: every wave's stand-down is cut from the pipeline (break_pipeline),
 # so the older run applies its waves after the newer push lands and its
 # commit says applied, not superseded. The waves need not overlap in time.
 claim_apply_serial() {
-  local m since sha1 sha2 run1 run2 applying spans overlaps cancelled first_order c1 c2 s1 s2 ran
+  local m since sha1 sha2 run1 run2 applying spans cancelled first_order c1 c2 s1 s2 ran
   if [ -z "${b:-}" ] || ! step change module-bump; then
     unrun apply-serial "no orders-note pull request, or change module-bump failed"
     return 0
@@ -1026,25 +1027,20 @@ claim_apply_serial() {
   [ -z "$run1" ] || gh run watch "$run1" -R "$REPO" --interval 10 >/dev/null 2>&1 || true
   spans="$(for r in $run1 $run2; do
     gh api "repos/$REPO/actions/runs/$r/jobs?per_page=100" | jq -c --arg r "$r" '.jobs[] | select(.name | startswith("apply-wave-"))
-      | {run: $r, id, job: .name, conclusion, steps: [.steps[] | select(.name | startswith("Apply wave")) | select(.started_at != null and .completed_at != null)]}
-      | select(.steps | length > 0) | {run, id, job, conclusion, start: .steps[0].started_at, end: .steps[0].completed_at}' \
-      | while read -r s; do
-        # A wave that stood down for the newer push applied nothing, so its span is no overlap.
-        if gh api "repos/$REPO/actions/jobs/$(jq -r .id <<<"$s")/logs" 2>/dev/null | grep -v 'echo "' | grep -q "standing down"; then jq -c '. + {stood: true}' <<<"$s"; else jq -c '. + {stood: false}' <<<"$s"; fi
-      done
+      | {run: $r, job: .name, conclusion, steps: [.steps[] | select(.name | startswith("Apply wave")) | select(.started_at != null and .completed_at != null)]}
+      | select(.steps | length > 0) | {run, job, conclusion, start: .steps[0].started_at, end: .steps[0].completed_at}'
   done | jq -s . 2>/dev/null || echo '[]')"
-  overlaps="$(jq '[.[] as $x | .[] as $y | select($x.run < $y.run and ($x.stood | not) and $x.start < $y.end and $y.start < $x.end)] | length' <<<"$spans")"
   cancelled="$(for r in $run1 $run2; do gh run view "$r" -R "$REPO" --json jobs -q '.jobs[] | select(.conclusion == "cancelled") | .name'; done | tr '\n' ' ')"
   first_order="$(jq -r --arg a "$run1" --arg b "$run2" '([.[] | select(.run == $a and .job == "apply-wave-1")][0].start) < ([.[] | select(.run == $b and .job == "apply-wave-1")][0].start // "~")' <<<"$spans")"
   c1="$(gh run view "$run1" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
   c2="$(gh run view "$run2" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
   s1="$(status_on "$sha1" terragucci/apply)"; s2="$(status_on "$sha2" terragucci/apply)"
-  ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])\(if .stood then " stood down" else "" end)") | join(", ")' <<<"$spans")"
-  if [ "$overlaps" = 0 ] && [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
-    && [ "${s1%% *}" = success ] && [[ "$s1" == *"superseded by a newer push"* ]] && [ "${s2%% *}" = success ]; then
-    verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; no overlap, none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
+  ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])") | join(", ")' <<<"$spans")"
+  if [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
+    && [ "${s1%% *}" = success ] && [[ "$s1" == *"superseded by a newer push"* ]] && [ "${s2%% *}" = success ] && [[ "$s2" == *" applied" ]]; then
+    verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
   else
-    verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; overlaps $overlaps; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
+    verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
   fi
   ( record_state ) || log "could not record the state after the two merges"
 }
