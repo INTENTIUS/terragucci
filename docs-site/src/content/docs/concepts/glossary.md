@@ -17,6 +17,10 @@ A root with a `cloud` block on remote execution runs on HCP Terraform's workers,
 
 The service that hosts your repository and runs its pipelines: GitHub, GitLab or Forgejo. The workflow terragucci writes for yours runs on its runners.
 
+### control repo
+
+A repo whose `terragucci.yml` lists your projects under `projects` and their shared settings under `defaults`. `reconcile` opens a pull request in each project that changes, and each project's own pipeline applies. [Control repo](/terragucci/concepts/control-repo/).
+
 ### unit
 
 A Terragrunt directory with a `terragrunt.hcl`. `terragrunt find` lists units and each is treated as a root. A directory of units is an implicit stack, shown as a report label.

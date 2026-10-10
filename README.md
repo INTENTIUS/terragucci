@@ -46,6 +46,6 @@ Never apply, approve (a pull request review, `terragucci approve`, `chant approv
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Licence
+## License
 
 terragucci is Apache-2.0 ([LICENSE](./LICENSE)) and there is nothing to buy.

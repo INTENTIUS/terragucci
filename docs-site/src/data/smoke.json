@@ -926,6 +926,38 @@
       "commit": "0c494d98"
     },
     {
+      "claim": "terramate-waves",
+      "says": "init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-affected",
+      "says": "a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-sharing",
+      "says": "a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-stale",
+      "says": "the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
       "claim": "atmos-roles",
       "says": "oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack",
       "needs": null,

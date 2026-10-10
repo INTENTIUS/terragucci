@@ -98,7 +98,7 @@ The check job's `tf-check` fails, naming the file, when a generated file:
 
 A higher level overrides only the keys it names. Backend arguments and provider settings merge key by key down through nested maps. Naming another backend type replaces the backend. Setting a key to `null` drops what an earlier level set (`backend: null`, `providers: { aws.dr: null }`, `required_version: null`, `disable_init: null`).
 
-In a control repo, `defaults.generate` comes first, then the project's own `generate`.
+In a [control repo](/terragucci/concepts/control-repo/), `defaults.generate` comes first, then the project's own `generate`.
 
 ## Providers
 
