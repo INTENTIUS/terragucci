@@ -118,7 +118,7 @@ unit "top" {
 | Stage | With an explicit stack |
 |---|---|
 | `init` and every job | runs `terragrunt stack generate` first, so Terragrunt 1.1 or later must be on the path; without it `init` stops with an error naming the stack file |
-| Check | generates the units, then `terragrunt hcl validate --inputs` checks them, so a value the stack file feeds a module that does not declare it fails the check, naming the generated unit |
+| Check | generates the units, then `terragrunt hcl validate --inputs` checks them, so a unit whose template reads a value the stack file does not set fails the check, naming the generated unit |
 | Which units a change reaches | a changed value in the stack file plans the unit it feeds; a changed unit template plans the units generated from it; their dependents wait as usual |
 | Plan note and report | the note lists each stack file and the units it generates; `roots[].terragrunt.stack` is the stack's directory and `stack_file` its `terragrunt.stack.hcl` |
 | Drift | generates the units in a fresh checkout and reports drift by generated unit. The drift pull request leaves a generated unit's drift in the issue, naming its stack file, since that unit's `terragrunt.hcl` is not in the repo |
