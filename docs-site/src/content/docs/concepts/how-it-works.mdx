@@ -7,8 +7,6 @@ import { Steps } from '@astrojs/starlight/components';
 
 `npx terragucci init` writes a pipeline file for your forge; its CI runs everything in terragucci's image. It needs no server or hosted service and keeps state in your backend. The package is Apache-2.0.
 
-The pipeline is made of [chant](/terragucci/concepts/glossary/#chant) stages. chant renders them into your forge's format, and its command line records approvals.
-
 ## A change, start to finish
 
 Each step names its stage and the identity it runs with. All of them run on GitHub, GitLab and Forgejo.
@@ -49,4 +47,4 @@ The plan identity is read-only because pull request code runs with it. Applying 
 - [The tutorial](/terragucci/tutorial/) runs each step on a 15-root example on your laptop.
 - [Waves and approvals](/terragucci/concepts/waves-and-approvals/) explains the waves and the gate.
 - [The approvals runbook](/terragucci/guides/approvals-runbook/) has the commands for signers, pending waves and refusals.
-- [The glossary](/terragucci/concepts/glossary/) defines the chant words and lists the ones that mean something else in Terraform.
+- [The glossary](/terragucci/concepts/glossary/) defines terragucci's words and lists the ones that mean something else in Terraform.

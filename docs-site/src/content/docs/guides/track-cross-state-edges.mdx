@@ -5,7 +5,7 @@ claims: [state-edges, gl-state-edges]
 prompt: |
   Read https://intentius.io/terragucci/guides/track-cross-state-edges/.
   List the terraform_remote_state blocks in this repo's roots and the root whose state each reads, from the backend blocks, and tell me which reads terragucci cannot match to a root.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';

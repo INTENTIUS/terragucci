@@ -7,7 +7,7 @@ prompt: |
   the JSON Schema the page names, and tell me, per project, the deployment frequency, the lead time with
   its split, the change failure rate and the time to restore, and which weeks moved most.
   Read only: write nothing to the bucket.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 [`terragucci estate`](/terragucci/guides/see-every-project/#delivery-metrics) reads the [audit trail](/terragucci/reference/audit-trail/) (`audit.jsonl`) and each project's `index.json` from your bucket. It writes the four DORA metrics for each project and the whole estate to `dora.json` beside `estate.json` and to the Delivery section of `estate.html`.

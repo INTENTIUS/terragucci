@@ -7,7 +7,7 @@ prompt: |
   Run `npx terragucci import atlantis --dry-run` (or `import digger --dry-run` for a digger.yml, `import terrateam --dry-run` for a .terrateam/config.yml) and report what it would write and each setting it lists as not mapped or left out on purpose.
   Then run it without --dry-run, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml and the generated pipeline.
   Do not delete atlantis.yaml, digger.yml or .terrateam/config.yml, and do not create secrets.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## Result
@@ -52,7 +52,7 @@ Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merg
 | Import | `atlantis import <address> <id>` | none | refused; [an `import` block](#left-out-on-purpose) in the change |
 | Remove from state | `atlantis state rm <address>` | none | refused; [a `removed` block](#left-out-on-purpose) in the change |
 | Pass a failed policy | `atlantis approve_policies` | none | refused from a comment; a person `policy.override` lists runs [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) for one root's plan |
-| Approve | the forge's review | the forge's review | [`terragucci approve`](/terragucci/reference/cli/#approve) (it runs [`chant approve`](/terragucci/concepts/glossary/#chant)) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes) |
+| Approve | the forge's review | the forge's review | [`terragucci approve`](/terragucci/reference/cli/#approve) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes) |
 
 With [`atlantis_comments: true`](/terragucci/reference/config/#keys), `atlantis plan`, `atlantis plan -d <dir>` and `atlantis apply` work as the `/terragucci` comments. The alias changes only the words. `atlantis apply` on an open pull request is still refused unless `apply.when: pull-request` is set and its requirements pass. `-p`, `-w`, `--` and `atlantis apply -d` are refused with the reason from the tables here.
 

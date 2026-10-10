@@ -8,7 +8,7 @@ prompt: |
   and time, every policy override with its reason, every refused wave and every failed apply in the
   last 30 days, each with its evidence link.
   Read only: do not run `terragucci audit` without `--check`, and write nothing to the bucket.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -160,7 +160,7 @@ Fetch the record with the store's own CLI, such as `aws s3 cp s3://acme-terraguc
 | Record | Where | What it says | Written by |
 |---|---|---|---|
 | A wave asking for approval | `_gates/tf-apply.jsonl` on `chant/lifecycle`, a `"kind":"pending"` line | the wave, the plan digest it asks for, when, and when the request expires | the apply job, when the wave waits |
-| An approval | `_gates/tf-apply.jsonl`, any other line, in a commit of its own | the wave, the plan digest it binds, who (`resolvedBy`) and when (`timestamp`) | `chant approve` or `terragucci approve`; under `approval: pr-review`, the apply job |
+| An approval | `_gates/tf-apply.jsonl`, any other line, in a commit of its own | the wave, the plan digest it binds, who (`resolvedBy`) and when (`timestamp`) | `terragucci approve`; under `approval: pr-review`, the apply job |
 | A policy override | `_gates/policy-override.jsonl` | the root, its plan digest, the rules it overrides, who, when and the reason | `terragucci override` |
 | A run's report | the bucket, under one path per commit and stage | every root's plan digest and changes, each wave's set digest, approval state and, when it applied nothing, why (`waves[].refused`) | every `tf-plan`, `tf-apply` wave and `tf-drift` run |
 | The index | `index.json` at the project's path | one row per run; `terragucci audit` reads its `tf-apply` rows to find the reports | every upload |

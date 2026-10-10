@@ -6,7 +6,7 @@ prompt: |
   For this repo, list who can take each action in the page's table: read the forge's collaborators and their roles, the branch protection of the default branch and of the approvals branch, the `approval` key in terragucci.yml on the default branch, the principals in the signers file, and the trust policy of each role `oidc` names, through the forge's API or CLI and the cloud's CLI.
   Report each action with the people or roles who can take it, and flag any action that the `approval` mode leaves unprovable.
   Change nothing.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Every terragucci stage is a job in your CI, so the controls you already run decide who can apply to production and show an auditor who did.

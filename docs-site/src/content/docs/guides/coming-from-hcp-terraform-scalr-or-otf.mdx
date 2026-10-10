@@ -8,7 +8,7 @@ prompt: |
   Once I agree, run it without `--dry-run`. Add what the concepts table maps that the import does not write: `policy` with `input: hcp` for an OPA policy set, `steps` for run tasks. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the `terraform.tfvars` files and the generated pipeline.
   List the sensitive variables the import named under `pass` that I must recreate as CI secrets, and each Sentinel policy that needs a Rego rewrite.
   Do not change a `cloud` or `backend` block, do not run `init -migrate-state`, `state pull` or `state push`, and do not create secrets: a person moves the state.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';

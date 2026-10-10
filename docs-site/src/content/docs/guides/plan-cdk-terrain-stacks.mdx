@@ -7,7 +7,7 @@ prompt: |
   Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,
   run `npx cdktn synth` and then `npx terragucci init`, and open a pull request with the result.
   Tell me which stacks init found and whether each one's backend keeps its state outside the job.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';

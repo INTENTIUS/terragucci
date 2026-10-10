@@ -13,6 +13,12 @@ Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub rele
 - Changed default: a pull request that changes a Terragrunt unit also previews the units that depend on it, provisional and outside every digest. Set `terragrunt.dependents: follow` to keep the old behavior ([The terragrunt block](/terragucci/reference/config/#the-terragrunt-block)).
 - Applies now run per root. With stock binaries, two overlapping pushes to one root can fail the newer apply with "Saved plan is stale"; run it again and it plans again ([Two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate)).
 
+## Since 0.4.5
+
+| What | Where |
+|---|---|
+| Approvals are one command, `terragucci approve`, for waves, migrations, state exports, lock releases and pull request environments, and installing terragucci is enough | [approve](/terragucci/reference/cli/#approve) |
+
 ## Applies and locking
 
 | What | Where |

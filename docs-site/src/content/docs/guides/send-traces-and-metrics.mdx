@@ -7,7 +7,7 @@ prompt: |
   Add `OTEL_EXPORTER_OTLP_ENDPOINT` under `env:` in terragucci.yml, `telemetry.headers_secret` if the collector needs a key, and `dashboards: true`.
   Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the pipeline and observability/terragucci/.
   List the secret I must add for my forge; do not create it.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Shot from '../../../components/Shot.astro';

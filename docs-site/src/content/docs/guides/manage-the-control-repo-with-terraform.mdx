@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/manage-the-control-repo-with-terraform/.
   Read the terragucci.yml of the control repo I name and write a Terraform configuration that holds the same defaults and projects with terragucci_defaults and terragucci_project, plus the import blocks that adopt each of them.
   Run `tofu plan` (or `terraform plan`) with the provider built as the page shows, and show me the plan. It must show no change other than the imports.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
