@@ -190,6 +190,7 @@ export default defineConfig({
 						{ label: 'Plan grouping', slug: 'concepts/why-plans-are-grouped' },
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
 						{ label: 'Locking and staleness with choudoufu', slug: 'concepts/locking-and-staleness' },
+						{ label: 'Control repo', slug: 'concepts/control-repo' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
