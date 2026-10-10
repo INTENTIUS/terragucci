@@ -17,12 +17,23 @@
  *
  * The waves are the dependency layers of the instances, as Terragrunt units'
  * are: no instance of a wave depends on another instance of it.
+ *
+ * Describe runs before the job has a cloud credential, so it skips the YAML
+ * functions that read state (`!terraform.state`, `!terraform.output`) and
+ * stores (`!store`, refused). A var set by `!terraform.state <component>
+ * [<stack>] <output>` is a read: its upstream is a dependency, and the stage
+ * fills the var from the upstream's outputs once it has credentials
+ * (fillReads), holding the instance back while the upstream has no state, as
+ * a root that reads an unapplied `terraform_remote_state` is held back. Each
+ * instance's edges are written beside it in `.terragucci-atmos.json`, which
+ * the stages read for affected selection and for those reads.
  */
+import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { WORKSPACE_FILE } from "./backend";
-import { terragruntExec } from "./binary-env";
+import { WORKSPACE_FILE, workspaceInit } from "./backend";
+import { binaryEnv, terragruntExec } from "./binary-env";
 import { ConfigError } from "./config";
 import { unitWaves } from "./terragrunt";
 
@@ -59,8 +70,69 @@ export interface AtmosInstance {
   backendType: string;
   backend: Record<string, unknown>;
   providers: Record<string, unknown>;
-  /** The instances it depends on, by path. */
+  /** The instances it depends on, by path: `dependencies.components`, `settings.depends_on`, and the upstream of each read. */
   dependencies: string[];
+  /** The vars it reads from another instance's outputs, which the stage fills in. */
+  reads: AtmosRead[];
+}
+
+/** A var set by `!terraform.state` or `!terraform.output`: the stage reads it from the upstream's state. */
+export interface AtmosRead {
+  /** The var it sets. */
+  var: string;
+  /** The instance whose outputs it reads, by path. */
+  upstream: string;
+  /** The output, then the keys into its value: `.subnets.private` is `["subnets", "private"]`. */
+  output: string[];
+  /** The function as describe left it. */
+  function: string;
+}
+
+/** The file beside each instance naming its edges: `{ dependencies, reads }`. */
+export const EDGES_FILE = ".terragucci-atmos.json";
+
+/** The varfile the stage writes with the values of an instance's reads, before it plans. */
+export const READS_VARFILE = "terragucci-atmos-reads.auto.tfvars.json";
+
+/** The YAML functions describe skips, since they read state or a store the job has no credential for yet. */
+export const SKIPPED_FUNCTIONS = ["terraform.state", "terraform.output", "store", "store.get"] as const;
+
+const FUNCTION = /^!(terraform\.state|terraform\.output|store\.get|store)(\s|$)/;
+
+/** Split a function's arguments on spaces, keeping a quoted one whole, its quotes dropped. */
+function splitArgs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)) out.push(m[1] ?? m[2] ?? m[3]);
+  return out;
+}
+
+/**
+ * The read a var's value names, when it is a `!terraform.state` or
+ * `!terraform.output` that describe skipped; undefined for any other value.
+ * Refused: a store, a function inside a map or a list, and an output
+ * expression other than an output name or a path of keys into it.
+ */
+export function parseRead(path: string, stack: string, name: string, value: unknown): Omit<AtmosRead, "upstream"> & { component: string; stack: string } | undefined {
+  if (typeof value !== "string") {
+    const nested = (v: unknown): string | undefined =>
+      typeof v === "string" ? (FUNCTION.test(v) ? v : undefined) : v && typeof v === "object" ? Object.values(v).map(nested).find((x) => x) : undefined;
+    const inner = nested(value);
+    if (inner) throw new ConfigError(`${path} sets ${name} with ${inner.split(/\s/)[0]} inside a map or a list; terragucci reads a whole var only, so give the function a var of its own`);
+    return undefined;
+  }
+  const m = value.match(FUNCTION);
+  if (!m) return undefined;
+  const fn = m[1];
+  if (fn === "store" || fn === "store.get") {
+    throw new ConfigError(`${path} sets ${name} with !${fn}, which terragucci does not read in the job; output the value from an instance and read it with !terraform.state`);
+  }
+  const args = splitArgs(value.slice(m[0].length));
+  if (args.length !== 2 && args.length !== 3) throw new ConfigError(`${path} sets ${name} with "${value}"; terragucci reads !${fn} <component> [<stack>] <output>`);
+  const expr = args[args.length - 1];
+  if (!/^\.?[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/.test(expr)) {
+    throw new ConfigError(`${path} sets ${name} with "${value}", whose expression ${expr} terragucci does not evaluate; read an output by name or by a path of keys, such as .subnets.private`);
+  }
+  return { var: name, component: args[0], stack: args.length === 3 ? args[1] : stack, output: expr.replace(/^\./, "").split("."), function: value };
 }
 
 export interface AtmosOptions {
@@ -83,7 +155,7 @@ export async function describeStacks(repo: string, options: AtmosOptions = {}): 
   const exec = options.exec ?? terragruntExec;
   let out: Awaited<ReturnType<TerragruntExec>>;
   try {
-    out = await exec(atmos, ["describe", "stacks", "--format", "json", "--component-types", "terraform"], { cwd: repo, env: { ...ATMOS_ENV } });
+    out = await exec(atmos, ["describe", "stacks", "--format", "json", "--component-types", "terraform", ...SKIPPED_FUNCTIONS.flatMap((f) => ["--skip", f])], { cwd: repo, env: { ...ATMOS_ENV } });
   } catch (e) {
     throw new ConfigError(`atmos describe stacks did not run (${(e as Error).message}); put Atmos ${ATMOS_VERSION} on the path, or set TERRAGUCCI_ATMOS`);
   }
@@ -136,7 +208,7 @@ function rawEdges(c: Obj): RawEdge[] {
  * refused: Atmos's order is explicit, so a missing upstream is a mistake.
  */
 export function atmosInstances(stacks: Obj): AtmosInstance[] {
-  type Found = AtmosInstance & { raw: RawEdge[]; ctx: Obj };
+  type Found = AtmosInstance & { raw: RawEdge[]; ctx: Obj; rawReads: ReturnType<typeof parseRead>[] };
   const found: Found[] = [];
   const disabled = new Set<string>();
   for (const [stack, s] of Object.entries(stacks)) {
@@ -154,6 +226,7 @@ export function atmosInstances(stacks: Obj): AtmosInstance[] {
           throw new ConfigError(`${path} sets ${key}, which terragucci does not carry into the jobs yet; move it into the component's Terraform, or leave the instance out with metadata.enabled: false`);
         }
       }
+      const rawReads = Object.entries(obj(c.vars)).map(([name, v]) => parseRead(path, stack, name, v)).filter((r) => r !== undefined);
       const componentPath = str(obj(c.component_info).component_path) ?? `components/terraform/${str(meta.component) ?? str(c.component) ?? component}`;
       found.push({
         path,
@@ -166,8 +239,10 @@ export function atmosInstances(stacks: Obj): AtmosInstance[] {
         backend: obj(c.backend),
         providers: obj(c.providers),
         dependencies: [],
+        reads: [],
         raw: rawEdges(c),
         ctx: obj(c.vars),
+        rawReads,
       });
     }
   }
@@ -192,10 +267,20 @@ export function atmosInstances(stacks: Obj): AtmosInstance[] {
       if (!byPath.has(target)) throw new ConfigError(`${f.path} depends on ${target}, which no stack deploys`);
       deps.add(target);
     }
+    for (const r of f.rawReads) {
+      const upstream = `${r!.stack}/${r!.component}`;
+      const what = `${f.path} reads ${r!.var} from ${upstream} (${r!.function})`;
+      if (upstream === f.path) throw new ConfigError(`${what}, its own state`);
+      if (disabled.has(upstream)) throw new ConfigError(`${what}, which is disabled, so nothing ever applies it`);
+      if (!byPath.has(upstream)) throw new ConfigError(`${what}, which no stack deploys`);
+      // A read is an edge: the instance waits for the upstream it reads.
+      deps.add(upstream);
+      f.reads.push({ var: r!.var, upstream, output: r!.output, function: r!.function });
+    }
     f.dependencies = [...deps].sort();
   }
   return found
-    .map(({ raw: _r, ctx: _c, ...i }) => i)
+    .map(({ raw: _r, ctx: _c, rawReads: _rr, ...i }) => i)
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
@@ -256,7 +341,14 @@ function copyComponent(src: string, dest: string, componentDir: string): void {
 /** The files Atmos generates for an instance, by name: its varfile, backend and provider override. */
 export function generatedFiles(i: AtmosInstance): Record<string, string> {
   const json = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
-  const out: Record<string, string> = { "terragucci-atmos.auto.tfvars.json": json(i.vars), [WORKSPACE_FILE]: `${i.workspace}\n` };
+  // A read's var is left out: the stage writes it, read from the upstream's state, before it plans.
+  const reads = new Set(i.reads.map((r) => r.var));
+  const vars = Object.fromEntries(Object.entries(i.vars).filter(([k]) => !reads.has(k)));
+  const out: Record<string, string> = {
+    "terragucci-atmos.auto.tfvars.json": json(vars),
+    [WORKSPACE_FILE]: `${i.workspace}\n`,
+    [EDGES_FILE]: json({ dependencies: i.dependencies, reads: i.reads }),
+  };
   if (i.backendType === "cloud") out["backend.tf.json"] = json({ terraform: { cloud: i.backend } });
   else if (i.backendType) out["backend.tf.json"] = json({ terraform: { backend: { [i.backendType]: i.backend } } });
   if (Object.keys(i.providers).length > 0) out["providers_override.tf.json"] = json({ provider: i.providers });
@@ -291,4 +383,149 @@ export async function atmosWrite(repo: string, options: AtmosOptions = {}): Prom
   if (instances.length === 0) throw new ConfigError("atmos describe stacks lists no Terraform instance that is neither abstract nor disabled");
   writeInstances(repo, instances);
   return instances.map((i) => `${i.path}: ${i.componentPath} in workspace ${i.workspace}`);
+}
+
+/** The edges `terragucci atmos write` left beside the instance at `dir`; undefined for a directory that is no instance. */
+export function atmosEdges(dir: string): { dependencies: string[]; reads: AtmosRead[] } | undefined {
+  const file = join(dir, EDGES_FILE);
+  if (!existsSync(file)) return undefined;
+  try {
+    const v = JSON.parse(readFileSync(file, "utf-8")) as { dependencies?: unknown; reads?: unknown };
+    const dependencies = Array.isArray(v.dependencies) ? v.dependencies.filter((d): d is string => typeof d === "string") : [];
+    const reads = (Array.isArray(v.reads) ? v.reads : []).filter(
+      (r): r is AtmosRead => !!r && typeof r === "object" && typeof (r as AtmosRead).var === "string" && typeof (r as AtmosRead).upstream === "string" && Array.isArray((r as AtmosRead).output),
+    );
+    return { dependencies, reads };
+  } catch {
+    return undefined;
+  }
+}
+
+/** For each root that is an Atmos instance, the instances whose state it reads: its reads' upstreams. */
+export function atmosStateReads(repo: string, roots: readonly string[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const r of roots) {
+    const reads = atmosEdges(join(repo, r))?.reads ?? [];
+    if (reads.length > 0) out.set(r, new Set(reads.map((x) => x.upstream)));
+  }
+  return out;
+}
+
+/** For each root that is an Atmos instance, every instance it depends on: `dependencies.components` and its reads. */
+export function atmosDependencies(repo: string, roots: readonly string[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const r of roots) {
+    const deps = atmosEdges(join(repo, r))?.dependencies ?? [];
+    if (deps.length > 0) out.set(r, new Set(deps));
+  }
+  return out;
+}
+
+/** An upstream's outputs, by name, or why they could not be read. */
+export type UpstreamOutputs = { outputs: Record<string, unknown> } | { error: string };
+
+/**
+ * The outputs in the state of the instance at `dir`, read with `binary` in
+ * its own workspace: init in default, select the workspace, then `output
+ * -json`. An instance nothing applied has none. `turn` serialises the init
+ * with the job's other inits, which share one provider cache.
+ */
+export async function upstreamOutputs(binary: string, dir: string, env: NodeJS.ProcessEnv, turn: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn()): Promise<UpstreamOutputs> {
+  const run = (args: string[], e: NodeJS.ProcessEnv): Promise<{ code: number | null; out: string; err: string }> =>
+    new Promise((done) => {
+      const child = spawn(binary, [`-chdir=${dir}`, ...args], { env: binaryEnv(e), stdio: ["ignore", "pipe", "pipe"] });
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      child.stdout.on("data", (d: Buffer) => out.push(d));
+      child.stderr.on("data", (d: Buffer) => err.push(d));
+      child.on("error", (x) => err.push(Buffer.from(x.message)));
+      child.on("close", (code) => done({ code, out: Buffer.concat(out).toString("utf-8"), err: Buffer.concat(err).toString("utf-8") }));
+    });
+  const tail = (s: string): string => s.trim().split("\n").slice(-6).join("\n");
+  const ws = workspaceInit(env, dir);
+  const init = await turn(() => run(["init", "-input=false", "-no-color"], ws?.init ?? env));
+  if (init.code !== 0) return { error: `init failed: ${tail(init.err || init.out)}` };
+  if (ws) {
+    const sel = await run(ws.select, ws.selectEnv);
+    if (sel.code !== 0) return { error: `workspace select failed: ${tail(sel.err || sel.out)}` };
+  }
+  const got = await run(["output", "-json", "-no-color"], env);
+  if (got.code !== 0) return { error: `output -json failed: ${tail(got.err || got.out)}` };
+  try {
+    const outputs = obj(JSON.parse(got.out || "{}"));
+    return { outputs: Object.fromEntries(Object.entries(outputs).map(([k, v]) => [k, obj(v).value])) };
+  } catch {
+    return { error: `output -json printed no JSON: ${tail(got.out)}` };
+  }
+}
+
+/** The value a read names in its upstream's outputs, or undefined when the outputs do not have it. */
+export function readValue(outputs: Record<string, unknown>, output: readonly string[]): { value: unknown } | undefined {
+  const [name, ...keys] = output;
+  if (!(name in outputs)) return undefined;
+  let v: unknown = outputs[name];
+  for (const k of keys) {
+    if (!v || typeof v !== "object" || Array.isArray(v) || !(k in (v as Obj))) return undefined;
+    v = (v as Obj)[k];
+  }
+  return { value: v };
+}
+
+/** What filling an instance's reads came to. */
+export interface FilledReads {
+  /** The reads whose upstream has no such value yet: the instance waits for these upstreams to apply. */
+  waiting: { read: AtmosRead; why: string }[];
+  /** Upstreams whose state could not be read at all. */
+  errors: string[];
+  /** The vars written, by name. */
+  filled: string[];
+}
+
+/**
+ * Fill the reads of the instance at `<repo>/<root>`: read each upstream's
+ * outputs once (`outputsOf`, which the caller caches) and write the values to
+ * READS_VARFILE. A read whose upstream has no state, or no such output yet,
+ * is waiting, and nothing is written: the instance must not plan on a stand-in.
+ */
+export async function fillReads(repo: string, root: string, outputsOf: (upstream: string) => Promise<UpstreamOutputs>): Promise<FilledReads> {
+  const edges = atmosEdges(join(repo, root));
+  const result: FilledReads = { waiting: [], errors: [], filled: [] };
+  if (!edges || edges.reads.length === 0) return result;
+  const values: Record<string, unknown> = {};
+  for (const read of edges.reads) {
+    const got = await outputsOf(read.upstream);
+    if ("error" in got) {
+      result.errors.push(`${root} reads ${read.var} from ${read.upstream}, whose state could not be read: ${got.error}`);
+      continue;
+    }
+    const v = readValue(got.outputs, read.output);
+    if (!v) {
+      const why = Object.keys(got.outputs).length === 0 ? "has no state yet" : `has no output ${read.output.join(".")} yet`;
+      result.waiting.push({ read, why });
+      continue;
+    }
+    values[read.var] = v.value;
+  }
+  if (result.waiting.length === 0 && result.errors.length === 0) {
+    writeFileSync(join(repo, root, READS_VARFILE), `${JSON.stringify(values, null, 2)}\n`);
+    result.filled = Object.keys(values).sort();
+  }
+  return result;
+}
+
+/**
+ * Where each instance keeps its state, as Atmos lays it out, and the
+ * instances whose state it reads: what `config check` lists for each role
+ * without writing the instances. An s3 backend's state is at
+ * `<workspace_key_prefix>/<workspace>/<key>`; another backend's is named by
+ * its workspace alone.
+ */
+export function instanceStates(instances: readonly AtmosInstance[]): { states: Map<string, { bucket?: string; key: string } | undefined>; reads: Map<string, Set<string>> } {
+  const states = new Map<string, { bucket?: string; key: string } | undefined>();
+  for (const i of instances) {
+    const key = str(i.backend.key) ?? "terraform.tfstate";
+    if (i.backendType === "s3") states.set(i.path, { ...(str(i.backend.bucket) ? { bucket: i.backend.bucket as string } : {}), key: `${str(i.backend.workspace_key_prefix) ?? i.component}/${i.workspace}/${key}` });
+    else states.set(i.path, i.backendType ? { key: `${i.backendType}:${i.workspace}` } : undefined);
+  }
+  return { states, reads: new Map(instances.map((i) => [i.path, new Set(i.reads.map((r) => r.upstream))])) };
 }

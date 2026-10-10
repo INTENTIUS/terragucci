@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { rootRoleEnv } from "../roles";
 import { workspaceEnv, workspaceInit } from "../backend";
-import { effectiveSynth } from "../atmos";
+import { atmosDependencies, effectiveSynth, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
@@ -924,7 +924,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const notices: string[] = [];
   let selected: Set<string> | undefined;
   if (base && synth) {
-    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log);
+    // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
+    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, atmosDependencies(repo, all));
     selected = synthed.selected;
     notices.push(synthed.notice);
   } else if (base) {
@@ -992,6 +993,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // Linked states: the terraform_remote_state blocks of each root, and the plans of the roots this run planned, whose outputs a later layer plans on.
   const blocksOf = drift ? new Map<string, { name: string; upstream: string; repeated: boolean }[]>() : remoteStateReads(repo, all);
   const upstreamPlans = new Map<string, unknown>();
+  // An Atmos instance's reads (../atmos.ts): each upstream's outputs, read once, in its own workspace and with its own role.
+  const outputsRead = new Map<string, Promise<UpstreamOutputs>>();
+  const outputsOf = (up: string): Promise<UpstreamOutputs> => {
+    if (!outputsRead.has(up)) {
+      const upDir = join(repo, up);
+      outputsRead.set(up, binaries.resolve(up).then((b) => b.path, () => binary).then((b) => upstreamOutputs(b, upDir, workspaceEnv(rootRoleEnv(binEnv, up), upDir), initTurn)));
+    }
+    return outputsRead.get(up)!;
+  };
   let redacted = 0;
 
   /** How a root reads each upstream: the links a plan on their planned outputs takes, and the reads the report names. */
@@ -1088,6 +1098,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
         if (sel.status !== 0) return failed(`workspace select failed:\n${tail(sel.stderr || sel.stdout)}`, `${root}: workspace select failed`);
       }
       for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
+      // An Atmos instance that reads another's outputs plans on their values, never on a stand-in: held back while one has none yet.
+      const filled = await fillReads(checkoutOf(root), root, outputsOf);
+      if (filled.errors.length > 0) return failed(filled.errors.join("\n"), `${root}: could not read the state its stacks read`);
+      if (filled.waiting.length > 0) {
+        const after = [...new Set(filled.waiting.map((w) => w.read.upstream))].sort();
+        lines.push(`${root}: held back, ${filled.waiting.map((w) => `${w.read.upstream} ${w.why} (${w.read.var}: ${w.read.function})`).join("; ")}`);
+        return { root, lines, deferred: { unit: root, after, why: `reads ${filled.waiting.map((w) => `${w.read.var} from ${w.read.upstream}, which ${w.why}`).join(", and ")}, so it cannot plan until then`, previewed: false } };
+      }
+      for (const v of filled.filled) lines.push(`${root}: ${v} read from the state its stacks name`);
       stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.

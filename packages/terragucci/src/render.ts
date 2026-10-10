@@ -461,7 +461,7 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
   const loop = rootPins
     ? [
@@ -476,6 +476,8 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
       ];
   return [
     "set -eu",
+    // An Atmos repo: its stack manifests must pass Atmos's own validation before the instances are written from them.
+    ...(atmos ? ['ATMOS_TELEMETRY_ENABLED=false atmos validate stacks || { echo "terragucci: atmos validate stacks failed" >&2; exit 1; }'] : []),
     ...(synth
       ? [
           synthScript(synth),
@@ -1798,7 +1800,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.

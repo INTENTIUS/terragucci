@@ -3,7 +3,7 @@
 // each runs in, and init's pipeline. The last block applies two instances
 // with the real tofu, when it is on the path.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
@@ -18,7 +18,22 @@ import {
   instanceWaves,
   rewriteSources,
   writeInstances,
+  atmosDependencies,
+  atmosEdges,
+  EDGES_FILE,
+  fillReads,
+  instanceStates,
+  parseRead,
+  READS_VARFILE,
+  readValue,
+  SKIPPED_FUNCTIONS,
 } from "../src/atmos";
+import { rootDependencies } from "../src/detect";
+import { checkScript } from "../src/render";
+import { stateAccess } from "../src/roles";
+import { runStage } from "../src/report/stage";
+import { synthAffected } from "../src/synth";
+import { validateConfig } from "../src/config";
 import { workspaceEnv, workspaceInit, WORKSPACE_FILE } from "../src/backend";
 import { applyWave } from "../src/apply";
 import { ROOTS_NOT_ATMOS } from "../src/config";
@@ -271,5 +286,180 @@ describe.skipIf(!hasTofu)("two instances of one component, applied with the real
     }
     expect(existsSync(join(shared, "terraform.tfstate"))).toBe(false);
     expect(out.mock.calls.flat().join("\n")).toMatch(/applied dev\/vpc/);
+  });
+});
+
+describe("reads: !terraform.state and !terraform.output", () => {
+  it("parses a read of the instance's own stack and of another, by output name or a path of keys", () => {
+    expect(parseRead("dev/app", "dev", "cidr", "!terraform.state vpc .cidr")).toEqual({ var: "cidr", component: "vpc", stack: "dev", output: ["cidr"], function: "!terraform.state vpc .cidr" });
+    expect(parseRead("dev/app", "dev", "ids", '!terraform.output vpc prod ".subnets.private"')).toMatchObject({ component: "vpc", stack: "prod", output: ["subnets", "private"] });
+    expect(parseRead("dev/app", "dev", "n", "plain")).toBeUndefined();
+    expect(parseRead("dev/app", "dev", "n", { a: 1 })).toBeUndefined();
+  });
+
+  it("refuses a store, a function inside a map, and an expression it does not evaluate", () => {
+    expect(() => parseRead("dev/app", "dev", "k", "!store ssm vpc cidr")).toThrow(/!store, which terragucci does not read in the job; output the value from an instance and read it with !terraform.state/);
+    expect(() => parseRead("dev/app", "dev", "k", { a: ["!terraform.state vpc cidr"] })).toThrow(/inside a map or a list/);
+    expect(() => parseRead("dev/app", "dev", "k", '!terraform.state vpc ".cidr // \\"x\\""')).toThrow(/does not evaluate/);
+    expect(() => parseRead("dev/app", "dev", "k", "!terraform.state vpc")).toThrow(/<component> \[<stack>\] <output>/);
+  });
+
+  it("makes each read's upstream a dependency, and refuses a read of an instance no stack deploys or a disabled one", () => {
+    const got = atmosInstances(twoStacks({ vars: { stage: "x", cidr: "!terraform.state vpc prod .cidr" } }));
+    const app = got.find((i) => i.path === "dev/app")!;
+    expect(app.dependencies).toEqual(["prod/vpc"]);
+    expect(app.reads).toEqual([{ var: "cidr", upstream: "prod/vpc", output: ["cidr"], function: "!terraform.state vpc prod .cidr" }]);
+    expect(instanceWaves(got)).toEqual([["dev/vpc", "prod/vpc"], ["dev/app", "prod/app"]]);
+    expect(() => atmosInstances(twoStacks({ vars: { cidr: "!terraform.state eks .cidr" } }))).toThrow("dev/app reads cidr from dev/eks (!terraform.state eks .cidr), which no stack deploys");
+    const off = twoStacks({ vars: { cidr: "!terraform.state vpc .cidr" } });
+    (off.dev as { components: { terraform: Obj } }).components.terraform.vpc = instance("dev", "vpc", { metadata: { enabled: false } });
+    expect(() => atmosInstances(off)).toThrow(/which is disabled/);
+  });
+
+  it("leaves a read's var out of the varfile and writes the edges beside the instance", () => {
+    const repo = write(tmp(), COMPONENTS);
+    const instances = atmosInstances(twoStacks({ dependencies: { components: [{ component: "vpc" }] }, vars: { stage: "dev", cidr: "!terraform.state vpc .cidr" } }));
+    writeInstances(repo, instances);
+    expect(JSON.parse(readFileSync(join(repo, "dev/app/terragucci-atmos.auto.tfvars.json"), "utf-8"))).toEqual({ stage: "dev" });
+    expect(atmosEdges(join(repo, "dev/app"))).toEqual({ dependencies: ["dev/vpc"], reads: [{ var: "cidr", upstream: "dev/vpc", output: ["cidr"], function: "!terraform.state vpc .cidr" }] });
+    expect(existsSync(join(repo, "dev/vpc", EDGES_FILE))).toBe(true);
+    // A state read is a root dependency, as terraform_remote_state is; dependencies.components orders without reading state.
+    expect([...rootDependencies(repo, ["dev/app", "dev/vpc"]).get("dev/app")!]).toEqual(["dev/vpc"]);
+    expect([...atmosDependencies(repo, ["dev/app", "prod/app"]).get("prod/app")!]).toEqual(["prod/vpc"]);
+  });
+
+  it("asks describe to skip the functions that need a credential", async () => {
+    const dir = tmp("atmos-args-");
+    const bin = join(dir, "atmos");
+    writeFileSync(join(dir, "describe.json"), JSON.stringify(twoStacks()));
+    writeFileSync(bin, `#!/bin/sh\necho "$@" > ${JSON.stringify(join(dir, "args"))}\ncat ${JSON.stringify(join(dir, "describe.json"))}\n`);
+    chmodSync(bin, 0o755);
+    await atmosWrite(write(tmp(), COMPONENTS), { atmos: bin });
+    const args = readFileSync(join(dir, "args"), "utf-8");
+    for (const f of SKIPPED_FUNCTIONS) expect(args).toContain(`--skip ${f}`);
+  });
+
+  it("reads a value by output and keys", () => {
+    expect(readValue({ cidr: "10.0.0.0/16" }, ["cidr"])).toEqual({ value: "10.0.0.0/16" });
+    expect(readValue({ net: { private: ["a"] } }, ["net", "private"])).toEqual({ value: ["a"] });
+    expect(readValue({}, ["cidr"])).toBeUndefined();
+    expect(readValue({ net: "x" }, ["net", "private"])).toBeUndefined();
+    expect(readValue({ cidr: null }, ["cidr"])).toEqual({ value: null });
+  });
+
+  it("fills the reads from the upstream's outputs, and waits, writing nothing, while it has none", async () => {
+    const repo = write(tmp(), COMPONENTS);
+    writeInstances(repo, atmosInstances(twoStacks({ vars: { stage: "dev", cidr: "!terraform.state vpc .cidr" } })));
+    const none = await fillReads(repo, "dev/app", async () => ({ outputs: {} }));
+    expect(none.waiting.map((w) => [w.read.upstream, w.why])).toEqual([["dev/vpc", "has no state yet"]]);
+    expect(existsSync(join(repo, "dev/app", READS_VARFILE))).toBe(false);
+    const other = await fillReads(repo, "dev/app", async () => ({ outputs: { id: "x" } }));
+    expect(other.waiting[0].why).toBe("has no output cidr yet");
+    const bad = await fillReads(repo, "dev/app", async () => ({ error: "init failed" }));
+    expect(bad.errors[0]).toMatch(/dev\/app reads cidr from dev\/vpc, whose state could not be read: init failed/);
+    const seen: string[] = [];
+    const ok = await fillReads(repo, "dev/app", async (up) => (seen.push(up), { outputs: { cidr: "10.1.0.0/16" } }));
+    expect(ok.filled).toEqual(["cidr"]);
+    expect(seen).toEqual(["dev/vpc"]);
+    expect(JSON.parse(readFileSync(join(repo, "dev/app", READS_VARFILE), "utf-8"))).toEqual({ cidr: "10.1.0.0/16" });
+    expect(await fillReads(repo, "dev/vpc", async () => ({ outputs: {} }))).toEqual({ waiting: [], errors: [], filled: [] });
+  });
+});
+
+describe("affected instances", () => {
+  it("plans a changed instance and the instances that depend on it, and leaves the other stack alone", async () => {
+    const repo = write(tmp(), COMPONENTS);
+    const instances = atmosInstances(twoStacks());
+    // The synth: write the instances, prod/vpc's var as the commit's stacks/prod.txt says.
+    write(repo, { "stacks/prod.txt": "10.0.0.0/16\n", "write.mjs": writer(instances) });
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "add", "-A");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+    write(repo, { "stacks/prod.txt": "10.9.0.0/16\n" });
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "change prod");
+    execFileSync("node", ["write.mjs"], { cwd: repo });
+    const roots = instances.map((i) => i.path);
+    const logs: string[] = [];
+    const got = await synthAffected(repo, "HEAD~1", "node write.mjs", roots, rootDependencies(repo, roots), process.env, (l) => logs.push(l), atmosDependencies(repo, roots));
+    expect([...got.selected!].sort()).toEqual(["prod/app", "prod/vpc"]);
+    expect(logs).toContain("affected: prod/app depends on prod/vpc");
+    const without = await synthAffected(repo, "HEAD~1", "node write.mjs", roots, rootDependencies(repo, roots), process.env, () => {});
+    expect([...without.selected!]).toEqual(["prod/vpc"]);
+  });
+});
+
+/** A synth script that writes `instances` as terragucci atmos write would, prod/vpc's cidr read from stacks/prod.txt. */
+function writer(instances: ReturnType<typeof atmosInstances>): string {
+  const files = Object.fromEntries(instances.map((i) => [i.path, generatedFiles(i)]));
+  return [
+    'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";',
+    `const files = ${JSON.stringify(files)};`,
+    'files["prod/vpc"]["terragucci-atmos.auto.tfvars.json"] = JSON.stringify({ cidr: readFileSync("stacks/prod.txt", "utf-8").trim() });',
+    "for (const [dir, f] of Object.entries(files)) { mkdirSync(dir, { recursive: true }); for (const [n, c] of Object.entries(f)) writeFileSync(`${dir}/${n}`, c); }",
+  ].join("\n");
+}
+
+describe("the check job, the Atmos version and per-stack roles", () => {
+  it("validates the stacks before the instances are written", () => {
+    const script = checkScript("tofu", ["dev/vpc"], ATMOS_WRITE, false, false, true);
+    expect(script.indexOf("atmos validate stacks")).toBeGreaterThan(-1);
+    expect(script.indexOf("atmos validate stacks")).toBeLessThan(script.indexOf(ATMOS_WRITE));
+    expect(checkScript("tofu", ["a"], undefined)).not.toContain("atmos validate");
+  });
+
+  it("installs the release terragucci.yml names, refuses one that is no release, and an atmos block outside an Atmos repo", async () => {
+    const repo = write(tmp(), { ...COMPONENTS, "terragucci.yml": "forge: forgejo\nbinary: tofu\natmos:\n  version: 1.229.0\n" });
+    const r = await init(repo, { atmos: stubAtmos(twoStacks()), dryRun: true });
+    expect(r.atmos?.version).toBe("1.229.0");
+    expect(r.files[0].content).toContain("terragucci install atmos 1.229.0");
+    expect(() => validateConfig({ atmos: { version: "latest" } }, "terragucci.yml")).toThrow(/atmos.version must be a release version/);
+    expect(() => validateConfig({ atmos: { image: "x" } }, "terragucci.yml")).toThrow(/atmos.image is not a setting/);
+    expect(() => validateConfig({ atmos: {}, terragrunt: {} }, "terragucci.yml")).toThrow(/an Atmos repo or a Terragrunt repo, not both/);
+    await expect(init(write(tmp(), { "main.tf": "", "terragucci.yml": "forge: forgejo\natmos:\n  version: 1.229.0\n" }), { dryRun: true })).rejects.toThrow("terragucci.yml has an atmos block, but the repo has no atmos.yaml at its root");
+  });
+
+  it("gives each stack its roles by glob, and lists each role's states as Atmos lays them out", () => {
+    const instances = atmosInstances(twoStacks({ vars: { cidr: "!terraform.state vpc prod .cidr" } }));
+    const oidc = { roles: { "dev/*": { plan: "dev-plan", apply: "dev-apply" }, "prod/*": { plan: "prod-plan", apply: "prod-apply" } } };
+    const access = stateAccess(tmp(), instances.map((i) => i.path), oidc, { ...instanceStates(instances), via: "!terraform.state" });
+    const devApply = access.roles.find((r) => r.role === "dev-apply")!;
+    expect(devApply.roots).toEqual(["dev/app", "dev/vpc"]);
+    expect(devApply.states).toEqual(["s3://state/app/dev/terraform.tfstate", "s3://state/vpc/dev/terraform.tfstate"]);
+    expect(access.warnings.join("\n")).toContain("oidc: dev/app (dev/*) reads the state of prod/vpc (prod/*) through !terraform.state");
+  });
+});
+
+describe.skipIf(!hasTofu)("a read of an unapplied upstream, with the real tofu", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("holds the reader back until the upstream applies, then plans and applies it on the upstream's output", async () => {
+    const dir = tmp("atmos-read-");
+    const work = join(dir, "work");
+    mkdirSync(work);
+    write(work, {
+      "atmos.yaml": "base_path: .\n",
+      "components/terraform/vpc/main.tf": 'variable "cidr" {\n  type = string\n}\n\nresource "terraform_data" "vpc" {\n  input = var.cidr\n}\n\noutput "cidr" {\n  value = var.cidr\n}\n',
+      "components/terraform/app/main.tf": 'variable "vpc_cidr" {\n  type     = string\n  nullable = true\n}\n\nresource "terraform_data" "app" {\n  input = { vpc = var.vpc_cidr }\n}\n',
+    });
+    const shared = join(dir, "states");
+    const local = (c: string, vars: Obj): Obj => instance("dev", c, { backend_type: "local", backend: { path: join(shared, `${c}.tfstate`), workspace_dir: join(shared, c) }, vars });
+    writeInstances(work, atmosInstances({ dev: { components: { terraform: { vpc: local("vpc", { cidr: "10.4.0.0/16" }), app: local("app", { vpc_cidr: "!terraform.state vpc .cidr" }) } } } }));
+    git(work, "init", "-q", "-b", "main");
+    git(work, "add", "-A");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one");
+    const env = { ...process.env, TF_IN_AUTOMATION: "1" } as Record<string, string>;
+    const layers = [["dev/vpc"], ["dev/app"]];
+    const logs: string[] = [];
+    const first = await runStage("tf-plan", work, { binary: "tofu", layers, out: join(dir, "plan1"), env }, (l) => logs.push(l));
+    expect(logs.join("\n")).toMatch(/dev\/app: held back, dev\/vpc has no state yet/);
+    expect(first.report.deferred?.map((d) => [d.unit, d.after])).toEqual([["dev/app", ["dev/vpc"]]]);
+    expect(first.report.roots.map((r) => r.path)).toEqual(["dev/vpc"]);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await applyWave(work, { wave: 1, layers, binary: "tofu", gate: "never", env })).toBe(0);
+    expect(await applyWave(work, { wave: 2, layers, binary: "tofu", gate: "never", env })).toBe(0);
+    const file = (readdirSync(join(shared, "app"), { recursive: true }) as string[]).find((f) => f.startsWith("dev") && f.endsWith(".tfstate"));
+    expect(file, "dev/app's state in its workspace").toBeDefined();
+    const app = JSON.parse(readFileSync(join(shared, "app", file!), "utf-8"));
+    expect(app.resources[0].instances[0].attributes.input.value).toEqual({ vpc: "10.4.0.0/16" });
   });
 });

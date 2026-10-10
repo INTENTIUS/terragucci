@@ -159,6 +159,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
   const tgMode = detectedTg !== undefined;
   const detectedAtmos = detectAtmos(repo);
+  if (settings.atmos && !detectedAtmos) throw new ConfigError("terragucci.yml has an atmos block, but the repo has no atmos.yaml at its root");
   if (detectedAtmos && tgMode) throw new ConfigError(`the repo has ${detectedAtmos} and ${detectedTg!.reason}; terragucci runs an Atmos repo or a Terragrunt repo, not both`);
 
   // In Terragrunt mode the binary is what Terragrunt calls, and the units carry no .tf files to read it from.
@@ -181,7 +182,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (instances.length === 0) throw new ConfigError(`found no Atmos instances (${detectedAtmos} turned Atmos mode on): atmos describe stacks lists no Terraform component that is neither abstract nor disabled`);
     rootReasons = instances.map((i) => ({ root: i.path, reason: `atmos describe stacks: ${i.componentPath} in workspace ${i.workspace}` }));
     layers = instanceWaves(instances, settings.waves?.canary);
-    atmos = { reason: detectedAtmos, version: ATMOS_VERSION };
+    atmos = { reason: detectedAtmos, version: settings.atmos?.version ?? ATMOS_VERSION };
   } else if (detectedTg) {
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};

@@ -221,6 +221,12 @@ export interface TerragruntSettings {
   credentials?: Record<string, RolePair>;
 }
 
+/** Atmos settings. Atmos mode is detected (`atmos.yaml` at the repo root); this block only tunes it. */
+export interface AtmosSettings {
+  /** The Atmos release every job installs. Default: the one this terragucci release pins. */
+  version?: string;
+}
+
 /**
  * Pipeline events and the responses each takes. The first mode is the
  * default and needs no model. `drift: attribute` also names who changed each drifted attribute (a known-writes
@@ -453,6 +459,8 @@ export interface ProjectSettings {
   parallelism?: number;
   /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
   terragrunt?: TerragruntSettings;
+  /** Atmos settings, for a repo with an `atmos.yaml` at its root. */
+  atmos?: AtmosSettings;
   /** Opt-in policy checks over each plan; see PolicySettings. */
   policy?: PolicySettings;
   /**
@@ -622,7 +630,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -807,6 +815,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
   if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
+  if (s.atmos !== undefined) checkAtmos(s.atmos, `${where}.atmos`, problems);
+  if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
   if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems);
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
@@ -1327,6 +1337,23 @@ function checkDashboards(d: unknown, where: string, problems: string[]): void {
     else if ((DASHBOARD_DURATION_KEYS as readonly string[]).includes(k) && !DURATION.test(v)) problems.push(`${where}.${k} is ${JSON.stringify(v)}; use a duration such as 4h or 1d`);
   }
   if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);
+}
+
+const ATMOS_KEYS = ["version"];
+/** Why a config with both an atmos and a terragrunt block is refused. */
+export const ATMOS_NOT_TERRAGRUNT = "terragucci runs an Atmos repo or a Terragrunt repo, not both; keep the block of the one this repo is";
+
+function checkAtmos(a: unknown, where: string, problems: string[]): void {
+  if (!isObject(a)) {
+    problems.push(`${where} must be a map (settings: ${ATMOS_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(a)) {
+    if (!ATMOS_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${ATMOS_KEYS.join(", ")})`);
+  }
+  if (a.version !== undefined && (typeof a.version !== "string" || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(a.version))) {
+    problems.push(`${where}.version must be a release version such as 1.230.1`);
+  }
 }
 
 function checkTerragrunt(t: unknown, where: string, problems: string[]): void {

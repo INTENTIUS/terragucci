@@ -77,7 +77,7 @@ import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { detectForge, findRoots } from "./detect";
-import { atmosWrite } from "./atmos";
+import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -776,7 +776,12 @@ export async function main(argv: string[]): Promise<number> {
           const config = await loadConfig(resolve(path), "check");
           // Which state each role reaches, read from the roots' code, and a warning for each that reaches another environment's.
           const repoDir = dirname(resolve(path));
-          if (!config.projects && config.oidc?.roles && detectTerragrunt(repoDir) === undefined) {
+          if (!config.projects && config.oidc?.roles && detectAtmos(repoDir)) {
+            // An Atmos repo's roots are its instances, <stack>/<component>, so a glob such as prod/* gives a stack its roles.
+            const instances = atmosInstances(await describeStacks(repoDir));
+            access = stateAccess(repoDir, instances.map((i) => i.path), config.oidc, { ...instanceStates(instances), via: "!terraform.state" });
+            warnings = access.warnings;
+          } else if (!config.projects && config.oidc?.roles && detectTerragrunt(repoDir) === undefined) {
             access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
             warnings = access.warnings;
           }
