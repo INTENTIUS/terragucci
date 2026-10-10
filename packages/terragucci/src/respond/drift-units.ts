@@ -7,7 +7,8 @@
  * written there, so only that unit changes. An attribute the module sets as
  * a literal is left, with why: every unit that calls the module shares it. A
  * unit with no `terraform.source` is its own root, codified as a plain root
- * is.
+ * is. A unit an explicit stack generates is left, naming its stack file: its
+ * `terragrunt.hcl` is written by `terragrunt stack generate`, not kept in git.
  *
  * Each unit is planned again with `-refresh-only` through `terragrunt run`,
  * since the stage's plan files are gone and its report's plan is redacted.
@@ -22,6 +23,7 @@ import { terragruntExec } from "../binary-env";
 import { ConfigError } from "../config";
 import { globMatch } from "../detect";
 import { discoverUnits } from "../terragrunt";
+import { STACK_UNIT_DRIFT_PR } from "../refusals";
 import { codify, driftOf, hcl, literal, type Codified, type Drifted, type Left } from "./drift";
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -235,7 +237,11 @@ export function codifyUnit(repo: string, unit: string, moduleDir: string, drifte
  * repo, in its own files when it names no source, and left with why when its
  * module is outside the repo.
  */
-export async function codifyUnitDrift(repo: string, unit: string, drifted: Drifted[], r: UnitRunner, files: Map<string, string>): Promise<{ codified: Codified[]; left: Left[] }> {
+export async function codifyUnitDrift(repo: string, unit: string, drifted: Drifted[], r: UnitRunner, files: Map<string, string>, editAt = unit): Promise<{ codified: Codified[]; left: Left[] }> {
+  // Where the shape says an edit to the unit belongs (Shape.sourceOf): a stack file, for a unit an explicit stack generates.
+  if (editAt !== unit) {
+    return { codified: [], left: drifted.map((d) => ({ root: unit, address: d.address, reason: `${editAt} ${STACK_UNIT_DRIFT_PR}` })) };
+  }
   const source = await unitSource(repo, unit, r);
   if (!source) {
     const local = new Map<string, string>();

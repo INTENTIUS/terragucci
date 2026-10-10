@@ -1,6 +1,6 @@
 {
   "step": "see-runs",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "be9f7c9320e2bc21",
   "commands": [
     {
       "cmd": "just see-runs",
@@ -13,7 +13,7 @@
     "waves-dark": "1b5b5783bc817884",
     "estate-light": "6b8f10dd4eb709d9",
     "estate-dark": "40fd1d979daf0367",
-    "slos-light": "f4b0f8f328c3c3d5",
-    "slos-dark": "45598918e005deed"
+    "slos-light": "6d301a07cc406d3f",
+    "slos-dark": "3998ff5307ac7b5b"
   }
 }

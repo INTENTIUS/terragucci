@@ -34,8 +34,9 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `just example reset` | closes the pull requests, puts main back, applies again |
 | `just smoke [claim]` | one line per claim: `SMOKE claim=… verdict=pass\|caught\|fail\|pending`; `BREAK=1` must print `caught` |
 | `just smoke-record` | every claim plain and under `BREAK=1`, written to `docs-site/src/data/smoke.json` for the status page. Claims run several at a time (`SMOKE_JOBS`, default 6; `SMOKE_SERIAL=1` for one at a time), each holding the resources its line in `CLAIM_GROUPS` in `smoke.sh` names; each run's log is under `stack/.state/smoke-logs/` |
-| `just tutorial-capture` | the tutorial's output and screenshots, for steps whose claims pass |
+| `just tutorial-capture` | the tutorial's output and screenshots, for steps whose claims pass, on the capture stack |
 | `just capture <step>…` | one or more of those steps alone; `--list` names them, `--reuse` captures on the running example (CONTRIBUTING.md) |
+| `just capture-stack-down` | removes the capture stack (see [The capture stack](#the-capture-stack)) |
 | `just example-patches` | rebuilds `example/changes/*.patch` after an edit under `example/` |
 | `just stack-for <config>` | starts only the profiles a terragucci config needs: floci, the forges it names, and fountain when a project runs there |
 
@@ -112,6 +113,25 @@ Host ports are off the usual defaults so the stack can run beside another harnes
 | fountain | 4010 | `http://fountain:4000` | `TERRAGUCCI_FOUNTAIN_PORT` |
 
 The compose project is `terragucci`, the network is `terragucci`, and every container and volume name starts with `terragucci-`. `down.sh` removes those and nothing else.
+
+### The capture stack
+
+`TG_STACK=capture` selects a second instance from the same `docker-compose.yml` (`instance.sh`): compose project, network and name prefix `terragucci-capture`, state in `stack/.state-capture/`, and locks in the main checkout's `stack/.state-capture/locks`, apart from the claims' locks. `just tutorial-capture` and `just capture` run there, so a capture never holds the claims' `stack!` lock. Its host ports are the shared stack's plus 100:
+
+| Service | Shared | Capture |
+|---|---|---|
+| Forgejo | 3300 | 3400 |
+| floci | 4580 | 4680 |
+| Grafana | 3310 | 3410 |
+| Prometheus | 9190 | 9290 |
+| Tempo | 3210 | 3420 |
+| OTLP, collector health | 4328, 13143 | 4428, 13243 |
+| registry | 5050 | 5150 |
+| fountain | 4010 | 4110 |
+| mock GitHub, GitLab | 8198, 8939 | 8298, 9039 |
+| Azurite, GCS, decide | 10010, 4453, 8790 | 10110, 4553, 8890 |
+
+Inside it the forge is still `http://forgejo:3000` and floci `http://floci:4566`, so the pages a capture screenshots read the same, and the capture writes `localhost:3400` in command output as `localhost:3300` (each port as its shared one). Both instances share the `terragucci-job-cache` volume. Any `just stack-up`, `just example` or `stack/smoke.sh` call takes `TG_STACK=capture` too; `just capture-stack-down` removes the capture stack and leaves the shared one alone.
 
 ## The GitLab lab
 

@@ -26,7 +26,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ConfigError } from "./config";
+import { ConfigError, type Binary } from "./config";
+import { BINARY } from "./shape";
 
 /**
  * shape: the one decision a binary makes about concurrent applies.
@@ -37,7 +38,8 @@ import { ConfigError } from "./config";
 export type ApplyScope = "resource" | "root" | "repo";
 
 export function applyScope(binary: string): ApplyScope {
-  return basename(binary).replace(/\.exe$/, "") === "choudoufu" ? "resource" : "root";
+  const name = basename(binary).replace(/\.exe$/, "");
+  return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";
 }
 
 const LIFECYCLE = "chant/lifecycle";

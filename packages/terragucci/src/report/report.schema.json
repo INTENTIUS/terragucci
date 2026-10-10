@@ -96,6 +96,7 @@
             "required": ["stack", "selection", "provisional", "run_result"],
             "properties": {
               "stack": { "type": "string" },
+              "stack_file": { "description": "The terragrunt.stack.hcl that generates the unit, when an explicit stack does (minor 29).", "type": "string" },
               "selection": { "type": "string" },
               "provisional": { "type": "boolean" },
               "run_result": { "type": "string" }

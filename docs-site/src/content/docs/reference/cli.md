@@ -42,6 +42,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
+| `terramate generate` | internal: fails on stale [Terramate](/terragucci/guides/use-terramate/) generated code (`terramate generate --detailed-exit-code`), then writes each stack's order and inputs beside it; every job of the generated Terramate pipeline runs it first |
 | `atmos write` | internal: writes each Atmos instance to `<stack>/<component>` from `atmos describe stacks`; every job of the generated [Atmos](/terragucci/guides/use-atmos/) pipeline runs it first |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
 | `install` | fetches a release of OpenTofu, Terraform, Terragrunt, Atmos, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Infracost, verified against its checksums |
@@ -651,7 +652,7 @@ terragucci check-policy [--config <file>] [--base <ref>]
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos <version>
+terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>
 ```
 
 Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds. With `modules.attest`, the publish job installs cosign this way before it publishes, and in an Atmos repo every job installs Atmos.

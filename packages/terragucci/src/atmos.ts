@@ -51,11 +51,6 @@ export function detectAtmos(repo: string): string | undefined {
   return existsSync(join(repo, ATMOS_MARKER)) ? ATMOS_MARKER : undefined;
 }
 
-/** The synth a repo's jobs run: its own `synth`, else the Atmos write in an Atmos repo. */
-export function effectiveSynth(repo: string, synth: string | undefined): string | undefined {
-  return synth ?? (detectAtmos(repo) ? ATMOS_WRITE : undefined);
-}
-
 /** One deployed instance of a Terraform component in a stack. */
 export interface AtmosInstance {
   /** `<stack>/<component>`: the root's name, and where it is written. */
@@ -88,8 +83,11 @@ export interface AtmosRead {
   function: string;
 }
 
-/** The file beside each instance naming its edges: `{ dependencies, reads }`. */
+/** The file beside each instance naming its edges and its component's directory: `{ component, dependencies, reads }`. */
 export const EDGES_FILE = ".terragucci-atmos.json";
+
+/** The same file beside each Terramate stack, which `terragucci terramate generate` writes (./terramate.ts). */
+export const TERRAMATE_EDGES_FILE = ".terragucci-terramate.json";
 
 /** The varfile the stage writes with the values of an instance's reads, before it plans. */
 export const READS_VARFILE = "terragucci-atmos-reads.auto.tfvars.json";
@@ -347,7 +345,7 @@ export function generatedFiles(i: AtmosInstance): Record<string, string> {
   const out: Record<string, string> = {
     "terragucci-atmos.auto.tfvars.json": json(vars),
     [WORKSPACE_FILE]: `${i.workspace}\n`,
-    [EDGES_FILE]: json({ dependencies: i.dependencies, reads: i.reads }),
+    [EDGES_FILE]: json({ component: i.componentPath, dependencies: i.dependencies, reads: i.reads }),
   };
   if (i.backendType === "cloud") out["backend.tf.json"] = json({ terraform: { cloud: i.backend } });
   else if (i.backendType) out["backend.tf.json"] = json({ terraform: { backend: { [i.backendType]: i.backend } } });
@@ -386,16 +384,17 @@ export async function atmosWrite(repo: string, options: AtmosOptions = {}): Prom
 }
 
 /** The edges `terragucci atmos write` left beside the instance at `dir`; undefined for a directory that is no instance. */
-export function atmosEdges(dir: string): { dependencies: string[]; reads: AtmosRead[] } | undefined {
-  const file = join(dir, EDGES_FILE);
-  if (!existsSync(file)) return undefined;
+export function atmosEdges(dir: string): { component?: string; dependencies: string[]; reads: AtmosRead[] } | undefined {
+  // A Terramate stack's edges are in a file of their own, in the same form.
+  const file = [join(dir, EDGES_FILE), join(dir, TERRAMATE_EDGES_FILE)].find((f) => existsSync(f));
+  if (!file) return undefined;
   try {
-    const v = JSON.parse(readFileSync(file, "utf-8")) as { dependencies?: unknown; reads?: unknown };
+    const v = JSON.parse(readFileSync(file, "utf-8")) as { component?: unknown; dependencies?: unknown; reads?: unknown };
     const dependencies = Array.isArray(v.dependencies) ? v.dependencies.filter((d): d is string => typeof d === "string") : [];
     const reads = (Array.isArray(v.reads) ? v.reads : []).filter(
       (r): r is AtmosRead => !!r && typeof r === "object" && typeof (r as AtmosRead).var === "string" && typeof (r as AtmosRead).upstream === "string" && Array.isArray((r as AtmosRead).output),
     );
-    return { dependencies, reads };
+    return { ...(typeof v.component === "string" ? { component: v.component } : {}), dependencies, reads };
   } catch {
     return undefined;
   }

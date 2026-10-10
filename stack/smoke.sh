@@ -249,7 +249,12 @@ atmos-from-plan|an Atmos wave whose plans changed after approval applies nothing
 atmos-upstream-wait|an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied|
 atmos-check|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
 atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
+terramate-waves|init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate|
+terramate-affected|a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other|
+terramate-sharing|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
+terramate-stale|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
 atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
+atmos-refuse|config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
 provider-project|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
@@ -297,6 +302,7 @@ otlp-headers|telemetry.headers_secret maps the collector key into the jobs, span
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
 generate|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
 tg-generate|in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name|
+tg-generate-init|with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it|
 root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
@@ -325,7 +331,7 @@ policy-hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and i
 policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
 tg-policy|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
 tg-credentials|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
-tg-dependents|terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out|
+tg-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
 tg-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
 tg-preview-gate|a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves|
 tf-terraform|with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform|
@@ -389,6 +395,10 @@ tg-estate-graph|in a Terragrunt repo the plan note gives the blast radius of a c
 tg-state-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
 tg-apply-branches|with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved|
 tg-stacks|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
+tg-stack-check|the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit|
+tg-stack-affected|a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file|
+tg-stack-gate|the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate|
+tg-stack-drift|tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from|
 chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
 chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
 chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
@@ -745,7 +755,15 @@ gated_repo() { # name [fixture] [approval] -> a fresh repo $USER/<name>, the fix
   # an approval counts only when its seal verifies against the signers file at
   # base. Without it (ledger, the default) any approval of the digest counts.
   [ -z "$approval" ] || echo "approval: $approval" >> "$work/tree/terragucci.yml"
-  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  # Terramate finds its project root by git, as in any checkout a user runs init in.
+  [ ! -f "$work/tree/terramate.tm.hcl" ] || git -C "$work/tree" init -q -b main
+  if [ -n "${GATED_INIT_TG:-}" ]; then
+    # An explicit stack is generated by Terragrunt, which init runs in the Terragrunt image.
+    tg_in_image "$work/tree" -e TG_TF_PATH=tofu -- terragucci init >/dev/null 2>&1 || { log "init failed"; return 1; }
+    clean_mounted "$work/tree" "$(tg_image)"
+  else
+    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  fi
   bin_pipeline "$work/tree/.forgejo/workflows/terragucci.yml" || return 1
   # The approver's key goes in the signers file; an agent's never does.
   ssh-keygen -q -t ed25519 -N "" -C smoke-approver -f "$work/approver" || return 1
@@ -1480,7 +1498,7 @@ JS
   (cd "$work/tree" && npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; drop_work "$work"; return 1; }
   grep -q 'data.terraform_remote_state.net.outputs.name' "$work/tree/$app/cdk.tf.json" || { log "app's cdk.tf.json does not read net's output"; drop_work "$work"; return 1; }
   for stack in "$net" "$app"; do
-    run_copied --rm --network terragucci -v "$work/tree:/repo" -w "/repo/$stack" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w "/repo/$stack" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $stack at rev 1"; drop_work "$work" "$image"; return 1; }
   done
@@ -1490,7 +1508,7 @@ JS
   sum="$(shasum "$work/tree/$app/cdk.tf.json" | cut -d' ' -f1)"
   git -C "$work/tree" init -q -b main
   git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "$name: net at rev 2"
-  run_copied --rm --network terragucci -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci stage tf-plan --layers "$net;$app" ${args[@]+"${args[@]}"} >&2 || code=$?
@@ -1705,7 +1723,7 @@ linked_apply() { # name
   done
   linked_copy "$name" "$work/apply"
   for root in net app; do
-    run_copied --rm --network terragucci -v "$work/apply:/repo" -w "/repo/$root" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/apply:/repo" -w "/repo/$root" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $root"; return 1; }
   done
@@ -1750,7 +1768,7 @@ claim_linked_plan() {
   echo 2 > "$work/tree/net/rev.txt"
   git -C "$work/tree" init -q -b main
   git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "linked-plan: net at rev 2"
-  run_copied --rm --network terragucci -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci stage tf-plan --layers 'net;app' ${args[@]+"${args[@]}"} >&2 || code=$?
@@ -2121,7 +2139,7 @@ report_run() {
   else
     extra+=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*')
   fi
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
@@ -2144,7 +2162,7 @@ apply_roots() { # root...
   bin_tree "$work" "$EX_SHOP" --names "$EX_TAG" || { drop_work "$work"; return 1; }
   if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_example "$work" || return 1; smoke_aws_queue_settle; fi
   for root in "$@"; do
-    run_copied --rm --network terragucci -v "$work:/repo" -w "/repo/$root" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w "/repo/$root" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "BIN=$SMOKE_BINARY" \
@@ -2331,7 +2349,7 @@ collector_up() {
   echo "starting the observability profile" >&2
   # up -d leaves running containers alone, so this is safe when half of it is up.
   # The compose lock keeps it from racing another run's compose call.
-  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile observability up -d >&2 || return 1
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" --profile observability up -d >&2 || return 1
   for i in $(seq 1 30); do
     answers 2>/dev/null && return 0
     sleep 2
@@ -2347,7 +2365,7 @@ collector_up() {
 otel_trace() {
   local span="$1" commit="$2" out="$3" t="" i
   for i in $(seq 1 "${OTEL_TRACE_WAIT:-60}"); do
-    docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$out" || true
+    docker cp "${TG_PROJECT:-terragucci}-otel-collector":/out/traces.jsonl - 2>/dev/null | tar -xO > "$out" || true
     t="$(jq -rs --arg s "$span" --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
       | select(.name == $s and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$out" 2>/dev/null)"
     [ -n "$t" ] && break
@@ -2645,7 +2663,7 @@ registry_up() { # work, port
   cat "$work/newcerts/registry.key" > "$certs/registry.key"
   cat "$work/newcerts/registry.crt" > "$certs/registry.crt"
   chmod 644 "$certs/registry.key"
-  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" \
     --profile registry up -d --force-recreate registry >&2 || return 1
   for i in $(seq 1 30); do
     curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && return 0
@@ -3124,7 +3142,7 @@ in_image() { # dir, command...; IN_IMAGE names another CI image
   image="${IN_IMAGE:-$(image_tag tofu)}"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   [ -f "$bundle" ] || build_cli || return 1
-  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="${TOKEN:-}" \
@@ -3383,7 +3401,7 @@ tg_report_run() { # work, patches...
   [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
   [ -n "${TG_EDIT:-}" ] && (cd "$work" && eval "$TG_EDIT")
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke $(date +%s%N)"
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
@@ -3413,7 +3431,7 @@ tg_apply_units() { # unit...
   cp -R "$TG_EXAMPLE/." "$work/"
   if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_tg "$work" || return 1; smoke_aws_queue_settle; fi
   for unit in "$@"; do
-    run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
@@ -3895,7 +3913,7 @@ claim_policy_wave() {
   bin_tree "$work" "policy-wave-$(date +%s)" || { log "the tree was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy-wave"
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -3960,7 +3978,7 @@ HCL
   git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke wave-report"
   git -C "$work/wave" remote add origin /origin.git
   wave_run() {
-    run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -4552,7 +4570,7 @@ HCL
   aws_env=(-e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1)
   if [ -z "${BREAK:-}" ]; then
     holder="terragucci-smoke-lock-holder-$$"
-    run_copied -d --name "$holder" --network terragucci -v "$work/holder:/repo" -w /repo/lock -v "$bin:/usr/local/bin/choudoufu:ro" \
+    run_copied -d --name "$holder" --network "${TG_NETWORK:-terragucci}" -v "$work/holder:/repo" -w /repo/lock -v "$bin:/usr/local/bin/choudoufu:ro" \
       "${aws_env[@]}" "$image" \
       sh -c 'choudoufu init -input=false -no-color >/dev/null && sleep 50 | choudoufu plan -input=true -no-color' >/dev/null || rc=1
     # The holder holds the lock once its lock object is in the bucket.
@@ -4567,7 +4585,7 @@ HCL
     fi
   fi
   if [ $rc = 0 ]; then
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
       "${aws_env[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TF_VAR_hold=given \
       -e TF_CLI_ARGS_plan=-lock-timeout=150s \
       -e OTEL_EXPORTER_OTLP_ENDPOINT="$OTLP_ENDPOINT" \
@@ -4635,7 +4653,7 @@ resource "null_resource" "n" {
 HCL
   git -C "$work/repo" init -q -b main
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke timings $(date +%s%N)"
-  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$@" \
@@ -4743,7 +4761,7 @@ dash_up() {
   dash_answers() { curl -fsS -o /dev/null -m 3 "$GRAFANA/api/health" && curl -fsS -o /dev/null -m 3 "$TEMPO/ready"; }
   dash_answers 2>/dev/null && return 0
   echo "starting Grafana and Tempo" >&2
-  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile observability up -d >&2 || return 1
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" --profile observability up -d >&2 || return 1
   for i in $(seq 1 45); do
     dash_answers 2>/dev/null && return 0
     sleep 2
@@ -4802,7 +4820,7 @@ HCL
   git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke dashboards $id"
   git -C "$work/wave" remote add origin /origin.git
   for kv in $env; do extra+=(-e "$kv"); done
-  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -4918,7 +4936,7 @@ claim_dash_slos() {
   . "$HERE/lib.sh"
   # Prometheus and Grafana may not be up yet on a fresh stack.
   dash_up || { log "the observability profile did not start"; return 1; }
-  docker exec terragucci-prometheus promtool check rules /etc/prometheus/rules/terragucci.rules.yml >&2 \
+  docker exec "${TG_PROJECT:-terragucci}-prometheus" promtool check rules /etc/prometheus/rules/terragucci.rules.yml >&2 \
     || { log "promtool does not accept the rules file"; return 1; }
   local slo
   for slo in slo-terragucci-apply-success slo-terragucci-drift-corrected; do
@@ -5174,7 +5192,7 @@ REGO
   # added only when push_tree pushes the pipeline.
   cimage="${cimage%"${TG_IMAGE_SUFFIX:-}"}"
   grep -qF "image: $cimage" "$cdir/.forgejo/workflows/terragucci.yml" || { log "the pipeline init wrote for the choudoufu repo does not run in $cimage"; return 1; }
-  run_copied --rm --network terragucci -v "$cdir:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$cdir:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -5392,7 +5410,7 @@ JSON
 SH
   chmod +x "$work/smoke/aws"
   open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
-  run_copied --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$work/smoke:/smoke" -v "$work/smoke/aws:/usr/local/bin/aws:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
@@ -6794,7 +6812,7 @@ YML
   printf '%s\n' "$file" > "$work/project/terragucci.yml"
   [ ! -e "$work/project/policy" ] || { log "the project has a policy directory of its own"; rc=1; }
   git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "terragucci.yml from the control repo"
-  run_copied --rm --network terragucci -v "$work/project:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/project:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -7030,7 +7048,7 @@ claim_drift_overdue() {
   mkdir -p "$work/app"
   cp "$HERE/fixtures/policy-wave/app/main.tf" "$work/app/"
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "one root"
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_BASE="$base" \
     -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_REPOSITORY="$repo" -e TG_TOKEN="$TOKEN" \
@@ -7384,7 +7402,7 @@ claim_atmos_workspace() {
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke atmos-workspace"
   layers='dev/vpc,prod/vpc;dev/app,prod/app'
   # shellcheck disable=SC2016 # expanded by the container's shell
-  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin \
     "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "LAYERS=$layers" -e "ATMOS_RELEASE=$ATMOS_SMOKE_VERSION" \
@@ -7736,7 +7754,7 @@ YML
   if [ $rc = 0 ]; then
     node -e 'const b=(o)=>Buffer.from(JSON.stringify(o)).toString("base64url");const t=Math.floor(Date.now()/1000);process.stdout.write(b({alg:"RS256",typ:"JWT"})+"."+b({iss:"https://token.actions.githubusercontent.com",sub:"repo:smoke/atmos-roles:ref:refs/heads/main",aud:"sts.amazonaws.com",iat:t,nbf:t,exp:t+3600})+".c21va2U")' > "$work/repo/.oidc-token"
     # shellcheck disable=SC2016 # expanded by the container's shell
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "ATMOS_RELEASE=$ATMOS_SMOKE_VERSION" -e "TERRAGUCCI_ROOT_ROLES=$roles" \
       -e AWS_WEB_IDENTITY_TOKEN_FILE=/repo/.oidc-token -e AWS_ROLE_SESSION_NAME=smoke -e AWS_ENDPOINT_URL_STS=http://floci:4566 \
@@ -7754,6 +7772,274 @@ YML
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "config check listed each stack's role with its instances' states, and each stack's vpc applied as its own stack's role"
+  return $rc
+}
+
+# ── Terramate stacks ──────────────────────────────────────────────────────
+# stack/fixtures/terramate-stacks: network (tagged net), db (before app) and
+# app (after tag:net), each with its generated code committed; state under
+# <claim>/ in shop-terraform-state. stack/fixtures/terramate-sharing: app
+# reads network's name through an input block. The jobs install the pinned
+# Terramate release; init here runs the host's build of it (terramate_host),
+# fetched once and checked against the release's checksums.txt.
+
+TERRAMATE_SMOKE_VERSION="$(sed -n 's/^export const TERRAMATE_VERSION = "\(.*\)";$/\1/p' "$HERE/../packages/terragucci/src/terramate.ts")"
+
+terramate_host() { # -> the path of the host's terramate at the pinned release
+  local os arch dir file v="$TERRAMATE_SMOKE_VERSION"
+  case "$(uname -s)" in Darwin) os=darwin ;; *) os=linux ;; esac
+  case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=x86_64 ;; esac
+  dir="$HERE/.state/terramate-$v"; file="terramate_${v}_${os}_${arch}.tar.gz"
+  if [ ! -x "$dir/terramate" ]; then
+    mkdir -p "$dir" || return 1
+    curl -fsSL -o "$dir/$file" "https://github.com/terramate-io/terramate/releases/download/v$v/$file" || return 1
+    curl -fsSL -o "$dir/checksums.txt" "https://github.com/terramate-io/terramate/releases/download/v$v/checksums.txt" || return 1
+    [ "$(grep " $file\$" "$dir/checksums.txt" | cut -d' ' -f1)" = "$(shasum -a 256 "$dir/$file" | cut -d' ' -f1)" ] \
+      || { echo "[smoke terramate] $file does not match the release's checksums.txt" >&2; return 1; }
+    tar -xzf "$dir/$file" -C "$dir" terramate || return 1
+  fi
+  echo "$dir/terramate"
+}
+
+terramate_plan_log() { # repo, run id -> the plan job's whole log
+  atmos_plan_log "$@"
+}
+
+claim_terramate_waves() {
+  # Push the fixture, gate: always. init takes the three stacks as roots and
+  # cuts two waves from their order: db (before app) and network, then app
+  # (after tag:net). Wave 1 waits, so nothing has state. Approve wave 1 and
+  # push again: db and network apply and wave 2 waits at its own gate.
+  # Approve wave 2 and push again: app applies after them.
+  # BREAK: init runs a bundle that drops each stack's order, so all three
+  # share one wave and app goes out with db and network.
+  log() { echo "[smoke terramate-waves] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-waves" sha applied logs rc=0 k want wf TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_TERRAMATE
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" terramate.ts '      dependencies: [...closure(p)].filter((d) => d !== p).sort(),' '      dependencies: [],' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-waves terramate-stacks || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-waves: first")"
+  wait_run "$repo" "$sha"
+  applied="$(gated_applied terramate-waves)"
+  logs="$(print_logs "$repo" "$RUN_ID")"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "a stack applied before any wave was approved"; rc=1; }
+  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  for k in 1 2; do
+    [ $rc = 0 ] || break
+    gated_approve terramate-waves "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "terramate-waves: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied terramate-waves)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+    case "$k" in
+      1) want="db network " ;;
+      2) want="app db network " ;;
+    esac
+    [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
+    if [ "$k" = 1 ]; then
+      grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+    else
+      [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once both waves were approved"; rc=1; }
+    fi
+  done
+  grep -q -- "-auto-approve" <<<"$logs" && { log "a job ran an apply with -auto-approve"; rc=1; }
+  for k in 1 2; do
+    grep -q "^  apply-wave-$k:" "$wf" || { log "init wrote no apply-wave-$k job"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "db and network went out in wave 1, app after them in wave 2, as before and after order them, each wave after an approval of its own digest"
+  return $rc
+}
+
+claim_terramate_affected() {
+  # The fixture on main, then a pull request that changes network. The plan
+  # job's diff names stacks/network, and stacks/app plans after it, since its
+  # after (tag:net) puts it after network; db is not reached, so it does not plan.
+  # BREAK: the jobs run an image whose stage leaves out the stacks' order,
+  # so stacks/app does not plan.
+  log() { echo "[smoke terramate-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-affected" sha head pr plan_log rc=0 r TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" report/stage.ts '  const order = atmosDependencies(repo, all);' '  const order = new Map<string, Set<string>>();' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-affected terramate-stacks || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-affected: three stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  sed -i.bak 's/:1"/:2"/' "$work/tree/stacks/network/main.tf" && find "$work/tree" -name '*.bak' -delete
+  head="$(push_tree "$work/tree" "$repo" change "terramate-affected: network moves")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "terramate-affected: network moves")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    plan_log="$(terramate_plan_log "$repo" "$RUN_ID")"
+    grep -E 'terramate generate|affected: |stacks/(network|db|app): (Plan|No changes)' <<<"$plan_log" >&2 || true
+    [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }
+    for r in stacks/network stacks/app; do
+      grep -q "$r: Plan:" <<<"$plan_log" || { log "the pull request did not plan $r"; rc=1; }
+    done
+    grep -qE "stacks/db: (Plan:|No changes)" <<<"$plan_log" && { log "the pull request planned stacks/db, which the change does not reach"; rc=1; }
+    grep -q "affected: stacks/app depends on stacks/network" <<<"$plan_log" || { log "the plan does not say stacks/app plans because it runs after stacks/network"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "a change to network planned network and app, which runs after it, and not db"
+  return $rc
+}
+
+claim_terramate_sharing() {
+  # stack/fixtures/terramate-sharing: app reads network's name with an input
+  # block, so app is a wave after network. On main wave 1 waits, so nothing
+  # has state. A pull request that changes app plans it in the plan job:
+  # network has no state, so app is held back, never planned on the input's
+  # mock. Then wave 1 and wave 2 are approved on main: app applies with the
+  # name network's state holds.
+  # BREAK: the jobs run an image that neither counts the input as a state
+  # read nor waits for a missing output, so app plans on null.
+  log() { echo "[smoke terramate-sharing] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-sharing" sha head pr plan_log applied got k rc=0 TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" \
+      atmos.ts '    if (reads.length > 0) out.set(r, new Set(reads.map((x) => x.upstream)));' '' \
+      atmos.ts '    if (!v) {' '    if (false) {' \
+      atmos.ts '    values[read.var] = v.value;' '    values[read.var] = v ? v.value : null;' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-sharing terramate-sharing || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-sharing: app reads network")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  sed -i.bak 's/replicas = 1/replicas = 2/' "$work/tree/stacks/app/main.tf" && find "$work/tree" -name '*.bak' -delete
+  head="$(push_tree "$work/tree" "$repo" change "terramate-sharing: app grows")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "terramate-sharing: app grows")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    plan_log="$(terramate_plan_log "$repo" "$RUN_ID")"
+    grep -E 'affected: |held back|stacks/(network|app): (Plan|No changes)' <<<"$plan_log" >&2 || true
+    grep -q "stacks/app: held back, stacks/network has no state yet" <<<"$plan_log" || { log "stacks/app was not held back for stacks/network"; rc=1; }
+    grep -qE "stacks/app: (Plan:|No changes)" <<<"$plan_log" && { log "stacks/app planned before stacks/network had state"; rc=1; }
+  fi
+  for k in 1 2; do
+    [ $rc = 0 ] || break
+    gated_approve terramate-sharing "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "terramate-sharing: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied terramate-sharing)"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+  done
+  if [ $rc = 0 ]; then
+    [ "$applied" = "app network " ] || { log "expected both stacks to apply once both waves were approved"; rc=1; }
+    got="$(curl -fsS "$FLOCI/shop-terraform-state/terramate-sharing/app.tfstate" 2>/dev/null | jq -r '.resources[0].instances[0].attributes.input.value.net // empty' 2>/dev/null || true)"
+    [ "$got" = "net-1" ] || { log "stacks/app applied with net_name '${got:-null}', not network's net-1"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "stacks/app was held back while stacks/network had no state, then applied on the name network's state holds"
+  return $rc
+}
+
+claim_terramate_stale() {
+  # The fixture with a global changed in terramate.tm.hcl and the generated
+  # code left as it was. The push's check job runs terramate generate
+  # --detailed-exit-code, which would rewrite every stack's
+  # _terramate_generated_owner.tf, so the check fails and names the file.
+  # BREAK: the jobs run an image that ignores what the generate check found,
+  # so the check passes on the stale code.
+  log() { echo "[smoke terramate-stale] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-stale" sha logs rc=0 TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" terramate.ts '  if (stale) throw new ConfigError(stale);' '' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-stale terramate-stacks || { drop_work "$work"; return 1; }
+  sed -i.bak 's/owner = "smoke"/owner = "stale"/' "$work/tree/terramate.tm.hcl" && find "$work/tree" -name '*.bak' -delete
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-stale: a global changed, the generated code not")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  logs="$(run_logs "$repo" "$RUN_ID")"
+  grep -E "generated code is stale|_terramate_generated_owner|synth command failed" <<<"$logs" | head -8 >&2 || true
+  [ "$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "check") | .status' | head -1)" = failure ] || { log "the check job did not fail on the stale generated code"; rc=1; }
+  grep -q "the generated code is stale" <<<"$logs" || { log "the check job did not say the generated code is stale"; rc=1; }
+  grep -q "_terramate_generated_owner.tf" <<<"$logs" || { log "the check job does not name the file terramate generate would change"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the check job ran terramate generate --detailed-exit-code, which failed it on the stale _terramate_generated_owner.tf"
+  return $rc
+}
+
+claim_atmos_refuse() {
+  # The fixture with a drift schedule and no respond.drift. config check and
+  # init each refuse the drift pull request, the default response, as a config
+  # error worded for Atmos (the value belongs in the stack's vars or the
+  # component), never about synth; with respond.drift: attribute init writes
+  # the drift job. With the instances written, respond tips proposes lock files
+  # for the two components git holds, not the four written instances, and a
+  # canary of instances.
+  # BREAK: config check and init run a bundle whose refusal table leaves the
+  # Atmos drift pull request out, so config check passes the schedule.
+  log() { echo "[smoke atmos-refuse] $*" >&2; }
+  local work out tips rc=0 TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_ATMOS
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" refusals.ts '"drift-pr": ATMOS_DRIFT_PR, ' '' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/atmos-two-stacks/." "$work/tree/"
+  printf 'url: https://forge.test/acme/infra\ndrift: "0 6 * * *"\n' >> "$work/tree/terragucci.yml"
+  git -C "$work/tree" init -q -b main
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" config check 2>&1)"; then
+    log "config check passed the drift pull request in an Atmos repo"; rc=1
+  else
+    grep -q "config.respond.drift: .*stack's vars or the component" <<<"$out" || { log "config check did not refuse it in Atmos's words: $out"; rc=1; }
+    grep -q "synth" <<<"$out" && { log "config check talks about synth: $out"; rc=1; }
+  fi
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" init 2>&1)"; then
+    log "init accepted the drift pull request in an Atmos repo"; rc=1
+  else
+    grep -q "respond.drift: .*stack's vars or the component" <<<"$out" || { log "init did not refuse it in Atmos's words: $out"; rc=1; }
+  fi
+  printf 'respond:\n  drift: attribute\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init refused respond.drift: attribute"; rc=1; }
+  grep -q "tf-drift" "$work/tree/.forgejo/workflows/terragucci.yml" 2>/dev/null || { log "the pipeline has no drift job"; rc=1; }
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m fixture
+  (cd "$work/tree" && "$TERRAGUCCI" atmos write >/dev/null) || { log "atmos write failed"; rc=1; }
+  tips="$(cd "$work/tree" && "$TERRAGUCCI" respond tips --binary tofu 2>&1)" || { log "respond tips failed: $tips"; rc=1; }
+  log "respond tips: $(tr '\n' ' ' <<<"$tips")"
+  grep -q "for 2 root(s)" <<<"$tips" || { log "the lock file tip does not name the two components"; rc=1; }
+  grep -q "canary wave: dev/app, dev/vpc" <<<"$tips" || { log "the canary tip does not name instances"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "config check and init refused the drift pull request in Atmos's words, attribute wrote the drift job, and tips went to the components"
   return $rc
 }
 
@@ -8382,7 +8668,7 @@ HCL
   git -C "$work/estate-wave" remote add origin /origin.git
   in_image() { # project dir, then the command
     local dir="$1"; shift
-    run_copied --rm --network terragucci -v "$work/$dir:/projects/$dir" -v "$work/origin.git:/origin.git" -w "/projects/$dir" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/$dir:/projects/$dir" -v "$work/origin.git:/origin.git" -w "/projects/$dir" \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -8411,7 +8697,7 @@ HCL
   fi
   if [ $rc = 0 ]; then
     mkdir -p "$work/estate-page"
-    out="$(run_copied --rm --network terragucci -v "$work/estate-page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+    out="$(run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/estate-page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
       "$image" terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1)" || { log "terragucci estate failed"; rc=1; }
     printf '%s\n' "$out" >&2
   fi
@@ -8618,7 +8904,7 @@ cdf_proxy_up() { # work
   local work="$1" port i
   CDF_ALIAS="tgs-records-$$-$RANDOM"
   mkdir -p "$work/proxy" && cp "$HERE/fixtures/cdf-race/s3-hold.mjs" "$work/proxy/" || return 1
-  CDF_PROXY="$(run_copied -d --name "$CDF_ALIAS" --network terragucci "--network-alias=$CDF_RECORDS.$CDF_ALIAS" "--network-alias=000000000000.$CDF_ALIAS" \
+  CDF_PROXY="$(run_copied -d --name "$CDF_ALIAS" --network "${TG_NETWORK:-terragucci}" "--network-alias=$CDF_RECORDS.$CDF_ALIAS" "--network-alias=000000000000.$CDF_ALIAS" \
     -p 127.0.0.1::8080 -e "ALIAS=$CDF_ALIAS" -e UPSTREAM=floci:4566 -v "$work/proxy:/proxy:ro" \
     "$(image_tag choudoufu)" node /proxy/s3-hold.mjs)" || return 1
   port="$(docker port "$CDF_PROXY" 8080/tcp | head -1 | sed 's/.*://')"
@@ -8686,7 +8972,7 @@ cdf_run() { # dir log name bin override stage-args...
   local -a mount=()
   shift 5
   [ -n "$over" ] && mount=(-v "$over:/usr/local/bin/$bin:ro")
-  run_copied --rm --name "$name" --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" ${mount[@]+"${mount[@]}"} \
+  run_copied --rm --name "$name" --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" ${mount[@]+"${mount[@]}"} \
     -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -8978,7 +9264,7 @@ claim_cdf_iam() {
   fimg="$(awk '/^  floci:/ { f = 1 } f && /image:/ { print $2; exit }' "$HERE/docker-compose.yml")"
   [ -n "$fimg" ] || { log "no floci image in docker-compose.yml"; return 1; }
   docker rm -f "$name" >/dev/null 2>&1 || true
-  docker run -d --name "$name" --label "terragucci.run-copied=$$" --network terragucci -p 127.0.0.1::4566 \
+  docker run -d --name "$name" --label "terragucci.run-copied=$$" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::4566 \
     -e FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED=true "$fimg" >/dev/null || { log "could not start floci with IAM enforcement"; return 1; }
   port="$(docker port "$name" 4566/tcp | head -1 | sed 's/.*://')"
   url="http://127.0.0.1:$port"
@@ -9000,7 +9286,7 @@ claim_cdf_iam() {
   iam_wave() { # log layers [docker run args...]: tf-apply wave 1 of those roots of $work/repo on this floci
     local logf="$1" layers="$2" r=0
     shift 2
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
       -e "AWS_ENDPOINT_URL=http://$name:4566" -e AWS_REGION=us-east-1 "$@" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       "$image" terragucci stage tf-apply --wave 1 --layers "$layers" --binary choudoufu --gate never >"$logf" 2>&1 || r=$?
@@ -9141,7 +9427,7 @@ claim_apply_per_root() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply-rows.ts 'return basename(binary).replace(/\.exe$/, "") === "choudoufu" ? "resource" : "root";' 'return "repo";' \
+    break_bundle "$work/break.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "repo";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     cli="$work/break.mjs"
   fi
@@ -9307,7 +9593,7 @@ claim_cdf_rows_overlap() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply-rows.ts 'return basename(binary).replace(/\.exe$/, "") === "choudoufu" ? "resource" : "root";' 'return "repo";' \
+    break_bundle "$work/break.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "repo";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     cli="$work/break.mjs"
   fi
@@ -9387,7 +9673,7 @@ claim_cdf_rows_wait() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/terragucci.mjs" apply-rows.ts 'return basename(binary).replace(/\.exe$/, "") === "choudoufu" ? "resource" : "root";' 'return "root";' \
+    break_bundle "$work/terragucci.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "root";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     bundle="$work/terragucci.mjs"
   fi
@@ -9396,7 +9682,7 @@ claim_cdf_rows_wait() {
   inner="http://${USER}:${TOKEN}@forgejo:3000/$repo.git"
   host="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
   rows_wave() { # side log
-    run_copied --rm --name "$CDF_ALIAS-$1" --network terragucci -v "$work/$1:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --name "$CDF_ALIAS-$1" --network "${TG_NETWORK:-terragucci}" -v "$work/$1:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
       -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_LOCK_POLL=2 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -9788,7 +10074,7 @@ policy_override_repo() { # work [override list] -> $work/wave committed, $work/o
 
 policy_override_wave() { # work image -> the exit code of one tf-apply wave 1
   local work="$1" image="$2" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0
-  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -9998,7 +10284,7 @@ blob_project() { # work, name, reports yaml
 # arguments come from BLOB_ENV.
 blob_run() { # work, name, image, stub, command...
   local work="$1" name="$2" image="$3" stub="$4"; shift 4
-  run_copied --rm --network terragucci -v "$work/$name:/projects/$name" -v "$work/stub:/stub" -w "/projects/$name" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/$name:/projects/$name" -v "$work/stub:/stub" -w "/projects/$name" \
     -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${BLOB_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -10033,7 +10319,7 @@ claim_blob_azure() {
   cat "$work/newcerts/azurite.crt" >"$certs/azurite.crt"
   chmod 644 "$certs/azurite.key"
   cp "$certs/azurite.crt" "$work/stub/ca.crt"
-  with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+  with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" \
     --profile blob up -d --force-recreate azurite >&2 || { drop_work "$work"; return 1; }
   # What Entra ID would answer: Azurite checks the audience, the issuer and the lifetime (iat, nbf and exp, all three present), and keys the delegation on oid and tid.
   now="$(date +%s)"
@@ -10122,7 +10408,7 @@ claim_blob_gcs() {
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/stub"
-  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile blob up -d gcs >&2 || { drop_work "$work"; return 1; }
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" --profile blob up -d gcs >&2 || { drop_work "$work"; return 1; }
   gcs() { curl -sS -H 'Host: gcs:4443' "$@"; }
   for i in $(seq 1 30); do
     gcs -f -o /dev/null "http://localhost:$port/_internal/healthcheck" 2>/dev/null && break
@@ -10295,7 +10581,7 @@ note_stage() { # dir, stage args...
   local dir="$1" image rc=0
   shift
   image="$(image_tag tofu)"
-  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci stage tf-plan "$@" >&2 || rc=$?
@@ -10440,7 +10726,7 @@ stand_in_up() { # work, name, port, KEY=VALUE...
   local -a envs=()
   for kv in "$@"; do envs+=(-e "$kv"); done
   mkdir -p "$work/stand-in" && cp "$HERE/fixtures/stand-in/server.mjs" "$work/stand-in/" || return 1
-  STANDIN="$(run_copied -d --name "$name" --network terragucci -p "127.0.0.1::$port" -e "PORT=$port" ${envs[@]+"${envs[@]}"} \
+  STANDIN="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" -p "127.0.0.1::$port" -e "PORT=$port" ${envs[@]+"${envs[@]}"} \
     -v "$work/stand-in:/stand-in:ro" "$(image_tag tofu)" node /stand-in/server.mjs)" || return 1
   hostport="$(docker port "$STANDIN" "$port/tcp" | head -1 | sed 's/.*://')"
   STANDIN_CTL="http://127.0.0.1:$hostport"
@@ -10591,7 +10877,7 @@ claim_otlp_headers() {
   otlp_plan() { # endpoint, docker run args...
     local endpoint="$1" code=0
     shift
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       -e "OTEL_EXPORTER_OTLP_ENDPOINT=$endpoint" "$@" "$(image_tag tofu)" terragucci stage tf-plan --layers small >&2 || code=$?
@@ -10752,6 +11038,69 @@ YML
   return $rc
 }
 
+claim_tg_generate_init() {
+  # A Terragrunt repo of one unit, live/app, that includes terragucci.hcl,
+  # and a terragucci.yml whose generate key gives the s3 backend in a bucket
+  # nobody created, with disable_init: false. terragucci generate writes
+  # disable_init = false in terragucci.hcl's remote_state; the check step
+  # init writes passes it (hcl fmt, generate --check, hcl validate). Then
+  # tf-apply --terragrunt wave 1, run in the Terragrunt image as the apply job
+  # runs it, has Terragrunt bootstrap the backend: the bucket exists after,
+  # and live/app's state is in it. force_path_style, not use_path_style, is
+  # what Terragrunt's own S3 client reads to reach floci by path.
+  # BREAK: terragucci.yml leaves disable_init out, so terragucci.hcl keeps
+  # disable_init = true, nothing creates the bucket and the wave fails.
+  log() { echo "[smoke tg-generate-init] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bucket="tggeninit-$STAMP" body code=0 rc=0 init_line="  disable_init: false"
+  image="$(image_tag terragrunt)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  [ -n "${BREAK:-}" ] && init_line=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null "$FLOCI/$bucket" 2>/dev/null && { log "the bucket $bucket exists before the run"; drop_work "$work"; return 1; }
+  mkdir -p "$work/wave/modules/app" "$work/wave/live/app"
+  printf 'resource "terraform_data" "app" {\n  input = "app"\n}\n' > "$work/wave/modules/app/main.tf"
+  printf '# The unit takes its backend from terragucci.hcl.\n' > "$work/wave/root.hcl"
+  printf 'include "terragucci" {\n  path = find_in_parent_folders("terragucci.hcl")\n}\n\nterraform {\n  source = "../../modules/app"\n}\n' > "$work/wave/live/app/terragrunt.hcl"
+  cat > "$work/wave/terragucci.yml" <<YML
+forge: forgejo
+binary: tofu
+generate:
+$init_line
+  backend:
+    s3:
+      bucket: $bucket
+      key: "{root}/terraform.tfstate"
+      region: us-east-1
+      use_lockfile: true
+      force_path_style: true
+YML
+  printf '.terragrunt-cache/\nterragucci-report/\n' > "$work/wave/.gitignore"
+  (cd "$work/wave" && "$TERRAGUCCI" generate >&2) || { log "generate failed"; drop_work "$work"; return 1; }
+  if grep -q '^  disable_init = false$' "$work/wave/terragucci.hcl"; then log "terragucci.hcl's remote_state has disable_init = false"
+  else log "terragucci.hcl's remote_state has $(grep -m1 'disable_init' "$work/wave/terragucci.hcl" | sed 's/^ *//'), not disable_init = false"; rc=1; fi
+  (cd "$work/wave" && TERRAGUCCI_TERRAGRUNT=/nonexistent/terragrunt "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  body="$(check_step_body "$work/wave/.forgejo/workflows/terragucci.yml")"
+  audit_origin "$work"
+  AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true sh -c "$body" > "$work/check.log" 2>&1 || code=$?
+  cat "$work/check.log" >&2
+  clean_mounted "$work/wave" "$image"
+  [ "$code" = 0 ] || { log "the check step exited $code"; rc=1; }
+  AUDIT_CODE=0
+  AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-apply --wave 1 --layers "live/app" --binary tofu --gate never --terragrunt > "$work/apply.log" 2>&1 || AUDIT_CODE=$?
+  cat "$work/apply.log" >&2
+  clean_mounted "$work/wave" "$image"
+  [ "$AUDIT_CODE" = 0 ] || { log "the wave exited $AUDIT_CODE, not 0"; rc=1; }
+  grep -q 'Terragrunt bootstraps its backend (TG_BACKEND_BOOTSTRAP)' "$work/apply.log" || { log "the wave did not say it bootstraps the backend"; rc=1; }
+  curl -fsS -o /dev/null "$FLOCI/$bucket" || { log "the bucket $bucket does not exist after the wave"; rc=1; }
+  curl -fsS -o /dev/null "$FLOCI/$bucket/live/app/terraform.tfstate" || { log "no state for live/app at $bucket/live/app/terraform.tfstate"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "generate wrote disable_init = false, the check step passed it, and the apply job had Terragrunt create $bucket and apply live/app into it"
+  return $rc
+}
+
 claim_root_pins() {
   # Two roots in one wave: old pins OpenTofu 1.10.6 in its .opentofu-version,
   # which the tofu image does not carry, and new pins nothing. tf-plan, run in
@@ -10775,7 +11124,7 @@ claim_root_pins() {
   git -C "$work/repo" init -q -b main
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "two roots, two versions"
   # One layer, so one wave: the stage plans both roots at once.
-  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci stage tf-plan --layers 'new,old' --forge github >"$work/plan.log" 2>&1 || { log "the plan run failed"; rc=1; }
@@ -10880,7 +11229,7 @@ YML
   [ -n "${BREAK:-}" ] && perl -pi -e 's#shop-terraform-state-prod#hand-edited#' "$tree/envs/prod/app/backend.tf"
   git -C "$tree" init -q -b main
   git -C "$tree" add -A && git -C "$tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "generated roots"
-  run_copied --rm --network terragucci -v "$tree:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$tree:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -11019,7 +11368,7 @@ projects:
 YAML
   printf '%s' 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnNtb2tlL2NvbnRyb2w6cmVmOnJlZnMvaGVhZHMvbWFpbiJ9.c21va2U' > "$work/control/.oidc-token"
   if [ $rc = 0 ]; then
-    out="$(run_copied --rm --network terragucci -v "$work/control:/control" -w /control -v "$bundle:/usr/local/bin/terragucci:ro" \
+    out="$(run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/control:/control" -w /control -v "$bundle:/usr/local/bin/terragucci:ro" \
       "${AWS_DOCKER_ENV[@]}" -e AWS_ACCESS_KEY_ID= -e AWS_SECRET_ACCESS_KEY= -e AWS_WEB_IDENTITY_TOKEN_FILE=/control/.oidc-token -e AWS_ROLE_SESSION_NAME=smoke \
       "$(image_tag tofu)" terragucci estate --link-hours 1 2>&1)" || log "terragucci estate exited non-zero"
     printf '%s\n' "$out" >&2
@@ -11061,7 +11410,7 @@ claim_estate_override() {
   git -C "$work/wave" remote add origin /origin.git
   override_wave() {
     code=0
-    run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >"$work/run.log" 2>&1 || code=$?
@@ -11075,7 +11424,7 @@ claim_estate_override() {
     override_wave
     log "the run after the override exited $code"
     mkdir -p "$work/page"
-    run_copied --rm --network terragucci -v "$work/page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
       "$image" terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || log "terragucci estate exited non-zero"
     page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
   fi
@@ -11115,7 +11464,7 @@ claim_reader_contracts() {
   done
   in_dir() { # project dir, then the command; the repo is named after the directory unless the environment names it
     local dir="$1"; shift
-    run_copied --rm --network terragucci -v "$work/$dir:/work/$dir" -w "/work/$dir" -v "$bundle:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/$dir:/work/$dir" -w "/work/$dir" -v "$bundle:/usr/local/bin/terragucci:ro" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' "$image" "$@"
   }
@@ -11128,7 +11477,7 @@ claim_reader_contracts() {
   fi
   if [ $rc = 0 ]; then
     mkdir -p "$work/page"
-    run_copied --rm --network terragucci -v "$work/page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
       "$image" terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
   fi
   if [ $rc = 0 ]; then
@@ -11645,11 +11994,11 @@ TF
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke token scrub"
   local -a envs=(-e "TG_TOKEN=$secret" -e "GITHUB_TOKEN=$secret-gh" -e "FORGEJO_TOKEN=$secret-fj" -e "SMOKE_COPY=$secret" -e "TF_VAR_token=$secret")
   if [ -n "${BREAK:-}" ]; then
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo/app -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo/app -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 "${envs[@]}" \
       "$(image_tag tofu)" sh -c 'tofu init -input=false -no-color >/dev/null && tofu plan -input=false -no-color' >&2 || true
   else
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' "${envs[@]}" \
       "$(image_tag tofu)" terragucci stage tf-plan --layers app >&2 || true
@@ -11954,7 +12303,7 @@ claim_plan_no_lock() {
   git -C "$work/repo" init -q -b main
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "plan-no-lock: one"
   base="$(git -C "$work/repo" rev-parse HEAD)"
-  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo/app "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo/app "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 \
     || { log "the first apply failed"; drop_work "$work"; return 1; }
   clean_mounted "$work/repo"
@@ -11962,7 +12311,7 @@ claim_plan_no_lock() {
   # lock held, until /tmp/release appears (or ten minutes pass); then stdin
   # closes, the apply is cancelled and lets go of the lock.
   # shellcheck disable=SC2016 # expanded by the container's shell
-  run_copied -d --name "$holder" --network terragucci -v "$work/holder:/repo" -w /repo/app "${AWS_DOCKER_ENV[@]}" \
+  run_copied -d --name "$holder" --network "${TG_NETWORK:-terragucci}" -v "$work/holder:/repo" -w /repo/app "${AWS_DOCKER_ENV[@]}" \
     "$image" sh -c 'tofu init -input=false -no-color >/dev/null && { i=0; while [ ! -f /tmp/release ] && [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done; } | tofu apply -input=true -no-color' >/dev/null \
     || { log "the holding apply did not start"; drop_work "$work"; return 1; }
   lock_held() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/$key.tflock")" = 200 ]; }
@@ -11977,7 +12326,7 @@ claim_plan_no_lock() {
   for s in tf-plan tf-drift; do
     [ $rc = 0 ] || break
     t0="$(date +%s)"
-    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TF_CLI_ARGS_plan=-lock-timeout=30s -e "TG_BASE=$base" \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       "$image" terragucci stage "$s" --layers app --out "$s-report" >&2 || { log "$s failed while the apply held the lock"; rc=1; }
@@ -12055,7 +12404,7 @@ HCL
   git -C "$work/repo" remote add origin "http://forgejo:3000/$USER/example.git"
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke sensitive-redacted"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
-  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TF_VAR_db_password=$new" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci stage tf-plan --layers app >"$work/job.log" 2>&1 || { log "the plan run exited non-zero"; rc=1; }
@@ -12125,7 +12474,7 @@ claim_provider_cache_once() {
   git -C "$work/repo" init -q -b main
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke provider-cache-once"
   docker volume create "$vol" >/dev/null || { log "could not make the volume $vol"; drop_work "$work"; return 1; }
-  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$vol:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci stage tf-plan --layers "$layer" >"$work/job.log" 2>&1 || { log "the plan run exited non-zero"; rc=1; }
@@ -12587,7 +12936,7 @@ claim_policy_hcl() {
   [ -n "${BREAK:-}" ] && sed -i.bak 's/enforcement_level = "mandatory"/enforcement_level = "advisory"/' "$work/policy-hcl/policies.hcl" && rm -f "$work/policy-hcl/policies.hcl.bak"
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy-hcl"
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -12629,7 +12978,7 @@ tg_fixture_stage() { # dir, docker run args (up to --), stage args...
   local -a extra=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do extra+=("$1"); shift; done
   [ "${1:-}" = -- ] && shift
-  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -12727,23 +13076,29 @@ claim_tg_dependents() {
   # The Terragrunt gated fixture with live/fleet/two depending on
   # live/canary/one, a fourth unit under live/sandbox, and terragrunt.exclude
   # leaving live/sandbox/** out. A change to live/canary/one and to the
-  # sandbox unit is planned twice against the base: with dependents: plan,
-  # live/fleet/two is previewed, provisional and deferred; with
+  # sandbox unit is planned twice against the base: with no dependents key,
+  # the default, live/fleet/two is previewed, provisional and deferred; with
   # dependents: follow it is not planned; both runs have the same set
   # digests, and neither plans the sandbox unit.
-  # BREAK: the first run also has dependents: follow, so nothing is previewed.
+  # BREAK: the first run has dependents: follow, the old default, so nothing
+  # is previewed.
   log() { echo "[smoke tg-dependents] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work prefix="tg-dep-$STAMP" dir mode base r1 r2 rc=0 i
-  local -a dep_modes=(plan follow)
+  # "default" writes no dependents key.
+  local -a dep_modes=(default follow)
   [ -n "${BREAK:-}" ] && dep_modes=(follow follow)
   docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   for i in 1 2; do
     dir="$work/run$i"; mode="${dep_modes[$((i - 1))]}"
-    tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]\n  dependents: %s' "$mode")" || return 1
+    if [ "$mode" = default ]; then
+      tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]')" || return 1
+    else
+      tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]\n  dependents: %s' "$mode")" || return 1
+    fi
     printf '\ndependencies {\n  paths = ["../../canary/one"]\n}\n' >> "$dir/live/fleet/two/terragrunt.hcl"
     mkdir -p "$dir/live/sandbox/four"
     cp "$dir/live/fleet/three/terragrunt.hcl" "$dir/live/sandbox/four/"
@@ -12760,13 +13115,13 @@ claim_tg_dependents() {
   r2="$work/run2/terragucci-report/report.json"
   [ -f "$r1" ] && [ -f "$r2" ] || { log "a run wrote no report"; drop_work "$work"; return 1; }
   jq -e '.roots[] | select(.path == "live/canary/one" and .status == "planned" and (.terragrunt.provisional | not))' "$r1" >/dev/null || { log "live/canary/one is not a real plan"; rc=1; }
-  jq -e '.roots[] | select(.path == "live/fleet/two" and .terragrunt.provisional == true)' "$r1" >/dev/null || { log "dependents: plan did not preview live/fleet/two as provisional"; rc=1; }
+  jq -e '.roots[] | select(.path == "live/fleet/two" and .terragrunt.provisional == true)' "$r1" >/dev/null || { log "by default live/fleet/two was not previewed as provisional"; rc=1; }
   jq -e '.deferred[] | select(.unit == "live/fleet/two" and .previewed == true)' "$r1" >/dev/null || { log "live/fleet/two is not deferred and previewed"; rc=1; }
   jq -e '[.roots[] | select(.path == "live/fleet/two")] | length == 0' "$r2" >/dev/null || { log "dependents: follow planned live/fleet/two"; rc=1; }
   [ "$(jq -c '[.waves[]?.set_digest]' "$r1")" = "$(jq -c '[.waves[]?.set_digest]' "$r2")" ] || { log "the preview changed a set digest"; rc=1; }
   jq -e '[.roots[] | select(.path | startswith("live/sandbox"))] | length == 0' "$r1" >/dev/null || { log "the excluded sandbox unit was planned"; rc=1; }
   drop_work "$work"
-  [ $rc = 0 ] && log "dependents: plan previewed live/fleet/two outside every digest, follow left it for later, and the excluded unit never planned"
+  [ $rc = 0 ] && log "by default live/fleet/two was previewed outside every digest, dependents: follow left it for later, and the excluded unit never planned"
   return $rc
 }
 
@@ -12783,7 +13138,7 @@ tg_preview_copy() { # dir, prefix -> the tg-preview fixture in dir, its state un
 
 tg_preview_apply() { # dir -> every unit of the fixture in dir applied as it stands, with Terragrunt in the CI image
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
-  run_copied --rm --network terragucci -v "$1:/repo" -w /repo -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$1:/repo" -w /repo -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
     "$(tg_image)" terragrunt run --all --no-color -- apply -auto-approve -input=false >&2 || { clean_mounted "$1"; return 1; }
   clean_mounted "$1"
@@ -13027,7 +13382,7 @@ claim_tfquery_import() {
     --data-urlencode Action=CreateRole --data-urlencode Version=2010-05-08 --data-urlencode "RoleName=$role" \
     --data-urlencode 'AssumeRolePolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
     || { log "floci did not make IAM role $role"; return 1; }
-  out="$(run_copied --rm --network terragucci -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  out="$(run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e "TERRAGUCCI_FORGEJO_TOKEN=$TOKEN" -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" terragucci respond drift --root app --mode apply 2>&1)" || true
@@ -13079,7 +13434,7 @@ claim_alerts_fire() {
   cp "$work/rules-repo/obs/prometheus/terragucci.rules.yml" "$work/prom/rules/" || { log "init wrote no rules file"; drop_work "$work"; return 1; }
   printf 'global:\n  scrape_interval: 5s\n  evaluation_interval: 5s\nrule_files:\n  - /prom/rules/*.yml\nscrape_configs:\n  - job_name: otel-collector\n    static_configs:\n      - targets: [otel-collector:8889]\n' > "$work/prom/prometheus.yml"
   prom="$(grep -o 'prom/prometheus:[^ ]*' "$HERE/docker-compose.yml" | head -1)"
-  STANDIN="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::9090 -v "$work/prom:/prom:ro" "$prom" \
+  STANDIN="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::9090 -v "$work/prom:/prom:ro" "$prom" \
     --config.file=/prom/prometheus.yml)" || { log "the Prometheus of the claim did not start"; drop_work "$work"; return 1; }
   hostport="$(docker port "$STANDIN" 9090/tcp | head -1 | sed 's/.*://')"
   promurl="http://127.0.0.1:$hostport"
@@ -13098,7 +13453,7 @@ claim_alerts_fire() {
   stage() { # name, stage args...
     local n="$1"
     shift
-    run_copied --rm --network terragucci -v "$work/$n:/repo" -v "$work/$n.git:/origin.git" -w /repo \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/$n:/repo" -v "$work/$n.git:/origin.git" -w /repo \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       -e "OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT" -e GITHUB_SERVER_URL=http://smoke.local -e "GITHUB_REPOSITORY=alerts/$n-$STAMP" \
@@ -13162,7 +13517,7 @@ provider "aws" {
   code=0; stage refused tf-apply --wave 1 --layers app --binary tofu --gate always || code=$?
   [ "$code" = 4 ] || { log "the wave of refused was not refused (exit $code)"; rc=1; }
   # drift: apply the queue, change its timeout in floci, run tf-drift.
-  run_copied --rm --network terragucci -v "$work/drift:/repo" -w /repo/app -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/drift:/repo" -w /repo/app -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 \
     || { log "the queue of drift did not apply"; rc=1; }
   clean_mounted "$work/drift"
@@ -13230,7 +13585,7 @@ claim_blob_gcs_key() {
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/stub"
-  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile blob up -d gcs >&2 || { drop_work "$work"; return 1; }
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" --profile blob up -d gcs >&2 || { drop_work "$work"; return 1; }
   gcs() { curl -sS -H 'Host: gcs:4443' "$@"; }
   for i in $(seq 1 30); do gcs -f -o /dev/null "http://localhost:$port/_internal/healthcheck" 2>/dev/null && break; sleep 1; done
   bucket="tg-key-$(date +%s)"
@@ -13308,7 +13663,7 @@ claim_blob_azure_key() {
   cat "$work/newcerts/azurite.crt" >"$certs/azurite.crt"
   chmod 644 "$certs/azurite.key"
   cp "$certs/azurite.crt" "$work/stub/ca.crt"
-  with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+  with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" \
     --profile blob up -d --force-recreate azurite >&2 || { drop_work "$work"; return 1; }
   # The claim reads Azurite with a token Azurite takes, as blob-azure does; the job has only the key.
   now="$(date +%s)"
@@ -13369,7 +13724,7 @@ claim_index_writes() {
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   index_plan() { # project dir, endpoint
-    run_copied --rm --network terragucci -v "$work/$1:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/$1:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e GITHUB_SERVER_URL=http://smoke.local -e "GITHUB_REPOSITORY=index/$1" \
       "$(image_tag tofu)" terragucci stage tf-plan --layers app > "$work/$1.log" 2>&1
@@ -13774,7 +14129,7 @@ audit_origin() { # work -> commits $1/wave and pushes it to $1/origin.git, its o
 
 audit_in() { # work, command... -> runs it in the CI image in /repo ($1/wave), with /origin.git
   local work="$1" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
-  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$(image_tag "${AUDIT_IMAGE:-tofu}")" "$@"
@@ -13842,7 +14197,7 @@ claim_apply_outcome() {
     [ -z "${BREAK:-}" ] || asked=()
     code=0
     : > "$out"
-    run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       "${asked[@]}" \
@@ -14066,7 +14421,7 @@ claim_audit_control() {
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
   control_in() { # dir under /work, command...
     local dir="$1"; shift
-    run_copied --rm --network terragucci -v "$work:/work" -w "/work/$dir" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/work" -w "/work/$dir" \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       -e GITHUB_SERVER_URL=http://smoke.local -e "GITHUB_REPOSITORY=audit/$dir" "$image" "$@"
@@ -14630,7 +14985,7 @@ tg_in_image() { # dir, docker run args (up to --), command...
   local -a extra=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do extra+=("$1"); shift; done
   [ "${1:-}" = -- ] && shift
-  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_NON_INTERACTIVE=true -e TERRAGUCCI_FORGEJO_TOKEN="${TOKEN:-}" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -15075,10 +15430,186 @@ claim_tg_stacks() {
   return $rc
 }
 
+# ── explicit stacks ───────────────────────────────────────────────────────
+# stack/fixtures/tg-stack: live/stk/terragrunt.stack.hcl generates base and
+# top from catalog/units, each taking its rev from the stack's values, and
+# top reads base's output, so base is wave 1 and top wave 2. gate: always.
+# Its state is in floci under @PREFIX@.
+
+tg_stack_tree() { # dir, prefix -> the fixture in dir, committed on main
+  mkdir -p "$1"
+  cp -R "$HERE/fixtures/tg-stack/." "$1/"
+  perl -pi -e "s#\@PREFIX\@#$2#" "$1/root.hcl"
+  git -C "$1" init -q -b main
+  git -C "$1" add -A && git -C "$1" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "an explicit stack"
+}
+
+tg_stack_rev() { # dir, unit, rev -> the stack file feeds that unit the rev
+  perl -0pi -e "s/(unit \"$2\" \\{.*?rev = \")[^\"]*\"/\${1}$3\"/s" "$1/live/stk/terragrunt.stack.hcl"
+}
+
+claim_tg_stack_check() {
+  # The stack file stops feeding top the rev its template reads
+  # (values.rev). Pushed to a branch, the check job generates the stack and
+  # terragrunt hcl validate fails on the generated top unit, naming it and
+  # the rev it lacks.
+  # BREAK: the pushed pipeline's check job does not generate the stack, so
+  # validate never sees the stack's units.
+  log() { echo "[smoke tg-stack-check] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-stack-check" sha logs rc=0 wf
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  GATED_INIT_TG=1 gated_repo tg-stack-check tg-stack || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "terragrunt stack generate" "$wf" || { log "init wrote no stack generate into the check job"; rc=1; }
+  [ -n "${BREAK:-}" ] && perl -ni -e 'print unless /terragrunt stack generate/' "$wf"
+  perl -0pi -e 's/(unit "top" \{.*?values = \{\n)    rev = "1"\n/${1}    note = "no rev"\n/s' "$work/tree/live/stk/terragrunt.stack.hcl"
+  sha="$(push_tree "$work/tree" "$repo" smoke/check "tg-stack-check: the stack file feeds top no rev")"
+  wait_run "$repo" "$sha"
+  logs="$(run_logs "$repo" "$RUN_ID")"
+  log "the push ended '$RUN_STATUS'"
+  [ "$RUN_STATUS" = failure ] || { log "the check did not fail"; rc=1; }
+  grep -q "\.terragrunt-stack/top" <<<"$logs" || { log "the log does not name the generated top unit"; rc=1; }
+  grep -q 'attribute named "rev"' <<<"$logs" || { log "the log does not name the rev top lacks"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the check job generated the stack and failed on live/stk/.terragrunt-stack/top, which the stack file feeds no rev"
+  return $rc
+}
+
+claim_tg_stack_affected() {
+  # The base is the fixture; the head changes base's rev in the stack file
+  # and nothing else. tf-plan against the base, in the Terragrunt image,
+  # plans live/stk/.terragrunt-stack/base alone, selected for the stack
+  # file, lists top as waiting on it because it depends on a changed unit,
+  # and the report and note name live/stk/terragrunt.stack.hcl.
+  # BREAK: no base, so every unit is planned for no reason of its own.
+  log() { echo "[smoke tg-stack-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 base r b="live/stk/.terragrunt-stack/base" t="live/stk/.terragrunt-stack/top" image
+  image="$(tg_image)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_stack_tree "$work/repo" "tg-stack-affected-$STAMP"
+  base="$(git -C "$work/repo" rev-parse HEAD)"
+  tg_stack_rev "$work/repo" base 2
+  git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "base takes rev 2"
+  [ -n "${BREAK:-}" ] && base=""
+  tg_in_image "$work/repo" -e TG_TF_PATH=tofu -e "TG_BASE=$base" -- terragucci stage tf-plan --terragrunt --binary tofu >"$work/plan.log" 2>&1 || true
+  cat "$work/plan.log" >&2
+  clean_mounted "$work/repo" "$image"
+  r="$work/repo/terragucci-report/report.json"
+  if [ ! -f "$r" ]; then log "no report"; rc=1
+  else
+    jq -c '[.roots[] | {path, status, selection: .terragrunt.selection, stack: .terragrunt.stack, stack_file: .terragrunt.stack_file}], .deferred' "$r" >&2
+    [ "$(jq -r '[.roots[] | select(.terragrunt.provisional | not) | .path] | join(",")' "$r")" = "$b" ] || { log "the plan covers more or less than $b"; rc=1; }
+    jq -e --arg b "$b" '.roots[] | select(.path == $b) | .terragrunt.selection | contains("live/stk/terragrunt.stack.hcl")' "$r" >/dev/null || { log "$b's selection does not name the stack file"; rc=1; }
+    jq -e --arg b "$b" '.roots[] | select(.path == $b) | .terragrunt.stack == "live/stk" and .terragrunt.stack_file == "live/stk/terragrunt.stack.hcl"' "$r" >/dev/null || { log "the report does not name $b's stack and stack file"; rc=1; }
+    jq -e --arg t "$t" --arg b "$b" '[.deferred[]? | select(.unit == $t and .after == [$b] and .why == "depends on a changed unit")] | length == 1' "$r" >/dev/null || { log "$t is not listed as waiting on $b"; rc=1; }
+    grep -q 'Explicit stacks: `live/stk/terragrunt.stack.hcl` generates `base`' "$work/repo/terragucci-report/note.md" || { log "the note does not name the stack file"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "a change to base's value in the stack file planned base alone, top waits on it, and the report and note name the stack file"
+  return $rc
+}
+
+claim_tg_stack_gate() {
+  # Push the fixture to a fresh repo. The check job generates the stack and
+  # passes; wave 1 (the generated base) plans, waits for an approval of its
+  # set digest and prints the command, so no unit has state. Approve wave 1
+  # and push again: base applies from its saved plan, and wave 2 (top) waits
+  # at its own gate with its own approve command.
+  # BREAK: the pushed pipeline runs with --gate never, so both units apply
+  # with nothing approved.
+  log() { echo "[smoke tg-stack-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-stack-gate" sha applied logs rc=0 wf
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  GATED_INIT_TG=1 gated_repo tg-stack-gate tg-stack || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "tf-apply --wave 1 --layers 'live/stk/.terragrunt-stack/base;live/stk/.terragrunt-stack/top'" "$wf" || { log "the waves are not the generated base, then top"; rc=1; }
+  [ -n "${BREAK:-}" ] && perl -pi -e 's#--gate always#--gate never#g' "$wf"
+  sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: first")"
+  wait_run "$repo" "$sha"
+  applied="$(tg_gated_applied tg-stack-gate)"
+  logs="$(run_logs "$repo" "$RUN_ID")"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
+  grep -q "every unit is formatted and its inputs match its module" <<<"$logs" || { log "the check job did not validate the generated units"; rc=1; }
+  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
+  [ $rc = 0 ] && { gated_approve tg-stack-gate 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(tg_gated_applied tg-stack-gate)"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "live/stk/.terragrunt-stack/base " ] || { log "expected the generated base alone to apply, top waiting at its own gate"; rc=1; }
+    grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the generated base applied only once wave 1 was approved, and top waited at wave 2's gate"
+  return $rc
+}
+
+claim_tg_stack_drift() {
+  # The fixture plus a third unit, queue, which the stack generates from
+  # catalog/units/queue: one SQS queue on floci. Every unit is applied in the
+  # Terragrunt image, then the queue is deleted outside Terraform. From a
+  # fresh clone, where nothing is generated, tf-drift generates the stack and
+  # reports aws_sqs_queue.this deleted under live/stk/.terragrunt-stack/queue
+  # and nothing else deleted, and the report names the unit's stack file.
+  # BREAK: terragrunt stack generate does nothing (a wrapper stands in for
+  # it), so the fresh clone has no unit to check.
+  log() { echo "[smoke tg-stack-drift] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 image prefix="tg-stack-drift-$STAMP" queue="tgstk-drift-$STAMP" url r deletes tg=terragrunt q="live/stk/.terragrunt-stack/queue" k
+  image="$(tg_image)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_stack_tree "$work/repo" "$prefix"
+  mkdir -p "$work/repo/modules/queue" "$work/repo/catalog/units/queue" "$work/bin"
+  printf 'variable "name" {\n  type = string\n}\n\nresource "aws_sqs_queue" "this" {\n  name = var.name\n}\n' > "$work/repo/modules/queue/main.tf"
+  printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "${get_repo_root()}/modules/queue"\n}\n\ngenerate "provider" {\n  path      = "provider.tf"\n  if_exists = "overwrite_terragrunt"\n  contents  = "provider \\"aws\\" {\\n  region = \\"us-east-1\\"\\n}\\n"\n}\n\ninputs = {\n  name = values.name\n}\n' > "$work/repo/catalog/units/queue/terragrunt.hcl"
+  printf '\nunit "queue" {\n  source = "${get_repo_root()}/catalog/units/queue"\n  path   = "queue"\n\n  values = {\n    name = "%s"\n  }\n}\n' "$queue" >> "$work/repo/live/stk/terragrunt.stack.hcl"
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "a queue unit"
+  tg_in_image "$work/repo" -e TG_TF_PATH=tofu -- sh -c 'terragrunt stack generate --non-interactive --no-color && terragrunt run --all --non-interactive --no-color --filter "!./catalog/**" -- apply -auto-approve -input=false -no-color' >"$work/apply.log" 2>&1 \
+    || { cat "$work/apply.log" >&2; log "the stack did not apply"; rc=1; }
+  clean_mounted "$work/repo" "$image"
+  url="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || url=""
+  [ -n "$url" ] || { log "$queue is not in floci after the apply"; rc=1; }
+  if [ $rc = 0 ]; then
+    curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$url\"}" || rc=1
+    printf '#!/bin/sh\n[ "$1" = stack ] && exit 0\nexec terragrunt "$@"\n' > "$work/bin/terragrunt-nogen"
+    chmod +x "$work/bin/terragrunt-nogen"
+    [ -n "${BREAK:-}" ] && tg=/smoke/terragrunt-nogen
+    git clone -q "$work/repo" "$work/fresh"
+    tg_in_image "$work/fresh" -v "$work/bin:/smoke:ro" -e TG_TF_PATH=tofu -e "TERRAGUCCI_TERRAGRUNT=$tg" -- terragucci stage tf-drift --terragrunt --binary tofu >"$work/drift.log" 2>&1 || true
+    cat "$work/drift.log" >&2
+    clean_mounted "$work/fresh" "$image"
+    r="$work/fresh/terragucci-report/report.json"
+    if [ ! -f "$r" ]; then log "the drift run wrote no report"; rc=1
+    else
+      deletes="$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$r")"
+      [ "$deletes" = "$q aws_sqs_queue.this" ] || { log "the deletes are not exactly $q's queue: ${deletes:-none}"; rc=1; }
+      jq -e --arg q "$q" '.roots[] | select(.path == $q) | .terragrunt.stack_file == "live/stk/terragrunt.stack.hcl"' "$r" >/dev/null || { log "the report does not name $q's stack file"; rc=1; }
+    fi
+  fi
+  for k in base top queue; do curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$prefix/live/stk/.terragrunt-stack/$k/terraform.tfstate" || true; done
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "tf-drift generated the stack in a fresh clone, reported $q's queue deleted, and named live/stk/terragrunt.stack.hcl"
+  return $rc
+}
+
 # ── state access per environment, state export, cross-state edges ─────────
 state_in() { # work, command... -> as audit_in, with the docker arguments in STATE_IN_EXTRA, in the STATE_IN_IMAGE image (tofu)
   local work="$1" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
-  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     ${STATE_IN_EXTRA[@]+"${STATE_IN_EXTRA[@]}"} "$(image_tag "${STATE_IN_IMAGE:-tofu}")" "$@"
@@ -15485,7 +16016,7 @@ claim_mcp_last_apply() {
   commit="$(git -C "$work/wave" rev-parse HEAD)"
   # The server: the bundle copied into the CI image, stdin and stdout the protocol's, floci's keys in its environment.
   out="$(cd "$HERE/.." && node stack/mcp-client.mjs app -- bash -c '. "$1/mounted.sh"; shift; run_copied --rm -i "$@"' mcp "$HERE" \
-    --network terragucci -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+    --network "${TG_NETWORK:-terragucci}" -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
     "$image" terragucci mcp --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix")" \
     || { log "the MCP client failed"; drop_work "$work"; return 1; }
   jq -c '{server, tools: [.tools[].name], last_apply: (.last_apply.json // .last_apply.text | if type == "object" then {commit, wave, applied, approval, report, result: {path: .result.path, status: .result.status, changes: .result.changes}} else . end)}' <<<"$out" >&2
@@ -16484,11 +17015,11 @@ DOCKERFILE
     # The emulator takes invocations on 9000, so the relay keeps 8080 as it has on Lambda.
     port=9000
     entry=(--entrypoint /rie/aws-lambda-rie -v "$work/lambda/aws-lambda-rie:/rie/aws-lambda-rie:ro")
-    RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::9000 ${entry[@]+"${entry[@]}"} \
+    RELAY="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::9000 ${entry[@]+"${entry[@]}"} \
       -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
       ${envs[@]+"${envs[@]}"} "$image" --runtime-interface-emulator-address 0.0.0.0:9000 terragucci relay)" || return 1
   else
-    RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::8080 -v "$bundle:/usr/local/bin/terragucci:ro" \
+    RELAY="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::8080 -v "$bundle:/usr/local/bin/terragucci:ro" \
       -e PORT=8080 -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
       ${envs[@]+"${envs[@]}"} "$image" terragucci relay)" || return 1
   fi
@@ -16871,7 +17402,7 @@ claim_cost_policy() {
   [ -n "${BREAK:-}" ] || printf 'cost:\n  command: node cost.mjs\n' >> "$work/terragucci.yml"
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke cost-policy"
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -17447,7 +17978,7 @@ claim_tg_respond_fmt() {
 
 unlock_in() { # dir, bundle, command... -> runs it in the CI image in DIR, with the forge token as FORGEJO_TOKEN
   local dir="$1" bundle="$2"; shift 2
-  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e FORGEJO_TOKEN="$TOKEN" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -17679,7 +18210,7 @@ claim_tg_pr_plan() {
     sleep 3
   done
   if [ -z "$run" ]; then
-    log "pull request $pr got no pull_request run in two minutes: $(docker logs --since 5m terragucci-forgejo 2>&1 | grep -m1 "runID .* hit recursion limit" || echo 'no recursion line in the Forgejo log')"
+    log "pull request $pr got no pull_request run in two minutes: $(docker logs --since 5m "${TG_PROJECT:-terragucci}-forgejo" 2>&1 | grep -m1 "runID .* hit recursion limit" || echo 'no recursion line in the Forgejo log')"
     drop_work "$work"; return 1
   fi
   TIMEOUT=900 wait_run "$repo" "$sha" pull_request || { drop_work "$work"; return 1; }
@@ -17766,7 +18297,7 @@ claim_github_drift_issue() {
     break_bundle "$bundle" forge.ts 'const only = t.forge === "forgejo" ? "&type=issues" : "";' 'const only = "&type=issues";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
-  docker run -d --name "$mock" --network terragucci -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
+  docker run -d --name "$mock" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
     -e PORT=8188 -e MOCK_TOKEN="$gh_token" -e MOCK_PUBLIC_URL="http://$mock:8188" \
     public.ecr.aws/docker/library/node:22-bookworm node /srv/server.mjs >/dev/null || { log "the mock did not start"; drop_work "$work"; return 1; }
   port="$(docker port "$mock" 8188/tcp | head -1 | sed 's/.*://')"
@@ -17784,7 +18315,7 @@ claim_github_drift_issue() {
   sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null || { log "could not change $queue's timeout"; rc=1; }
   issues() { ghm "http://127.0.0.1:$port/api/v3/repos/$gh_repo/issues?state=open&per_page=100" | jq -c '[.[] | select(.pull_request == null and ((.body // "") | contains("<!-- terragucci:drift -->")))]'; }
   for run in 1 2; do
-    run_copied --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
@@ -18014,6 +18545,11 @@ atmos-upstream-wait  runner self! weight=400
 atmos-check          runner self! weight=150
 atmos-version        self! weight=90
 atmos-roles          self! weight=150
+terramate-waves      runner self! weight=350
+terramate-affected   runner self! weight=250
+terramate-sharing    runner self! weight=400
+terramate-stale      runner self! weight=150
+atmos-refuse         weight=60
 policy-source        self! weight=150
 reconcile-parallelism weight=120
 provider-project self! weight=90
@@ -18061,6 +18597,7 @@ pinned-install       weight=60
 root-pins            weight=60
 generate             weight=60
 tg-generate          weight=150
+tg-generate-init     weight=120
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150
@@ -18149,6 +18686,10 @@ tg-migrate-split     weight=200
 tg-root-pins         weight=150
 tg-choudoufu         weight=120
 tg-stacks            weight=150
+tg-stack-check       runner self! weight=150
+tg-stack-affected    weight=120
+tg-stack-gate        runner self! weight=250
+tg-stack-drift       weight=150
 tg-estate-graph      weight=200
 tg-state-export      weight=200
 tg-apply-branches    runner self! weight=300
@@ -18189,7 +18730,6 @@ fi
 if [ "$SMOKE_FORGE" = gitlab ]; then
   CLAIMS="$GITLAB_CLAIMS"
   CLAIM_GROUPS="$GITLAB_CLAIM_GROUPS"
-  SMOKE_LOCK_DIR="${SMOKE_LOCK_DIR:-$HERE/gitlab/.state/locks}"
 fi
 # shellcheck source=locks.sh
 . "$HERE/locks.sh"
@@ -18449,7 +18989,7 @@ runner_prep() {
       || { cat "$SMOKE_LOG_DIR/bootstrap-fountain.log" >&2; echo "[smoke] the fountain profile did not start" >&2; return 1; }
   fi
   # shellcheck disable=SC1091
-  . "$HERE/.state/forgejo.env"
+  . "${TG_STATE:-$HERE/.state}/forgejo.env"
 }
 
 # Free space on the host's data volume, in GB. Docker Desktop's VM can hold

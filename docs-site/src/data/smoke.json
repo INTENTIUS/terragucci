@@ -297,6 +297,78 @@
       "commit": "02e7f08"
     },
     {
+      "claim": "gl-comments",
+      "says": "the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-comment-plan",
+      "says": "a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-protected-token",
+      "says": "with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-mr-apply",
+      "says": "with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-pr-review",
+      "says": "with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-wave-jobs",
+      "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-comment-agent",
+      "says": "a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-review-agent",
+      "says": "the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
       "claim": "traces",
       "says": "each plan run is one trace, with a span per root and the binary spans inside it",
       "needs": null,
@@ -854,12 +926,52 @@
       "commit": "0c494d98"
     },
     {
+      "claim": "terramate-waves",
+      "says": "init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-affected",
+      "says": "a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-sharing",
+      "says": "a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-stale",
+      "says": "the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
       "claim": "atmos-roles",
       "says": "oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-refuse",
+      "says": "config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
     },
     {
       "claim": "policy-source",
@@ -1263,6 +1375,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "b0f19790"
+    },
+    {
+      "claim": "tg-generate-init",
+      "says": "with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "04983e3b"
     },
     {
       "claim": "root-pins",
@@ -2062,6 +2182,38 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "tg-stack-check",
+      "says": "the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-affected",
+      "says": "a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-gate",
+      "says": "the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-drift",
+      "says": "tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
     },
     {
       "claim": "chat-approve",

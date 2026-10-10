@@ -16,10 +16,10 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { rootRoleEnv } from "../roles";
 import { workspaceEnv, workspaceInit } from "../backend";
-import { atmosDependencies, effectiveSynth, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
+import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { parseTerragruntReport, terragruntEnv } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
 import { terragruntRenderArgs } from "@intentius/chant-lexicon-terraform/terragrunt/mocks";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
@@ -30,12 +30,14 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
-import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
+import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
-import { detectTerragrunt, discoverUnits, generateStacks, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { detectShape, type Shape } from "../shape";
+import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { findIssue, ForgeError, type Fetch } from "../forge";
@@ -466,7 +468,7 @@ type Unpreviewed = PreviewBlock & { wave: number };
  * earlier layer of the run plans on that plan's outputs (../tg-preview.ts),
  * when every value it reads is known. One that reads a value known only once
  * its upstream applies is not planned: it is named with the value and the
- * wave that settles it. With `dependents: plan`, the dependents of the
+ * wave that settles it. With `dependents: plan` (the default), the dependents of the
  * changed units are previewed the same way, in their own layers, marked
  * provisional, so no digest or group of real plans takes them.
  *
@@ -605,7 +607,7 @@ async function planUnits(
       const path = part.member.member;
       const result = results.get(path);
       const preview = provisional.has(path);
-      const unit = { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
+      const unit = { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
       const file = join(dirOf(groups, path, groups[0]!.workDir), "json", path, "tfplan.json");
       const bin = tools.get(path)?.report;
       const read = reads.get(path) ?? [];
@@ -668,7 +670,7 @@ async function planUnits(
   /** A unit that did not plan for a reason of its own (a step, a pin): no plan, the error. */
   const unitFailed = (path: string, error: string, number: number, preview: boolean): void => {
     run.set(path, { wave: number });
-    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
+    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
   };
 
   const allWaiting: string[] = [];
@@ -734,7 +736,7 @@ async function planUnits(
           const error = (e as Error).message;
           for (const path of units) {
             run.set(path, { wave: layer.number });
-            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
+            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
           }
           log(`wave ${layer.number}: ${error}`);
           units = [];
@@ -905,7 +907,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const configPath = options.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
-  if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) return runTerragruntStage(repo, settings, options, env, log, drift, configPath);
+  const shape = detectShape(repo, settings);
+  if (options.terragrunt ?? shape.engine === "terragrunt") return runTerragruntStage(repo, settings, shape, options, env, log, drift, configPath);
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
   const full = options.layers ?? applyLayers(repo, all);
   const layers = full
@@ -914,7 +917,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
   // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
   // An Atmos repo's instances are written by terragucci atmos write, its synth when terragucci.yml names none.
-  const synth = effectiveSynth(repo, settings.synth);
+  const synth = shape.prepare;
   if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
     throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${synth ? `; the synth command (${synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
   }
@@ -923,7 +926,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // Roots a synth command writes are not in git, so no diff names them: the command runs on the base too, and the roots whose output differs plan.
   const notices: string[] = [];
   let selected: Set<string> | undefined;
-  if (base && synth) {
+  // Roots git holds (a Terramate repo's stacks, with their generated code) are named by the diff, even with a prepare step.
+  if (base && synth && !shape.rootsInGit) {
     // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
     const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, atmosDependencies(repo, all));
     selected = synthed.selected;
@@ -1286,6 +1290,7 @@ interface Planned {
 async function runTerragruntStage(
   repo: string,
   settings: ReturnType<typeof resolveRepo>,
+  shape: Shape,
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
@@ -1309,7 +1314,7 @@ async function runTerragruntStage(
     discovered = found.source === "terragrunt find";
   } else {
     // The pipeline names the waves, so discovery does not run; an explicit stack's units are still generated before they plan.
-    const stacks = await generateStacks(repo, { binary, ...tool });
+    const stacks = await shape.prepareRoots({ binary, ...tool });
     if (stacks.length) log(`generated the units of ${stacks.length} explicit stack${stacks.length === 1 ? "" : "s"}: ${stacks.join(", ")}`);
   }
   let waves = options.layers ?? unitWaves(units!, canary);
@@ -1362,7 +1367,7 @@ async function runTerragruntStage(
       const r = await pins!(unit);
       if (r.refused.length) {
         log(`${unit}: refused by modules.require: attested`);
-        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
+        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { ...unitStack(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
       } else if (r.verified.length) log(`${unit}: attested ${r.verified.join("; ")}`);
     }
     const refused = new Set(refusedUnits.map((u) => u.path));
@@ -1373,9 +1378,10 @@ async function runTerragruntStage(
   // Each unit's plan sends its spans here through the TG_TF_PATH wrapper, for its per-resource timings.
   await observer.collectSpans(log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
-  // Each layer: the units it plans, and with dependents: plan the dependents it previews.
+  // Each layer: the units it plans, and the dependents it previews (dependents: plan, the default; follow opts out).
   const selected = new Set(waves.flat());
-  const previewing = new Set(!drift && settings.terragrunt?.dependents === "plan" ? preview : []);
+  // shape: Terragrunt's dependents default
+  const previewing = new Set(!drift && (settings.terragrunt?.dependents ?? DEFAULT_DEPENDENTS) === "plan" ? preview : []);
   const layers = full
     .map((w, i) => ({ number: i + 1, roots: w.filter((u) => selected.has(u)), preview: w.filter((u) => previewing.has(u)) }))
     .filter((l) => l.roots.length > 0 || l.preview.length > 0);
@@ -1386,6 +1392,7 @@ async function runTerragruntStage(
     const graph = units ?? walkUnits(repo, settings.terragrunt?.exclude);
     /** One checkout's units planned: the repo's, or a branch's worktree's, with its own pins and its own explicit stacks. */
     const planIn = async (dir: string, own: UnitLayer[], sub: string): Promise<Awaited<ReturnType<typeof planUnits>>> => {
+      // shape: another checkout's own stacks, which the repo's shape does not describe.
       if (dir !== repo) await generateStacks(dir, { binary, ...tool });
       const tools = new UnitBinaries(dir, binary, settings.version, terragrunt, env, options.installer);
       return planUnits(dir, own, binary, sub, {
@@ -1409,7 +1416,7 @@ async function runTerragruntStage(
       planned = mergePlanned(parts);
       for (const [u, why] of sources.failed) {
         log(`${u}: not checked, its branch could not be checked out`);
-        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { ...unitStack(u), selection: everyUnit, provisional: false, run_result: "not run" } });
       }
     }
     const { inputs, plans, redacted, mockReads } = planned;
@@ -1427,7 +1434,7 @@ async function runTerragruntStage(
       if (drift) {
         // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.
         const error = "its upstream has no outputs yet, so Terragrunt would plan it on mock_outputs";
-        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { ...unitStack(u), selection: everyUnit, provisional: false, run_result: "not run" } });
         continue;
       }
       defer(u, [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort(), "would read mock_outputs");
@@ -1516,11 +1523,14 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
   const deps = rootDependencies(repo, all);
+  // A Terramate stack's dependents plan with it: the stacks its after, before, nesting or inputs put after it (../terramate.ts).
+  const order = atmosDependencies(repo, all);
+  const upstreams = (root: string): string[] => [...new Set([...(deps.get(root) ?? []), ...(order.get(root) ?? [])])];
   const selected = new Set(changed);
   for (let grew = true; grew; ) {
     grew = false;
-    for (const [root, reads] of deps) {
-      if (!selected.has(root) && [...reads].some((d) => selected.has(d))) {
+    for (const root of new Set([...deps.keys(), ...order.keys()])) {
+      if (!selected.has(root) && upstreams(root).some((d) => selected.has(d))) {
         selected.add(root);
         grew = true;
       }
@@ -1528,7 +1538,9 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   }
   for (const r of changed) log(`affected: ${r} changed`);
   for (const r of [...selected].filter((r) => !changed.includes(r)).sort()) {
-    log(`affected: ${r} reads the state of ${[...deps.get(r)!].filter((d) => selected.has(d)).sort().join(", ")}`);
+    const reads = [...(deps.get(r) ?? [])].filter((d) => selected.has(d)).sort();
+    const after = [...(order.get(r) ?? [])].filter((d) => selected.has(d) && !reads.includes(d)).sort();
+    log(`affected: ${r} ${[...(reads.length ? [`reads the state of ${reads.join(", ")}`] : []), ...(after.length ? [`depends on ${after.join(", ")}`] : [])].join(" and ")}`);
   }
   log(`affected: ${changed.length} of ${roots.length} roots against ${base}, ${selected.size - changed.length} dependents after them`);
   return new Set([...selected].filter((r) => roots.includes(r)));

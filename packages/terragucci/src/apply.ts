@@ -123,13 +123,15 @@ import { approvalRule, type ApprovalRule } from "./approval";
 import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, overrideDigest, type OverridePending } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
-import { changesSomething, forgeCalls, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
+import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
+import { gitlabReviewCalls, gitlabReviewOf } from "./gitlab-agent";
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
+import { backendBootstrap } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
@@ -1551,16 +1553,42 @@ async function priceWave(
 }
 
 /**
+ * `input.review` on GitLab: the verdict of the review job a note on the merge
+ * request points at, once GitLab says it is the default branch's (gitlabReviewOf).
+ */
+async function gitlabWaveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
+  const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  try {
+    const mr = await gitlabMergeRequestOf(gitlabCalls(env, options.fetch), sha, env);
+    if (!mr) {
+      console.log(`${label}: review: no merge request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
+      return noReview();
+    }
+    const head = typeof mr.sha === "string" ? mr.sha : "";
+    const { job, skipped, ...review } = await gitlabReviewOf(gitlabReviewCalls(env, options.fetch), { number: mr.iid, head });
+    for (const s of skipped) console.log(`${label}: review: skipped the review job ${s.job === null ? "a note named" : s.job}, since ${s.why}`);
+    console.log(review.found
+      ? `${label}: review: merge request !${mr.iid}'s head ${head.slice(0, 8)} was reviewed with risk ${review.risk} in job ${job} of a default-branch pipeline, which the policy reads as input.review`
+      : `${label}: review: no review job of a default-branch pipeline kept a review of merge request !${mr.iid}'s head ${head.slice(0, 8)}, so input.review.found is false`);
+    return review;
+  } catch (e) {
+    console.log(`${label}: review: could not read the merge request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
+    return noReview();
+  }
+}
+
+/**
  * What the wave's policy reads as `input.review`: the verdict the review job
  * kept as its artifact, in a run of the default branch's review workflow that
  * reviewed the head of the pull request this commit merged (or `TG_PR`'s,
  * applied before merge). Notes on the pull request are not read: any run's
  * token can post one. Nor is an artifact a run of the pull request's own
- * pipeline kept, which the pull request can edit. GitLab has no review job, and a
- * commit no pull request made has no review: both read as not found.
+ * pipeline kept, which the pull request can edit. On GitLab the review job is in
+ * a pipeline of the default branch (gitlabWaveReview). A commit no pull request
+ * made has no review: it reads as not found.
  */
 async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string, forge: string | undefined): Promise<PolicyReview> {
-  if (env.GITLAB_CI === "true" || forge === "gitlab") return noReview();
+  if (env.GITLAB_CI === "true" || forge === "gitlab") return gitlabWaveReview(repo, env, options, label);
   const on: "github" | "forgejo" = forge === "forgejo" || forge === "github" ? forge : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   try {
@@ -1949,6 +1977,11 @@ export function changesOutputs(plan: unknown): boolean {
  * The runner with the default `-lock-timeout` added to the binary's plan and
  * apply commands (`lockTimeoutArgs`), unless the job's `TF_CLI_ARGS` names one.
  */
+/** The runner with TG_BACKEND_BOOTSTRAP set when `on`, so Terragrunt creates or updates the backend of a unit whose remote_state has disable_init = false. */
+function bootstrapExec(inner: TerragruntExec, on: boolean): TerragruntExec {
+  return on ? (file, args, opts) => inner(file, args, { ...opts, env: { ...opts.env, TG_BACKEND_BOOTSTRAP: "true" } }) : inner;
+}
+
 function unitLockTimeoutExec(inner: TerragruntExec, env: NodeJS.ProcessEnv): TerragruntExec {
   return (file, args, opts) => {
     const at = args.indexOf("--");
@@ -2082,7 +2115,10 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     console.log(`${label}: ${stepsRefused}, so nothing in it was applied`);
     return EXIT.failed;
   }
-  const exec = unitLockTimeoutExec(options.terragruntExec ?? terragruntExec, env);
+  // shape: Terragrunt's backend bootstrap. generate's disable_init: false asks Terragrunt to init the backend; only the apply job may create or change the bucket.
+  const bootstrap = backendBootstrap(repo, settings) && env.TG_BACKEND_BOOTSTRAP === undefined;
+  if (bootstrap) console.log(`wave ${wave}: generate gives a unit disable_init: false, so Terragrunt bootstraps its backend (TG_BACKEND_BOOTSTRAP)`);
+  const exec = unitLockTimeoutExec(bootstrapExec(options.terragruntExec ?? terragruntExec, bootstrap), env);
   const run = { dir: repo, binary, terragrunt, exec };
   w.started = new Date().toISOString();
   w.roots = roots;

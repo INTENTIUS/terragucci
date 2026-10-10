@@ -127,7 +127,7 @@ dashboards: true
 
 | Key | Default | Meaning |
 |---|---|---|
-| `roots` | detected | globs of root directories. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude` |
+| `roots` | detected | globs of root directories. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude`. A [Terramate](/terragucci/guides/use-terramate/) repo's roots are its stacks, so `roots`, `synth`, `generate`, `rollouts` and a drift pull request are config errors there; leave a stack out with `.tmskip` |
 | `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts`, `generate`, and a `drift` schedule under `respond.drift: pull-request` are config errors, since each edits the files the command writes, and the app sets backends, providers and `required_version` through its own constructs; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
 | `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. In a Terragrunt repo each moment runs once around the wave's `run --all`, in each unit the `roots` globs match, and `after: init` is refused; see [Run steps around a stage](/terragucci/guides/run-steps/) |
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
@@ -137,7 +137,7 @@ dashboards: true
 | `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `branches`: roots that apply from a branch other than the default; see [Apply from other branches](#apply-from-other-branches). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
-| `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (GitHub and Forgejo, not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
+| `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
 | `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay`: the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
 | `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift). With `binary: choudoufu`, a config error when a root keeps its resources under live resource markers, which refuse the refresh-only plan a drift check runs |
@@ -147,7 +147,7 @@ dashboards: true
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Runtimes](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
-| `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers` and `required_version` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
+| `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers`, `required_version` and, for Terragrunt units, `disable_init` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -369,7 +369,7 @@ terragrunt:
 | `version` | the version `terragrunt_version_constraint` pins exactly, or terragucci's | the Terragrunt release the jobs run |
 | `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once; each unit running starts its own providers, about 800 MB each with the AWS provider, so 16 need about 13 GB: set 4 on a 7 GB runner |
-| `dependents` | `follow` | `follow`, or `plan` to preview them on the planned outputs of the units they read, provisional and undigested |
+| `dependents` | `plan` | `plan` previews a changed unit's dependents in the pull request, on the planned outputs of the units they read, provisional and undigested; `follow` leaves them to plan once what they read applies |
 | `credentials` | none | AWS roles by unit glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 
 Terragrunt 1.1 or later is required; see [Use Terragrunt](/terragucci/guides/use-terragrunt/).
@@ -398,7 +398,7 @@ agent:
 | `max_turns` | 30 | the turn limit, passed to the command as `TG_AGENT_MAX_TURNS` |
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
-The agent's jobs get no cloud credentials; `init` refuses `agent.comment` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).
+The agent's jobs get no cloud credentials. On GitLab it needs `comments`, whose job starts the agent's pipeline on the default branch. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).
 
 ## The drift agent
 
@@ -417,7 +417,7 @@ agent:
     timeout: 30
 ```
 
-Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. As with the comment agent, its jobs get no cloud credentials and `init` refuses it on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
+Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. As with the comment agent, its jobs get no cloud credentials; `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
 
 ## The review
 
@@ -440,7 +440,7 @@ review:
 | `instructions` | `.terragucci/review.md` | the instructions file, read from the default branch only |
 | `timeout` | 10 | minutes before the review job is stopped |
 
-The review jobs get no cloud credentials and the command's step no forge token; `init` refuses `review` on GitLab. With `policy` set, each `tf-apply` wave reads the review's risk as [`input.review`](/terragucci/reference/policy/#review).
+The review jobs get no cloud credentials and the command's step no forge token. On GitLab it needs `comments`, whose job starts each review in a pipeline of the default branch. With `policy` set, each `tf-apply` wave reads the review's risk as [`input.review`](/terragucci/reference/policy/#review).
 
 ## The decide block
 
