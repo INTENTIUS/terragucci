@@ -46,6 +46,15 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "affected",
+      "says": "a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "8022dedb"
+    },
+    {
       "claim": "grouped",
       "says": "one note groups many plans",
       "needs": null,
@@ -464,6 +473,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "policy",
+      "says": "a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "8022dedb"
     },
     {
       "claim": "comment-plan",
@@ -2919,6 +2937,15 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "33f6c5e8"
+    },
+    {
+      "claim": "oidc",
+      "says": "the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "8022dedb"
     }
   ]
 }

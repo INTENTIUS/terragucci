@@ -2484,10 +2484,12 @@ const head = dec(h), c = dec(p);
 const ISS = e.CI_SERVER_URL;
 try {
   const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
-  const jwk = (await (await fetch(conf.jwks_uri)).json()).keys.find((k) => k.kid === head.kid);
+  // The lab advertises https endpoints but serves http, so the keys are read from the issuer's origin.
+  const jwks = new URL(new URL(conf.jwks_uri).pathname, ISS).href;
+  const jwk = (await (await fetch(jwks)).json()).keys.find((k) => k.kid === head.kid);
   found.verified = head.alg === "RS256" && !!jwk
     && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
-  if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${conf.jwks_uri}`);
+  if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${jwks}`);
 } catch (err) {
   found.verified = false;
   found.problems.push(`the keys of ${ISS} could not be read: ${err.message}`);
