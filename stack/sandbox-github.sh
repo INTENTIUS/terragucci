@@ -678,7 +678,9 @@ explain_job() {
   cat <<YML
   explain-refusal:
     needs: apply-wave-4
-    if: failure()
+    # failure() alone also runs it on a branch push whose check failed, where
+    # wave 4 never ran and left no report.
+    if: failure() && needs.apply-wave-4.result == 'failure'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -711,14 +713,24 @@ status_on() { # sha, context
     -q "[.[] | select(.context == \"$2\")] | first | if . == null then empty else \"\(.state) \(.description)\" end" 2>/dev/null || true
 }
 
+# Runs on a commit still queued or running (not one waiting for an approval
+# to run at all, as a bot's push can be).
+runs_open_on() { # sha
+  gh run list -R "$REPO" --commit "$1" -L 20 --json status -q '[.[] | select(.status | IN("queued", "in_progress", "pending", "requested"))] | length' 2>/dev/null || echo 0
+}
+
 # A status another run posts (pr-lock runs on pull_request_target), polled
-# until it reaches a state or five minutes pass. Prints the last one seen.
+# until it reaches a state. It gives up after five minutes once no run on the
+# commit is still open, and after thirty in any case: when the organization's
+# runners are busy a job can sit queued for ten minutes. Prints the last one
+# seen.
 wait_status() { # sha, context, state
   local got="" i
-  for i in $(seq 1 30); do
+  for i in $(seq 1 180); do
     got="$(status_on "$1" "$2")"
     [ "${got%% *}" = "$3" ] && break
-    [ "$i" = 30 ] || sleep 10
+    [ "$i" -lt 30 ] || [ "$(runs_open_on "$1")" -gt 0 ] || break
+    [ "$i" = 180 ] || sleep 10
   done
   echo "$got"
 }
@@ -763,17 +775,36 @@ say() { # pull request, text
     -q '[.[] | select((.body | startswith("terragucci: ")) and .created_at >= "'"$since"'") | .body | gsub("\n"; " ")] | join(" || ")'
 }
 
-# Run a run's failed jobs again and wait for them. Prints its conclusion.
-rerun() { # run id
+attempt_of() { # run id -> its latest attempt
+  gh run view "$1" -R "$REPO" --json attempt -q .attempt 2>/dev/null || echo 0
+}
+
+# Wait for an attempt of a run after the given one to start and finish.
+# Prints its conclusion, or none when no later attempt starts in five minutes.
+await_attempt() { # run id, attempt before
   local i
-  gh run rerun "$1" -R "$REPO" --failed >/dev/null || { echo none; return 0; }
-  for i in $(seq 1 30); do
-    [ "$(gh run view "$1" -R "$REPO" --json status -q .status)" != completed ] && break
-    sleep 2
+  for i in $(seq 1 60); do
+    [ "$(attempt_of "$1")" -gt "$2" ] && break
+    [ "$i" = 60 ] && { echo none; return 0; }
+    sleep 5
   done
-  log "run $1 again…"
+  log "run $1 again (attempt $(attempt_of "$1"))…"
   gh run watch "$1" -R "$REPO" --interval 10 >"$DIR/logs/watch-$1-rerun.log" 2>&1 || true
   gh run view "$1" -R "$REPO" --json conclusion -q .conclusion
+}
+
+# Run a run's failed jobs again and wait for them. Prints its conclusion. A run
+# something else already started again (terragucci approve resumes the run
+# it approved) is waited for, not refused as "already running".
+rerun() { # run id, [attempt before: the one to wait past, when it may already have moved]
+  local before="${2:-$(attempt_of "$1")}" err
+  if [ "$(attempt_of "$1")" = "$before" ]; then
+    err="$(gh run rerun "$1" -R "$REPO" --failed 2>&1 >/dev/null)" || {
+      grep -q 'already running' <<<"$err" || { log "could not re-run run $1: $err"; echo none; return 0; }
+      log "run $1 is already running again"
+    }
+  fi
+  await_attempt "$1" "$before"
 }
 
 # A job of a run's latest attempt: its conclusion, or its log.
@@ -821,6 +852,20 @@ ledger_lines() { # clone dir, path
 verdict() { # claim, pass|fail, what was seen
   printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$WORK/verdicts"
   log "claim $1: $2 ($3)"
+  write_prove || true
+}
+
+# The rows the validation page lists, for the verdicts so far, as prove.json.
+# Each verdict rewrites it, so a run cut short by its timeout keeps the
+# verdicts it reached.
+prove_rows() {
+  while IFS=$'\t' read -r claim result _; do
+    says="$(grep "^github.com|$claim|" <<<"$PROVE_CLAIMS" | cut -d'|' -f3)"
+    jq -n --arg c "$claim" --arg s "$says" --arg v "$result" '{forge: "github.com", claim: $c, says: $s, verdict: $v, break: null}'
+  done < "$WORK/verdicts" | jq -s .
+}
+write_prove() {
+  prove_rows | jq '{release: $release, claims: .}' --arg release "$RELEASE" > "$DIR/prove.json"
 }
 # Each step runs as its own command; a step that fails fails the claims that
 # need it, and the rest still run.
@@ -922,7 +967,10 @@ prove_merge() {
   if [ -n "$a" ] && step change unformatted; then
     local u u0 uf="" i
     u="$(pr_for unformatted open)"
-    u0="$(head_of "$u")"
+    # The commit the scenario pushed, the pull request's first: by the time
+    # the step has waited for the check run, the fmt job may already have
+    # pushed the formatting on top of it.
+    u0="$(gh api "repos/$REPO/pulls/$u/commits?per_page=100" -q '.[0].sha' 2>/dev/null || true)"
     for i in $(seq 1 30); do
       uf="$(head_of "$u")"
       [ "$uf" != "$u0" ] && break
@@ -1168,12 +1216,16 @@ prove_merge() {
     before="$(ledger_lines "$WORK/approve-dry" _gates/tf-apply.jsonl)"
     sleep 5
     kept="$(ledger_lines "$WORK/approve-dry" _gates/tf-apply.jsonl)"
+    attempt="$(attempt_of "$refused_run")"
     out="$(approver "$WORK/approve-real" approve --actor "$SIGNER" --sign "$KEY")"
     printf '%s\n' "$out" > "$DIR/logs/approve-real.log"
     ran="$(grep -m1 '^running: chant approve tf-apply wave-4 --plan ' <<<"$out" | sed 's/ --sign .*//' || true)"
-    again="$(rerun "$refused_run")"
+    # terragucci approve re-runs the refused run itself with the approver's
+    # token; rerun waits for that attempt, and re-runs only when it did not.
+    resumed="$(grep -m1 "^resumed: re-ran the failed jobs of run $refused_run" <<<"$out" || true)"
+    again="$(rerun "$refused_run" "$attempt")"
     if grep -q 'chant approve tf-apply wave-4 --plan ' <<<"$dry" && [ "$before" = "$kept" ] && [ -n "$ran" ] && [ "$again" = success ]; then
-      verdict approve-command pass "run $refused_run: --dry-run printed the command and the ledger kept $kept lines; terragucci approve ${ran#running: }; the re-run applied wave 4"
+      verdict approve-command pass "run $refused_run: --dry-run printed the command and the ledger kept $kept lines; terragucci approve ${ran#running: }; ${resumed:-the harness re-ran it}; the re-run applied wave 4"
       ( record_state ) || log "could not record the state after the approval"
       [ -z "$gw_waited" ] || verdict gate-wait pass "$gw_waited; approved with --sign and re-run, it applied (run $refused_run)"
     else
@@ -1806,11 +1858,8 @@ EOF
     # The rows the validation page lists, beside the local stack's: each
     # github.com row this run made replaces the one of its claim, new ones
     # follow, and the github.com rows go after the GitHub rows.
-    rows="$(while IFS=$'\t' read -r claim result _; do
-      says="$(grep "^github.com|$claim|" <<<"$PROVE_CLAIMS" | cut -d'|' -f3)"
-      jq -n --arg c "$claim" --arg s "$says" --arg v "$result" '{forge: "github.com", claim: $c, says: $s, verdict: $v, break: null}'
-    done < "$WORK/verdicts" | jq -s .)"
-    jq '{release: $release, claims: .}' --arg release "$RELEASE" <<<"$rows" > "$DIR/prove.json"
+    rows="$(prove_rows)"
+    write_prove
     if [ -n "$record" ]; then
       jq --argjson rows "$rows" '.claims |= (
         [.[] | select(.forge == "github.com")] as $old | ($old | map(.claim)) as $had
