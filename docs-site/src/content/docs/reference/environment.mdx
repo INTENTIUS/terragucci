@@ -257,6 +257,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_LOCK_STALE` |  | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), seconds after which a wave takes over the resources another run holds, whatever its forge says of that run; 7200 by default |
 | `TG_BACKEND_BOOTSTRAP` |  | Terragrunt repos, `tf-apply`: when the job sets it, the wave passes it to Terragrunt as it is, so `false` keeps the wave from creating or changing a bucket that `generate.disable_init: false` would bootstrap |
 | `TG_LOCK_POLL` |  | with choudoufu, seconds between a waiting wave's checks of the resources another run holds; 10 by default |
+| `TG_PROGRESS_SECONDS` |  | with choudoufu, seconds between an applying wave's reads of its estates' records for [its progress](/terragucci/concepts/waves-and-approvals/#progress); 5 by default |
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
