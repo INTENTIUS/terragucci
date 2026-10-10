@@ -3,6 +3,7 @@
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
  *   terragucci import atlantis|digger|terrateam [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
+ *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -88,6 +89,9 @@ import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { describeImport, importConfig, IMPORT_SOURCES, type ImportSource } from "./import";
+import { readScalr } from "./import/scalr";
+import { readTfe } from "./import/tfe";
+import { describeWorkspaceImport, importWorkspaces, PLATFORM_SOURCES, type PlatformSource } from "./import/workspaces";
 import { checkGenerated, describeGenerate, planGenerate } from "./generate";
 import { assertLinux, install, type Tool } from "./install";
 import { describeBinary, RootBinaries } from "./pins";
@@ -122,6 +126,7 @@ import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
   terragucci import atlantis|digger|terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+  terragucci import hcp|otf|scalr [--hostname <host>] [--organization <org>] [--environment <env>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci generate [--check] [--dry-run] [--config <file>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -276,6 +281,28 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "import": {
         const [source, file, extra] = args;
+        if (PLATFORM_SOURCES.includes(source as PlatformSource)) {
+          if (file !== undefined) throw new ConfigError(`import ${source} reads the platform's API, not a file: give --hostname${source === "scalr" ? "" : " and --organization"}`);
+          const forge = str(flags, "forge");
+          if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
+          const hostname = str(flags, "hostname") ?? (source === "hcp" ? "app.terraform.io" : undefined);
+          if (!hostname || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d+)?$/i.test(hostname)) throw new ConfigError(`import ${source} needs --hostname, the host name of ${source === "scalr" ? "the Scalr account, such as acme.scalr.io" : "the OTF server"}`);
+          const org = str(flags, "organization");
+          if (source !== "scalr" && !org) throw new ConfigError(`import ${source} needs --organization, the organization whose workspaces it reads`);
+          if (source === "scalr" && org) throw new ConfigError("import scalr reads the account the host names; --environment narrows it to one environment");
+          const environment = str(flags, "environment");
+          if (source !== "scalr" && environment) throw new ConfigError(`--environment is Scalr's; import ${source} reads one --organization`);
+          const repoFlag = str(flags, "repo");
+          if (repoFlag !== undefined && !/^[^/\s]+(\/[^/\s]+)+$/.test(repoFlag)) throw new ConfigError("--repo must be the repo as the VCS connection names it, owner/name");
+          const result = await importWorkspaces(cwd, () => (source === "scalr" ? readScalr(hostname, environment, process.env) : readTfe(source as "hcp" | "otf", hostname, org!, process.env)), {
+            ...(repoFlag ? { repo: repoFlag } : {}),
+            ...(forge ? { forge: forge as ForgeName } : {}),
+            force: flags.force === true,
+            dryRun: flags["dry-run"] === true,
+          });
+          console.log(describeWorkspaceImport(result));
+          return 0;
+        }
         if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\` or \`terragucci import terrateam [.terrateam/config.yml]\``);
         if (extra !== undefined) throw new ConfigError("import reads one file");
         const forge = str(flags, "forge");
