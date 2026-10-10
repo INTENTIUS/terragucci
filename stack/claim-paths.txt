@@ -56,7 +56,7 @@ packages/terragucci/src/estate.ts         estate estate-* front-door audit* read
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export ephemeral-*
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-* gcs-state azurerm-state gcs-unlock azurerm-unlock blob-migrate cloud-roles
 packages/terragucci/src/gitlab-state.ts   state-versions unlock-state state-export ephemeral-* tg-ephemeral-pr
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr cdf-migrate cdf-adopt migrate-backend-tfe blob-migrate
+packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr cdf-migrate cdf-adopt migrate-backend-tfe blob-migrate migrate-backend-pg migrate-backend-k8s
 packages/terragucci/src/migrate-estate.ts cdf-migrate cdf-adopt
 packages/terragucci/src/state-source.ts   migrate-backend-tfe
 packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr tg-generate-init
