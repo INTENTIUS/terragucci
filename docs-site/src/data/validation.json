@@ -117,7 +117,7 @@
       "claim": "pr-lock",
       "says": "with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder",
       "verdict": "pass",
-      "break": null
+      "break": "caught"
     },
     {
       "forge": "github.com",
@@ -201,14 +201,14 @@
       "claim": "pr-apply-lock",
       "says": "with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "verdict": "pass",
-      "break": null
+      "break": "caught"
     },
     {
       "forge": "github.com",
       "claim": "pr-apply-stale",
       "says": "a comment on an approved pull request whose head is behind main is refused as not up to date, and nothing applies",
       "verdict": "pass",
-      "break": null
+      "break": "caught"
     },
     {
       "forge": "github.com",
@@ -244,6 +244,13 @@
       "says": "after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step",
       "verdict": "pass",
       "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "pr-lock-fmt",
+      "says": "with locks: plan a pull request whose check job formats it, with a push that starts no workflow, still has its lock answered on the formatted head",
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "forge": "gitlab",
