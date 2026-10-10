@@ -672,6 +672,32 @@ export interface ReportBlast {
   roots: string[];
   /** Nearest first: each root that reads the state of a root in the radius. */
   downstream: ReportBlastRoot[];
+  /**
+   * The radius by resource (minor 31), when a root downstream: each resource
+   * a plan changes and the resources that depend on it, from the plans'
+   * references and the outputs each root reads. Absent in a Terragrunt repo.
+   */
+  resources?: ReportBlastResource[];
+}
+
+/** A resource a plan changes, and what depends on it (minor 31). */
+export interface ReportBlastResource {
+  root: string;
+  /** The changed resource instance's address. */
+  address: string;
+  /** Its change's actions, as the plan gives them. */
+  actions: string[];
+  /** Nearest first: its own root's resources, then each root's that reads an output the change reaches. */
+  reaches: ReportBlastReach[];
+}
+
+/** A resource that depends on a changed one (minor 31). */
+export interface ReportBlastReach {
+  root: string;
+  /** Its address in the root's configuration, with no instance key. */
+  address: string;
+  /** In another root: the output it reads, and the root that makes it. */
+  through?: { root: string; output: string };
 }
 
 /** A root downstream of a change (minor 22). */

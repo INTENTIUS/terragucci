@@ -127,6 +127,21 @@ In a Terragrunt repo the radius is the units whose own plan changes something, n
 
 The note leaves it out when nothing reads or depends on a changed root. `report.json` carries it as `blast`.
 
+### Resources in the radius
+
+For plain roots, the note also lists each changed resource and the resources that depend on it, in its own root and in each root that reads an output it reaches:
+
+```text
+**By resource:**
+
+- `aws_sqs_queue.jobs` in `queue` (update) reaches:
+  - `aws_sqs_queue_policy.jobs`
+  - `aws_lambda_event_source_mapping.jobs` in `worker`, through output `jobs_arn` of `queue`
+  - `aws_lambda_function.worker` in `worker`, through output `jobs_arn` of `queue`
+```
+
+The edges come from each plan's references: expressions, `count`, `for_each`, `depends_on`, module arguments and outputs, and locals. Between roots, a resource is listed only when it reads an output the change reaches, through `terraform_remote_state` or `terraform_estate_outputs`. A reader of `worker`'s outputs is followed the same way. A root the run did not plan stays in the root list only. `report.json` carries the list as `blast.resources`.
+
 ## Waiting waves
 
 The gate policy decides which waves wait for a person.

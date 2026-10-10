@@ -61,6 +61,7 @@ import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportBlast, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
 import { blastRadius } from "./graph";
+import { blastRootsOf, resourceBlast } from "./resource-blast";
 import { branchCheckouts } from "../branch-checkouts";
 import { changesSomething } from "./changing";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
@@ -1257,7 +1258,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
 
   // The blast radius: the roots whose plan changes something, and every root that reads their state, followed through.
   const changing = inputs.filter((i) => i.plan !== undefined && !i.error && changesSomething(i.plan)).map((i) => i.path);
-  const blast = !drift && changing.length > 0 ? blastRadius(orderOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  const radius = !drift && changing.length > 0 ? blastRadius(orderOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  // By resource, when a root is downstream: what each changed resource reaches through the plans' references and the outputs roots read.
+  const byResource = radius && radius.downstream.length > 0 ? resourceBlast(blastRootsOf(repo, all, inputs.filter((i) => !i.error), blocksOf), radius.roots) : [];
+  const blast = radius ? { ...radius, ...(byResource.length ? { resources: byResource } : {}) } : undefined;
   // A plain root's dependencies in the report: the roots waves.after puts before it (its reads are in roots[].reads).
   const dependencies = explicit.size ? new Map([...explicit].map(([r, ups]) => [r, [...ups].sort()])) : undefined;
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}), ...(dependencies ? { dependencies } : {}) });

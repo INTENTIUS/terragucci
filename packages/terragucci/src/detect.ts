@@ -515,6 +515,66 @@ export function estateOf(dir: string): { estate?: string; reads: string[] } {
   return { estate, reads };
 }
 
+/** Each `data "terraform_estate_outputs"` block of a root: its label and the estate whose outputs it reads. */
+export function estateOutputReads(dir: string): { name: string; estate: string }[] {
+  const out: { name: string; estate: string }[] = [];
+  for (const f of tfFiles(dir)) {
+    if (isJson(f)) continue;
+    const text = stripComments(readFileSync(f, "utf-8"));
+    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"([^"]+)"\s*\{/g)) {
+      const e = attr(blockBody(text, m.index!), "estate");
+      if (e) out.push({ name: m[1], estate: e });
+    }
+  }
+  return out;
+}
+
+/**
+ * A module's `locals` blocks, as written in its directory: each local's name
+ * and the text of its value, for a reader that follows references through
+ * them (plan JSON names a reference to a local but not what the local holds).
+ */
+export function localsText(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of tfFiles(dir)) {
+    const raw = readFileSync(f, "utf-8");
+    if (isJson(f)) {
+      try {
+        const doc = JSON.parse(raw) as { locals?: unknown };
+        for (const block of Array.isArray(doc.locals) ? doc.locals : [doc.locals]) {
+          for (const [name, v] of Object.entries(objectOf(block) ?? {})) out.set(name, JSON.stringify(v));
+        }
+      } catch {
+        // Not JSON: nothing to read.
+      }
+      continue;
+    }
+    const text = stripComments(raw);
+    for (const m of text.matchAll(/^\s*locals\s*\{/gm)) {
+      const body = blockBody(text, m.index!);
+      const inner = body.slice(body.indexOf("{") + 1, -1);
+      // Each attribute at the block's own depth starts a local; its value runs to the next one.
+      let depth = 0;
+      let name: string | undefined;
+      let value: string[] = [];
+      for (const line of inner.split("\n")) {
+        const at = depth === 0 ? /^\s*([A-Za-z_][\w-]*)\s*=(?!=)/.exec(line) : null;
+        if (at) {
+          if (name) out.set(name, value.join("\n"));
+          name = at[1];
+          value = [line.slice(at[0].length)];
+        } else value.push(line);
+        for (const c of line.replace(/"(?:[^"\\]|\\.)*"/g, '""')) {
+          if (c === "{" || c === "[" || c === "(") depth++;
+          else if (c === "}" || c === "]" || c === ")") depth--;
+        }
+      }
+      if (name) out.set(name, value.join("\n"));
+    }
+  }
+  return out;
+}
+
 /** The roots that keep their resources under choudoufu's live resource markers: a `live` block in a `terraform` block, or an `estate.chdf.hcl`. */
 export function liveRoots(repo: string, roots: string[]): string[] {
   return roots.filter((r) => {
