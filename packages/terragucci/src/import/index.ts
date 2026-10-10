@@ -1,7 +1,9 @@
 /**
- * `terragucci import atlantis [atlantis.yaml]` and `terragucci import digger
- * [digger.yml]`: write terragucci.yml from an Atlantis repo config or an
- * OpenTaco (digger) config, and say what became of every setting.
+ * `terragucci import atlantis [atlantis.yaml]`, `terragucci import digger
+ * [digger.yml]` and `terragucci import terrateam [.terrateam/config.yml]`:
+ * write terragucci.yml from an Atlantis repo config, an OpenTaco (digger)
+ * config or a Terrateam config (./terrateam.ts), and say what became of
+ * every setting.
  *
  * The mapping is the guide's (./guide.ts holds its tables, which a test holds
  * equal to the page). Each setting the file carries ends up as one note:
@@ -35,31 +37,24 @@ import {
   type ForgeName,
   type ProjectSettings,
 } from "../config";
-import { detectForge, findRoots } from "../detect";
-import { APPLY_TIMING_TABLE, GUIDE_URL, leftOut, plain, settingCell, type LeftOutRow, type SettingRow } from "./guide";
+import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
+import { APPLY_TIMING_TABLE, GUIDE_URL, plain, TERRATEAM_URL, type SettingRow } from "./guide";
+import { isMap, list, Notes, rootOf, type ImportNote, type NoteKind } from "./notes";
+import { convertTerrateam, type RepoShape } from "./terrateam";
 
-export const IMPORT_SOURCES = ["atlantis", "digger"] as const;
+export { rootOf, type ImportNote, type NoteKind } from "./notes";
+
+export const IMPORT_SOURCES = ["atlantis", "digger", "terrateam"] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 /** The file each source reads when none is named, first found wins. */
 export const SOURCE_FILES: Record<ImportSource, string[]> = {
   atlantis: ["atlantis.yaml", "atlantis.yml"],
   digger: ["digger.yml", "digger.yaml"],
+  terrateam: [".terrateam/config.yml", ".terrateam/config.yaml"],
 };
 
-export type NoteKind = "mapped" | "default" | "unmapped" | "left-out";
-
-export interface ImportNote {
-  /** The setting, as a path in the source file. */
-  key: string;
-  kind: NoteKind;
-  /** The guide's row; empty for a note in its own words, such as a key the guide has no row for. */
-  row: string;
-  /** What the page says: the terragucci cell, or the rule and what to do instead. */
-  text: string;
-  /** What this file's value made of it, when there is more to say than the page. */
-  detail?: string;
-}
+const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", terrateam: "Terrateam" };
 
 export interface Converted {
   settings: ProjectSettings;
@@ -71,51 +66,8 @@ export interface ImportOptions {
   forge?: ForgeName;
   /** Overrides when the change applies; otherwise the source tool's own timing. */
   applyWhen?: ApplyWhen;
-}
-
-/** Collects the notes, one per key and row. */
-class Notes {
-  readonly list: ImportNote[] = [];
-  private add(kind: NoteKind, key: string, row: string, text: string, detail?: string): void {
-    if (this.list.some((n) => n.key === key && n.row === row)) return;
-    this.list.push({ key, kind, row, text, ...(detail ? { detail } : {}) });
-  }
-  mapped(key: string, row: SettingRow, detail: string): void {
-    this.add("mapped", key, row, settingCell(row), detail);
-  }
-  covered(key: string, row: SettingRow, detail?: string): void {
-    this.add("default", key, row, settingCell(row), detail);
-  }
-  unmapped(key: string, row: SettingRow, detail?: string): void {
-    this.add("unmapped", key, row, settingCell(row), detail);
-  }
-  leftOut(key: string, row: LeftOutRow, detail?: string): void {
-    const l = leftOut(row);
-    this.add("left-out", key, row, `${l.rule}. Instead: ${l.instead}`, detail);
-  }
-  unknown(key: string): void {
-    this.add("unmapped", key, "", `the guide has no row for it, so nothing was written; see ${GUIDE_URL}`);
-  }
-  /** A note outside the settings table, in its own words: when the change applies, and the requirements' one list. */
-  own(key: string, kind: NoteKind, text: string, detail?: string): void {
-    this.add(kind, key, "", text, detail);
-  }
-}
-
-function isMap(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-
-function list(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
-}
-
-/** A project directory as a root path: `./envs/dev/` is `envs/dev`, the repo root is `.`; undefined when it leaves the repo. */
-export function rootOf(dir: unknown): string | undefined {
-  if (typeof dir !== "string") return undefined;
-  const parts = dir.trim().split("/").filter((p) => p !== "" && p !== ".");
-  if (dir.trim().startsWith("/") || parts.includes("..")) return undefined;
-  return parts.length ? parts.join("/") : ".";
+  /** The repo's roots and their order, which Terrateam's depends_on is read against. */
+  repo?: RepoShape;
 }
 
 /** A source requirement as terragucci's: the guide's Required approval, Checks green and Up to date rows. */
@@ -126,7 +78,7 @@ const REQUIREMENTS: Record<string, { row: SettingRow; to: ApplyRequire[] }> = {
 };
 
 /** The guide's row for when a tool applies, as one line: Atlantis's or OpenTaco's default against terragucci's. */
-function timingText(source: ImportSource): string {
+function timingText(source: "atlantis" | "digger"): string {
   const [def, other] = APPLY_TIMING_TABLE;
   const col = source === "atlantis" ? 1 : 2;
   return `${source === "atlantis" ? "Atlantis" : "OpenTaco"} applies ${plain(def[col])} by default, terragucci ${plain(def[3])}; the other way is ${plain(other[3])}`;
@@ -354,9 +306,10 @@ function readDigger(doc: Record<string, unknown>, g: Gathered, notes: Notes): vo
 
 // ── both ────────────────────────────────────────────────────────────────────
 
-/** Turn a parsed atlantis.yaml or digger.yml into terragucci settings and a note per setting. */
-export function convert(source: ImportSource, doc: unknown, o: ImportOptions = {}): Converted {
-  if (!isMap(doc)) throw new ConfigError(`the ${source === "atlantis" ? "Atlantis" : "OpenTaco"} config is not a map of settings`);
+/** Turn a parsed atlantis.yaml, digger.yml or .terrateam/config.yml into terragucci settings and a note per setting. */
+export function convert(source: ImportSource, doc: unknown, o: ImportOptions = {}): Converted & { missing?: string[] } {
+  if (!isMap(doc)) throw new ConfigError(`the ${SOURCE_NAMES[source]} config is not a map of settings`);
+  if (source === "terrateam") return convertTerrateam(doc, o);
   const notes = new Notes();
   const g = gathered();
   if (source === "atlantis") readAtlantis(doc, g, notes);
@@ -459,6 +412,17 @@ export interface ImportResult extends Converted {
   missing: string[];
 }
 
+/** The repo's roots as detection finds them, their layers and their reads; no order when the reads form a cycle. */
+function repoShape(repo: string): RepoShape {
+  const roots = findRoots(repo);
+  const reads = rootDependencies(repo, roots);
+  try {
+    return { roots, layers: applyLayers(repo, roots), reads };
+  } catch {
+    return { roots, layers: [roots], reads: new Map() };
+  }
+}
+
 /** Read the source file in `repo`, convert it, and write terragucci.yml unless `dryRun`. */
 export function importConfig(repo: string, source: ImportSource, o: ImportOptions & { file?: string; dryRun?: boolean; force?: boolean } = {}): ImportResult {
   const file = o.file ? resolve(repo, o.file) : SOURCE_FILES[source].map((f) => join(repo, f)).find((f) => existsSync(f));
@@ -470,10 +434,10 @@ export function importConfig(repo: string, source: ImportSource, o: ImportOption
     throw new ConfigError(`${relative(repo, file)} is not YAML: ${(e as Error).message}`);
   }
   const forge = o.forge ?? detectForge(repo)?.value;
-  const { settings, notes } = convert(source, doc, { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}) });
+  const { settings, notes, missing: unmatched } = convert(source, doc, { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}), ...(source === "terrateam" ? { repo: repoShape(repo) } : {}) });
   const from = relative(repo, file) || file;
-  const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${GUIDE_URL}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
-  const missing = (settings.roots ?? []).filter((r) => findRoots(repo, [r]).length === 0);
+  const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
+  const missing = unmatched ?? (settings.roots ?? []).filter((r) => findRoots(repo, [r]).length === 0);
   const existing = findConfig(repo);
   let wrote: string | undefined;
   if (!o.dryRun) {
@@ -509,7 +473,7 @@ export function describeImport(r: ImportResult): string {
       out.push(`  ${n.key}${n.row ? ` (${n.row})` : ""}: ${detail}${quoted}`);
     }
   }
-  if (r.missing.length) out.push("", `No directory with Terraform files matches ${r.missing.join(", ")}; check those projects' dir.`);
-  out.push("", `Next: \`npx terragucci init\` writes the pipeline for these settings. Every mapping: ${GUIDE_URL}`);
+  if (r.missing.length) out.push("", r.source === "terrateam" ? `No root matches the dirs ${r.missing.join(", ")}; check those keys.` : `No directory with Terraform files matches ${r.missing.join(", ")}; check those projects' dir.`);
+  out.push("", `Next: \`npx terragucci init\` writes the pipeline for these settings. Every mapping: ${r.source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}`);
   return out.join("\n");
 }

@@ -339,6 +339,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? { applyBranches: settings.apply.branches } : {}),
     ...(settings.own_jobs !== undefined ? { ownJobs: ownJobs(repo, settings.own_jobs) } : {}),
     ...(settings.ephemeral ? { ephemeral: { sweep: settings.ephemeral.sweep ?? EPHEMERAL_SWEEP } } : {}),
+    ...(settings.runner !== undefined ? { runner: settings.runner } : {}),
+    ...(settings.pass !== undefined ? { pass: settings.pass } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {

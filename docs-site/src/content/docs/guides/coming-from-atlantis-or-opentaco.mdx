@@ -1,28 +1,29 @@
 ---
-title: Coming from Atlantis or OpenTaco
-description: Each Atlantis and OpenTaco comment command and setting, the terragucci command or key that does the same job, and what terragucci leaves out on purpose.
-claims: [comment-refused, import-atlantis, comment-atlantis]
+title: Coming from Atlantis, OpenTaco or Terrateam
+description: Each Atlantis, OpenTaco and Terrateam comment command and setting, the terragucci command or key that does the same job, and what terragucci leaves out on purpose.
+claims: [comment-refused, import-atlantis, comment-atlantis, import-terrateam]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-atlantis-or-opentaco/.
-  Run `npx terragucci import atlantis --dry-run` (or `import digger --dry-run` for a digger.yml) and report what it would write and each setting it lists as not mapped or left out on purpose.
+  Run `npx terragucci import atlantis --dry-run` (or `import digger --dry-run` for a digger.yml, `import terrateam --dry-run` for a .terrateam/config.yml) and report what it would write and each setting it lists as not mapped or left out on purpose.
   Then run it without --dry-run, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml and the generated pipeline.
-  Do not delete atlantis.yaml or digger.yml, and do not create secrets.
+  Do not delete atlantis.yaml, digger.yml or .terrateam/config.yml, and do not create secrets.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## Result
 
-A `terragucci.yml` that matches your Atlantis or OpenTaco setup, and jobs `init` writes for your forge's CI. There is no server and no account; the jobs write to your git and bucket.
+A `terragucci.yml` that matches your Atlantis, OpenTaco or Terrateam setup, and jobs `init` writes for your forge's CI. There is no server and no account; the jobs write to your git and bucket.
 
 ## Import the settings
 
 ```bash
 npx terragucci import atlantis   # reads atlantis.yaml
 npx terragucci import digger     # reads digger.yml
+npx terragucci import terrateam  # reads .terrateam/config.yml
 npx terragucci init
 ```
 
-[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below and prints each setting as one of:
+[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below, or the [Terrateam table](#terrateam), and prints each setting as one of:
 
 - written as a key
 - done with no key
@@ -102,6 +103,51 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Applying one root of a wave | | an approval covers the wave's plans as one set | split the change, or `waves.canary` to send roots out first |
 | Flags at run time | a step's `extra_args` | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml` |
 | A server or web UI | | the jobs run in your CI and write to your git and your bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+
+## Terrateam
+
+`import terrateam` reads `.terrateam/config.yml`. Terrateam plans every directory with Terraform files, and terragucci detects the same roots, so the import writes no `roots`. It names each `dirs` key that matches no root.
+
+Terrateam applies on a `terrateam apply` comment before merge, so the import writes `apply.when: pull-request`, with `apply.requires` from `apply_requirements.checks`. `autoapply` or `apply_after_merge` keeps the default, `apply.when: merge`.
+
+`depends_on` is read against the repo. A dependency the roots' `terraform_remote_state` reads already give needs no key. The rest go into `waves.canary`, which applies the roots it names before every other root. Terrateam's layered-runs example is a chain of three:
+
+```yaml
+dirs:
+  network: {}
+  database:
+    when_modified:
+      depends_on: 'dir:network'
+  application:
+    when_modified:
+      depends_on: 'dir:database'
+```
+
+If `database` reads `network`'s state, the import writes `waves.canary: [database, network]` and the three apply in three waves. If no root reads another's state, it writes `waves.canary: [network]` and lists `application after database` as not mapped: one canary set gives one step of order. Read the upstream's outputs with `terraform_remote_state` and import again to keep the second step.
+
+| Setting | Terrateam | terragucci |
+|---|---|---|
+| Which directories | `dirs`, and every directory with Terraform files that `dirs` leaves out | detected: every directory with a backend, `cloud` block or provider; a root that `dirs` turns off with empty `file_patterns` needs `roots` globs that leave it out |
+| Workspace | `dirs.<dir>.workspaces`, `create_and_select_workspace` | none: each root is a directory with one state |
+| Tags | `tags`, a `tag_query` | none: a key that picks roots takes globs of their paths, which an import writes from a query of `dir:` terms joined by `or` |
+| What triggers a plan | `when_modified`: `file_patterns`, `autoplan`, `autoplan_draft_pr` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
+| Order | `when_modified.depends_on` | waves from `terraform_remote_state` reads; an order the reads do not give becomes `waves.canary`, which puts the roots it names first |
+| When it applies | `terrateam apply` before merge; `autoapply` or `apply_after_merge` after | `apply.when: pull-request` before merge, or the default, `apply.when: merge`, after |
+| Required approval | `apply_requirements.checks[].approved` | with `apply.when: pull-request`, `apply.requires: [approved]`: a reviewer other than the author approved the head; how many and who is branch protection's job |
+| Checks green | `merge_conflicts`, `status_checks` | with `apply.when: pull-request`, `apply.requires`: `mergeable` for no conflicts, `checks` for no status failed or running |
+| Merge after apply | `automerge` | `apply.merge: auto` with `apply.when: pull-request` |
+| Engine | `engine`, `default_tf_version`, a workflow's `engine` or `terraform_version` | `binary` and `version` for Terraform and OpenTofu; Terragrunt is detected, with `terragrunt.version`; CDKTF through `synth`; no Pulumi or custom engine |
+| Hooks | `hooks.all`, `hooks.plan`, `hooks.apply` | `steps`: a `run` hook becomes a step before or after `init`, `plan` or `apply`, run once per root; an `env` hook that echoes a fixed value becomes `env` |
+| Workflow steps | `workflows[].plan`, `workflows[].apply` | `steps`, with `roots` from the workflow's `dir:` query, for its `run` entries; `init`, `plan` and `apply` are the stages themselves |
+| Locks | `lock_policy` | a root locks when it applies before merge, or from the first plan with `locks: plan` (GitHub, Forgejo); no key turns locking off |
+| Concurrency | `parallel_runs` | `parallelism` within a job |
+| Access control | `access_control` | none in `terragucci.yml`: the forge's permissions decide who pushes and comments, and `approval` with `.chant/allowed_signers` decides who approves a wave |
+| Cloud credentials | an `oidc` hook | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
+| Policy | `conftest`, `opa` and `checkov` workflow steps | `policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo |
+| Cost | `cost_estimation` | `cost: true`: Infracost in the plan job, on your `INFRACOST_API_KEY` |
+| Drift | `drift`, a `drift_create_issue` hook | `drift`, a cron schedule over every root, whose job opens the drift issue |
+
+A workflow step's `extra_args` is [left out on purpose](#left-out-on-purpose), as it is for Atlantis.
 
 ## Next
 

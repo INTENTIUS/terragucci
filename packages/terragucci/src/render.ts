@@ -92,6 +92,48 @@ export const forgejoSkipLevels = 5;
  */
 export const runnerEvaluatedIf = "(env.TF_IN_AUTOMATION || 'set') != ''";
 
+/**
+ * The stage `runner` places a job by: the jobs that plan a pull request, the
+ * jobs that apply (the waves, comment and pull request applies, confirm,
+ * resume and the ephemeral copies), and the drift job. Every other job runs
+ * on `runner.default`.
+ */
+export function jobStage(name: string): RunnerStage | undefined {
+  if (name === "plan" || name === "replan") return "plan";
+  if (name === "drift") return "drift";
+  if (name.startsWith("apply-") || ["confirm", "mr-apply", "resume", "ephemeral", "ephemeral-sweep", "sweep"].includes(name)) return "apply";
+  return undefined;
+}
+
+/** The runner `runner` gives a job of `stage`, or undefined to keep the job's default. */
+export function runnerOf(runner: RunnerSettings | undefined, stage: RunnerStage | undefined): RunnerSpec | undefined {
+  if (runner === undefined || !runnerByStage(runner)) return runner;
+  return (stage ? runner[stage] : undefined) ?? runner.default;
+}
+
+/**
+ * `runner`: each job's `runs-on` on GitHub and Forgejo (where the dialect
+ * passes any label but GitHub's hosted ones through), its `tags` on GitLab,
+ * by its stage. A job `runner` gives nothing keeps what it has, so a pipeline
+ * without the key is the one it always was.
+ */
+export function placeJobs(jobs: Map<string, unknown>, runner: RunnerSettings | undefined, forge: ForgeName): void {
+  if (runner === undefined) return;
+  for (const [name, job] of jobs) {
+    const spec = name === "workflow" ? undefined : runnerOf(runner, jobStage(name));
+    const props = (job as { props?: Record<string, unknown> }).props;
+    if (spec === undefined || !props) continue;
+    if (forge === "gitlab") props.tags = typeof spec === "string" ? [spec] : Array.isArray(spec) ? [...spec] : [...(spec.labels ?? [])];
+    else props["runs-on"] = typeof spec === "string" ? spec : Array.isArray(spec) ? [...spec] : { group: spec.group, ...(spec.labels ? { labels: [...spec.labels] } : {}) };
+  }
+}
+
+/** `pass` as a job's environment: each secret as `secrets.<name>` and each variable as `vars.<name>`, under its own name. Empty on GitLab, whose jobs have the project's variables already. */
+export function passEnv(pass: PassSettings | undefined, forge: ForgeName): Record<string, string> {
+  if (!pass || forge === "gitlab") return {};
+  return Object.fromEntries([...(pass.secrets ?? []).map((n) => [n, `\${{ secrets.${n} }}`]), ...(pass.vars ?? []).map((n) => [n, `\${{ vars.${n} }}`])]);
+}
+
 /** The number of jobs on the longest chain of `needs` below each job. */
 export function needsDepths(entities: Map<string, unknown>): Map<string, number> {
   const below = new Map<string, string[]>();
@@ -129,7 +171,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -282,6 +324,10 @@ export interface PipelineInput {
    * at base when the jobs run, so the pipeline carries only the schedule.
    */
   ephemeral?: { sweep: number };
+  /** `runner`: the runner each job runs on, as `runs-on` (GitHub, Forgejo) or `tags` (GitLab); see placeJobs. Unset, every job keeps the default. */
+  runner?: RunnerSettings;
+  /** `pass`: secret and variable names the jobs that plan, apply and check drift get as environment variables (GitHub and Forgejo). */
+  pass?: PassSettings;
 }
 
 export interface RenderedPipeline {
@@ -1802,6 +1848,11 @@ function text(result: string | { primary: string }): string {
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
+  // init validates both keys with the config; this holds for a pipeline input built another way, and for the forge init settled on.
+  const keyProblems = [...(input.runner !== undefined ? runnerProblems(input.runner, "runner", forge) : []), ...(input.pass !== undefined ? passProblems(input.pass, "pass", env) : [])];
+  if (keyProblems.length > 0) throw new RenderError(keyProblems.join("; "));
+  // pass: the named secrets and variables, in the jobs that plan, apply and check drift, under terragucci's own keys so those win.
+  const passed = passEnv(input.pass, forge);
   // waves.jobs: a wave of more roots than one job spreads across share jobs, after a job of its own plans it and decides its gate.
   const waveJobs = input.waveJobs !== undefined && input.waveJobs > 1 ? input.waveJobs : undefined;
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
@@ -2264,6 +2315,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, binary, ephemeralPrelude))),
       } as never) as never);
     }
+    placeJobs(jobs, input.runner, forge);
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
@@ -2362,6 +2414,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: "read", statuses: "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     env: {
+      ...passed,
       TG_SHA: "${{ github.event.pull_request.head.sha }}",
       TG_PR: "${{ github.event.pull_request.number }}",
       ...headersEnv,
@@ -2417,7 +2470,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // step holds the job's token and runs before the change is checked out; the plan step holds none, and the
   // replan-note job posts the note.
   const go = "steps.decide.outputs.go == '1'";
-  const replanEnv = { ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
+  const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
@@ -2491,7 +2544,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...openid(needsToken),
     ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
+    env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
     ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
     steps: [
       ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
@@ -2561,7 +2614,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       permissions: { contents: "write", "pull-requests": "read", ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
       concurrency: { group: "terragucci-ephemeral-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": false },
-      env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
+      env: { ...passed, TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
       steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, binary, ephemeralPrelude) }), false, true),
     } as never) as never);
   }
@@ -2594,6 +2647,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // Under a repo-wide scope, one apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares apply side by side, under the run's shared lock.
       ...(job.share === undefined && repoWide ? { concurrency: applyConcurrency(forge) } : {}),
       env: {
+        ...passed,
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
         TG_BEFORE: "${{ github.event.before }}",
@@ -2622,7 +2676,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
       permissions: { contents: "read", statuses: "write", ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      env: { TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv },
+      env: { ...passed, TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv },
       steps: [
         ...steps(new Step({ name: `Plan every ${what} to confirm the merge applied`, shell: "bash", run: confirmScript(binary, layers, forge, oidc, report) }), true),
         new Step({ name: "Keep the plan report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-confirm`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
@@ -2697,6 +2751,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...openid(Boolean(oidc)),
       ...(input.agentDrift ? { outputs: { agent: "${{ steps.drift.outputs.agent }}", issue: "${{ steps.drift.outputs.issue }}" } } : {}),
       env: {
+        ...passed,
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
         ...headersEnv,
@@ -2720,7 +2775,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   }
   if (drift && input.agentDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
   if (forge === "forgejo") deferDeepSkips(entities);
-  const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
+  // Every workflow file goes through here, so its jobs run where runner places them.
+  const serialize = (jobs: Map<string, never>): string => {
+    placeJobs(jobs, input.runner, forge);
+    return text((forge === "forgejo" ? forgejoSerializer : githubSerializer).serialize(jobs));
+  };
   const extra: { path: string; content: string }[] = [];
   if (input.resume) {
     // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
@@ -2732,14 +2791,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
         ...openid(needsToken),
         ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
-        env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
+        env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
         steps: [
           ...steps(new Step({ name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
           new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-resume`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ],
       } as never) as never],
     ]);
-    extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(resume)) });
+    extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(resume) });
   }
   if (ephemeral) {
     // ephemeral: a schedule of its own destroys the copies whose TTL passed or whose pull request closed.
@@ -2751,16 +2810,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         permissions: { contents: "write", "pull-requests": "read", ...(needsToken ? { "id-token": "write" } : {}) },
         ...openid(needsToken),
         concurrency: { group: "terragucci-ephemeral-sweep-${{ github.repository }}", "cancel-in-progress": false },
-        env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+        env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv },
         steps: steps(new Step({ name: "Destroy the ephemeral copies whose TTL passed or whose pull request closed", shell: "bash", run: ephemeralSweepScript(forge, oidc, binary) }), false, true),
       } as never) as never],
     ]);
-    extra.push({ path: EPHEMERAL_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(sweep)) });
+    extra.push({ path: EPHEMERAL_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(sweep) });
   }
   // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
-  if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv }))) });
-  if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined))) });
-  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), ...(extra.length ? { extra } : {}) };
+  if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv })) });
+  if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined)) });
+  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(entities) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), ...(extra.length ? { extra } : {}) };
 }
 
 /**
