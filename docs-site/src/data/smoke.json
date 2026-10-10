@@ -2801,7 +2801,7 @@
       "verdict": "pass",
       "break": "caught",
       "forge": "gitlab",
-      "commit": "02e7f08"
+      "commit": "ef2ecac5"
     },
     {
       "claim": "gl-comments",

@@ -31,4 +31,12 @@ describe("config check", () => {
     const ok = await check(write(tmp(), { "terragucci.yml": "binary: terraform\n" }));
     expect(JSON.parse(ok.out).results.ok).toBe(true);
   });
+
+  it("refuses a terragucci.yml that is a list, instead of checking it as the empty config (#803)", async () => {
+    const refused = await check(write(tmp(), { "terragucci.yml": "- binary: terraform\n" }));
+    expect(refused.code).toBe(2);
+    const { results } = JSON.parse(refused.out);
+    expect(results.ok).toBe(false);
+    expect(results.problems.join("\n")).toMatch(/the config must be a mapping .* holds a list/);
+  });
 });
