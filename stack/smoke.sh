@@ -277,6 +277,7 @@ pr-review-status|with approval: pr-review terragucci/approval on the head of a p
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
+cdf-live-progress|with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
 cdf-rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
@@ -9566,12 +9567,14 @@ HCL
 # One stage run in a checkout, in the CI image of BIN (choudoufu or tofu),
 # with its S3 calls sent to the proxy, as the container NAME. OVERRIDE, when
 # not empty, is a Linux build mounted over the image's binary. The run's
-# output goes to LOG.
+# output goes to LOG. CDF_BUNDLE, when set, is mounted in place of the CLI
+# bundle, and CDF_ENV holds extra KEY=VALUE pairs for the run, space-separated.
 cdf_run() { # dir log name bin override stage-args...
-  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0
+  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="${CDF_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}" rc=0 kv
   local -a mount=()
   shift 5
   [ -n "$over" ] && mount=(-v "$over:/usr/local/bin/$bin:ro")
+  for kv in ${CDF_ENV:-}; do mount+=(-e "$kv"); done
   run_copied --rm --name "$name" --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" ${mount[@]+"${mount[@]}"} \
     -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
@@ -9925,6 +9928,86 @@ HCL
   fi
   cdf_down "$work"
   [ $rc = 0 ] && log "the killed wave left a record for first, whose apply had returned, and none for second; the next plan creates second only"
+  return $rc
+}
+
+claim_cdf_live_progress() {
+  # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
+  # the choudoufu CI image with a reports bucket: first, and second, which
+  # depends on first and whose local-exec provisioner leaves a mark in the
+  # wave's container and then sleeps. Once the mark is there, first's apply
+  # has returned and second's is running. While second sleeps, the wave's
+  # run view in the bucket (run.json and run.html) must show first done and
+  # second in flight, and the job's terragucci-report/progress.json the same:
+  # the progress is read from the record store as the apply runs.
+  # BREAK: the wave's bundle reads the records only when the apply ends, so
+  # mid-apply the run view still shows first in flight and second waiting.
+  log() { echo "[smoke cdf-live-progress] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate bucket=terragucci-smoke-progress pid i keys key view="" html="" local_p="" got rc=0 CDF_BUNDLE="" CDF_ENV="TG_PROGRESS_SECONDS=1"
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply-progress.ts 'this.every();' '' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    CDF_BUNDLE="$work/break.mjs"
+  fi
+  estate="smoke-progress-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  curl -s -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_estate "$work/a" "$estate" "$(cat <<'HCL'
+resource "terraform_data" "first" {
+  input = "first"
+}
+
+resource "terraform_data" "second" {
+  input      = "second"
+  depends_on = [terraform_data.first]
+
+  provisioner "local-exec" {
+    command = "touch /repo/second-started && sleep 900"
+  }
+}
+HCL
+)"
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$bucket" "$estate" >"$work/a/terragucci.yml"
+  printf 'second-started\n' >>"$work/a/.gitignore"
+  git -C "$work/a" init -q -b main && git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate" \
+    || { log "could not commit the estate"; cdf_down "$work"; return 1; }
+  ( CDF_BUNDLE="$CDF_BUNDLE" CDF_ENV="$CDF_ENV" cdf_run "$work/a" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate never ) >/dev/null 2>&1 &
+  pid=$!
+  # The checkout is copied into the container (run_copied), so the mark is looked for there.
+  started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
+  for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if ! started; then
+    log "second's provisioner never started"; tail -20 "$work/apply.log" >&2
+    docker rm -f "$CDF_ALIAS-apply" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; cdf_down "$work"; return 1
+  fi
+  # second sleeps for 15 minutes: give the run view up to 30 seconds to show first done.
+  for i in $(seq 1 30); do
+    key="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$estate/" | grep -o '<Key>[^<]*/runs/[^<]*/run.json</Key>' | sed -E 's#</?Key>##g' | head -1)"
+    if [ -n "$key" ]; then
+      view="$(curl -fsS "$FLOCI/$bucket/$key" 2>/dev/null || true)"
+      got="$(jq -r '[.waves[0].progress.resources[]? | "\(.address)=\(.status)"] | sort | join(" ")' <<<"$view" 2>/dev/null || true)"
+      [ "$got" = "terraform_data.first=done terraform_data.second=in-flight" ] && break
+    fi
+    sleep 1
+  done
+  log "the run view while second applies: wave $(jq -r '.waves[0].state' <<<"$view" 2>/dev/null || echo none), ${got:-no progress}"
+  [ -n "$key" ] && html="$(curl -fsS "$FLOCI/$bucket/${key%run.json}run.html" 2>/dev/null || true)"
+  local_p="$(docker exec "$CDF_ALIAS-apply" cat /repo/terragucci-report/progress.json 2>/dev/null | jq -r '[.resources[] | "\(.address)=\(.status)"] | sort | join(" ")' 2>/dev/null || true)"
+  log "progress.json in the job while second applies: ${local_p:-none}"
+  docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+  grep 'progress' "$work/apply.log" | sed 's/^/  /' >&2 || true
+  [ "$got" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply the run view does not show first done and second in flight"; rc=1; }
+  grep -q 'data-status="done" data-address="terraform_data.first"' <<<"$html" && grep -q 'data-status="in-flight" data-address="terraform_data.second"' <<<"$html" \
+    || { log "mid-apply run.html does not show first done and second in flight"; rc=1; }
+  [ "$local_p" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply terragucci-report/progress.json does not show first done and second in flight"; rc=1; }
+  cdf_down "$work"
+  [ $rc = 0 ] && log "while second applied, the run view, its page and the job's progress.json showed first done and second in flight, read from the records"
   return $rc
 }
 
@@ -20577,6 +20660,7 @@ cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
 cdf-killed-records   weight=90
+cdf-live-progress    weight=90
 apply-per-root       runner self! weight=300
 cdf-rows-overlap     runner self! weight=250
 cdf-rows-wait        self! weight=200

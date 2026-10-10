@@ -1105,6 +1105,14 @@
       "commit": "fd59fd2a"
     },
     {
+      "claim": "cdf-live-progress",
+      "says": "with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
       "claim": "cdf-iam",
       "says": "with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate",
       "needs": null,
