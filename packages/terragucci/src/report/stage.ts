@@ -31,7 +31,7 @@ import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
-import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, unaddressedStates } from "../detect";
+import { applyLayers, detectBinary, driftRefusal, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
@@ -910,7 +910,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const shape = detectShape(repo, settings);
   if (options.terragrunt ?? shape.engine === "terragrunt") return runTerragruntStage(repo, settings, shape, options, env, log, drift, configPath);
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
-  const full = options.layers ?? applyLayers(repo, all);
+  // waves.after orders plain roots (and a synth's); the other shapes refuse it and keep their own order.
+  const after = shape.after;
+  const explicit = explicitOrder(after, all);
+  const full = options.layers ?? applyLayers(repo, all, after);
   const layers = full
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
     .filter((l) => l.length > 0);
@@ -929,11 +932,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // Roots git holds (a Terramate repo's stacks, with their generated code) are named by the diff, even with a prepare step.
   if (base && synth && !shape.rootsInGit) {
     // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
-    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, atmosDependencies(repo, all));
+    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, withOrder(atmosDependencies(repo, all), explicit));
     selected = synthed.selected;
     notices.push(synthed.notice);
   } else if (base) {
-    selected = affectedRoots(repo, base, all, layers.flat(), log);
+    selected = affectedRoots(repo, base, all, layers.flat(), log, after);
   }
   // steps: read at base, so the change under review cannot add, edit or remove one. Drift has no base: the default branch's own.
   const stepsRead = await readSteps(repo, base, settings.steps, { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) });
@@ -996,6 +999,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const heldBySteps = new Set<string>();
   const unknownFrom = new Map<string, string[]>();
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
+  // What each root follows: its reads, and the roots waves.after puts before it. An upstream it follows but does not read holds nothing back.
+  const orderOf = drift ? readsOf : rootOrder(repo, all, after);
   // Linked states: the terraform_remote_state blocks of each root, and the plans of the roots this run planned, whose outputs a later layer plans on.
   const blocksOf = drift ? new Map<string, { name: string; upstream: string; repeated: boolean }[]>() : remoteStateReads(repo, all);
   // The states the code does not address: their edges are unknown, and the report says so.
@@ -1239,7 +1244,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     .filter((w) => w.roots.length > 0)
     .map((w) => {
       const holding = w.roots.filter((r) => heldBySteps.has(r));
-      const reads = wavesOf(waveOf, w.roots.flatMap((r) => [...(readsOf.get(r) ?? [])]), w.number);
+      const reads = wavesOf(waveOf, w.roots.flatMap((r) => [...(orderOf.get(r) ?? [])]), w.number);
       const replansAfter = wavesOf(waveOf, w.roots.flatMap((r) => unknownFrom.get(r) ?? []), w.number);
       return {
         ...w,
@@ -1252,8 +1257,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
 
   // The blast radius: the roots whose plan changes something, and every root that reads their state, followed through.
   const changing = inputs.filter((i) => i.plan !== undefined && !i.error && changesSomething(i.plan)).map((i) => i.path);
-  const blast = !drift && changing.length > 0 ? blastRadius(readsOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}) });
+  const blast = !drift && changing.length > 0 ? blastRadius(orderOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  // A plain root's dependencies in the report: the roots waves.after puts before it (its reads are in roots[].reads).
+  const dependencies = explicit.size ? new Map([...explicit].map(([r, ups]) => [r, [...ups].sort()])) : undefined;
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}), ...(dependencies ? { dependencies } : {}) });
 }
 
 interface Planned {
@@ -1281,7 +1288,7 @@ interface Planned {
   notices?: string[];
   /** tf-plan of plain roots: what the change reaches through the roots that read the changed roots' state. */
   blast?: ReportBlast;
-  /** A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads. */
+  /** A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads. A plain root's: the roots waves.after puts before it. */
   dependencies?: ReadonlyMap<string, string[]>;
 }
 
@@ -1514,10 +1521,11 @@ function mergePlanned(parts: Awaited<ReturnType<typeof planUnits>>[]): Awaited<R
 /**
  * The roots a change from `base` to HEAD reaches: chant's path rules (a file
  * in the root, in a local module it calls, or one of its var files), plus
- * every root that reads a reached root's state, followed through. Undefined,
- * so every root plans, when git cannot diff the range.
+ * every root that reads a reached root's state or that `waves.after` puts
+ * after one, followed through. Undefined, so every root plans, when git
+ * cannot diff the range.
  */
-export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void): Set<string> | undefined {
+export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void, after?: WavesAfter): Set<string> | undefined {
   const diff = spawnSync("git", ["-C", repo, "diff", "--name-only", "--no-renames", "--relative", `${base}...HEAD`], { encoding: "utf-8" });
   if (diff.status !== 0) {
     log(`every root: affected selection failed (git diff ${base}...HEAD: ${(diff.stderr || "").trim().split("\n")[0]})`);
@@ -1527,7 +1535,7 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
   const deps = rootDependencies(repo, all);
   // A Terramate stack's dependents plan with it: the stacks its after, before, nesting or inputs put after it (../terramate.ts).
-  const order = atmosDependencies(repo, all);
+  const order = withOrder(atmosDependencies(repo, all), explicitOrder(after, all));
   const upstreams = (root: string): string[] => [...new Set([...(deps.get(root) ?? []), ...(order.get(root) ?? [])])];
   const selected = new Set(changed);
   for (let grew = true; grew; ) {
@@ -1547,6 +1555,13 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   }
   log(`affected: ${changed.length} of ${roots.length} roots against ${base}, ${selected.size - changed.length} dependents after them`);
   return new Set([...selected].filter((r) => roots.includes(r)));
+}
+
+/** `a` with `b`'s edges added, each root's upstreams joined. */
+function withOrder(a: Map<string, Set<string>>, b: Map<string, Set<string>>): Map<string, Set<string>> {
+  const out = new Map([...a].map(([r, ups]) => [r, new Set(ups)]));
+  for (const [r, ups] of b) out.set(r, new Set([...(out.get(r) ?? []), ...ups]));
+  return out;
 }
 
 /** The base of a pull request's range, from the forge's environment: `origin/<target branch>`. */

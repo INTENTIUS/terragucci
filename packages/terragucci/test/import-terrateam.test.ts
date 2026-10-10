@@ -85,19 +85,25 @@ describe("depends_on", () => {
     expect(note(notes, "dirs.application.when_modified.depends_on")?.kind).toBe("default");
   });
 
-  it("puts the roots a dependency waits on into waves.canary, with what they read", () => {
+  it("writes a dependency the reads do not give into waves.after", () => {
     const { settings, notes } = run(LAYERED, { repo: shape(["application", "database", "network"], { database: ["network"] }) });
-    expect(settings.waves).toEqual({ canary: ["database", "network"] });
-    expect(note(notes, "dirs.application.when_modified.depends_on")).toMatchObject({ kind: "mapped", row: "Order" });
+    expect(settings.waves).toEqual({ after: { application: ["database"] } });
+    expect(note(notes, "dirs.application.when_modified.depends_on")).toMatchObject({ kind: "mapped", row: "Order", detail: "waves.after: application after database" });
+    expect(note(notes, "dirs.database.when_modified.depends_on")?.kind).toBe("default");
   });
 
-  it("keeps one step of order with no reads, and names the dependency that needs a second", () => {
+  it("keeps a chain of any length with no reads", () => {
     const { settings, notes } = run(LAYERED, { repo: shape(["application", "database", "network"]) });
-    expect(settings.waves).toEqual({ canary: ["network"] });
+    expect(settings.waves).toEqual({ after: { application: ["database"], database: ["network"] } });
     expect(note(notes, "dirs.database.when_modified.depends_on")?.kind).toBe("mapped");
-    const late = note(notes, "dirs.application.when_modified.depends_on")!;
-    expect(late.kind).toBe("unmapped");
-    expect(late.detail).toMatch(/^application after database is not kept: waves.canary puts one set of roots first/);
+    expect(note(notes, "dirs.application.when_modified.depends_on")?.kind).toBe("mapped");
+    expect(notes.filter((n) => n.row === "Order" && n.kind === "unmapped")).toEqual([]);
+  });
+
+  it("names a cycle depends_on and the reads make together, and writes no order", () => {
+    const { settings, notes } = run(LAYERED, { repo: shape(["application", "database", "network"], { network: ["application"] }) });
+    expect(settings.waves).toBeUndefined();
+    expect(note(notes, "dirs.application.when_modified.depends_on")).toMatchObject({ kind: "unmapped", detail: "application after database is not kept: with the terraform_remote_state reads they make a cycle, application after database after network after application" });
   });
 
   it("reads a glob dir, a relative_dir and an outputs dependency against the repo's roots", () => {
@@ -116,12 +122,18 @@ describe("depends_on", () => {
 `;
     const roots = ["envs/dev/platform", "envs/prod/app", "envs/prod/database", "envs/prod/network", "envs/staging/api", "envs/staging/web"];
     const { settings, notes } = run(yaml, { repo: shape(roots) });
-    // prod/app after prod/database after prod/network is two steps: the first is kept.
-    expect(settings.waves?.canary).toEqual(["envs/dev/platform", "envs/prod/network"]);
+    expect(settings.waves).toEqual({
+      after: {
+        "envs/prod/app": ["envs/prod/database"],
+        "envs/prod/database": ["envs/prod/network"],
+        "envs/staging/api": ["envs/dev/platform"],
+        "envs/staging/web": ["envs/dev/platform"],
+      },
+    });
     expect(note(notes, "dirs.envs/staging/**.when_modified.depends_on")?.kind).toBe("mapped");
     expect(note(notes, "dirs.envs/prod/database.when_modified.depends_on")?.kind).toBe("mapped");
     expect(note(notes, "dirs.envs/prod/database.when_modified.depends_on.prune_on_no_change")?.kind).toBe("unmapped");
-    expect(note(notes, "dirs.envs/prod/app.when_modified.depends_on")?.kind).toBe("unmapped");
+    expect(note(notes, "dirs.envs/prod/app.when_modified.depends_on")?.kind).toBe("mapped");
   });
 
   it("names a query it cannot read and a dependency on no root", () => {
@@ -395,13 +407,13 @@ describe("terragucci import terrateam, on a repo", () => {
       ".terrateam/config.yml": `${LAYERED}  modules/**:\n    when_modified:\n      file_patterns: []\n  gone:\n    tags: [old]\n`,
     });
 
-  it("writes terragucci.yml that config check reads, ordered by the reads and the canary, and names dirs that match no root", async () => {
+  it("writes terragucci.yml that config check reads, ordered by the reads and waves.after, and names dirs that match no root", async () => {
     const dir = repo();
     const r = importConfig(dir, "terrateam");
     expect(r.from).toBe(".terrateam/config.yml");
     const cfg = await loadConfig(join(dir, "terragucci.yml"));
     expect(cfg.roots).toBeUndefined();
-    expect(cfg.waves).toEqual({ canary: ["database", "network"] });
+    expect(cfg.waves).toEqual({ after: { application: ["database"] } });
     expect(r.missing).toEqual(["gone"]);
     const text = describeImport(r);
     expect(text).toContain("No root matches the dirs gone; check those keys.");

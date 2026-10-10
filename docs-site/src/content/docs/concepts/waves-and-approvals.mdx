@@ -13,6 +13,23 @@ A shared module change goes out in batches, each after the last; a batch waits o
 
 The roots in `waves.canary` go first, then one dependency layer per wave, so no root in a wave reads another in it. The report's wave 3 is the gate `wave-3`.
 
+A root's dependencies are the roots whose state it reads through `terraform_remote_state`. For plain roots that read nothing of each other, [`waves.after`](/terragucci/reference/config/#root-order) gives the order instead:
+
+```yaml
+waves:
+  after:
+    app: [database]
+    database: [network]
+```
+
+```text
+wave 1  network
+wave 2  database   (after network)
+wave 3  app        (after database)
+```
+
+A pull request that changes `network` plans all three, and its blast radius names `database` and `app`.
+
 Terragrunt units split the same way, the canary units' layers first. Each wave is one `terragrunt run --all` behind its own gate. Once approved, it applies exactly the plans its job saved.
 
 | Where | Terragrunt waves come from |
@@ -83,7 +100,7 @@ Below the waves the page has two more parts:
 
 | Part | Shows |
 |---|---|
-| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state` (in a Terragrunt repo, every unit whose `dependency` or `dependencies` block names it), followed through, and the dependency graph of the commit's roots with both marked |
+| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state` or that `waves.after` puts after them (in a Terragrunt repo, every unit whose `dependency` or `dependencies` block names it), followed through, and the dependency graph of the commit's roots with both marked |
 | Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
 
 A wave that waited shows the plan that asked for the approval and the later plan that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
