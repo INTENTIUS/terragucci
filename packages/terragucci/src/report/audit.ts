@@ -27,7 +27,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, or a report in the bucket. */
@@ -87,6 +87,9 @@ export const UNLOCK_DONE_FILE = "_gates/tf-unlock/done.jsonl";
 /** State exports: the requests and their approvals, and the record of each export written (../export.ts). */
 export const EXPORT_LEDGER_FILE = "_gates/tf-state-export.jsonl";
 export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
+/** Ephemeral environments: the gate of each pull request's copy, and the record of each apply and destroy of it (../ephemeral.ts). */
+export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
+export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
 
 const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
 
@@ -150,6 +153,7 @@ export function ledgerEntries(project: string, path: string, changes: LedgerChan
   if (path === MIGRATE_DONE_FILE) return migrationEntries(project, changes, commitUrl);
   if (path === UNLOCK_DONE_FILE) return unlockEntries(project, changes, commitUrl);
   if (path === EXPORT_DONE_FILE) return exportEntries(project, changes, commitUrl);
+  if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, changes, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   // An override line names its digest; the denial it answers (a pending line of that digest) holds the rules and the root's plan digest.
   const denials = new Map<string, Line>();
@@ -335,6 +339,46 @@ function exportEntries(project: string, changes: LedgerChange[], commitUrl: (com
       result: "exported",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: EXPORT_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ location: str(r.location), version_id: str(r.version_id), approved_by: str(r.approvedBy), approved_at: str(r.approvedAt), content_digest: str(r.content_digest) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of `_gates/tf-ephemeral/done.jsonl`: one per apply of a pull
+ * request's ephemeral copy, and one per destroy of it, with why it was
+ * destroyed (its pull request closed, or its TTL passed), the digest of the
+ * destroy's plans and each root's state. Never a state's contents.
+ */
+function ephemeralEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of changes) {
+    if (!c.added) continue;
+    const r = parse(c.line);
+    if (!r || r.version !== 1 || (r.kind !== "ephemeral-apply" && r.kind !== "ephemeral-destroy") || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    const roots = Array.isArray(r.roots) ? (r.roots as Line[]).map((x) => drop({ root: str(x.root), location: str(x.location), result: str(x.result) })) : undefined;
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, EPHEMERAL_DONE_FILE, c.line),
+      kind: r.kind,
+      project,
+      at: r.timestamp,
+      who: str(r.by) ?? null,
+      what: r.gate,
+      digest: str(r.planDigest) ?? null,
+      result: str(r.result) ?? (r.kind === "ephemeral-apply" ? "applied" : "destroyed"),
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: EPHEMERAL_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({
+        pull_request: typeof r.pr === "number" ? r.pr : undefined,
+        suffix: str(r.suffix),
+        roots,
+        reason: str(r.reason),
+        expires: str(r.expiresAt),
+        approved_by: str(r.approvedBy),
+        commit: str(r.commit),
+        run_id: str(r.runId),
+      }),
     });
   }
   return out;

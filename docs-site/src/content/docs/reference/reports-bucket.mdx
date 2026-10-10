@@ -8,7 +8,7 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`, empty by default) in your S3 bucket, GCS bucket or Azure Blob container. The keys below are the layout a program can rely on: a release adds keys and never moves one.
+With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`, empty by default) in your S3 bucket, GCS bucket or Azure Blob container. A release adds keys and never moves one, so a program can rely on the layout below.
 
 ## Keys
 
@@ -21,6 +21,7 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/<project>/migrations/<name>.json` | wave 1 of `tf-apply`, when it runs a [state migration](/terragucci/reference/migration-files/) | the migration's record: each root's state version and digest before and after, never a state's contents |
 | `<prefix>/<project>/states.json` | a `tf-apply` wave's upload | the state version id each root's applies left, newest first; never a state's contents |
 | `<prefix>/<project>/edges.json` | an upload whose roots read another root's state, or a `tf-apply` wave that changed a root | each root's reads, its newest plan and its newest apply that changed it; never a state's contents |
+| `<prefix>/<project>/ephemeral.json` | the [ephemeral](/terragucci/guides/ephemeral-environments/) job and the sweep, each time a pull request's copy applies or is destroyed | the live copies: each pull request's roots and state keys, its commit, when it applied and when it expires (`terragucci.ephemeral/v1`, the rows of the estate's `projects[].ephemeral`) |
 | `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
 | `<prefix>/<project>/runs/<commit>/run.json`, `run.html` | each `tf-apply` wave job | the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view): every wave of the commit's apply, its roots and what they read, where it stands, its blast radius and its timeline; `terragucci estate` reads it for the dependency graph |
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
@@ -30,7 +31,7 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/audit.jsonl`, `audit.html`, `audit.json` | [`terragucci audit`](/terragucci/reference/audit-trail/) | the audit trail, its page and its summary |
 | `<prefix>/views/` | nothing | kept for a viewer's own files |
 
-`<project>` is `<host>/<path>` of the repo, for example `github.com/acme/infra`, so it holds slashes. A repo with no git remote is named after its directory. `<yyyy>/<mm>` is the month the run finished, in UTC, and `<commit>` is the full SHA. `<stage>` is `tf-plan`, `tf-drift` or `tf-apply`, and a `tf-apply` directory ends in `-wave-<n>`.
+`<project>` is the repo's `<host>/<path>`, such as `github.com/acme/infra`, slashes included; a repo with no git remote is named after its directory. `<yyyy>/<mm>` is the month the run finished, in UTC, and `<commit>` is the full SHA. `<stage>` is `tf-plan`, `tf-drift` or `tf-apply`, and a `tf-apply` directory ends in `-wave-<n>`.
 
 ## A run's directory
 
@@ -72,11 +73,11 @@ npm pack @intentius/terragucci
 tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
 ```
 
-[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json`, `states.json` and `edges.json`, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#what-each-entry-holds) the fields of an audit entry.
+[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json`, `states.json` and `edges.json`, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#entry-fields) the fields of an audit entry.
 
 ## The views prefix
 
-terragucci never writes or reads under `<prefix>/views/`. A tool that renders your reports, such as a static page built in a scheduled job, writes its files under `<prefix>/views/<tool>/`, where they never meet a key of terragucci's. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
+terragucci never writes or reads under `<prefix>/views/`. A tool that renders your reports, such as a static page built in a scheduled job, writes its files under `<prefix>/views/<tool>/`, clear of terragucci's keys. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
 
 Whatever serves the bucket serves `views/` too. A presigned link opens one object, and the [front door](/terragucci/guides/keep-reports-in-a-bucket/#the-front-door) serves every key under the prefix to whoever your identity provider signs in.
 
@@ -88,6 +89,7 @@ Whatever serves the bucket serves `views/` too. A presigned link opens one objec
 | every project's resources | `GetObject` on `<prefix>/*inventory.json` |
 | every root's state versions | `GetObject` on `<prefix>/*states.json` |
 | every root's cross-state edges | `GetObject` on `<prefix>/*edges.json` |
+| every live ephemeral environment | `GetObject` on `<prefix>/*ephemeral.json` |
 | every resource's history | `GetObject` on `<prefix>/history.json`, or on `<prefix>/*changes.json` for the rows without approvers |
 | a run's report | `GetObject` on `<prefix>/*/report.json` |
 | the audit trail | `GetObject` on `<prefix>/audit.jsonl` |

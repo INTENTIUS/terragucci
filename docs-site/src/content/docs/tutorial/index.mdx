@@ -17,7 +17,7 @@ prompt: |
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
 
-This tutorial runs terragucci against a small shop's estate on your machine. Nothing here touches a cloud account.
+You run terragucci against a small shop's estate on your machine, with no cloud account.
 
 | Page | You see | Time |
 |---|---|---|
@@ -33,7 +33,7 @@ This tutorial runs terragucci against a small shop's estate on your machine. Not
 | [The same shop on Terragrunt](/terragucci/tutorial/terragrunt/) | the estate as 15 Terragrunt units | 15 min |
 | [Clean up, then your own repo](/terragucci/tutorial/your-repo/) | terragucci on a repository of your own | 10 min |
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -42,7 +42,7 @@ This tutorial runs terragucci against a small shop's estate on your machine. Not
 | Node.js 22 or later | `just example up` runs `npx tsx` and builds terragucci from the clone |
 | about ten minutes | the first boot pulls the images and builds the CI images |
 
-Clone terragucci and move into its directory:
+Clone terragucci and install its dependencies.
 
 ```bash
 git clone https://github.com/INTENTIUS/terragucci && cd terragucci
@@ -53,8 +53,6 @@ npm ci
 
 ## Boot it
 
-In the `terragucci` directory, run:
-
 ```bash
 just example up
 ```
@@ -63,9 +61,9 @@ It starts Forgejo (a local forge) with its runner, and floci (an AWS stand-in). 
 
 <Captured step="boot" />
 
-The last line is the boot time. A first boot pulls the images and builds the CI images, so expect ten minutes; later boots skip both.
+The last line is the boot time. Later boots skip the image pulls and builds.
 
-## What you just made
+## Result
 
 Open the Forgejo link, at `localhost:3300` unless you changed the port. The repo is the shop's whole estate:
 
@@ -79,7 +77,7 @@ Open the Forgejo link, at `localhost:3300` unless you changed the port. The repo
 | `envs/staging/...`, `envs/prod/...` | the same five roots each |
 | `terragucci.yml` | the whole terragucci config |
 
-That is three environments of five roots, fifteen in all. A change to `modules/service` reaches twelve roots. Prod payments differs because its jobs queue has a dead-letter queue.
+Three environments of five roots make fifteen. A change to `modules/service` reaches twelve roots. Prod payments differs because its jobs queue has a dead-letter queue.
 
 The platform roots hold the logs bucket, so terragucci applies them before the services.
 
@@ -98,7 +96,7 @@ drift: "0 6 * * *"
 
 With Terraform, `binary: terraform` runs the same pipeline ([Choose your binary](/terragucci/guides/use-a-binary/)). Terragrunt users get the same shop as units on [its own page](/terragucci/tutorial/terragrunt/).
 
-## When something looks wrong
+## Troubleshooting
 
 | You see | Try |
 |---|---|

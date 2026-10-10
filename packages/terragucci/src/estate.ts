@@ -10,7 +10,7 @@
  * `reports.role` of its own); the page goes to the bucket under `defaults`.
  * In a single repo the projects are the ones the top-of-prefix index lists.
  *
- * It reads each project's `index.json`, `inventory.json`, `changes.json`, `states.json` and `edges.json`,
+ * It reads each project's `index.json`, `inventory.json`, `changes.json`, `states.json`, `edges.json` and `ephemeral.json`,
  * and the run view (`runs/<commit>/run.json`) of its newest applied commit for the dependency graph,
  * and never a report, a plan's text or a root's plan JSON (see
  * report/estate.ts). Beside the page it reads `audit.json`, the summary
@@ -36,6 +36,7 @@ import { RUN_SCHEMA, runViewKey, type RunView } from "./report/run-view";
 import { changesKey, edgesKey, inventoryKey, statesKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 import { buildDora, DORA_FILE, doraGauges, duration, type Dora } from "./report/dora";
 import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
+import { EPHEMERAL_SCHEMA, ephemeralKey, type EphemeralList } from "./ephemeral";
 import { version as VERSION } from "../package.json";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
@@ -133,7 +134,9 @@ async function readProject(project: string, reports: Reports | undefined, out: R
   const states = rows ? await readStatesOf(client(reports), statesKey(project, reports.prefix ?? "")) : undefined;
   const edges = rows ? await readEdgesOf(client(reports), edgesKey(project, reports.prefix ?? "")) : undefined;
   const run = rows ? await readRunOf(client(reports), project, rows, reports.prefix ?? "") : undefined;
-  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}), ...(run ? { run } : {}), ...(base !== undefined ? { base } : {}) };
+  // A pull request's copy may apply before any wave has written the index.
+  const ephemeral = await readEphemeralOf(client(reports), ephemeralKey(project, reports.prefix ?? ""));
+  return { project, ...(rows ? { reports: rows } : {}), ...(ephemeral ? { ephemeral } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}), ...(run ? { run } : {}), ...(base !== undefined ? { base } : {}) };
 }
 
 /** The run view of the project's newest applied commit, for the dependency graph; one that cannot be read leaves the project out of the graph, never off the page. */
@@ -146,6 +149,19 @@ async function readRunOf(store: ObjectStore, project: string, rows: IndexEntry[]
     if (text === undefined) return undefined;
     const parsed = JSON.parse(text) as Partial<RunView>;
     return parsed.schema === RUN_SCHEMA && Array.isArray(parsed.roots) && Array.isArray(parsed.waves) ? (parsed as RunView) : undefined;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
+    throw e;
+  }
+}
+
+/** A project's live ephemeral environments; an unreadable file leaves the project without them, never without its runs. */
+async function readEphemeralOf(store: ObjectStore, at: string): Promise<EphemeralList | undefined> {
+  try {
+    const text = await store.get(at);
+    if (text === undefined) return undefined;
+    const parsed = JSON.parse(text) as Partial<EphemeralList>;
+    return parsed.schema === EPHEMERAL_SCHEMA && Array.isArray(parsed.environments) ? (parsed as EphemeralList) : undefined;
   } catch (e) {
     if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
     throw e;

@@ -689,6 +689,14 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "provider-project",
+      "says": "the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "29a262ee"
+    },
+    {
       "claim": "pr-requires",
       "says": "with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable",
       "needs": null,
@@ -865,6 +873,14 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "plan-lock-fmt",
+      "says": "with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
       "claim": "policy-override",
       "says": "a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest",
       "needs": null,
@@ -1000,6 +1016,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "tg-generate",
+      "says": "in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "b0f19790"
     },
     {
       "claim": "root-pins",
@@ -1579,6 +1603,14 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "apply-branches-drift",
+      "says": "with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would read the state release left behind and report a false drift",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
       "claim": "own-jobs-kept",
       "says": "with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes",
       "needs": null,
@@ -1699,6 +1731,30 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "tg-estate-graph",
+      "says": "in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
+      "claim": "tg-state-export",
+      "says": "terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
+      "claim": "tg-apply-branches",
+      "says": "with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
       "claim": "tg-stacks",
       "says": "the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them",
       "needs": null,
@@ -1809,6 +1865,46 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "tg-pr-plan",
+      "says": "a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "github-drift-issue",
+      "says": "on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "runner-nudge",
+      "says": "on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "ephemeral-pr",
+      "says": "with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7c2ff19c"
+    },
+    {
+      "claim": "ephemeral-ttl",
+      "says": "with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7c2ff19c"
     },
     {
       "claim": "mr-widget",

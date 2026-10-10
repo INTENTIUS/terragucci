@@ -12,11 +12,11 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or apply the stacks it wrote to `cdktf.out/stacks/`. The synthesized files stay out of git.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -52,7 +52,7 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
    npx terragucci init
    ```
 
-   `init` finds each stack by the backend or provider in its `cdk.tf.json` and names `cdktf.out/stacks/<stack>` as a root. With no stacks on disk it stops and says to run the synth command first. Run both again when you add or remove a stack.
+   `init` finds each stack by the backend or provider in its `cdk.tf.json` and names `cdktf.out/stacks/<stack>` as a root. With no stacks on disk it stops and asks you to run the synth command first. Run both again when you add or remove a stack.
 
 4. Read the step `init` wrote. It comes after the checkout and before any cloud credential:
 
@@ -106,7 +106,7 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
 
 </Steps>
 
-## Which jobs run it
+## Jobs
 
 | Job | Runs the command | Then |
 |---|---|---|
@@ -126,9 +126,9 @@ A command that fails ends the job; the plan job also sets `terragucci/plan` to f
 | Terragrunt | not supported: `init` refuses `synth` in a Terragrunt repo |
 | [State migrations](/terragucci/guides/move-resources-between-roots/) | a migration file names stacks by their roots, such as `cdktf.out/stacks/dev`; `tf-plan` proves it against each stack's `cdk.tf.json` after the synth, and wave 1 writes it once approved. Move the construct in the app in the same change, keeping its id, so the address in the other stack is the same |
 
-## What edits the stacks
+## Stack edits
 
-The stacks' files are the app's output: git does not hold them, and the next synth writes them again. A response that would edit them has nothing to edit, so the change belongs in the app.
+The stacks' files are the app's output. Git does not hold them and the next synth rewrites them, so a change a response would make to them belongs in the app.
 
 | Feature | With `synth` |
 |---|---|
@@ -138,7 +138,7 @@ The stacks' files are the app's output: git does not hold them, and the next syn
 | `rollouts`, or `terragucci rollout` in the repo | a config error: move the pin in the app |
 | A control repo's rollout | a project with `synth` is listed as refused, and the other projects roll out |
 
-## Which stacks a pull request plans
+## Planned stacks
 
 The stacks are not in git, so no diff names them. `tf-plan` compares what the app writes at the base with what it writes at the head:
 

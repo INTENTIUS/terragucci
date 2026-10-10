@@ -11,7 +11,7 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A cost table in each pull request's plan note, with a row per root the change reaches (a unit, in a Terragrunt repo) and a total row. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
 
@@ -24,7 +24,7 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 | Total    | 0.00   | 20.00 | +20.00 |
 ```
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -49,7 +49,7 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
      </TabItem>
    </Tabs>
 
-   The plan job runs the pull request's code, which can read the key. Give Infracost a key that does nothing but price.
+   The plan job runs the pull request's code, which can read the key, so give Infracost a key that can only price.
 
 2. Turn it on in `terragucci.yml`:
 
@@ -86,7 +86,7 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 
 </Steps>
 
-## What the report keeps
+## Report contents
 
 | Where | What |
 |---|---|
@@ -96,7 +96,7 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 
 An estimate that fails never fails the plan. A wave's report keeps its own estimate the same way, with the wave's change under `waves[].cost`.
 
-In a Terragrunt repo the estimator reads each unit's saved plan, the one the wave's `run --all` wrote, and a unit is priced, held and named as a root is.
+In a Terragrunt repo the estimator reads the plan the wave's `run --all` saved for each unit, and treats each unit as a root.
 
 ## Hold a wave over an amount
 
@@ -118,9 +118,9 @@ cost:
 
 The amount is read from the config at base: the commit before the one applied, or the pull request's base with `apply.when: pull-request`. A change that raises or drops the amount waits under the old one, and its log says which amount counts.
 
-The amount, the currency and the wave's change join the wave's set digest. An approval of the plans at one cost does not apply them at another: a wave priced differently after its approval applies nothing, exits 4 and names `(monthly cost)` as what moved, as it names a root whose plan moved. [Approve a wave](/terragucci/guides/approve-a-wave/) has the commands.
+The amount, the currency and the wave's change join the wave's set digest. A wave priced differently after its approval applies nothing, exits 4 and names `(monthly cost)` as what moved, as it names a root whose plan moved. [Approve a wave](/terragucci/guides/approve-a-wave/) has the commands.
 
-Each wave's change is set against the amount at base in the plan note:
+The plan note sets each wave's change against the amount at base:
 
 ```text
 Against `cost.approve_above` at base, 100.00 USD a month: wave 1 +20.00 USD, within it; wave 2 +140.00 USD, over it: it waits for an approval whatever the gate.
@@ -130,7 +130,7 @@ A wave the amount holds says "waits for an approval" in the note's wave table, w
 
 ## Cost in the policy
 
-With `cost` set, a policy reads the figures as `input.cost`, in `tf-plan` and in each `tf-apply` wave. [Policy](/terragucci/reference/policy/#cost) has the fields; this one denies a root that adds more than 50 a month:
+With `cost` set, `tf-plan` and each `tf-apply` wave give the policy the figures as `input.cost`. [Policy](/terragucci/reference/policy/#cost) lists the fields; this one denies a root that adds more than 50 a month:
 
 ```rego
 package main

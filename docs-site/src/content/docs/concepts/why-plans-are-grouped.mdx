@@ -1,5 +1,5 @@
 ---
-title: Why plans are grouped
+title: Plan grouping
 description: What grouping does to two hundred plans, what it never folds away, and why no approval is bound to it.
 ---
 
@@ -7,7 +7,7 @@ import Shot from '../../../components/Shot.astro';
 
 A shared module change can reach two hundred roots with near-identical plans, and a reviewer scrolling for the odd one out can miss a destroy.
 
-## What grouping does
+## Grouping
 
 terragucci normalizes each root's changes and groups the roots whose changes are the same:
 
@@ -18,11 +18,11 @@ terragucci normalizes each root's changes and groups the roots whose changes are
 destroys: prod-eu/db (delete aws_db_instance.main)
 ```
 
-A hundred and eighty identical updates become one line with a count. The reviewer reads the change once, and reads the 20 roots that differ.
+A hundred and eighty identical updates become one line with a count, so the reviewer reads the change once, then the 20 roots that differ.
 
 <Shot step="one-note" view="pull" alt="The plan note on a module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" />
 
-## What it never folds
+## Never grouped
 
 | Change | In the report |
 |---|---|
@@ -35,15 +35,9 @@ A hundred and eighty identical updates become one line with a count. The reviewe
 | values known after apply | folded |
 | roots with no changes | folded |
 
-## Nothing is summarized away
+The report links each root and group to its full plan as printed and as JSON. Approvals bind the plan digests, taken before redaction or rendering, so the summary's wording never changes what was approved.
 
-Each root and group in the report links to its full plan, which is kept as printed and as JSON.
-
-## No approval is bound to the summary
-
-Approvals bind the plan digests, taken before redaction or rendering, so changing how the summary reads never changes what was approved.
-
-## Where to go next
+## Next
 
 - [The plan report](/terragucci/reference/report/) shows the note, the HTML report and the JSON.
-- [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/)

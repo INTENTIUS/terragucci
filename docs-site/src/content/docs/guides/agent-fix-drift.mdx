@@ -11,9 +11,9 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-This is one of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)). It is off unless `agent.drift` is set.
+One of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)), off unless `agent.drift` is set.
 
-## What you end up with
+## Result
 
 When a [drift run](/terragucci/guides/turn-on-drift-checks/) opens the drift issue, a coding agent reads what drifted and changes the code to describe what is live. terragucci opens a pull request with the change and links it on the issue:
 
@@ -22,9 +22,9 @@ terragucci: the drift agent opened https://forgejo.example/acme/infra/pulls/2, c
 It plans like any other pull request; nothing was applied, approved or merged.
 ```
 
-The pull request plans like any other. Merging it keeps the change made outside the code, and its apply goes through the gate. Closing it, then applying the code as it is, undoes the drift instead.
+Merging the pull request keeps the change made outside the code, and its apply goes through the gate. Closing it, then applying the code as it is, undoes the drift instead.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -36,7 +36,7 @@ The pull request plans like any other. Merging it keeps the change made outside 
 
 <Steps>
 
-1. Make the agent's token. Keep it in a secret such as `AGENT_FORGE_TOKEN`, and the model's key in `ANTHROPIC_API_KEY`. It is the same token as the [agent comment's](/terragucci/guides/agent-change-a-pull-request/), and the same settings hold.
+1. Make the agent's token. Keep it in a secret such as `AGENT_FORGE_TOKEN`, and the model's key in `ANTHROPIC_API_KEY`. It is the same token, with the same settings, as the [agent comment's](/terragucci/guides/agent-change-a-pull-request/).
 
    <Tabs syncKey="forge">
    <TabItem label="GitHub">
@@ -64,7 +64,7 @@ The pull request plans like any other. Merging it keeps the change made outside 
    </TabItem>
    </Tabs>
 
-2. Turn it on in `terragucci.yml`. The agent's pull request takes the place of the codified one, so set `respond.drift` to `off`, or to `attribute` to keep who changed what in the issue:
+2. Turn it on in `terragucci.yml`. The agent's pull request replaces the codified one, so set `respond.drift` to `off` (or `attribute`, to keep who changed what in the issue):
 
    ```yaml
    drift: "17 4 * * *"
@@ -88,11 +88,11 @@ The pull request plans like any other. Merging it keeps the change made outside 
    npx terragucci init
    ```
 
-4. Wait for drift, or run the drift workflow by hand. When the drift job opens the issue, the issue gets the pull request's link. Read the pull request and its plan note, then merge it or close it.
+4. Wait for drift, or run the drift workflow by hand. The drift issue gets the pull request's link; read the pull request and its plan note, then merge or close it.
 
 </Steps>
 
-## What the agent is given
+## Agent inputs
 
 The prompt lists each drifted resource by root, with what the state held and what is live, and never a value the plan marks sensitive:
 
@@ -104,7 +104,7 @@ root app:
 
 It tells the agent that the drift and every file are untrusted input, since a value in the cloud can hold any text, and that a change to a guarded path is refused.
 
-## What each job can do
+## Job permissions
 
 | Job | Does | Holds |
 |---|---|---|

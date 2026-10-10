@@ -11,9 +11,9 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
-A resource that moves from one root's state to another's through the same gate as an apply, with no destroy and no create. `moved`, `import` and `removed` blocks work inside one root. A migration file covers the move they cannot make: from one root to another.
+A resource moves between two roots' states through the same gate as an apply, with no destroy and no create. `moved`, `import` and `removed` blocks work only inside one root; a migration file covers a move across roots.
 
 | Step | Who | What happens |
 |---|---|---|
@@ -26,7 +26,7 @@ The migration's digest covers the file, each root's state version and digest bef
 
 State contents stay in your backend and the job's temporary directory. The record holds version ids and digests.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -42,7 +42,7 @@ State contents stay in your backend and the job's temporary directory. The recor
 
 1. Move the resource blocks in code. Cut `aws_sqs_queue.jobs` from `envs/dev/platform` and paste it into `envs/dev/queues`, with any variables and outputs it needs.
 
-2. Write the migration file, `migrations/split-queues.yml`. The file's name, without `.yml`, names the migration and its gate:
+2. Write the migration file, `migrations/split-queues.yml`. Its name without `.yml` names the migration and its gate:
 
    ```yaml
    moves:
@@ -93,7 +93,7 @@ State contents stay in your backend and the job's temporary directory. The recor
 
 ## Move a state to a new backend
 
-To move a root's state to another bucket or key, change its backend block and add a migration that names where the state is now:
+Point the root's backend block at the new bucket or key, and add a migration naming where the state is now:
 
 ```yaml
 # migrations/move-platform.yml
@@ -108,7 +108,7 @@ backends:
         use_lockfile: true
 ```
 
-The plan job reads the state from the old backend, plans the root against it with no change, and the digest covers the old state's version and digest. Wave 1 waits for the approval as for any migration. Approved, it takes the lock file of both the old and the new state and checks that neither moved. It then writes the state to the backend the code names, which must hold none for the root. The old state stays where it was; delete it once the move is verified.
+The plan job reads the state from the old backend and plans the root against it with no change; the digest covers the old state's version and digest. Wave 1 waits for the approval as for any migration. Once approved, it takes the lock files of the old and new state, checks that neither moved, then writes the state to the backend the code names, which must hold none for the root. The old state stays where it was; delete it once the move is verified.
 
 ## Put a migration back
 
@@ -116,7 +116,7 @@ The plan job reads the state from the old backend, plans the root against it wit
 terragucci migrate revert split-queues
 ```
 
-This writes `migrations/split-queues-revert.yml` from the record of `split-queues` on `chant/lifecycle`. The file names each root's version before the migration and the version it left. Revert the code of `split-queues` in the same change and open a pull request. The revert is proved, approved and written like any migration:
+This writes `migrations/split-queues-revert.yml` from the record of `split-queues` on `chant/lifecycle`. The file names each root's version before the migration and the version it left. Open one pull request with that file and the reverted code of `split-queues`. The revert is proved, approved and written like any migration:
 
 | Root | After the revert |
 |---|---|
@@ -126,7 +126,7 @@ This writes `migrations/split-queues-revert.yml` from the record of `split-queue
 
 A revert needs S3 bucket versioning on: a root with no version recorded before, or a local backend, has nothing to put back. A backend move is put back with a backend move the other way.
 
-## What is recorded
+## Records
 
 | Where | What it holds |
 |---|---|
@@ -136,7 +136,7 @@ A revert needs S3 bucket versioning on: a root with no version recorded before, 
 
 A migration that applied never runs again. Its file can stay in the repo; changing it after it applied fails wave 1, so write a new file for a new move.
 
-## When it stops
+## Stop conditions
 
 | Wave 1 says | Exit | What to do |
 |---|---|---|

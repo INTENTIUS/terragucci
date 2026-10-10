@@ -3,11 +3,11 @@ title: Locks that settle at the API
 description: Applies of one estate that touch different resources run at once, settled by conditional writes to an S3 backend with no lock table or database to run; each resource carries its estate as a tag, and one bucket serves every estate.
 ---
 
-With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), every estate gets the three features on this page. Other binaries keep your own backend and its locking.
+With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), every estate gets these three features. Other binaries keep your own backend and its locking.
 
 ## Locking per resource
 
-Two applies of one estate that change different resources run at the same time. Neither waits for an estate-wide lock.
+Two applies of one estate that change different resources run at once, with no estate-wide lock.
 
 | Two applies of one estate | What happens |
 |---|---|
@@ -23,7 +23,7 @@ Each resource has its own record in the estate's record store bucket. Every reco
 
 ## Live resource markers
 
-Each resource carries its identity on the resource itself, as tags written in its create call. A resource that exists has them.
+Each resource carries its identity as tags written in its create call, so every existing resource has them.
 
 | Tag | Holds |
 |---|---|

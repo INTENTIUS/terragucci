@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { appendLifecycle } from "../src/apply";
 import { doneExports, EXPORT_DONE, EXPORT_LEDGER, exportState, requestDigest } from "../src/export";
 import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE, parseLedgerLog } from "../src/report/audit";
+import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import type { BinaryExec } from "../src/migrate";
 import type { S3Fetch } from "../src/report/s3";
 import { main } from "../src/cli";
@@ -125,16 +126,53 @@ describe("terragucci state export", () => {
     await expect(exportState(work, { root: "app", version: "nope", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} })).rejects.toThrow(/has no version nope/);
   });
 
-  it("refuses a file inside the repo, a Terragrunt unit, and a request with nobody named", async () => {
-    const { work } = repo({ "unit/terragrunt.hcl": "", "unit/main.tf": "" });
+  it("refuses a file inside the repo, and a request with nobody named", async () => {
+    const { work } = repo();
     const w = world();
     const first = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
     approve(work, first.digest!, "bob", T(1));
     await expect(exportState(work, { root: "app", version: "v1", actor: "alice", out: join(work, "app.tfstate"), env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} })).rejects.toThrow(/inside the repo/);
     expect(existsSync(join(work, "app.tfstate"))).toBe(false);
-    await expect(exportState(work, { root: "unit", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch })).rejects.toThrow(/Terragrunt unit/);
     git(work, "config", "user.name", "");
     await expect(exportState(work, { root: "app", env: { ...ENV, GIT_CONFIG_GLOBAL: "/dev/null" }, exec: w.exec, fetch: w.fetch })).rejects.toThrow(/names who asks/);
+  });
+
+  it("exports a Terragrunt unit's state: Terragrunt prepares the unit, and the backend is the one its init recorded where Terragrunt ran the binary", async () => {
+    const { work, out } = repo({ "root.hcl": 'remote_state {\n  backend = "s3"\n}\n', "live/app/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n' });
+    const w = world();
+    const cache = join(work, "..", "tg-cache");
+    mkdirSync(cache, { recursive: true });
+    const prepared: string[][] = [];
+    // Terragrunt runs the binary (through TG_TF_PATH) in its cache, and the init there records the backend remote_state generated.
+    const terragrunt: TerragruntExec = async (_file, args, opts) => {
+      prepared.push([...args]);
+      execFileSync(opts.env.TG_TF_PATH!, args.slice(args.indexOf("--") + 1), { cwd: cache, env: { ...process.env, ...opts.env } });
+      mkdirSync(join(cache, ".terraform"), { recursive: true });
+      writeFileSync(join(cache, ".terraform/terraform.tfstate"), JSON.stringify({ version: 3, backend: { type: "s3", config: { bucket: "state", key: "app.tfstate", region: "us-east-1", endpoints: { s3: "http://s3.test" } } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const opts = { root: "live/app", version: "v1", actor: "alice", binary: "true", env: ENV, exec: w.exec, fetch: w.fetch, terragrunt: { path: "terragrunt", exec: terragrunt } };
+    const first = await exportState(work, { ...opts, now: T(0), log: () => {} });
+    expect(first.code).toBe(3);
+    expect(prepared[0]).toEqual(expect.arrayContaining(["run", "--working-dir", "live/app", "--", "init"]));
+    appendLifecycle(work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "live/app", resolvedBy: "bob", timestamp: T(1), planDigest: first.digest })], {}, "approve");
+    mkdirSync(out);
+    const file = join(out, "app.tfstate");
+    const r = await exportState(work, { ...opts, out: file, now: T(2), log: () => {} });
+    expect(r.code).toBe(0);
+    expect(readFileSync(file, "utf-8")).toBe(V1);
+    const done = [...doneExports(show(work, EXPORT_DONE)).values()];
+    expect(done).toEqual([expect.objectContaining({ root: "live/app", location: "s3://state/app.tfstate", version_id: "v1", exportedBy: "alice", approvedBy: "bob" })]);
+    // The unit's own directory gets no .terraform: Terragrunt ran the binary in its cache.
+    expect(existsSync(join(work, "live/app/.terraform"))).toBe(false);
+  });
+
+  it("a unit Terragrunt cannot prepare is an error naming it, and nothing is asked", async () => {
+    const { work } = repo({ "live/app/terragrunt.hcl": "" });
+    const w = world();
+    const terragrunt: TerragruntExec = async () => ({ code: 1, stdout: "", stderr: "ERROR boom" });
+    await expect(exportState(work, { root: "live/app", actor: "alice", binary: "true", env: ENV, exec: w.exec, fetch: w.fetch, terragrunt: { exec: terragrunt }, log: () => {} })).rejects.toThrow(/terragrunt could not prepare live\/app \(init failed\): ERROR boom/);
+    expect(w.seen).toEqual([]);
   });
 
   it("the audit trail names who exported what, and lists the request and its approval", async () => {

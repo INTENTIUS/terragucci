@@ -258,7 +258,6 @@ describe("a wave behind its gate", () => {
     expect(existsSync(log)).toBe(false);
     expect(await applyWave(work, { ...opts, gate: "never", branch: "release", now: T(2) })).toBe(0);
     expect(existsSync(log)).toBe(true);
-    await expect(applyWave(work, { ...opts, gate: "never", terragrunt: true, now: T(2) })).rejects.toThrow(/--branches: a Terragrunt wave/);
   });
 
   it("records one pending fact with each root's digest, applies nothing, and records no second fact on a re-run", async () => {

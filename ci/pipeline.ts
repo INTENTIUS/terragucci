@@ -12,7 +12,7 @@
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust, installAct, installTofu } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, installJust, installAct, installTofu, installGo } from "../workflows/shared";
 import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 export const workflow = new Workflow({
@@ -40,6 +40,7 @@ export const check = new Job({
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     installJust(),
     installTofu(TOOL_VERSIONS.tofu),
+    installGo(GO_VERSION),
     new Step({ name: "Install", run: "npm ci" }),
     new Step({ name: "Check", run: "just check" }),
     new Step({ name: "Workflows match their declarations", run: "just ci-check" }),
