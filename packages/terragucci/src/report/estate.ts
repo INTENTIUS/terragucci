@@ -490,7 +490,7 @@ function statesSection(estate: Estate, now: Date): string {
         r.versioning === "off"
           ? `<span class="warn">versions are off</span>${r.note ? `: ${esc(r.note)}` : ""}`
           : r.versioning === "unknown"
-            ? `<span class="warn">versions unknown</span>${r.note ? `: ${esc(r.note)}` : ""}`
+            ? `<span class="warn">versions not read</span>${r.note ? `: ${esc(r.note)}` : ""}`
             : `${r.versions.length} ${r.versions.length === 1 ? "version" : "versions"}`;
       const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${esc(r.backend)}${where}, ${state}</th></tr>`;
       const rows = r.versions.map((v) => `<tr><td><code>${esc(v.version_id)}</code></td><td>${link(v.report, v.wave !== undefined ? `wave ${v.wave}` : "applied")} ${short(v.commit)}</td><td>${when(v.finished, now)}</td></tr>`);

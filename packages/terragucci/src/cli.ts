@@ -79,7 +79,7 @@ import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
-import { detectForge, findRoots } from "./detect";
+import { addressWarnings, detectForge, findRoots } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { terramateWrite } from "./terramate";
 import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
@@ -848,6 +848,8 @@ export async function main(argv: string[]): Promise<number> {
             access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
             warnings = access.warnings;
           }
+          // A state the roots' code does not address can't order a reader after its writer: say which.
+          if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);

@@ -31,7 +31,7 @@ import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
-import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies } from "../detect";
+import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, unaddressedStates } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
@@ -998,6 +998,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
   // Linked states: the terraform_remote_state blocks of each root, and the plans of the roots this run planned, whose outputs a later layer plans on.
   const blocksOf = drift ? new Map<string, { name: string; upstream: string; repeated: boolean }[]>() : remoteStateReads(repo, all);
+  // The states the code does not address: their edges are unknown, and the report says so.
+  const unaddressedOf = new Map(drift ? [] : unaddressedStates(repo, all).map((u) => [u.root, { ...(u.reads.length ? { unknownReads: u.reads.map((r) => ({ data: r.name, why: r.why })) } : {}), ...(u.own ? { unaddressed: u.own } : {}) }] as const));
   const upstreamPlans = new Map<string, unknown>();
   // An Atmos instance's reads (../atmos.ts): each upstream's outputs, read once, in its own workspace and with its own role.
   const outputsRead = new Map<string, Promise<UpstreamOutputs>>();
@@ -1042,6 +1044,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const lines: string[] = [];
     const dir = join(checkoutOf(root), root);
     const { links, reads } = linksFor(root);
+    for (const r of unaddressedOf.get(root)?.unknownReads ?? []) lines.push(`${root}: reads state through terraform_remote_state "${r.data}" where the code does not say (${r.why}), so it is not ordered after the root that writes it`);
     // A root that reads the state of a root nothing has applied cannot plan: its terraform_remote_state block reads that
     // state even when its references point at the upstream's plan. Hold it back. An upstream that has applied and has a
     // change pending is the linked path: the root plans on that upstream's planned outputs.
@@ -1072,7 +1075,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     };
     const failed = (error: string, line: string): RootOutcome => {
       lines.push(line);
-      return { root, lines, ...(holds.length ? { holds } : {}), input: { path: root, planner, binary: bin, error, preventDestroy: new Set(), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}) } };
+      return { root, lines, ...(holds.length ? { holds } : {}), input: { path: root, planner, binary: bin, error, preventDestroy: new Set(), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...unaddressedOf.get(root) } };
     };
     const refused = pinRefusals.get(root);
     if (refused) {
@@ -1178,7 +1181,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...unaddressedOf.get(root) },
       };
     } finally {
       observer.endRoot(timing);

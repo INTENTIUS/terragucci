@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 29;
+export const REPORT_MINOR = 30;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -299,6 +299,19 @@ export interface ReportRoot {
   /** The roots whose state it reads through `terraform_remote_state`, and which outputs it planned on (minor 21). Absent when it reads none. */
   reads?: ReportRead[];
   /**
+   * Its `terraform_remote_state` blocks whose state the code does not address
+   * (minor 30): an expression, or a value the backend takes from the
+   * environment. No edge orders the root after the root that writes that
+   * state, so the edge is unknown. Absent when it has none.
+   */
+  unknown_reads?: ReportUnknownRead[];
+  /**
+   * Why the code does not address the root's own state, when a root of the
+   * run reads state through `terraform_remote_state` (minor 30): a reader of
+   * it is not ordered after it.
+   */
+  unaddressed?: string;
+  /**
    * A Terragrunt unit's `dependency` and `dependencies` blocks (minor 23): the
    * units whose outputs it reads, as plain paths in its `terragrunt.hcl`.
    * Absent when it names none.
@@ -323,6 +336,14 @@ export interface ReportRead {
   unknown?: string[];
   /** With `applied` in a `tf-plan`: why it did not plan on the upstream's planned outputs. */
   why?: string;
+}
+
+/** A `terraform_remote_state` block whose state the code does not address (minor 30). */
+export interface ReportUnknownRead {
+  /** The block's label. */
+  data: string;
+  /** Which part of the address the code does not say. */
+  why: string;
 }
 
 /**

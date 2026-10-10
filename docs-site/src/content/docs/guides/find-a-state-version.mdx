@@ -40,9 +40,11 @@ Other roots are listed with what terragucci knows:
 | Root | Listed as |
 |---|---|
 | a bucket with versioning off | versions are off: S3 keeps only the latest state |
-| a `local` backend | versions are off |
-| any other backend (`gcs`, `azurerm`, `http` and so on) | the backend's type, versions unknown |
-| a Terragrunt unit with no `remote_state` block that runs from Terragrunt's cache | versions unknown, naming why |
+| a `local`, `pg`, `kubernetes` or `consul` backend, or an `http` backend other than GitLab's | versions are off: each write replaces the state |
+| a backend that keeps versions terragucci does not read (`gcs`, `azurerm`, `remote`, GitLab-managed state) | versions not read, naming why |
+| a Terragrunt unit with no `remote_state` block that runs from Terragrunt's cache | versions not read, naming why |
+
+In `report.json` and `states.json`, `versioning` is `off` for the first two rows and `unknown` for the last two.
 
 ## Steps
 
