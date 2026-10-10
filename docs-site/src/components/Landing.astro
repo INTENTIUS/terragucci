@@ -97,11 +97,16 @@ const pillars = [
 			letter-spacing: 0.14em;
 		}
 	}
+	/* The taco's diamond between two gold hairlines, under the wordmark. */
 	.claim::before {
 		content: '';
-		width: 2.5rem;
-		height: 1px;
-		background: var(--tg-gold);
+		width: 7rem;
+		height: 13px;
+		background:
+			url('/terragucci/brand/diamond.svg') center / 17px 13px no-repeat,
+			linear-gradient(var(--tg-gold), var(--tg-gold)) left center / 2.4rem 1px no-repeat,
+			linear-gradient(var(--tg-gold), var(--tg-gold)) right center / 2.4rem 1px no-repeat;
+		image-rendering: pixelated;
 	}
 	.tg-agent {
 		padding-block: 0;

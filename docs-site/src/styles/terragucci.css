@@ -106,14 +106,15 @@ h1#_top {
 	font-size: 1.3rem;
 	margin-top: 2.75rem;
 }
-/* A short gold hairline over each section heading. */
+/* A small diamond, the taco's own, over each section heading. */
 .sl-markdown-content h2:not(.not-content, .not-content *)::before {
 	content: '';
 	display: block;
-	width: 2rem;
-	height: 1px;
-	margin-bottom: 0.9rem;
-	background: var(--tg-gold);
+	width: 17px;
+	height: 13px;
+	margin-bottom: 0.8rem;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
 }
 .sl-markdown-content h3:not(.not-content, .not-content *) {
 	font-size: 1.05rem;
@@ -132,7 +133,25 @@ h1#_top {
 	text-decoration-color: var(--tg-gold);
 }
 
-/* Bullets are tacos. Nested lists and ordered lists keep their markers. */
+/* Bullets are tacos, and a nested list's bullets are diamonds. Ordered lists keep their numbers. */
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li {
+	position: relative;
+	padding-left: 1.4rem;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.55em;
+	width: 12px;
+	height: 9px;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
 .sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) {
 	padding-left: 0;
 	list-style: none;

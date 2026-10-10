@@ -23,7 +23,7 @@ const taco = `${base}/brand/taco.svg`;
 const fromLabel = (label: string, id: string) => (id === 'none' ? 'Coming from a CI script, or nothing' : `Coming from ${label}`);
 const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, ${binaries[0].proven} on ${binaries[0].label} and ${forges[0].proven} on ${forges[0].label}. Each count covers one choice.`;
 ---
-<section class="tg-doors not-content" aria-label="Your setup" style={`--tg-taco: url(${taco})`}>
+<section class="tg-doors not-content" aria-label="Your setup" style={`--tg-taco: url(${taco}); --tg-diamond: url(${base}/brand/diamond.svg)`}>
 	<div class="tiles" role="group" aria-label="Your repo">
 		{shapes.map((s, i) => (
 			<button type="button" class="tile" data-pick="shape" value={s.id} aria-pressed={String(i === 0)}>
@@ -189,6 +189,20 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	.tile:hover {
 		border-color: var(--tg-gold);
 	}
+	.tile {
+		position: relative;
+	}
+	/* The picked tile wears a diamond in its corner. */
+	.tile[aria-pressed='true']::after {
+		content: '';
+		position: absolute;
+		top: 0.6rem;
+		right: 0.6rem;
+		width: 14px;
+		height: 11px;
+		background: var(--tg-diamond) center / contain no-repeat;
+		image-rendering: pixelated;
+	}
 	.tile[aria-pressed='true'] {
 		border-color: var(--tg-rule);
 		border-top-color: var(--tg-gold);
@@ -302,8 +316,13 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 		margin: 0;
 	}
 	.notes :global(li)::before {
-		content: '·';
-		margin-right: 0.5rem;
+		content: '';
+		display: inline-block;
+		width: 10px;
+		height: 8px;
+		margin-right: 0.45rem;
+		background: var(--tg-diamond) center / contain no-repeat;
+		image-rendering: pixelated;
 	}
 	.roles > span {
 		align-self: center;
