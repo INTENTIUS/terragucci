@@ -58,14 +58,14 @@ export function decode(file) {
 
 /**
  * The share of a picture that is blank: its rows that lie in a run of at
- * least `run` blank rows (24 by default: 12 CSS pixels at deviceScaleFactor
- * 2). A row is blank when nearly every pixel in it (all but 2%) is within a
+ * least `run` blank rows (40 by default: 20 CSS pixels at deviceScaleFactor
+ * 2, more than the space between paragraphs). A row is blank when nearly every pixel in it (all but 2%) is within a
  * few levels of that row's commonest colour, so a box's borders do not count.
  * The gaps between lines of text are shorter than a run; the white below a
  * short page, or a band above an anchor, is not. The `edge` rows at the top
  * and bottom (the margin shot.mjs leaves around an element) are not counted.
  */
-export function blankShare(img, run = 24, edge = 0) {
+export function blankShare(img, run = 40, edge = 0) {
   const { width, height, channels, pixels } = img;
   const near = 12;
   let blank = 0, streak = 0;

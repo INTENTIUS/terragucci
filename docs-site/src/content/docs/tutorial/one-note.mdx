@@ -29,7 +29,7 @@ Open the pull request link it printed, on Forgejo at `localhost:3300`. The plan 
 
 terragucci plans only the twelve service roots the change reaches and posts one note. Eleven roots take the identical change and appear as one group. Prod payments sits apart, because its dead-letter queue changes too.
 
-<Shot step="one-note" view="pull" alt="The plan note on the module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" optional />
+<Shot step="one-note" view="note" alt="The plan note on the module change's pull request: 12 roots in 2 groups, the waves table, eleven roots in one group with one diff, and prod payments on its own with its dead-letter queue" optional />
 
 The note is one comment on every forge; on GitHub and GitLab, for a change to one root:
 
@@ -47,7 +47,5 @@ The note is one comment on every forge; on GitHub and GitLab, for a change to on
 </Tabs>
 
 The note links to the full report. Its links start with `http://forgejo:3000`, which your browser cannot reach; open them at `http://localhost:3300` instead. The report opens on what differs and folds the eleven identical plans into one.
-
-<Shot step="report" view="top" alt="The HTML report of the module change: the run's counts, the roots to read first, and the eleven identical plans folded into one group" optional />
 
 Next, try `just example change replace` and `just example change destroy`. Each is named on its own, never folded into a group.

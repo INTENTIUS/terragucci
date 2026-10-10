@@ -13,13 +13,14 @@ prompt: |
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
 
 ## Result
 
 A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. Pick your forge in any tab and the other forge tabs on the site follow.
 
-<Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green, with the check report and each wave's report as artifacts" />
+<Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green" />
 
 ## Per forge
 
@@ -217,7 +218,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    git push -u origin add-terragucci
    ```
 
-   <Shot step="first-pr" view="pull" alt="A pull request in Forgejo with its check passing and its plan note for the one root" />
+   <Shot step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
 
    </TabItem>
    </Tabs>
@@ -233,9 +234,9 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
 
    <Shot step="github" view="required" alt="A GitHub ruleset named terragucci/plan required, active on the default branch, requiring the status check terragucci/plan" />
 
-   When the check fails, so does the run:
+   When the check fails, so does the run; its log shows the diff `tofu fmt` would make:
 
-   <Shot step="github" view="check" alt="A GitHub Actions run for a change pushed without tofu fmt: the check job failed and the plan and apply jobs after it were skipped" />
+   <Captured step="github" cmd="gh run view --log-failed  # the check" />
 
    </TabItem>
    <TabItem label="GitLab">
@@ -255,9 +256,9 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
 
    <Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" />
 
-   The failed check is a red cross on the commit:
+   The failed check is a red cross on the commit, and the fmt job pushes the formatting after it:
 
-   <Shot step="check" view="pull" alt="A pull request in Forgejo whose commit carries a red cross from its failed check, above its plan note" />
+   <Shot step="check" view="pull" alt="A Forgejo pull request: the pushed commit with a red cross from its failed check, the plan note, and the style: tofu fmt commit the fmt job pushed after it" />
 
    </TabItem>
    </Tabs>

@@ -4,17 +4,17 @@
   "commands": [
     {
       "cmd": "just sandbox change one-root",
-      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/79 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956250470 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956242333 (success)",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/84 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005625855 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005621464 (success)",
       "exit": 0
     },
     {
       "cmd": "just sandbox plan-comment one-root",
-      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/79 (the reply is in its conversation)\nRe-plan       https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956354234 (success)",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/84 (the reply is in its conversation)\nRe-plan       https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005697868 (success)",
       "exit": 0
     },
     {
       "cmd": "just sandbox change unformatted",
-      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/80 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956454318 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956446003 (failure)",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/85 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005779872 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005776039 (failure)",
       "exit": 0
     },
     {
@@ -24,44 +24,40 @@
     },
     {
       "cmd": "just sandbox change destroy",
-      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/81 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956581384 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956574555 (success)",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/86 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005840600 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005835811 (success)",
       "exit": 0
     },
     {
       "cmd": "just sandbox merge destroy",
-      "output": "Merged    pull request 81 into main\nPipeline  https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37956669968 (failure)\nStopped   apply-wave-4\nchant approve tf-apply wave-4 --plan jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2 --sign",
+      "output": "Merged    pull request 86 into main\nPipeline  https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38005891860 (failure)\nStopped   apply-wave-4\nchant approve tf-apply wave-4 --plan jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2 --sign",
       "exit": 0
     },
     {
       "cmd": "gh run view --log-failed  # wave 4 on main",
-      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: planning up to 16 roots at once (the local, s3 backends)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2, 2 changes, 1 destroy\nwave 4 of 4: approval sealed (identity.gates in chant.workspace.json at base, with no approval key)\nwave 4 of 4: note: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates\nwave 4 of 4 waits for an approval of digest jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2 --sign\nchant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>.\nThen run this job again.\nwave 4: report in terragucci-report/, slowest root envs/staging/search (0.49s)\nProcess completed with exit code 3.",
+      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: planning up to 16 roots at once (the local, s3 backends)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2, 2 changes, 1 destroy\nwave 4 of 4: approval sealed (identity.gates in chant.workspace.json at base, with no approval key)\nwave 4 of 4: note: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates\nwave 4 of 4 waits for an approval of digest jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:a0c27ed10cf4a17e60dac7b86e51f81a558458417908516cc0bf1740082985e2 --sign\nchant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>.\nThen run this job again.\nwave 4: report in terragucci-report/, slowest root envs/staging/orders (0.52s)\nProcess completed with exit code 3.",
       "exit": 3
     },
     {
       "cmd": "just sandbox drift",
-      "output": "Drift run  https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37957147214 (success)\nIssue      https://github.com/INTENTIUS/terragucci-sandbox/issues/82",
+      "output": "Drift run  https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38006062225 (success)\nIssue      https://github.com/INTENTIUS/terragucci-sandbox/issues/87",
       "exit": 0
     },
     {
       "cmd": "just sandbox pr-apply",
-      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/83 at 9ded37f8 (MERGED)\nReply         terragucci: applied wave 1, 2, 3, 4 of pull request 83 at 9ded37f8, and merged pull request 83 at 9ded37f8 and released its locks on envs/dev/orders. https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37957486850",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/88 at 44943650 (MERGED)\nReply         terragucci: applied wave 1, 2, 3, 4 of pull request 88 at 44943650, and merged pull request 88 at 44943650 and released its locks on envs/dev/orders. https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/38006232742",
       "exit": 0
     }
   ],
   "shots": {
-    "required-light": "26cd0ea027230b7d",
-    "required-dark": "e0eb38a1c50b1535",
-    "note-light": "b8480a0c0a3ace46",
-    "note-dark": "c443e0d286cb85a7",
-    "reply-light": "82db1c95a620a6c3",
-    "reply-dark": "a579377be8f73235",
-    "check-light": "3401e144b9967b8a",
-    "check-dark": "d6a2c0a1eee47953",
-    "waiting-light": "0b72816118ad09c8",
-    "waiting-dark": "403b7a3fb03c7356",
-    "drift-light": "c564058124147c71",
-    "drift-dark": "7d28cfce8c6a82d0",
-    "apply-light": "26f3a905e764fa3f",
-    "apply-dark": "7919cf7b90d11b70"
+    "required-light": "fd39152c90da2aec",
+    "required-dark": "88a57f2334c68b2c",
+    "note-light": "a2ab7717867896b7",
+    "note-dark": "976929bc5288fa0e",
+    "reply-light": "1f053a08f45e9d52",
+    "reply-dark": "8ff2155b60697956",
+    "drift-light": "fc0da8bfcf055179",
+    "drift-dark": "8a23bd436ae92064",
+    "apply-light": "44d082a00144e3cb",
+    "apply-dark": "74d3b5f4cf8cc7bb"
   }
 }

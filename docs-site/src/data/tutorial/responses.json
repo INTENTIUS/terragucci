@@ -3,11 +3,11 @@
   "source_hash": "c6909fe377b97186",
   "commands": [],
   "shots": {
-    "drift-light": "78fe3b852c1de439",
-    "drift-dark": "bd8b54ad3b0a8540",
-    "drift-files-light": "f3aa36e6d2c4381c",
-    "drift-files-dark": "d4c3caad9fce7854",
-    "fmt-light": "68e17f42f3e8cbb0",
-    "fmt-dark": "25d6e820bd337cab"
+    "drift-light": "dbe1bdbd422fa3f3",
+    "drift-dark": "32329bb69b948573",
+    "drift-files-light": "64ea08ef810b5239",
+    "drift-files-dark": "0cf5f790a28e8722",
+    "fmt-light": "cd0cb370dce3eead",
+    "fmt-dark": "cebf490cade67548"
   }
 }

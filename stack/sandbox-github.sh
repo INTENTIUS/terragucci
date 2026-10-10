@@ -363,12 +363,14 @@ wait_run() { # event, since, [sha]
 }
 
 # A view is a page a step leaves for `shot`: its URL, and optionally the CSS
-# selector of the element the picture starts at, a regex its text matches,
-# a height (a number, or "fit" for the element's own height) and the text of
-# a button to click first. The fields are split by the unit separator, since
-# a regex can hold a tab or a bar.
-record_view() { # name, url, [selector], [regex], [height], [click]
-  printf '%s\037%s\037%s\037%s\037%s\n' "$2" "${3:-}" "${4:-}" "${5:-900}" "${6:-}" > "$DIR/views/$1"
+# selector of the element the picture is cropped to, a regex its text matches,
+# a height (a number, or "fit" for the element's own height), the text of a
+# button to click first, a regex the last later element of the picture
+# matches (stack/shot.mjs --through), and the share of it that may be blank
+# when a page is airy by design (--blank-max). The fields are split by the unit
+# separator, since a regex can hold a tab or a bar.
+record_view() { # name, url, [selector], [regex], [height], [click], [through], [blank max]
+  printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\n' "$2" "${3:-}" "${4:-}" "${5:-900}" "${6:-}" "${7:-}" "${8:-}" > "$DIR/views/$1"
   log "view $1: $2"
 }
 
@@ -453,7 +455,7 @@ ensure_ruleset() {
       | gh api -X POST "repos/$REPO/rulesets" --input - -q .id)" || fail "could not add the ruleset"
     log "main requires terragucci/plan (ruleset $id)"
   fi
-  record_view required "$WEB/rules/$id" "" "" 900 "Show additional settings"
+  record_view required "$WEB/rules/$id" '[class*="RulesetPage-module__RulesetPageHeader"], [data-testid="rules-panel"]' "" fit "Show additional settings" . 0.6
 }
 
 # ── the claims prove runs ────────────────────────────────────────────────────
@@ -1616,7 +1618,7 @@ case "$CMD" in
     wait_run issue_comment "$since"
     record_view replan-run "$RUN_URL"
     # The re-plan edits the note in place; the picture ends below the comment.
-    record_view reply "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" 664
+    record_view reply "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" fit "" "/terragucci plan"
     printf '\n  Pull request  %s/pull/%s (the reply is in its conversation)\n  Re-plan       %s (%s)\n' "$WEB" "$pr" "$RUN_URL" "$RUN_CONCLUSION"
     ;;
 
@@ -1626,7 +1628,7 @@ case "$CMD" in
     at="$(head_of "$pr")"
     reply="$(say "$pr" "/terragucci apply")"
     record_view pr-apply-run "$WEB/actions/runs/$(cat "$DIR/last-run")"
-    record_view pr-apply "$WEB/pull/$pr" ".timeline-comment" "and merged pull request" 150
+    record_view pr-apply "$WEB/pull/$pr" ".timeline-comment" "and merged pull request" fit
     state="$(gh pr view "$pr" -R "$REPO" --json state -q .state)"
     printf '\n  Pull request  %s/pull/%s at %s (%s)\n  Reply         %s\n' "$WEB" "$pr" "${at:0:8}" "$state" "${reply:-none}"
     [ "$state" = MERGED ] || fail "pull request $pr was not merged after /terragucci apply"
@@ -1661,7 +1663,7 @@ EOF
     record_view drift-run "$RUN_URL"
     issue="$(gh issue list -R "$REPO" --state open -L 1 --json number -q '.[0].number // empty')"
     [ -n "$issue" ] || fail "the drift run ($RUN_CONCLUSION) opened no issue: $RUN_URL"
-    record_view drift "$WEB/issues/$issue" "" "" 1100
+    record_view drift "$WEB/issues/$issue" '[data-testid="issue-viewer-issue-container"]' "" fit
     printf '\n  Drift run  %s (%s)\n  Issue      %s/issues/%s\n' "$RUN_URL" "$RUN_CONCLUSION" "$WEB" "$issue"
     ;;
 
@@ -1694,7 +1696,9 @@ EOF
       local v
       for v in "$@"; do "$0" shot "$v"; done
     }
-    pairs="required:required note:note reply:reply check:check waiting-run:waiting"
+    # GitHub shows job logs only to a signed-in reader, so the check and the
+    # waiting wave are their log lines (log_lines), not pictures.
+    pairs="required:required note:note reply:reply"
     take required
     step change one-root || fail "change one-root failed"
     take note
@@ -1725,7 +1729,7 @@ EOF
     # The example's hash, computed the way tutorial-check computes it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
     # A view this run left out keeps the hash the last capture recorded.
-    shots="$(jq -c '.shots // {}' "$DATA/github.json" 2>/dev/null || echo '{}')"
+    shots="$(jq -c '.shots // {} | del(.["check-light"], .["check-dark"], .["waiting-light"], .["waiting-dark"])' "$DATA/github.json" 2>/dev/null || echo '{}')"
     for pair in $pairs; do
       from="${pair%%:*}" to="${pair#*:}"
       for scheme in light dark; do
@@ -1822,20 +1826,25 @@ EOF
     for f in "${views[@]}"; do
       [ -f "$f" ] || fail "no view '$(basename "$f")'; 'shot list' names them"
       name="$(basename "$f")"
-      IFS=$'\037' read -r url scroll match height click < "$f"
+      IFS=$'\037' read -r url scroll match height click through blank < "$f"
       for scheme in light dark; do
-        hooks=()
+        # Each scheme reads the view afresh: "fit" turned into a height for the
+        # light pass left the dark one a fixed 900px, cut short.
+        h="$height" hooks=()
         [ -z "$click" ] || hooks+=(--click "$click")
         [ -z "$scroll" ] || hooks+=(--scroll "$scroll")
         [ -z "$match" ] || hooks+=(--match "$match")
-        if [ "$height" = fit ]; then hooks+=(--fit 1); height=900; fi
+        [ -z "$through" ] || hooks+=(--through "$through")
+        [ -z "$blank" ] || hooks+=(--blank-max "$blank")
+        if [ "$h" = fit ]; then hooks+=(--fit 1); h=900; fi
         # A fresh profile in a container: the page as a logged-out reader sees it.
-        docker run --rm --ipc=host -v "$HERE/shot.mjs:/shot/shot.mjs:ro" -v "$DIR/shots:/out" "$SHOT_IMAGE" sh -c '
+        docker run --rm --ipc=host -v "$HERE/shot.mjs:/shot/shot.mjs:ro" -v "$HERE/png.mjs:/shot/png.mjs:ro" -v "$DIR/shots:/out" "$SHOT_IMAGE" sh -c '
           chrome="$(ls -d /ms-playwright/chromium-*/chrome-linux/chrome | head -1)"
           printf "#!/bin/sh\nexec %s --no-sandbox \"\$@\"\n" "$chrome" > /tmp/chrome && chmod +x /tmp/chrome
           exec node /shot/shot.mjs --chrome /tmp/chrome "$@"' sh \
-          --url "$url" --out "/out/$name-$scheme.png" --width 1280 --height "$height" --scheme "$scheme" "${hooks[@]}" \
+          --url "$url" --out "/out/$name-$scheme.png" --width 1280 --height "$h" --scheme "$scheme" "${hooks[@]}" \
           || fail "no screenshot of $url"
+        node "$HERE/../scripts/png-compress.mjs" "$DIR/shots/$name-$scheme.png" >/dev/null || fail "cannot compress $name-$scheme.png"
         log "shot $DIR/shots/$name-$scheme.png"
       done
     done

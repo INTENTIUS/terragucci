@@ -25,6 +25,9 @@
 //        [--through REGEX]   with --scroll, the picture runs on to the last
 //                            later element matching SELECTOR whose text
 //                            matches REGEX
+//        [--from REGEX]      with --expand and --scroll, the picture starts at
+//                            the first log line of the step matching REGEX,
+//                            for a long log
 //        [--until REGEX]     with --scroll, the picture ends below the first
 //                            log line of the --expand step (or the first
 //                            element of --scroll, any line) matching REGEX
@@ -34,6 +37,8 @@
 //                            matches REGEX (an empty REGEX takes the first);
 //                            each must exist, and be open and inside the
 //                            picture when it is taken
+//        [--margin 16]       the CSS pixels of page kept around the element;
+//                            a few, when the element is a line in a log
 //        [--full-width 1]    with --scroll, keep the page's width instead of
 //                            the element's
 //        [--cookie NAME=VALUE] send this cookie to the page's site, such as a
@@ -58,7 +63,7 @@ for (let i = 0; i < argv.length; i += 2) {
   opts[argv[i].slice(2)] = argv[i + 1];
 }
 for (const k of ["chrome", "url", "out"]) if (!opts[k]) die(`--${k} is required`);
-for (const k of ["through", "until", "fit", "full-width", "match"]) if (opts[k] && !opts.scroll) die(`--${k} needs --scroll`);
+for (const k of ["through", "until", "from", "fit", "full-width", "match"]) if (opts[k] && !opts.scroll) die(`--${k} needs --scroll`);
 
 function die(msg) {
   console.error(`shot: ${msg}`);
@@ -123,7 +128,7 @@ try {
   await loaded;
 
   // Runs in the page. Returns { box } or { error }; notes are warnings.
-  const prepare = async ({ hide, expand, focus, scroll, match, through, until: untilRe, open, style, click, fullWidth }) => {
+  const prepare = async ({ hide, expand, focus, scroll, match, through, until: untilRe, from, open, style, click, fullWidth }) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const until = async (fn, ms = 15000) => {
       const end = Date.now() + ms;
@@ -187,9 +192,16 @@ try {
           window.scrollTo(0, Math.max(0, window.scrollY + focusLine.getBoundingClientRect().top - 120));
         }
       }
+      if (from) {
+        const re = new RegExp(from);
+        const first = [...lines()].find((l) => re.test(text(l)));
+        if (!first) return { error: `no line of "${expand}" matches /${from}/` };
+        first.dataset.shotFrom = "1";
+      }
       if (untilRe) {
         const re = new RegExp(untilRe);
-        const last = [...lines()].find((l) => re.test(text(l)));
+        const start = [...lines()].findIndex((l) => l.dataset.shotFrom);
+        const last = [...lines()].slice(Math.max(0, start)).find((l) => re.test(text(l)));
         if (!last) return { error: `no line of "${expand}" matches /${untilRe}/` };
         last.dataset.shotUntil = "1";
       }
@@ -220,8 +232,9 @@ try {
       }
       if (untilRe && !expand) {
         const u = new RegExp(untilRe);
-        const line = [...el.querySelectorAll("*")].reverse().find((e) => e.children.length === 0 && u.test(e.textContent))
-          ?? [...el.querySelectorAll("*")].find((e) => u.test(e.textContent) && ![...e.children].some((c) => u.test(c.textContent)));
+        // The innermost shown element whose text matches: a folded <details>'s body does not count.
+        const shown = [...el.querySelectorAll("*")].filter((e) => e.getClientRects().length > 0);
+        const line = shown.find((e) => u.test(e.textContent) && ![...e.children].some((c) => c.getClientRects().length > 0 && u.test(c.textContent)));
         if (!line) return { error: `nothing in ${scroll} matches /${untilRe}/` };
         line.dataset.shotUntil = "1";
       }
@@ -230,9 +243,11 @@ try {
       await wait(300);
       const a = el.getBoundingClientRect(), b = end.getBoundingClientRect();
       const stopAt = document.querySelector("[data-shot-until]")?.getBoundingClientRect();
+      const startAt = document.querySelector("[data-shot-from]")?.getBoundingClientRect();
       const left = Math.min(a.left, b.left), right = Math.max(a.right, b.right);
       const bottom = stopAt && stopAt.bottom > a.top ? stopAt.bottom : Math.max(a.bottom, b.bottom);
-      box = { top: a.top + window.scrollY, height: bottom - a.top, left: fullWidth ? 0 : left, width: fullWidth ? document.documentElement.clientWidth : right - left };
+      const top = startAt ? startAt.top : a.top;
+      box = { top: top + window.scrollY, height: bottom - top, until: !!stopAt, from: !!startAt, left: fullWidth ? 0 : left, width: fullWidth ? document.documentElement.clientWidth : right - left };
       // Every <details> it opened is open and inside the picture.
       for (const { el: d, spec } of opened) {
         const r = d.getBoundingClientRect();
@@ -244,7 +259,7 @@ try {
     return { notes: notes.join("; "), box, docWidth: document.documentElement.scrollWidth };
   };
   const res = await page("Runtime.evaluate", {
-    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match, through: opts.through, until: opts.until, open: opts.open, style: opts.style, click: opts.click, fullWidth: !!opts["full-width"] })})`,
+    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match, through: opts.through, until: opts.until, from: opts.from, open: opts.open, style: opts.style, click: opts.click, fullWidth: !!opts["full-width"] })})`,
     awaitPromise: true,
     returnByValue: true,
   });
@@ -255,19 +270,22 @@ try {
 
   // A scrolled shot is a clip of the page around its element, taken beyond
   // the viewport, so the page never scrolls and nothing sticky moves.
-  const margin = 16;
+  const margin = +(opts.margin ?? 16);
   let clip;
   if (prepared.box) {
     const b = prepared.box;
     const x = Math.max(0, Math.floor(b.left - margin));
     const width = Math.min(Math.max(prepared.docWidth, +opts.width), Math.ceil(b.left + b.width + margin)) - x;
-    const y = Math.max(0, Math.floor(b.top - margin));
-    clip = { x, y, width, height: opts.fit || opts.through || opts.until ? Math.ceil(b.top + b.height + margin) - y : +opts.height, scale: 1 };
+    // A picture that starts or ends at a log line (--from, --until) keeps no
+    // margin there: a margin would show half of the line beside it.
+    const y = Math.max(0, Math.floor(b.top - (b.from ? 0 : margin)));
+    const below = b.until ? 0 : margin;
+    clip = { x, y, width, height: opts.fit || opts.through || opts.until ? Math.ceil(b.top + b.height + below) - y : +opts.height, scale: 1 };
   }
   const { data } = await page("Page.captureScreenshot", clip ? { format: "png", clip, captureBeyondViewport: true } : { format: "png" });
   const png = Buffer.from(data, "base64");
   ws.close();
-  const blank = blankShare(decode(png), Math.round(12 * dpr), clip ? Math.round(margin * dpr) : 0);
+  const blank = blankShare(decode(png), Math.round(20 * dpr), clip ? Math.round(margin * dpr) : 0);
   if (blank > +opts["blank-max"]) {
     writeFileSync(opts.out.replace(/\.png$/, "") + ".blank.png", png);
     die(`${opts.url}: the picture is ${Math.round(blank * 100)}% blank (at most ${Math.round(+opts["blank-max"] * 100)}%); it is kept as ${opts.out.replace(/\.png$/, "")}.blank.png`);
