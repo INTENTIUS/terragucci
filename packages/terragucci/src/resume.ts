@@ -24,6 +24,12 @@
  * `/terragucci apply` on the pull request that made the commit. Without a
  * token it says so, and the resume job, or a re-run by hand, picks it up.
  *
+ * The resume job also resumes a wave whose apply under an approval was
+ * killed before it finished, once the run that applied is gone: the wave
+ * plans again and applies the rest under that approval (./remainder.ts).
+ * Only a wave of roots that apply per resource (choudoufu) records what it
+ * needs for that; a failed apply is left to a re-run.
+ *
  * A state migration (./migrate.ts) waits inside wave 1, on a gate of its own
  * in `_gates/tf-migrate.jsonl`. An approved migration resumes as wave 1 does:
  * wave 1 runs the migration before it plans.
@@ -32,7 +38,9 @@
  */
 import { spawnSync } from "node:child_process";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { decideGate, type GateLedger, type PendingRecord } from "./apply";
+import { decideGate, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
+import { forgeLiveness, type Liveness } from "./apply-rows";
+import { finishOf } from "./remainder";
 import { forgeCalls, gitlabCalls, pullOf } from "./review";
 import type { Fetch } from "./forge";
 
@@ -48,6 +56,8 @@ export interface Resumable {
   runId?: string;
   /** The commit the waiting wave planned, when the pending fact names it. */
   commit?: string;
+  /** Set when the wave's apply under this approval was killed before it finished: the run that applied, and when it began. */
+  stopped?: { holder: string; at: string };
 }
 
 const at = (iso: string): number => new Date(iso).getTime();
@@ -60,6 +70,7 @@ export function resumable(ledger: GateLedger, now: string, migrations?: GateLedg
   const out: Resumable[] = approvedGates(ledger, now, (gate) => /^wave-\d+$/.test(gate)).map(({ gate, ...r }) => ({ wave: Number(gate.slice(5)), ...r }));
   // A migration waits inside wave 1, so an approved one resumes wave 1, which runs it before it plans.
   if (migrations) out.push(...approvedGates(migrations, now, () => true).map(({ gate, ...r }) => ({ wave: 1, migration: gate, ...r })));
+  for (const s of stoppedGates(ledger)) if (!out.some((w) => w.wave === s.wave && !w.migration)) out.push(s);
   return out.sort((a, b) => a.wave - b.wave || Number(Boolean(b.migration)) - Number(Boolean(a.migration)));
 }
 
@@ -82,6 +93,26 @@ function approvedGates(ledger: GateLedger, now: string, take: (gate: string) => 
   return out;
 }
 
+/**
+ * Each wave whose newest apply under an approval recorded its changes and
+ * then never recorded how it ended, with no plan of the wave asking for an
+ * approval since: an apply that was killed, or is still running.
+ */
+function stoppedGates(ledger: GateLedger): Resumable[] {
+  const newest = new Map<string, AppliedRecord>();
+  for (const a of ledger.applied ?? []) {
+    const before = newest.get(a.gate);
+    if (/^wave-\d+$/.test(a.gate) && (!before || at(a.timestamp) >= at(before.timestamp))) newest.set(a.gate, a);
+  }
+  const out: Resumable[] = [];
+  for (const [gate, a] of newest) {
+    if (!a.changes || finishOf(ledger, a)) continue;
+    if (ledger.pending.some((p) => p.gate === gate && at(p.timestamp) > at(a.timestamp))) continue;
+    out.push({ wave: Number(gate.slice(5)), digest: a.planDigest, by: a.approvedBy, ...(a.runId ? { runId: a.runId } : {}), ...(a.commit ? { commit: a.commit } : {}), stopped: { holder: a.holder ?? a.runId ?? "", at: a.timestamp } });
+  }
+  return out;
+}
+
 export type ForgeKind = "github" | "forgejo" | "gitlab";
 
 /** What the resume job does next. */
@@ -94,9 +125,14 @@ export type ResumeStep =
   | { kind: "retried"; job: string; pipeline: number; url?: string; waves: Resumable[] };
 
 /** The resume job's decision, from the ledger and, on GitLab, the default branch's newest push pipeline. Never throws for a forge it cannot read: it says why. */
-export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedger; forge: ForgeKind; sha: string; env: NodeJS.ProcessEnv; now?: string; fetch?: Fetch }): Promise<ResumeStep> {
-  const waves = resumable(o.ledger, o.now ?? new Date().toISOString(), o.migrations);
-  if (waves.length === 0) return { kind: "none", why: "no wave waits with an approval that stands" };
+export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedger; forge: ForgeKind; sha: string; env: NodeJS.ProcessEnv; now?: string; fetch?: Fetch; liveness?: Liveness }): Promise<ResumeStep> {
+  const alive = o.liveness ?? forgeLiveness(o.env);
+  const waves: Resumable[] = [];
+  // A stopped apply whose run still runs is applying: it is resumed once that run is gone.
+  for (const w of resumable(o.ledger, o.now ?? new Date().toISOString(), o.migrations)) {
+    if (!w.stopped || (w.stopped.holder && (await alive({ run: w.stopped.holder, at: w.stopped.at })) === "dead")) waves.push(w);
+  }
+  if (waves.length === 0) return { kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" };
   if (o.forge !== "gitlab") {
     let pr: number | undefined;
     try {
