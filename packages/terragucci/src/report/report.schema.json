@@ -419,6 +419,36 @@
               "planned": { "type": "boolean", "description": "Whether this run planned it." }
             }
           }
+        },
+        "resources": {
+          "description": "The radius by resource (minor 31), when a root is downstream: each resource a plan changes and the resources that depend on it, from the plans' references and the outputs each root reads, nearest first. A changed resource that nothing depends on is left out. Absent in a Terragrunt repo.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "address", "actions", "reaches"],
+            "properties": {
+              "root": { "type": "string" },
+              "address": { "type": "string", "description": "The changed resource instance's address." },
+              "actions": { "type": "array", "items": { "type": "string" } },
+              "reaches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "address"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "address": { "type": "string", "description": "Its address in the root's configuration, with no instance key." },
+                    "through": {
+                      "type": "object",
+                      "required": ["root", "output"],
+                      "description": "In another root: the output it reads, and the root that makes it.",
+                      "properties": { "root": { "type": "string" }, "output": { "type": "string" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

@@ -1,15 +1,16 @@
 // Holds @intentius/terragucci to its shape (terragucci#18, #87, #163): no runtime
 // dependencies, no imports but Node's own modules and the two optional packages,
 // no input from a path that would drag lint rules, codegen, the TypeScript
-// compiler or the dashboards' renderers into the bundle, and a 1.25 MB accident
+// compiler or the dashboards' renderers into the bundle, and a 1.5 MB accident
 // ceiling on its size. The ceiling was 1 MB until `terragucci mcp` brought the
-// MCP SDK and zod in, about 150 KB (terragucci#657).
+// MCP SDK and zod in, about 150 KB (terragucci#657), and 1.25 MB until the
+// bundle's own code (query, schema, estate moves, GitLab state) passed it.
 //   node scripts/bundle-check.mjs     (after `just build-cli`)
 import { readFileSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { join } from "node:path";
 
-const CEILING_BYTES = 1280 * 1024;
+const CEILING_BYTES = 1536 * 1024;
 const OPTIONAL = new Set(["@intentius/tsad-reference", "@cdktn/hcl2json"]);
 
 // Matched against each metafile input with everything up to the last

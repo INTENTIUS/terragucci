@@ -61,13 +61,15 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { isStored, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
+import { isStored, READS_VERSIONS, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 import { rootRoleEnv } from "./roles";
+import { liveRoots } from "./detect";
+import { applyEstateMigration, planEstateMigration, type EstatePlan, type Retag, type Stamp } from "./migrate-estate";
 import { EXTERNAL_BACKENDS, externalProblems, externalSource, type ExternalSource } from "./state-source";
 
 export const MIGRATE_OP = "tf-migrate";
@@ -131,7 +133,7 @@ export interface Migration {
   revert?: string;
 }
 
-const sha = (text: string | Buffer): string => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+export const sha = (text: string | Buffer): string => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 
 /** A migration's name: what its gate is called. */
 const NAME = /^[a-z0-9][a-z0-9._-]{0,99}$/;
@@ -423,8 +425,12 @@ export interface MigrationRecord {
   name: string;
   file: string;
   file_digest: string;
-  /** moves, backends or revert. */
-  change: Migration["kind"];
+  /** moves, backends or revert; retag or adopt when the roots are choudoufu estates (./migrate-estate.ts). */
+  change: Migration["kind"] | "retag" | "adopt";
+  /** A retag: each resource instance that changes estate, and the live resource its markers are on. */
+  retags?: Retag[];
+  /** An adoption: each resource instance of the old state, as the live system verified it. */
+  stamps?: Stamp[];
   moves: Move[];
   /** A backend move's roots, and where each state was. */
   backends?: { root: string; from: string }[];
@@ -501,10 +507,10 @@ export function resourceChanges(plan: unknown): string[] {
     .map((c) => `${c.address}: ${(c.change?.actions ?? []).join("+")}`);
 }
 
-const firstLine = (s: string, n = 4): string => s.trim().split("\n").slice(-n).join(" ").slice(0, 400);
+export const firstLine = (s: string, n = 4): string => s.trim().split("\n").slice(-n).join(" ").slice(0, 400);
 
 /** Plan a root and read its resource changes; with `-lock=false` when the job holds the lock itself. */
-async function planChanges(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv, work: string, tag: string, lock: boolean): Promise<{ changes: string[]; summary: string }> {
+export async function planChanges(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv, work: string, tag: string, lock: boolean): Promise<{ changes: string[]; summary: string }> {
   const planFile = join(work, `${tag}.tfplan`);
   const plan = await exec(binary, ["plan", "-input=false", "-no-color", ...(lock ? [] : ["-lock=false"]), `-out=${planFile}`], dir, env);
   if (plan.code !== 0) throw new ConfigError(`the plan of ${tag} failed: ${firstLine(plan.out)}`);
@@ -567,8 +573,9 @@ function jsonCloud(doc: unknown): boolean {
 }
 
 /** Which backends a migration writes to, or why not. */
-function backendRefusal(root: string, o: StateObject): string | undefined {
-  if ("unsupported" in o) return `${root}: ${o.unsupported.replace("reads state versions from", "migrates state in")}`;
+export function backendRefusal(root: string, o: StateObject): string | undefined {
+  if ("unsupported" in o) return `${root}: ${o.unsupported.replace(READS_VERSIONS, "migrates state in s3, gcs, azurerm and local backends")}`;
+  if ("gitlab" in o) return `${root}: its state is GitLab-managed (${o.location}), and terragucci migrates state in s3, gcs, azurerm and local backends`;
   if (o.backend === "s3" && !(o as { lockfile: boolean }).lockfile) return `${root}: its s3 backend takes no lock file (use_lockfile = true), so a migration could not hold its lock`;
   return undefined;
 }
@@ -612,7 +619,7 @@ export async function unitPlace(repo: string, unit: string, binary: string, env:
 }
 
 /** Each root's place: a unit's as Terragrunt prepares it, a plain root's where it is. */
-async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv, shape: Shape): Promise<Map<string, Place>> {
+export async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv, shape: Shape): Promise<Map<string, Place>> {
   const out = new Map<string, Place>();
   for (const root of roots) {
     // Each root with its own role, when `oidc.roles` names one (./roles.ts); a unit is prepared under it too.
@@ -645,7 +652,7 @@ async function pullState(exec: BinaryExec, binary: string, root: string, dir: st
 }
 
 /** The version id the backend holds for a state object now, when it keeps versions; with `pin`, an azurerm backend that keeps snapshots gets one. */
-async function versionOf(o: StateObject, fetchFn?: S3Fetch, pin = false): Promise<string | undefined> {
+export async function versionOf(o: StateObject, fetchFn?: S3Fetch, pin = false): Promise<string | undefined> {
   if (!isStored(o)) return undefined;
   return (await (await stateStore(o, fetchFn)).version(pin)).versionId;
 }
@@ -723,6 +730,8 @@ export interface PlannedMigration {
   places: Map<string, Place>;
   /** By root: the new state's file in the job's work dir, the backend it writes to, and, for a backend move, where the state is now. */
   files: Map<string, { path: string; object: StateObject; state: StateFile; beforeCount: number; source?: Source }>;
+  /** A migration into or between choudoufu estates, which writes markers on live resources instead of states. */
+  estate?: EstatePlan;
 }
 
 /** The empty state a root with none gets, or that a revert puts back where a migration found none. */
@@ -751,6 +760,15 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   const problems = roots.map((r) => refusal(repo, r)).filter((x): x is string => x !== undefined);
   if (problems.length > 0) throw new ConfigError(`migration ${m.name} cannot run:\n  ${problems.join("\n  ")}`);
   mkdirSync(options.work, { recursive: true });
+  // Roots under choudoufu's live markers keep no state file: a move between them is a retag, a backend move into one an adoption.
+  const live = liveRoots(repo, roots);
+  if (live.length > 0) {
+    if (live.length < roots.length) {
+      const stock = roots.filter((r) => !live.includes(r));
+      throw new ConfigError(`migration ${m.name} cannot run: ${live.join(", ")} ${live.length === 1 ? "keeps its" : "keep their"} resources under live markers and ${stock.join(", ")} ${stock.length === 1 ? "keeps" : "keep"} a state; ${m.kind === "moves" ? "adopt the state into an estate with a backends migration first" : "write a file for each"}`);
+    }
+    return planEstateMigration(repo, m, options);
+  }
   const places = await placesOf(repo, roots, options, env, shape);
   const before = new Map<string, StateFile | null>();
   const objects = new Map<string, StateObject>();
@@ -857,7 +875,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   return { record, files, places };
 }
 
-const locationOf = stateLocation;
+export const locationOf = stateLocation;
 
 /**
  * Plan a root against a state file: an override file switches its backend
@@ -889,7 +907,7 @@ interface HeldLock {
 }
 
 /** Take the lock of each state a migration writes or moves from, as its backend takes it. Releases what it took and throws when one is held. */
-async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {
+export async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {
   const held: HeldLock[] = [];
   const objects = [...files].flatMap(([root, f]) => [{ root, object: f.object }, ...(f.source && "object" in f.source ? [{ root, object: f.source.object }] : [])]);
   // A workspace the state moves from is locked as its backend locks it, so no run writes it meanwhile.
@@ -959,6 +977,7 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
   const env = options.env ?? process.env;
   const log = options.log ?? (() => {});
   const record = plan.record;
+  if (plan.estate) return applyEstateMigration(plan, options);
   const locks = await takeLocks(plan.files, options.now, options.fetch);
   try {
     const moved = await movedSince(repo, plan, options);
@@ -1025,7 +1044,9 @@ function fromOf(b: BackendMove): string {
 }
 
 /** What a migration does, in one line. */
-export function describeChange(m: Migration): string {
+export function describeChange(m: Migration, live = false): string {
+  if (live && m.kind === "backends") return `adopting the state of ${m.backends.map((b) => `${b.root} from ${fromOf(b)}`).join("; ")} into the estate its code names`;
+  if (live && m.kind === "moves") return `retagging ${m.moves.map((x) => `${x.addresses.join(", ")} from the estate of ${x.from} to the estate of ${x.to}`).join("; ")}`;
   if (m.kind === "backends") return `moving the state of ${m.backends.map((b) => `${b.root} from ${fromOf(b)}`).join("; ")} to the backend its code names`;
   if (m.kind === "revert") return `putting back the states ${m.revert} wrote: ${m.restores.map((r) => `${r.root} to ${r.version_id ?? "no state"}`).join(", ")}`;
   return `moving ${m.moves.map((x) => `${x.addresses.join(", ")} from ${x.from} to ${x.to}`).join("; ")}`;
@@ -1057,6 +1078,8 @@ export function revertMigration(name: string, done: string): { name: string; tex
   if (!line) throw new ConfigError(`chant/lifecycle records no applied migration ${name} in ${MIGRATE_DONE}`);
   if (line.change === "backends") throw new ConfigError(`${name} moved states to new backends; put it back with a backend move the other way, which reads each state where it is now`);
   if (line.change === "revert") throw new ConfigError(`${name} is a revert; apply the migration it put back again with a new migration file`);
+  if (line.change === "retag") throw new ConfigError(`${name} retagged resources between estates; put it back with a moves migration the other way`);
+  if (line.change === "adopt") throw new ConfigError(`${name} adopted a state into an estate and left the state where it was; to go back, put the backend block back in place of the live block`);
   const roots = Array.isArray(line.roots) ? (line.roots as Record<string, unknown>[]) : [];
   const problems: string[] = [];
   const restores = roots.map((r) => {
@@ -1138,6 +1161,7 @@ export function doneLine(record: MigrationRecord, approvedBy: string, now: strin
       after_digest: r.after.digest,
       ...(r.source ? { source: r.source.location, source_version: r.source.version_id ?? null } : {}),
     })),
+    ...(record.retags ? { retags: record.retags.map((t) => ({ address: t.address, from: t.from, to: t.to, from_estate: t.from_estate, to_estate: t.to_estate, live_id: t.live_id })) } : {}),
     ...(record.error ? { error: record.error } : {}),
     ...(runId ? { runId } : {}),
     ...(commit ? { commit } : {}),
@@ -1256,7 +1280,8 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
 async function runOne(repo: string, m: Migration, ledger: GateLedger, options: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void }, work: string): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env } = options;
   const label = `migration ${m.name}`;
-  log(`${label}: ${describeChange(m)}`);
+  const live = liveRoots(repo, m.kind === "backends" ? m.backends.map((b) => b.root) : m.moves.flatMap((x) => [x.from, x.to])).length > 0;
+  log(`${label}: ${describeChange(m, live)}`);
   let plan: PlannedMigration;
   try {
     plan = await planMigration(repo, m, { binary: options.binary, env, work, log, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
@@ -1267,11 +1292,13 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   }
   const record = plan.record;
   for (const r of record.roots) log(`${r.root}: state ${r.location ?? r.backend}${r.before.version_id ? ` version ${r.before.version_id}` : ""}, ${r.before.digest ? `digest ${r.before.digest}` : "no state yet"}`);
+  const proved = record.change === "retag" ? "every change each root plans is one the retag removes" : record.change === "adopt" ? "every resource of the state verifies against the live system, and every change the root plans is one the stamp removes" : "every root plans with no change against its new state";
   if (record.status === "proof-failed") {
-    log(`${label}: every root must plan with no change against its new state, and ${record.roots.filter((r) => r.proof.changes.length > 0).map((r) => r.root).join(", ")} would change; nothing was written`);
+    const failing = record.roots.filter((r) => r.proof.changes.length > 0).map((r) => r.root).join(", ");
+    log(`${label}: ${record.change === "retag" || record.change === "adopt" ? `${proved}, and ${failing} would still change` : `every root must plan with no change against its new state, and ${failing} would change`}; nothing was written`);
     return { code: EXIT.failed, record };
   }
-  log(`${label}: every root plans with no change against its new state; digest ${record.digest}`);
+  log(`${label}: ${proved}; digest ${record.digest}`);
   if (options.planOnly) return { code: EXIT.applied, record };
 
   const now = options.now ?? new Date().toISOString();
@@ -1341,9 +1368,9 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     return { code: EXIT.refused, record: result };
   }
   appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
-  for (const r of result.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
+  if (!plan.estate) for (const r of result.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
   if (result.status !== "applied") {
-    log(`${label}: ${result.error}; the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`);
+    log(`${label}: ${result.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);
     return { code: EXIT.failed, record: result };
   }
   log(`${label} applied`);

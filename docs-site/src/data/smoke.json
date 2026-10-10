@@ -148,12 +148,12 @@
     },
     {
       "claim": "drift",
-      "says": "with binary: choudoufu and the roots under live resource markers, each root plans in full: the queue deleted outside choudoufu is named by root in the report and one drift issue, the change waiting on main shows as drift too, and a run with no drift closes it",
+      "says": "with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "263ec5ea"
+      "commit": "33d0387f"
     },
     {
       "claim": "rollout",
@@ -658,7 +658,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "c64d95fa"
     },
     {
       "claim": "comment-apply",
@@ -1297,7 +1297,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "c64d95fa"
     },
     {
       "claim": "note-diff",
@@ -1385,7 +1385,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "b0f19790"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "tg-generate-init",
@@ -1690,7 +1690,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "c64d95fa"
     },
     {
       "claim": "blob-azure-key",
@@ -1740,6 +1740,22 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "fd59fd2a"
+    },
+    {
+      "claim": "cdf-migrate",
+      "says": "with binary: choudoufu a migration moves a resource between two estates by rewriting its ownership tags: proved by both plans, approved by digest, after which the next plan of both shows no change and the move is on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "05533250"
+    },
+    {
+      "claim": "cdf-adopt",
+      "says": "with binary: choudoufu a migration adopts a root on s3 state into an estate: proved against the live system, approved by digest, its resources stamped with no change, and its old state left as the version it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "05533250"
     },
     {
       "claim": "cdktn-synth",
@@ -1839,7 +1855,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "263ec5ea"
+      "commit": "c64d95fa"
     },
     {
       "claim": "estate-graph",
@@ -1899,7 +1915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "state-roles",
@@ -1907,7 +1923,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "c64d95fa"
     },
     {
       "claim": "state-export",
@@ -1915,55 +1931,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
-    },
-    {
-      "claim": "gcs-state",
-      "says": "a root whose state is in a bucket on fake-gcs-server with object versioning applies twice, each wave naming the generation it left, and terragucci state export writes the first generation once someone else approved the request",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0951ea83"
-    },
-    {
-      "claim": "azurerm-state",
-      "says": "a root whose azurerm backend on Azurite takes snapshots applies twice, each wave naming the snapshot it took of the state blob, and terragucci state export writes the first snapshot once someone else approved the request",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0951ea83"
-    },
-    {
-      "claim": "gcs-unlock",
-      "says": "terragucci unlock-state reads the lock a killed apply left on a gcs backend, by the generation of the lock object, and releases it only after an approval of that lock, recording who released it",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0951ea83"
-    },
-    {
-      "claim": "azurerm-unlock",
-      "says": "terragucci unlock-state reads the lease a killed apply left on an azurerm state blob, with the lock info in its metadata, and releases it only after an approval of that lock, recording who released it",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0951ea83"
-    },
-    {
-      "claim": "blob-migrate",
-      "says": "a migration moves a resource from a root whose state is on GCS to one whose state is on Azure Blob Storage: approved by digest, written under the lock object and the blob lease, and each version before and after recorded",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0951ea83"
-    },
-    {
-      "claim": "cloud-roles",
-      "says": "with oidc.gcp.roles and oidc.azure.roles, the roots of each environment plan and apply with the service account and the client of their glob, from the exports of the pipeline, and never the identity of the job",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0951ea83"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "state-edges",
@@ -1987,7 +1955,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "migrate-backend-tfe",
@@ -2003,7 +1971,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "migrate-resume-never",
@@ -2019,7 +1987,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "c64d95fa"
     },
     {
       "claim": "dora",
@@ -2321,7 +2289,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "tg-apply-branches",
@@ -2420,6 +2388,14 @@
       "commit": "65cae39f"
     },
     {
+      "claim": "resource-blast",
+      "says": "a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "33f6c5e8"
+    },
+    {
       "claim": "linked-states",
       "says": "after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands",
       "needs": null,
@@ -2457,7 +2433,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0951ea83"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "unlock-state",
@@ -2531,7 +2507,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "7c2ff19c"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "ephemeral-ttl",
@@ -2547,7 +2523,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "e67a400c"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "cdktn-ephemeral",
@@ -2738,6 +2714,51 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-state-versions",
+      "says": "on GitLab-managed state, each apply wave logs the state address of the root and the serial GitLab holds after it, and GitLab keeps each of those versions",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-state-export",
+      "says": "terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-unlock-state",
+      "says": "terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-ephemeral",
+      "says": "the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-state-edges",
+      "says": "a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
     }
   ]
 }

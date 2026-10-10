@@ -1,7 +1,7 @@
 ---
 title: Move resources between roots
 description: Split a root in two, merge two roots, or hand a resource to another root, with a migration file in the pull request, proved with no change, approved by digest and written under the state lock.
-claims: [migrate-split, migrate-resume, migrate-backend, migrate-backend-tfe, migrate-revert, cdktn-migrate, tg-migrate-split, blob-migrate]
+claims: [migrate-split, migrate-resume, migrate-backend, migrate-backend-tfe, migrate-revert, cdktn-migrate, tg-migrate-split, cdf-migrate, cdf-adopt, blob-migrate]
 prompt: |
   Read https://intentius.io/terragucci/guides/move-resources-between-roots/.
   In this repo, move the resource blocks I name from their root to the root I name, write the migration file the page describes for that move, and open a pull request.
@@ -119,6 +119,27 @@ The plan job plans the root against the old backend's state with no change; the 
 
 A root on HCP Terraform, Scalr, OTF or env zero's backend moves the same way, with `backend: cloud` (or `remote`) naming the workspace, and the token in `TF_TOKEN_<host>`. The job holds the workspace's lock while it writes. State exported from another platform moves with `backend: file`. [Migration files](/terragucci/reference/migration-files/#workspaces) lists the keys.
 
+## Estates
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu) as the binary, a root with a `live` block is an estate: it keeps no state file, and each resource carries its owner in two tags, `tofu-estate` and `tofu-address`. The same migration files move resources between estates and bring a state into one, through the same gate.
+
+| File | Roots | The write |
+|---|---|---|
+| `moves` | both are estates | `choudoufu live-mv -from-estate` rewrites the tags of each resource, run in the root it moves to |
+| `backends` | the root's code now has a `live` block in place of its backend block | `choudoufu live-import` reads the old state once and stamps the tags on each resource it verifies |
+
+The proof reads the live system and writes nothing. Each root plans as its code stands, and every change it plans must be one the write removes: a destroy in the estate a resource leaves and a create in the one it joins, or a create of a resource the old state holds and the live system verifies. `live-mv -dry-run` must find each resource, and `live-import` without `-approve` must verify each one. The digest covers each root's planned changes, the live id of each resource and, for an adoption, the old state's version id and digest.
+
+```text
+migration carve-jobs: retagging aws_sqs_queue.jobs from the estate of mono to the estate of team
+aws_sqs_queue.jobs: https://sqs.us-east-1.amazonaws.com/123456789012/jobs moves from estate mono to estate team
+mono: 1 planned change, each one the retag removes
+team: 1 planned change, each one the retag removes
+migration carve-jobs: every change each root plans is one the retag removes; digest jcs1-sha256:5c0e91d2...
+```
+
+Once approved, wave 1 writes the tags, plans every root again and requires no change. An adoption holds the old state's lock file while it stamps, refuses if that state moved since the plan, and leaves it where it was, at the version the record names. A move from a root with a state to an estate is refused: adopt the state first, then move. `terragucci migrate revert` refuses both; move the resources back with a `moves` file the other way.
+
 ## Put a migration back
 
 ```bash
@@ -139,7 +160,7 @@ A revert needs versions kept: a root with no version recorded before, or a local
 
 | Where | What it holds |
 |---|---|
-| `terragucci-report/migrations/<name>.json` in the job, and `<prefix>/<project>/migrations/<name>.json` in the [reports bucket](/terragucci/reference/reports-bucket/) | the moves, each root's version id and digest before and after, the proof and the plan after the write, the approver and the outcome |
+| `terragucci-report/migrations/<name>.json` in the job, and `<prefix>/<project>/migrations/<name>.json` in the [reports bucket](/terragucci/reference/reports-bucket/) | the moves, each root's version id and digest before and after, the proof and the plan after the write, the approver and the outcome; for estates, each resource's live id |
 | `_gates/tf-migrate/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) | one line per migration that wrote its states: the digest, the approver, the result and each root's version before and after |
 | the [audit trail](/terragucci/reference/audit-trail/) | a `migration` entry from that line, and the gate's request and approval |
 

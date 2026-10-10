@@ -584,8 +584,8 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 
 | Flag | Meaning |
 |---|---|
-| `<root>` | the root whose state to export, with a backend that keeps versions (an `s3` bucket with versioning, a `gcs` bucket with object versioning, an `azurerm` account with blob versioning or a backend with `snapshot = true`): a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
-| `--version` | the version id, as the estate page's State versions section lists it; the bucket's current version by default |
+| `<root>` | the root whose state to export, with a backend that keeps versions (an `s3` bucket with versioning, a `gcs` bucket with object versioning, an `azurerm` account with blob versioning or a backend with `snapshot = true`), or on GitLab-managed state: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
+| `--version` | the version id, as the estate page's State versions section lists it (GitLab's serial on GitLab-managed state); the current version by default |
 | `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |
 
@@ -608,7 +608,7 @@ An approval by the person who asked does not count. A request exports once; anot
 terragucci unlock-state <root> [--actor <name>] [--binary <b>] [--config <file>]
 ```
 
-Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes, a `gcs` backend's lock object, or an `azurerm` backend's lease on the state blob. A comment never runs it. Run it at a shell with:
+Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes, a `gcs` backend's lock object, an `azurerm` backend's lease on the state blob, or the lock of GitLab-managed state. A comment never runs it. Run it at a shell with:
 
 - the backend's credentials;
 - the forge token in the variable `token_env` names (by default `FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN`);
@@ -616,10 +616,10 @@ Releases the state lock a job killed mid-apply left on `<root>`: the lock file a
 
 | Step | Does |
 |---|---|
-| read the lock | inits the root and reads `<key>.tflock`: its ID, who took it and when |
+| read the lock | inits the root and reads the lock file, the gcs lock object or the azurerm lease and metadata, or asks GitLab's lock endpoint: its ID, who took it and when |
 | check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
 | wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `chant approve tf-unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
-| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID, and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
+| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
 
 | Flag | Meaning |
 |---|---|

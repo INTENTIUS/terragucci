@@ -1,7 +1,7 @@
 ---
 title: Ephemeral environments per pull request
 description: Give each pull request its own copy of a set of roots, under state keys of its own, and have terragucci destroy the copy when the pull request closes or its TTL passes.
-claims: [ephemeral-pr, ephemeral-ttl, tg-ephemeral-pr, cdktn-ephemeral]
+claims: [ephemeral-pr, ephemeral-ttl, tg-ephemeral-pr, cdktn-ephemeral, gl-ephemeral]
 prompt: |
   Read https://intentius.io/terragucci/guides/ephemeral-environments/.
   Look at this repo's roots and tell me which of them could be copied per pull request with ephemeral: name each root's backend and the key its copy would get, and, in a Terragrunt repo, whether the remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX.
@@ -90,13 +90,15 @@ Forks never get one. On GitLab the job needs the project token, so `ephemeral` w
 
 | Setup | Gets an environment |
 |---|---|
-| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu), with an `s3`, `azurerm`, `gcs` or `local` backend | yes |
+| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu), with an `s3`, `azurerm`, `gcs` or `local` backend, or on GitLab-managed state | yes |
 | a Terragrunt unit whose `remote_state` key reads `TERRAGUCCI_EPHEMERAL_SUFFIX` | yes; see [Terragrunt units](#terragrunt-units) |
 | a CDK Terrain stack, with `synth` | yes; see [Synthesized roots](#synthesized-roots) |
 | a root in HCP Terraform (a `cloud` block), or on another backend | no: the job fails with a config error naming the root |
 | a Terragrunt unit whose key does not read the suffix | no: the job fails with a config error naming the file, before anything plans |
 
 terragucci never selects a CLI workspace. The suffix goes in the backend block's own key attribute (`prefix` on `gcs`), so the environment's lock file and a bucket listing show it plainly.
+
+On GitLab-managed state the suffix goes on the state name in `address`, `lock_address` and `unlock_address`, from the block or the `TF_HTTP_*` variables: `.../terraform/state/app` becomes `.../terraform/state/app-pr-12`, which GitLab creates on its first write. A lock address that is not `<address>/lock` is refused, so a copy never takes the root's own lock. An `http` backend that is not GitLab's is refused.
 
 ## Terragrunt units
 
