@@ -854,6 +854,38 @@
       "commit": "0c494d98"
     },
     {
+      "claim": "terramate-waves",
+      "says": "init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-affected",
+      "says": "a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-sharing",
+      "says": "a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "terramate-stale",
+      "says": "the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
       "claim": "atmos-roles",
       "says": "oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack",
       "needs": null,
@@ -2176,30 +2208,6 @@
       "commit": "7c2ff19c"
     },
     {
-      "claim": "image",
-      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "env",
-      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "local-plan",
-      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
       "claim": "tg-ephemeral-pr",
       "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
       "needs": null,
@@ -2230,6 +2238,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "e67a400c"
+    },
+    {
+      "claim": "image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
     },
     {
       "claim": "mr-widget",
