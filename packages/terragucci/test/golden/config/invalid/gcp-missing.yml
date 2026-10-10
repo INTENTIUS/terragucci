@@ -1,0 +1,3 @@
+oidc:
+  gcp:
+    workload_identity_provider: projects/1/locations/global/workloadIdentityPools/p/providers/g

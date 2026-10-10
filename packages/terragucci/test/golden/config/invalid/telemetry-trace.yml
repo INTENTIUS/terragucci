@@ -1,0 +1,2 @@
+telemetry:
+  trace_url: https://grafana.example/explore

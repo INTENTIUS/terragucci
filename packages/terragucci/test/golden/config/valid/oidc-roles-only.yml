@@ -1,0 +1,4 @@
+oidc:
+  audience: sts.amazonaws.com
+  roles:
+    "envs/dev/**": { plan: dev-plan, apply: dev-apply }

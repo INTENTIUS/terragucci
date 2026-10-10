@@ -1,0 +1,3 @@
+binary: tofu
+projects:
+  github.com/acme/infra: {}

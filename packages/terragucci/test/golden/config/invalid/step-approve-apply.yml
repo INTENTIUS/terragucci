@@ -1,0 +1,4 @@
+steps:
+  - run: echo
+    before: apply
+    on_failure: approve

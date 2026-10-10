@@ -1,0 +1,5 @@
+# A name both env and pass set.
+env:
+  TF_VAR_region: us-east-1
+pass:
+  vars: [TF_VAR_region]
