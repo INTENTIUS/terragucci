@@ -208,6 +208,7 @@ policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the 
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
 import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
+waves-after|waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three|
 comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
 dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
@@ -4458,14 +4459,14 @@ claim_import_terrateam() {
   # a flag, apply requirements and access control. `terragucci import
   # terrateam` writes terragucci.yml from it and names what it cannot map;
   # `config check` passes; and `init --dry-run` finds the example's 15 roots
-  # and cuts them into the waves the dependencies ask for, as far as one
-  # canary set carries them: dev's platform, dev's orders, the other
-  # platforms, the rest. BREAK: the written waves block, the dependency
-  # mapping, is dropped before init, so the roots apply in their two read
-  # layers and staging no longer waits for dev.
+  # and cuts them into the waves the dependencies ask for, written as
+  # waves.after: dev's platform, dev's services, staging's platform, prod's
+  # platform with staging's services, prod's services. BREAK: the written
+  # waves block, the dependency mapping, is dropped before init, so the roots
+  # apply in their two read layers and staging no longer waits for dev.
   log() { echo "[smoke import-terrateam] $*" >&2; }
   local tree out rc=0 got roots canary
-  local want="envs/dev/platform|envs/dev/orders|envs/prod/platform,envs/staging/platform|envs/dev/email,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search"
+  local want="envs/dev/platform|envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search|envs/staging/platform|envs/prod/platform,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search|envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search"
   tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
   cp -R "$EXAMPLE/." "$tree/"
   mkdir -p "$tree/.terrateam"
@@ -4520,8 +4521,8 @@ access_control:
 YAML
   # The example's own terragucci.yml gives way to the imported one.
   out="$(cd "$tree" && "$TERRAGUCCI" import terrateam --force --forge forgejo 2>&1)" || { log "import failed: $out"; return 1; }
-  grep -q '^  dirs.envs/prod/\*\*.when_modified.depends_on (Order): envs/prod/platform after envs/staging/platform is not kept' <<<"$out" \
-    || { log "the import did not name the dependency one canary set cannot keep"; rc=1; }
+  grep -q '^  dirs.envs/prod/\*\*.when_modified.depends_on (Order): waves.after: .*envs/prod/platform after envs/staging/platform' <<<"$out" \
+    || { log "the import did not write prod's dependency on staging's platform into waves.after"; rc=1; }
   grep -q '^  access_control.policies (Access control): ' <<<"$out" || { log "the import did not name access_control as not mapped"; rc=1; }
   grep -q '^  workflows\[0\].plan\[1\].extra_args (Flags at run time)' <<<"$out" || { log "the import did not name the flag a step passes"; rc=1; }
   if [ -n "${BREAK:-}" ]; then
@@ -4540,7 +4541,81 @@ YAML
     | map(select(length > 0) | sort | join(",")) | join("|")' <<<"$out")"
   [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves depends_on asks for, $want"; rc=1; }
   drop_work "$tree"
-  [ $rc = 0 ] && log "the imported pipeline applies dev's platform, then dev's orders, then the other platforms, then the rest"
+  [ $rc = 0 ] && log "the imported pipeline applies dev, then staging's platform, then prod's platform with staging's services, then prod's services"
+  return $rc
+}
+
+claim_waves_after() {
+  # A scratch repo with three plain roots that read nothing of each other's
+  # state, and terragucci.yml whose waves.after puts app after database and
+  # database after network. init must cut them into three waves, network,
+  # database, app; the push to main must go green; and a pull request that
+  # changes network alone must plan all three, its plan note naming them.
+  # BREAK: terragucci.yml has no waves.after, so the three share one wave and
+  # the pull request plans network alone.
+  log() { echo "[smoke waves-after] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/waves-after" main_sha head_sha pr root cfg out layers deadline state notes roots rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo waves-after || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for root in network database app; do
+    mkdir -p "$work/tree/$root"
+    echo 1 > "$work/tree/$root/rev.txt"
+    cat > "$work/tree/$root/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+TF
+  done
+  cfg='forge: forgejo\nbinary: tofu\ngate: never\n'
+  [ -z "${BREAK:-}" ] && cfg="${cfg}waves:\n  after:\n    app: [database]\n    database: [network]\n"
+  # shellcheck disable=SC2059 # the config's newlines are printf escapes
+  printf "$cfg" > "$work/tree/terragucci.yml"
+  out="$(cd "$work/tree" && "$TERRAGUCCI" init --dry-run --json 2>/dev/null)" || { log "init --dry-run failed"; return 1; }
+  layers="$(jq -r '[.results.layers[] | sort | join(",")] | join("|")' <<<"$out")"
+  log "init's waves: $layers"
+  [ "$layers" = "network|database|app" ] || { log "init cut the roots into $layers, not network|database|app"; rc=1; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  main_sha="$(push_tree "$work/tree" "$repo" main "waves-after: first")" || return 1
+  wait_run "$repo" "$main_sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the push to main did not go green"; return 1; }
+  echo 2 > "$work/tree/network/rev.txt"
+  head_sha="$(push_tree "$work/tree" "$repo" network-change "waves-after: change network")" || return 1
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"network-change","base":"main","title":"waves-after: change network"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  [ -n "$pr" ] && [ "$pr" != null ] || { log "no pull request"; return 1; }
+  log "pull request $pr for ${head_sha:0:8}"
+  # The plan job's status on the head says when its note is up.
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  state=pending
+  while [ "$state" = pending ] && [ "$(date +%s)" -lt "$deadline" ]; do
+    sleep 5
+    state="$(api "$URL/api/v1/repos/$repo/commits/$head_sha/statuses" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // "pending"')"
+  done
+  log "terragucci/plan on ${head_sha:0:8}: $state"
+  notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq '[.[] | select(.body | startswith("<!-- terragucci:plan"))]')"
+  if [ "$(jq length <<<"$notes")" -lt 1 ]; then
+    log "pull request $pr has no plan note"; rc=1
+  else
+    roots="$(jq -r '.[-1].body' <<<"$notes" | head -1 | sed -E 's/.*roots=([^ ]*) -->.*/\1/' | tr , '\n' | sort | paste -sd, -)"
+    log "the plan note covers $roots"
+    [ "$roots" = "app,database,network" ] || { log "a change to network planned $roots, not app,database,network"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "network, database and app apply in three waves, and a change to network plans all three"
   return $rc
 }
 
@@ -19017,6 +19092,7 @@ comment-plan    runner self! weight=150
 comment-atlantis runner self! weight=150
 import-atlantis ex after=boot weight=150
 import-terrateam weight=30
+waves-after     runner self! weight=150
 lock-wait       otel! self! weight=150
 dash-pipeline   ex otel after=boot weight=120
 dash-changes    ex otel after=boot weight=120

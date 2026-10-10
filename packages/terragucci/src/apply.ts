@@ -101,7 +101,8 @@ import {
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
-import { estateOf, globMatch, remoteStateReads, rootDependencies, rootStates } from "./detect";
+import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates } from "./detect";
+import { detectShape } from "./shape";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
@@ -1010,6 +1011,23 @@ export function waveReads(repo: string, waves: readonly string[][], roots: reado
   return { reads, waves: wavesOf(waveOf, [...reads.values()].flat().map((r) => r.upstream), wave) };
 }
 
+/** The waves a wave's roots follow: `reads`, and the waves of the roots `waves.after` puts before them. */
+function afterWaves(repo: string, settings: ResolvedSettings, options: Pick<ApplyWaveOptions, "layers" | "canary">, roots: readonly string[], reads: number[], wave: number): number[] {
+  const after = detectShape(repo, settings).after;
+  if (!after) return reads;
+  const waves = applyWaves(options.layers, options.canary);
+  const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
+  const order = explicitOrder(after, options.layers.flat());
+  const ups = roots.flatMap((r) => [...(order.get(r) ?? [])]);
+  return [...new Set([...reads, ...wavesOf(waveOf, ups, wave)])].sort((a, b) => a - b);
+}
+
+/** For each plain root `waves.after` orders, the roots it puts before it. */
+function plainDependencies(repo: string, settings: ResolvedSettings, roots: string[]): Map<string, string[]> | undefined {
+  const order = explicitOrder(detectShape(repo, settings).after, roots);
+  return order.size ? new Map([...order].map(([r, ups]) => [r, [...ups].sort()])) : undefined;
+}
+
 /** Say what a wave's roots read, as they plan: the state of roots an earlier wave applied. */
 function logReads(label: string, reads: Map<string, ReportRead[]>, waves: readonly string[][]): void {
   const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
@@ -1033,7 +1051,7 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     const facts = runFacts(repo, env, settings.forge);
     // A Terragrunt repo's waves and edges are the ones the wave cut from terragrunt find; before it did, the units' files give the edges.
     const waves = options.terragrunt ? (w.units?.waves ?? options.layers) : applyWaves(options.layers, options.canary);
-    const reads = options.terragrunt ? (w.units?.edges ?? unitEdges(walkUnits(repo, w.settings?.terragrunt?.exclude))) : rootDependencies(repo, options.layers.flat());
+    const reads = options.terragrunt ? (w.units?.edges ?? unitEdges(walkUnits(repo, w.settings?.terragrunt?.exclude))) : rootOrder(repo, options.layers.flat(), detectShape(repo, settings).after);
     const states = options.terragrunt ? new Map() : rootStates(repo, options.layers.flat());
     const skeleton = runSkeleton(facts.project, facts.commit, waves, reads, states);
     const spans = waveSpans(w);
@@ -1064,7 +1082,8 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   }
   // The roots whose state each root reads, from the code: remote state for plain roots, dependency blocks for units.
   // A Terragrunt unit's dependency and dependencies blocks, from its terragrunt.hcl: the units whose outputs it reads.
-  const unitDeps = options.terragrunt ? new Map(walkUnits(repo, settings.terragrunt?.exclude).map((u) => [u.path, u.dependencies])) : undefined;
+  // A plain root's: the roots waves.after puts before it.
+  const unitDeps = options.terragrunt ? new Map(walkUnits(repo, settings.terragrunt?.exclude).map((u) => [u.path, u.dependencies])) : plainDependencies(repo, settings, options.layers.flat());
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => {
@@ -1204,6 +1223,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     return EXIT.failed;
   }
   const settings = (w.settings = read.settings);
+  if (!options.terragrunt) w.waveReads = afterWaves(repo, settings, options, roots, w.waveReads ?? [], wave);
   const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
   if ("error" in stepsRead) {
     console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
@@ -1433,6 +1453,7 @@ async function runShare(
     return EXIT.failed;
   }
   const settings = (w.settings = read.settings);
+  if (!options.terragrunt) w.waveReads = afterWaves(repo, settings, options, roots, w.waveReads ?? [], wave);
   const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
   if ("error" in stepsRead) {
     console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
