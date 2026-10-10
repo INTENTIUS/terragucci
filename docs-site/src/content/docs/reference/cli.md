@@ -32,6 +32,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
+| `query` | runs one SQL statement over the inventory, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
 | `mcp` | a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent |
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
@@ -427,6 +428,27 @@ Serves `POST /slack`, `POST /teams` and `GET /healthz`, with its settings from [
 
 The relay runs until stopped, whatever error a request hits.
 
+## query
+
+```bash
+terragucci query "<statement>" [--config <file>] [--json]
+    [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+```
+
+Loads the bucket's files into an in-memory SQLite database, runs the statement and prints the rows. It needs Node.js 22.13 or later. [Query the estate with SQL](/terragucci/guides/query-with-sql/) lists the tables.
+
+| Flag | Meaning |
+|---|---|
+| `--config` | the config file; default the one in the working directory |
+| `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read, in place of `reports` in a repo's config |
+| `--json` | the envelope, with `results.columns`, `results.rows` and `results.tables`, the row count of each table |
+
+| | `query` |
+|---|---|
+| Reads | each project's `inventory.json`, `changes.json` and `edges.json`, and `audit.jsonl` |
+| Projects | as `estate`: a control repo's `projects:`, with `audit.jsonl` from `defaults.reports`; otherwise the ones the top `index.json` lists |
+| Refuses | a statement that does not begin with `SELECT`, `WITH` or `VALUES`, and any write |
+
 ## mcp
 
 ```text
@@ -693,7 +715,7 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` and `config check` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check` and `query` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -732,6 +754,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
 | `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
+| `query` | rows printed | | a bad flag or config, a statement that does not run or writes | | |
 | `mcp` | the client closed stdin | | a bad flag or config | | |
 | `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
 

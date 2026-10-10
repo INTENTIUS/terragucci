@@ -1886,6 +1886,14 @@
       "commit": "263ec5ea"
     },
     {
+      "claim": "query-sql",
+      "says": "terragucci query, run on the reports bucket with no server, answers the SQS queues changed in the last 7 days with their approvers with the rows the audit trail holds",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c30cf05d"
+    },
+    {
       "claim": "state-versions",
       "says": "a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content",
       "needs": null,

@@ -1,0 +1,2 @@
+pass:
+  secrets: [github_token]

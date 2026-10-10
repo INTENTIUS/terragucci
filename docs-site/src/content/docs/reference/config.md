@@ -10,6 +10,17 @@ prompt: |
 
 terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root; two is an error. `terragucci config check` lists every problem.
 
+## Schema
+
+The file's JSON Schema is at [`https://intentius.io/terragucci/terragucci.schema.json`](/terragucci/terragucci.schema.json), and in the package as `@intentius/terragucci/terragucci.schema.json`. `config check` validates against it. The schema checks each key's type and values; rules across keys, and those that read the repo, are `config check`'s alone.
+
+For completion and checks in an editor that runs the YAML language server, start the file with:
+
+```yaml
+# yaml-language-server: $schema=https://intentius.io/terragucci/terragucci.schema.json
+binary: tofu
+```
+
 ## Defaults with no file
 
 | Setting | Default |
