@@ -67,3 +67,49 @@ export function rootOf(dir: unknown): string | undefined {
   return parts.length ? parts.join("/") : ".";
 }
 
+
+/**
+ * A source tool's dependencies as `waves.after`: each `[root, upstream]` the
+ * reads (`reads`, root to the roots whose state it reads) do not already give,
+ * by root. `cycle` names the roots of a cycle the dependencies and reads make
+ * together, when they do; then nothing is written.
+ */
+export function wavesAfterOf(edges: readonly (readonly [string, string])[], reads: ReadonlyMap<string, ReadonlySet<string>> = new Map()): { after: Record<string, string[]>; fromReads: Set<string>; cycle?: string[] } {
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>();
+    const walk = (x: string): boolean => [...(reads.get(x) ?? [])].some((u) => u === to || (!seen.has(u) && (seen.add(u), walk(u))));
+    return walk(from);
+  };
+  const fromReads = new Set<string>();
+  const after: Record<string, string[]> = {};
+  for (const [d, u] of edges) {
+    if (d === u) continue;
+    if (reaches(d, u)) {
+      fromReads.add(`${d}\0${u}`);
+      continue;
+    }
+    if (!(after[d] ?? []).includes(u)) after[d] = [...(after[d] ?? []), u].sort();
+  }
+  // A cycle: a root that, through the order written and the reads, comes after itself.
+  const next = (x: string): string[] => [...new Set([...(after[x] ?? []), ...(reads.get(x) ?? [])])];
+  const state = new Map<string, 1 | 2>();
+  const stack: string[] = [];
+  const visit = (x: string): string[] | undefined => {
+    if (state.get(x) === 2) return undefined;
+    if (state.get(x) === 1) return [...stack.slice(stack.indexOf(x)), x];
+    state.set(x, 1);
+    stack.push(x);
+    for (const u of next(x)) {
+      const c = visit(u);
+      if (c) return c;
+    }
+    stack.pop();
+    state.set(x, 2);
+    return undefined;
+  };
+  for (const x of Object.keys(after).sort()) {
+    const cycle = visit(x);
+    if (cycle) return { after: {}, fromReads, cycle };
+  }
+  return { after: Object.fromEntries(Object.entries(after).sort(([a], [b]) => a.localeCompare(b))), fromReads };
+}

@@ -67,7 +67,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Workspace | `projects[].workspace` | `projects[].workspace` | none: each root is a directory with one state |
 | What triggers a plan | `autoplan.when_modified`, `autoplan.enabled` | `include_patterns`, `exclude_patterns`, `on_pull_request_pushed` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
 | Binary version | `terraform_version` | a project's `opentofu`, or the action's `terraform-version` or `opentofu-version` input | `binary` and `version`, or the pins the roots carry |
-| Order | `execution_order_group`, `depends_on`, `abort_on_execution_order_fail` | `depends_on`, layering | waves from `terraform_remote_state` reads; `waves.canary` puts roots first; Terragrunt's dependency layers |
+| Order | `execution_order_group`, `depends_on`, `abort_on_execution_order_fail` | `depends_on`, layering | waves from `terraform_remote_state` reads; `waves.after`, which an import writes from `depends_on`, for an order the reads do not give; `waves.canary` puts roots first; Terragrunt's dependency layers |
 | Concurrency | `parallel_plan`, `parallel_apply` | | `parallelism` within a job: 1 when either is false, otherwise read from the state backend; `waves.jobs` to spread one wave over several jobs (plain roots on GitHub and Forgejo) |
 | Required approval | `apply_requirements: [approved]` | `apply_requirements: [approved]` | branch protection for a merge; with `apply.when: pull-request`, `apply.requires: [approved]`: a reviewer other than the author approved the head |
 | Checks green | `apply_requirements: [mergeable]` | `apply_requirements: [mergeable]` | with `apply.when: pull-request`, `apply.requires: [mergeable, checks]`: the forge can merge it, no status failed or running, and `terragucci/plan` passed |
@@ -110,7 +110,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 
 Terrateam applies on a `terrateam apply` comment before merge, so the import writes `apply.when: pull-request`, with `apply.requires` from `apply_requirements.checks`. `autoapply` or `apply_after_merge` keeps the default, `apply.when: merge`.
 
-`depends_on` is read against the repo. A dependency the roots' `terraform_remote_state` reads already give needs no key. The rest go into `waves.canary`, which applies the roots it names before every other root. Terrateam's layered-runs example is a chain of three:
+`depends_on` is read against the repo. A dependency the roots' `terraform_remote_state` reads already give needs no key. The rest go into [`waves.after`](/terragucci/reference/config/#root-order), each root after the roots it depends on. Terrateam's layered-runs example is a chain of three:
 
 ```yaml
 dirs:
@@ -123,7 +123,18 @@ dirs:
       depends_on: 'dir:database'
 ```
 
-If `database` reads `network`'s state, the import writes `waves.canary: [database, network]` and the three apply in three waves. If no root reads another's state, it writes `waves.canary: [network]` and lists `application after database` as not mapped: one canary set gives one step of order. Read the upstream's outputs with `terraform_remote_state` and import again to keep the second step.
+If no root reads another's state, the import writes the whole chain, and the three apply in three waves:
+
+```yaml
+waves:
+  after:
+    application: [database]
+    database: [network]
+```
+
+If `database` already reads `network`'s state, it writes only `application: [database]`. A cycle that `depends_on` and the reads make together is listed as not mapped, and no order is written.
+
+`import atlantis` and `import digger` write a project's `depends_on` the same way, naming each project by its `dir`.
 
 | Setting | Terrateam | terragucci |
 |---|---|---|
@@ -131,7 +142,7 @@ If `database` reads `network`'s state, the import writes `waves.canary: [databas
 | Workspace | `dirs.<dir>.workspaces`, `create_and_select_workspace` | none: each root is a directory with one state |
 | Tags | `tags`, a `tag_query` | none: a key that picks roots takes globs of their paths, which an import writes from a query of `dir:` terms joined by `or` |
 | What triggers a plan | `when_modified`: `file_patterns`, `autoplan`, `autoplan_draft_pr` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
-| Order | `when_modified.depends_on` | waves from `terraform_remote_state` reads; an order the reads do not give becomes `waves.canary`, which puts the roots it names first |
+| Order | `when_modified.depends_on` | waves from `terraform_remote_state` reads; an order the reads do not give becomes `waves.after`, each root after the roots it depends on |
 | When it applies | `terrateam apply` before merge; `autoapply` or `apply_after_merge` after | `apply.when: pull-request` before merge, or the default, `apply.when: merge`, after |
 | Required approval | `apply_requirements.checks[].approved` | with `apply.when: pull-request`, `apply.requires: [approved]`: a reviewer other than the author approved the head; how many and who is branch protection's job |
 | Checks green | `merge_conflicts`, `status_checks` | with `apply.when: pull-request`, `apply.requires`: `mergeable` for no conflicts, `checks` for no status failed or running |

@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
-import { forgeFromHost, type Binary, type ForgeName } from "./config";
+import { ConfigError, forgeFromHost, type Binary, type ForgeName } from "./config";
 import { atmosStateReads } from "./atmos";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
@@ -481,22 +481,89 @@ export function rootDependencies(repo: string, roots: string[], { estates: withE
   );
 }
 
+/** `waves.after`: for a root or glob, the roots or globs it applies after. */
+export type WavesAfter = Record<string, readonly string[]>;
+
+/**
+ * The order `waves.after` gives: for each root, the roots it names as
+ * upstreams, its globs matched against `roots`. A key or an upstream that
+ * matches no root is a config error naming it, and so is a root named after
+ * itself. Only roots with an upstream are in the map.
+ */
+export function explicitOrder(after: WavesAfter | undefined, roots: readonly string[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  if (!after) return out;
+  const match = (g: string): string[] => roots.filter((r) => r === posix(g).replace(/\/+$/, "") || globMatch(g, r));
+  const unknown: string[] = [];
+  const selfs: string[] = [];
+  for (const [key, ups] of Object.entries(after)) {
+    const downs = match(key);
+    if (downs.length === 0) unknown.push(key);
+    for (const g of ups) {
+      const found = match(g);
+      if (found.length === 0) {
+        if (!unknown.includes(g)) unknown.push(g);
+        continue;
+      }
+      for (const d of downs) {
+        for (const u of found) {
+          // A glob can match the root it orders, which skips it; a root named after itself by name on both sides is an error.
+          if (u === d) {
+            if (posix(key) === d && posix(g) === d && !selfs.includes(d)) selfs.push(d);
+            continue;
+          }
+          if (!out.has(d)) out.set(d, new Set());
+          out.get(d)!.add(u);
+        }
+      }
+    }
+  }
+  if (unknown.length) throw new ConfigError(`waves.after names ${unknown.map((u) => JSON.stringify(u)).join(", ")}, which ${unknown.length === 1 ? "matches" : "match"} no root; the roots are ${[...roots].sort().join(", ")}`);
+  if (selfs.length) throw new ConfigError(`waves.after puts ${selfs.join(", ")} after ${selfs.length === 1 ? "itself" : "themselves"}`);
+  return out;
+}
+
+/** Every root each root must follow: the roots whose state it reads, and the ones `waves.after` puts before it. */
+export function rootOrder(repo: string, roots: string[], after?: WavesAfter): Map<string, Set<string>> {
+  const deps = rootDependencies(repo, roots);
+  for (const [r, ups] of explicitOrder(after, roots)) for (const u of ups) deps.get(r)!.add(u);
+  return deps;
+}
+
 /**
  * Roots in layers that can apply together: a root that reads another's state
- * through `terraform_remote_state` comes after it. A cycle is an error.
+ * through `terraform_remote_state`, or that `waves.after` puts after another,
+ * comes after it. A cycle is an error naming the roots it holds.
  */
-export function applyLayers(repo: string, roots: string[]): string[][] {
-  const deps = rootDependencies(repo, roots);
+export function applyLayers(repo: string, roots: string[], after?: WavesAfter): string[][] {
+  const explicit = explicitOrder(after, roots);
+  const deps = rootOrder(repo, roots, after);
   const layers: string[][] = [];
   const done = new Set<string>();
   while (done.size < roots.length) {
     const layer = roots.filter((r) => !done.has(r) && [...deps.get(r)!].every((d) => done.has(d)));
     if (layer.length === 0) {
       const stuck = roots.filter((r) => !done.has(r));
+      const cycle = cycleOf(deps, stuck);
+      if (cycle.some((r, i) => explicit.get(r)?.has(cycle[(i + 1) % cycle.length]))) {
+        throw new ConfigError(`waves.after puts these roots in a cycle: ${[...cycle, cycle[0]].join(" after ")}`);
+      }
       throw new Error(`these roots read each other's state in a cycle: ${stuck.join(", ")}`);
     }
     layer.forEach((r) => done.add(r));
     layers.push(layer);
   }
   return layers;
+}
+
+/** One cycle among `stuck`, each root followed by one it must come after. */
+function cycleOf(deps: Map<string, Set<string>>, stuck: string[]): string[] {
+  const left = new Set(stuck);
+  const path: string[] = [];
+  let at = stuck[0];
+  while (!path.includes(at)) {
+    path.push(at);
+    at = [...deps.get(at)!].find((d) => left.has(d))!;
+  }
+  return path.slice(path.indexOf(at));
 }

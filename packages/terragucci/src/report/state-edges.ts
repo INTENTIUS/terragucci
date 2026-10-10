@@ -3,7 +3,8 @@
  * `terragucci.state-edges/v1`. A report names, for each root, the roots it
  * reads: `roots[].reads`, each `terraform_remote_state` block's upstream,
  * and `roots[].dependencies`, a Terragrunt unit's `dependency` and
- * `dependencies` blocks. The upload keeps, for each
+ * `dependencies` blocks or the roots `waves.after` puts before a plain
+ * root. The upload keeps, for each
  * root, the reads the newest default-branch run found in its code, the
  * newest run that planned it (a pull request's plan, a drift check or an
  * apply wave's plan), and the newest apply wave that changed it.
