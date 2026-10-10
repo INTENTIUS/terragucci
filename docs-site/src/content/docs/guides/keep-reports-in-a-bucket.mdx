@@ -45,7 +45,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
    For a store that is not AWS, add `endpoint`; without it, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
 
-   Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. For a bucket in another region, set it in the config's `env`:
+   Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. To sign for another region, set it in the config's `env`:
 
    ```yaml
    env:
@@ -59,7 +59,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
      prefix: reports
    ```
 
-   An emulator sets `endpoint`; the default is `https://storage.googleapis.com`.
+   `endpoint` defaults to `https://storage.googleapis.com`; an emulator sets its own.
      </TabItem>
      <TabItem label="Azure">
    ```yaml
@@ -68,11 +68,11 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
      prefix: reports
    ```
 
-   The bucket is `az://<storage account>/<container>`. A sovereign cloud or an emulator sets `endpoint`; the default is `https://<account>.blob.core.windows.net`.
+   The bucket is `az://<storage account>/<container>`. Set `endpoint` for a sovereign cloud or an emulator; it defaults to `https://<account>.blob.core.windows.net`.
      </TabItem>
    </Tabs>
 
-   `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` and each root's `plan.txt` there. Without `url` the note links them in the bucket, presigned for up to 7 days.
+   `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` and each root's `plan.txt` there. Without `url` the note uses presigned bucket links that last up to 7 days.
 
 2. Regenerate the pipeline and commit it.
 
@@ -107,7 +107,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`; `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` sets the STS address. When STS refuses it, the job fails with STS's error.
      </TabItem>
      <TabItem label="GCP">
-   The job writes as `oidc.gcp.plan_service_account`, through the `external_account` file in `GOOGLE_APPLICATION_CREDENTIALS`.
+   Writes go through `oidc.gcp.plan_service_account`, using the `external_account` file in `GOOGLE_APPLICATION_CREDENTIALS`.
 
    | Grant to the plan service account | On | For |
    |---|---|---|
@@ -140,7 +140,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
      </TabItem>
    </Tabs>
 
-   Even so, a pull request's plan can overwrite any object under the prefix, the index included. The apply job's CI artifact is the record of what was applied.
+   Even so, a pull request's plan can overwrite any object under the prefix, including the index. The apply job's CI artifact is the record of what was applied.
 
 4. Open a pull request. When the plan job finishes, its log says where the report went:
 
@@ -165,7 +165,15 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 5. <span id="5-serve-the-index"></span>Open the reports.
 
-   Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. A `tf-apply` wave's upload also writes the resources each applied root holds to the project's `inventory.json`, what it did to each resource to the project's `changes.json`, and the version of each applied root's state to the project's `states.json`. Writes are retried up to 8 times:
+   Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. A `tf-apply` wave also writes these at the project's path:
+
+   | File | Holds |
+   |---|---|
+   | `inventory.json` | the resources each applied root holds |
+   | `changes.json` | what the wave did to each resource |
+   | `states.json` | the version of each applied root's state |
+
+   Writes are retried up to 8 times:
 
    | Store | Index write |
    |---|---|
@@ -196,7 +204,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    [`terragucci estate`](/terragucci/guides/see-every-project/) prints such a link to its page on each cloud.
      </TabItem>
      <TabItem label="Front door">
-   Deploy the template in [The front door](#the-front-door) below, then set `url` to its address:
+   Deploy the template in [The front door](#the-front-door) below and set `url` to its address:
 
    ```yaml
    reports:
@@ -217,9 +225,9 @@ Retention is your bucket's lifecycle rule.
 
 ## The front door
 
-The template is CloudFront with Origin Access Control in front of the bucket, an OpenID Connect sign-in at the edge with a signed session cookie, a TLS certificate and the DNS name. It runs in your account and talks to nothing of terragucci's.
+The template puts CloudFront and an OpenID Connect sign-in with a signed session cookie in front of the bucket. It runs in your account and talks to nothing of terragucci's.
 
-Register a web application with your identity provider first, with the redirect URI `https://reports.acme.example/_terragucci/callback` and the `openid` and `email` scopes. Any provider whose token endpoint takes `client_secret_post` works, Google, Microsoft Entra ID and Okta among them.
+First register a web application with your identity provider. Give it the redirect URI `https://reports.acme.example/_terragucci/callback` and the `openid` and `email` scopes. Any provider whose token endpoint takes `client_secret_post` works; Google, Microsoft Entra ID and Okta do.
 
 <Steps>
 
@@ -249,7 +257,7 @@ Register a web application with your identity provider first, with the redirect 
      --query "Stacks[0].Outputs[?OutputKey=='BucketPolicyStatement'].OutputValue" --output text
    ```
 
-   For a bucket with no policy of its own, `WriteBucketPolicy=true` writes it instead. A bucket encrypted with your own KMS key also needs `kms:Decrypt` for `cloudfront.amazonaws.com`, on the same `AWS:SourceArn` condition.
+   `WriteBucketPolicy=true` writes it instead for a bucket with no policy of its own. A bucket encrypted with your own KMS key also needs `kms:Decrypt` for `cloudfront.amazonaws.com` under the same `AWS:SourceArn` condition.
 
 4. Set `url: https://reports.acme.example` under `reports:` and run `npx terragucci init` again.
 

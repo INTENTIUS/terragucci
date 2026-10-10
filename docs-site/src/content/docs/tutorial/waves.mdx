@@ -49,7 +49,7 @@ The example runs `approval: sealed`, so its approvals need a key. Your own repo 
 
 <Steps>
 
-1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key for the example's sealed mode and commits it to `.chant/allowed_signers` on main, the file listing who may approve.
+1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. That command's first run also generates a key for the example's sealed mode and commits it to `.chant/allowed_signers` on main; that file lists who may approve.
 
    <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 

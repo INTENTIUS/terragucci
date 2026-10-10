@@ -9,7 +9,7 @@ sidebar:
 claims: [boot]
 prompt: |
   Read https://intentius.io/terragucci/tutorial/.
-  Clone https://github.com/INTENTIUS/terragucci, run `npm ci` and `just example up` as the page says, and report the Forgejo URL and the boot time. If it fails, match the error to "When something looks wrong" and tell me the fix.
+  Clone https://github.com/INTENTIUS/terragucci, run `npm ci` and `just example up` as the page says, and report the Forgejo URL and the boot time. If it fails, match the error to "Troubleshooting" and tell me the fix.
   `just example up` applies the example to floci, its local AWS stand-in. That is the one exception to the line below, and only against floci.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -17,7 +17,7 @@ prompt: |
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
 
-You run terragucci against a small shop's estate on your machine, with no cloud account.
+You need no cloud account to run terragucci against a small shop's estate on your machine.
 
 | Page | You see | Time |
 |---|---|---|
@@ -57,7 +57,7 @@ npm ci
 just example up
 ```
 
-It starts Forgejo (a local forge) with its runner, and floci (an AWS stand-in). It pushes the example and the pipeline applies every root:
+It starts Forgejo (a local forge) with its runner, and floci (an AWS stand-in). Then it pushes the example and the pipeline applies every root:
 
 <Captured step="boot" />
 
@@ -105,7 +105,7 @@ With Terraform, `binary: terraform` runs the same pipeline ([Choose your binary]
 | containers restart or Docker stops answering | Docker is short of memory. Give it 4 GB. |
 | a link to `http://forgejo:3000/...` does not open | that is Forgejo's address inside the stack. On your laptop the page is at `http://localhost:3300/...`: change the start of the link. |
 
-## Stopping and starting again
+## Reset and restart
 
 `just example reset` closes every pull request and puts the estate back the way it booted. `just example down` removes everything, and `just example up` brings it back from nothing.
 

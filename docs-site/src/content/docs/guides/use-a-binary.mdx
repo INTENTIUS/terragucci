@@ -14,7 +14,7 @@ import TabFromHash from '../../../components/TabFromHash.astro';
 
 ## Binary features
 
-Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu, the OpenTofu fork from the team behind terragucci, adds the most: [nine features](#choudoufu) on top of OpenTofu's.
+Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu, the OpenTofu fork from the team behind terragucci, adds [nine features](#choudoufu) on top of OpenTofu's.
 
 | | choudoufu | Terraform | OpenTofu | Terragrunt |
 |---|---|---|---|---|
@@ -24,7 +24,7 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 | CI image | `terragucci-choudoufu`, choudoufu 0.23.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
 | Version pin | `version` only | `version`, `.terraform-version`, or an exact `required_version`; per root too | `version`, `.opentofu-version`, or an exact `required_version`; per root too | `terragrunt.version`, or an exact `terragrunt_version_constraint`; per unit too, with the binary's pins |
 
-A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
+A pin the image does not carry is installed in the job and checked against the release's SHA256SUMS. Images are pinned by digest.
 
 ### A version per root
 
@@ -55,7 +55,7 @@ Run `npx terragucci init` after adding a pin, so the check job validates each ro
 binary: choudoufu
 ```
 
-`binary: choudoufu` runs the same four stages on [choudoufu](https://github.com/INTENTIUS/choudoufu) and adds:
+On [choudoufu](https://github.com/INTENTIUS/choudoufu), the stages add:
 
 | You get | Where you see it |
 |---|---|
@@ -72,7 +72,7 @@ binary: choudoufu
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
-A `live-check` refusal fails `tf-check` and names its rule in the log. `drift` is a config error when a root keeps its resources under live resource markers: a drift check is a refresh-only plan, which choudoufu refuses there, and each plan of such a root already reads the live system. terragucci does not read a root's `required_version` as a choudoufu release.
+A `live-check` refusal fails `tf-check` and names its rule in the log. `drift` is a config error when a root keeps its resources under live resource markers. A drift check is a refresh-only plan, which choudoufu refuses there; each plan of such a root already reads the live system. terragucci does not read a root's `required_version` as a choudoufu release.
 </TabItem>
 <TabItem label="Terraform">
 
@@ -98,7 +98,7 @@ binary: tofu
 binary: tofu   # or terraform: the tool Terragrunt calls
 ```
 
-A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu`, `terraform` or `choudoufu`, which Terragrunt calls through `TG_TF_PATH`. Terraform is installed in the job; with `choudoufu` the jobs run in the choudoufu image and install Terragrunt. See [Use Terragrunt](/terragucci/guides/use-terragrunt/).
+A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu`, `terraform` or `choudoufu`, which Terragrunt calls through `TG_TF_PATH`. Terraform is installed in the job; with `choudoufu` the jobs run in the choudoufu image and install Terragrunt. [Use Terragrunt](/terragucci/guides/use-terragrunt/) has the rest.
 
 </TabItem>
 

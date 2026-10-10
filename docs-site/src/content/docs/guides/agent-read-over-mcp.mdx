@@ -61,7 +61,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
    npx -y @intentius/terragucci mcp --bucket s3://acme-plan-reports --bucket-prefix terragucci
    ```
 
-   A client starts a stdio server with only a few variables of its own, so name the bucket's credentials in the server's `env`. In a client that expands variables in its config, such as Claude Code's `.mcp.json`, the values stay in your shell:
+   A client starts a stdio server with only a few variables of its own, so name the bucket's credentials in the server's `env`. A client that expands variables in its config, such as Claude Code's `.mcp.json`, keeps the values in your shell:
 
    ```json
    {

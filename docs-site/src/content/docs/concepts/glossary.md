@@ -9,25 +9,25 @@ A page links a word here on first use, unless the page explains it.
 
 ### root
 
-A directory whose files hold a `backend` or `cloud` block, or choudoufu's `live` block, or configure a provider. `init` finds roots, or `roots:` names them by glob. Every stage runs the binary once in each.
+A directory whose files configure a provider or hold a state block (`backend`, `cloud` or choudoufu's `live`). `init` finds them, or `roots:` names them by glob. Every stage runs the binary once in each.
 
 A root with a `cloud` block on remote execution runs on HCP Terraform's workers, where the job's `oidc` roles do not reach. Local execution keeps the runs in your CI.
 
 ### forge
 
-The service that hosts your repository and runs its pipelines: GitHub, GitLab or Forgejo. terragucci writes a workflow for yours, and the jobs run on its runners.
+The service that hosts your repository and runs its pipelines: GitHub, GitLab or Forgejo. The workflow terragucci writes for yours runs on its runners.
 
 ### unit
 
-A Terragrunt directory with a `terragrunt.hcl`; terragucci lists units with `terragrunt find` and treats each as a root. A directory of units is an implicit stack, shown as a report label.
+A Terragrunt directory with a `terragrunt.hcl`. `terragrunt find` lists units and each is treated as a root. A directory of units is an implicit stack, shown as a report label.
 
 ### layer
 
-A step of the dependency order set by `terraform_remote_state` reads, choudoufu's `terraform_estate_outputs` reads or Terragrunt `dependency` blocks. `init --dry-run` counts them; `tf-plan` plans one at a time.
+A step of the dependency order that one root's reads of another set (`terraform_remote_state`, choudoufu's `terraform_estate_outputs` or a Terragrunt `dependency` block). `init --dry-run` counts them; `tf-plan` plans one at a time.
 
 ### wave
 
-A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`: canary first, then one layer each. Terragrunt units go the same way, each wave one `terragrunt run --all`.
+A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`. Wave 1 holds the canary and each later wave one layer; for Terragrunt units a wave is one `terragrunt run --all`.
 
 ### canary
 
@@ -39,7 +39,7 @@ A hash of one root's plan. The job takes it before anything is redacted or rende
 
 ### set digest
 
-The hash over the plan digests of the roots in a wave whose plan changes something. An approval names it, so when one plan in the wave changes, or a root starts or stops changing, the wave refuses to apply. A pull request's plan note shows it for each wave.
+The hash over the plan digests of the roots in a wave whose plan changes something. An approval names it, and the wave refuses to apply if any of its plans changes or a root starts or stops changing. A pull request's plan note shows it for each wave.
 
 ### gate
 
@@ -53,7 +53,7 @@ The tool terragucci's stages are written in. [chant](https://intentius.io/chant/
 
 ### chant/lifecycle
 
-A branch that holds the apply job's records and the approvals, each approval a commit. Let only the apply job's identity push to it and block force pushes and deletion. [Approvals as records](/terragucci/concepts/approvals-as-records/) says why.
+A branch holding the apply job's records and one commit per approval. Let only the apply job's identity push to it and block force pushes and deletion. [Approvals as records](/terragucci/concepts/approvals-as-records/) says why.
 
 ### chant.workspace.json
 
@@ -65,7 +65,7 @@ The gates in `chant.workspace.json` (`init` lists all under `approval: sealed`) 
 
 ### .chant/allowed_signers
 
-The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format, read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
+The signers file holds one ssh public key per approver in ssh-keygen's allowed_signers format and is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
 
 ### pr-review
 
@@ -73,7 +73,7 @@ The `approval:` mode where the merged pull request's approving review of its hea
 
 ### seal
 
-The ssh signature `chant approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing; under `ledger`, the default, and `pr-review` no seal is needed.
+The ssh signature `chant approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing. `ledger` (the default) and `pr-review` need no seal.
 
 ## Other tools
 
@@ -87,7 +87,7 @@ fountain's word for the machine that runs stages for one environment. terragucci
 
 ### floci
 
-A local stand-in for the AWS API that the tutorial applies to, so it needs no AWS account. floci keeps no tags, so every root's tags show as drift.
+A local stand-in for the AWS API that the tutorial applies to, so it needs no AWS account. It keeps no tags, so every root's tags show as drift.
 
 ### choudoufu
 

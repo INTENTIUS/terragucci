@@ -6,11 +6,11 @@ claims: [cdktn-synth, cdktn-affected, root-pins, pinned-install, boot, image, li
 
 import TacosCriteria from '../../../components/TacosCriteria.astro';
 
-Comparing Terraform automation platforms means holding each one to the same list. [tacos.guru](https://tacos.guru) keeps such a list, and this page answers it for terragucci, one criterion at a time, each answer backed by a smoke claim that passes and also fails when broken on purpose.
+[tacos.guru](https://tacos.guru) holds Terraform automation platforms to one list of criteria. This page answers that list for terragucci, with each answer proven by a passing smoke claim on the [validation](/terragucci/reference/validation/) page.
 
 tacos.guru has not scored terragucci, and this page claims no score from it.
 
-Two blocks carry no claim. RBAC and SSO, dashed, stay with your forge, which already decides who signs in, merges and approves ([Access and identity](/terragucci/standards/access-and-identity/)). Pricing, outlined, has nothing to prove: terragucci is Apache-2.0 and runs in your CI. Hover or tap a block for its criterion.
+Two blocks carry no claim. The dashed one, RBAC and SSO, stays with your forge, which already decides who signs in and who may approve a merge ([Access and identity](/terragucci/standards/access-and-identity/)). Pricing, outlined, has nothing to prove: terragucci is Apache-2.0 and runs in your CI. Hover or tap a block for its criterion.
 
 <TacosCriteria />
 
@@ -77,6 +77,6 @@ A 3 below is what tacos.guru's description of the criterion asks for. The terrag
 
 ## Next
 
-- [Access and identity](/terragucci/standards/access-and-identity/): who decides each action, in place of accounts and roles.
+- [Access and identity](/terragucci/standards/access-and-identity/): the forge and cloud permissions that stand in for accounts and roles.
 - [Standards](/terragucci/standards/): the open standards terragucci reads and writes.
 - [Validation](/terragucci/reference/validation/): every claim named here, with its result.

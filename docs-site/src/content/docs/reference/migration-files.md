@@ -50,7 +50,7 @@ backends:
 | `backends[].from.backend` | `s3` or `local`: the backend the state is in now |
 | `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least |
 
-The job reads the state through the root with the old backend in an override file, and writes it, unchanged, to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+The job reads the state through the root with the old backend in an override file and writes it unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
 
 ## Revert
 

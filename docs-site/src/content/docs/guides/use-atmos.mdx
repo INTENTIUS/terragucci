@@ -61,7 +61,7 @@ A pipeline whose roots are your [Atmos](https://atmos.tools) component instances
 
 ## Refused settings
 
-An instance's directory is a copy `terragucci atmos write` makes, so `config check` and `init` refuse what would edit it:
+`terragucci atmos write` makes each instance's directory as a copy, so `config check` and `init` refuse settings that would edit it:
 
 | Setting | Instead |
 |---|---|
@@ -83,7 +83,7 @@ An instance's directory is a copy `terragucci atmos write` makes, so `config che
 
 ## Jobs
 
-Every job installs Atmos 1.230.1, checked against the release's `SHA256SUMS`, then runs `terragucci atmos write` before it reads the roots. To install another release, name it in `terragucci.yml` and run `init` again:
+Before reading the roots, every job installs Atmos 1.230.1 (checked against the release's `SHA256SUMS`) and runs `terragucci atmos write`. For another release, set it in `terragucci.yml` and rerun `init`:
 
 ```yaml
 atmos:
@@ -113,7 +113,7 @@ The tip pull requests pin providers and add lock files in the components, which 
 
 ## Pull requests
 
-A pull request plans the instances whose written files differ from the base's, and every instance that depends on one of them. The plan job writes the instances at the base too and compares the two, with no cloud credential.
+A pull request plans the instances whose written files differ from the base's, and every instance that depends on one of them. The plan job also writes the instances at the base and compares the two without a cloud credential.
 
 | A pull request that changes | Plans |
 |---|---|
@@ -123,7 +123,7 @@ A pull request plans the instances whose written files differ from the base's, a
 
 ## Approval
 
-A wave applies the plans whose digest was approved, as plain roots do. If the stacks change after the approval, the wave plans again, applies nothing, and names the instances that moved; approve the new plans to apply them.
+A wave applies the plans whose digest was approved, as plain roots do. If the stacks change after the approval, the wave plans again and applies nothing. It names the instances that moved; approve the new plans to apply them.
 
 ## Reads of another instance
 
@@ -137,7 +137,7 @@ components:
         vpc_cidr: !terraform.state vpc .cidr
 ```
 
-`atmos describe stacks` runs before the job gets a cloud credential, so the job reads the value itself, once it has one, from the upstream's state in its own workspace. While the upstream has no state, the instance is held back rather than planned on a stand-in, and the plan note says which instance it waits for.
+`atmos describe stacks` runs before the job has a cloud credential, so the job reads the value itself afterwards from the state in the upstream's own workspace. While the upstream has no state, the instance is held back rather than planned on a stand-in; the plan note names the instance it waits for.
 
 | Form | Read |
 |---|---|

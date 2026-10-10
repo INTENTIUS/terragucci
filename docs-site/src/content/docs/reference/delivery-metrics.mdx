@@ -10,7 +10,7 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-[`terragucci estate`](/terragucci/guides/see-every-project/#delivery-metrics) writes the four DORA metrics for each project and the whole estate to `dora.json` beside `estate.json` and to the Delivery section of `estate.html`, from records already in your bucket: the [audit trail](/terragucci/reference/audit-trail/) (`audit.jsonl`) and each project's `index.json`.
+[`terragucci estate`](/terragucci/guides/see-every-project/#delivery-metrics) reads the [audit trail](/terragucci/reference/audit-trail/) (`audit.jsonl`) and each project's `index.json` from your bucket. It writes the four DORA metrics for each project and the whole estate to `dora.json` beside `estate.json` and to the Delivery section of `estate.html`.
 
 ## The metrics
 
@@ -21,13 +21,13 @@ prompt: |
 | Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies | `apply` entries with result `failed`, and `tf-drift` rows that found drift |
 | Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none | `apply` entries, and `tf-drift` rows |
 
-A refused wave is the gate working, so it is neither an apply nor a failure; a wave still waiting for its approval is not an apply yet.
+A refused wave is the gate working, so it is neither an apply nor a failure. Until its approval, a waiting wave is not an apply either.
 
 Infrastructure ships less often than an application. The page shows frequency per project as a trend and never rates a project against DORA's performance tiers.
 
 ## The window
 
-Every number covers the newest eight weeks, Monday to Sunday in UTC, the current week included. Each week also has its own row, `trend` in `dora.json`, with the same counts for that week alone.
+Every number covers the newest eight weeks (Monday to Sunday in UTC, current week included). Each week also has its own row, `trend` in `dora.json`, with the same counts for that week alone.
 
 ## Lead time and its split
 
@@ -39,11 +39,11 @@ Lead time starts at the first plan. terragucci finds the plan of an applied wave
 | at the gate | the wave asking for an approval | the approval |
 | after the gate | the approval | the wave applied |
 
-An applied wave with no plan in the index has no lead time. The page shows the median of the total and of each part, so the three parts need not add up to the total.
+Without a plan in the index, an applied wave has no lead time. The page shows the median of the total and of each part, so the three parts need not add up to the total.
 
 ## Change failures and restores
 
-An applied wave counts as failed when its roots drift within 7 days and no later apply of those roots came first. A `tf-drift` row lists the roots that drifted (`drifted_roots`). A row written before that field existed matches any root of its project.
+An applied wave counts as failed when its roots drift within 7 days and no later apply of those roots came first. A `tf-drift` row lists the roots that drifted (`drifted_roots`). Rows written before that field existed match any root of their project.
 
 | Event | Incident | Field |
 |---|---|---|
