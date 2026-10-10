@@ -135,11 +135,15 @@ describe("run.json", () => {
     let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1", changed: ["net"], spans }, at(1));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "chant approve tf-apply wave-2 --plan d2", shares: 2 }, at(2));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
+    const progress = { read: at(1, 31), resources: [{ root: "net", address: "terraform_data.a", action: "create" as const, status: "done" as const, done_at: at(1, 31) }, { root: "net", address: "terraform_data.b", action: "update" as const, status: "in-flight" as const }] };
+    v = withWave(JSON.stringify(v), skeleton, { number: 1, progress }, at(3));
     expect(validate(RUN_VIEW, v)).toEqual([]);
     expect([...keys([v as unknown as Json])].sort()).toEqual(named(RUN_VIEW).sort());
     expect([...keys(v.roots as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.roots.items).sort());
     expect([...keys(v.waves as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items).sort());
     expect([...keys(v.waves.flatMap((w) => w.spans ?? []) as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items.properties.spans.items).sort());
+    expect([...keys(v.waves.flatMap((w) => (w.progress ? [w.progress] : [])) as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items.properties.progress).sort());
+    expect([...keys(v.waves.flatMap((w) => w.progress?.resources ?? []) as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items.properties.progress.properties.resources.items).sort());
     expect([...keys(v.roots.flatMap((r) => [r.state, ...(r.external ?? [])]).filter(Boolean) as unknown as Json[])].sort()).toEqual(["bucket", "data", "key"]);
     expect(validate(RUN_VIEW, { ...v, waves: [{ ...v.waves[0], spans: [{ phase: "wait", start: at(1) }] }] })).toEqual(['$.waves[0].spans[0].phase: "wait" not in enum']);
   });
@@ -194,7 +198,10 @@ describe("terragucci.estate/v1", () => {
     await upload(s3, runs());
     objects.set("acme-reports:reports/audit.json", JSON.stringify({ schema: "terragucci.audit-summary/v1", generated: at(11, 30), entries: 3 }));
     // The run view of the network project's applied commit, as its waves' jobs write it.
-    const view = withWave(undefined, runSkeleton(NET, "b".repeat(40), [["a"], ["envs/dev/orders", "envs/dev/search"]], new Map([["envs/dev/orders", new Set(["a"])]])), { number: 1, state: "applied" }, at(10, 40));
+    const netSkeleton = runSkeleton(NET, "b".repeat(40), [["a"], ["envs/dev/orders", "envs/dev/search"]], new Map([["envs/dev/orders", new Set(["a"])]]));
+    const applied = withWave(undefined, netSkeleton, { number: 1, state: "applied" }, at(10, 40));
+    // Its second wave is a choudoufu wave still applying, its resources followed.
+    const view = withWave(JSON.stringify(applied), netSkeleton, { number: 2, state: "applying", progress: { read: at(10, 45), resources: [{ root: "envs/dev/orders", address: "terraform_data.a", action: "create", status: "done", done_at: at(10, 44) }, { root: "envs/dev/orders", address: "terraform_data.b", action: "create", status: "waiting" }] } }, at(10, 45));
     objects.set(`acme-reports:reports/${NET}/runs/${"b".repeat(40)}/run.json`, JSON.stringify(view));
     // A pull request's ephemeral copy, as its job lists it beside the index.
     objects.set(`acme-reports:reports/${WEB}/ephemeral.json`, JSON.stringify(updateList(undefined, WEB, 12, { pull_request: 12, pull_request_url: "https://github.com/acme/web/pull/12", suffix: "pr-12", roots: [{ root: "envs/preview/app", location: "s3://state/web/preview/app-pr-12.tfstate" }], commit: "c".repeat(40), applied: at(10), expires: at(23), approved_by: "alice", status: "live" }, at(10))));
@@ -224,6 +231,7 @@ describe("terragucci.estate/v1", () => {
     expect([...keys(stateRoots)].sort()).toEqual(named(ESTATE.$defs.stateRoot).sort());
     expect([...keys(stateRoots.flatMap((r) => r.versions))].sort()).toEqual(named(ESTATE.$defs.stateRoot.properties.versions.items).sort());
     expect([...keys(projects.flatMap((p) => (p.run_view ? [p.run_view] : [])))].sort()).toEqual(named(ESTATE.$defs.project.properties.run_view).sort());
+    expect([...keys(projects.flatMap((p) => p.applying ?? []))].sort()).toEqual(named(ESTATE.$defs.project.properties.applying.items).sort());
     expect([...keys(page.graph.nodes)].sort()).toEqual(named(ESTATE.properties.graph.properties.nodes.items).sort());
     expect([...keys(page.graph.edges)].sort()).toEqual(named(ESTATE.properties.graph.properties.edges.items).sort());
     expect([...keys(page.graph.edges.flatMap((e: Json) => [e.from, e.to]))].sort()).toEqual(named(ESTATE.$defs.graphRoot).sort());
