@@ -673,6 +673,22 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "atmos-waves",
+      "says": "init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f69bb93b"
+    },
+    {
+      "claim": "atmos-workspace",
+      "says": "each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f69bb93b"
+    },
+    {
       "claim": "policy-source",
       "says": "a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref",
       "needs": null,

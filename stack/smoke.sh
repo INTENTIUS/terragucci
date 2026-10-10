@@ -6772,9 +6772,13 @@ atmos_fill() { # tree, bucket -> the fixture's catalog names the bucket
   sed "s#@BUCKET@#$2#" "$f" > "$f.new" && mv "$f.new" "$f"
 }
 
-atmos_applied() { # bucket -> the instances with state in it, <workspace>/<component>, space-separated; a state in the default workspace as default/<key>
-  curl -fsS "$FLOCI/$1?list-type=2" | grep -o '<Key>[^<]*\.tfstate</Key>' | sed -E 's#</?Key>##g' \
-    | awk -F/ 'NF == 3 && $3 == "terraform.tfstate" { print $2 "/" $1; next } { print "default/" $0 }' | sort | tr '\n' ' '
+atmos_applied() { # bucket -> the instances whose state holds a resource, <workspace>/<component>, space-separated; a state in the default workspace as default/<key>
+  # workspace select -or-create writes an empty state, so a key alone does not mean an apply.
+  local key
+  for key in $(curl -fsS "$FLOCI/$1?list-type=2" | grep -o '<Key>[^<]*\.tfstate</Key>' | sed -E 's#</?Key>##g'); do
+    curl -fsS "$FLOCI/$1/$key" 2>/dev/null | jq -e '(.resources // []) | length > 0' >/dev/null 2>&1 || continue
+    awk -F/ 'NF == 3 && $3 == "terraform.tfstate" { print $2 "/" $1; next } { print "default/" $0 }' <<<"$key"
+  done | sort | tr '\n' ' '
 }
 
 claim_atmos_waves() {
