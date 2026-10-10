@@ -74,6 +74,7 @@ export default defineConfig({
 				Head: './src/components/Head.astro',
 				PageTitle: './src/components/PageTitle.astro',
 				Footer: './src/components/Footer.astro',
+				SocialIcons: './src/components/SocialIcons.astro',
 			},
 			description: 'One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
 			social: [
