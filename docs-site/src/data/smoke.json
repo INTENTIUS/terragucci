@@ -2276,6 +2276,14 @@
       "commit": "65cae39f"
     },
     {
+      "claim": "resource-blast",
+      "says": "a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "33f6c5e8"
+    },
+    {
       "claim": "linked-states",
       "says": "after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands",
       "needs": null,
