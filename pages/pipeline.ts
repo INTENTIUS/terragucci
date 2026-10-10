@@ -40,7 +40,14 @@ export const build = new Job({
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     new Step({ name: "Configure Pages", uses: CONFIGURE_PAGES }),
     installJust(),
-    new Step({ name: "Build the site", run: "just site" }),
+    // The PostHog project key is public by design (it ships in the page); a
+    // repository variable keeps it out of forks' and local builds, which then
+    // load no analytics.
+    new Step({
+      name: "Build the site",
+      env: { PUBLIC_POSTHOG_KEY: "${{ vars.PUBLIC_POSTHOG_KEY }}" },
+      run: "just site",
+    }),
     new Step({
       name: "Upload the artifact",
       uses: UPLOAD_ARTIFACT,

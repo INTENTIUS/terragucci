@@ -68,7 +68,12 @@ export default defineConfig({
 			customCss: ['./src/styles/terragucci.css'],
 			// The title gets a "Copy page as Markdown" button, an llms.txt pointer and
 			// the page's agent prompt. The footer adds the tutorial step and a small taco.
-			components: { PageTitle: './src/components/PageTitle.astro', Footer: './src/components/Footer.astro' },
+			// The head adds PostHog page analytics when the build has PUBLIC_POSTHOG_KEY.
+			components: {
+				Head: './src/components/Head.astro',
+				PageTitle: './src/components/PageTitle.astro',
+				Footer: './src/components/Footer.astro',
+			},
 			description: 'One workflow, one audit trail and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
