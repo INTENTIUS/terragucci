@@ -341,6 +341,7 @@ export const ROOMS: Room[] = [
 		lede: 'One place that keeps every repo\'s settings and policy alike.',
 		works: [
 			'A control repo holds the shared settings and opens a pull request in each repo that changes',
+			'A single project works without a control repo, from its own terragucci.yml',
 			'One estate page lists every project with its roots and last applies',
 			'A new module version rolls out to every repo that pins it, a wave of pull requests at a time',
 		],
