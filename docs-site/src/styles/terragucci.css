@@ -365,3 +365,18 @@ code, pre, kbd, samp {
 		min-width: 7.5rem;
 	}
 }
+
+/* Each top-level sidebar group's label starts with the taco's diamond. */
+.sidebar-content .top-level > li > details > summary .group-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.sidebar-content .top-level > li > details > summary .group-label::before {
+	content: '';
+	flex: none;
+	width: 15px;
+	height: 11px;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
