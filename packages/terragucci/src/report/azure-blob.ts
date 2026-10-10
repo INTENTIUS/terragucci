@@ -1,6 +1,9 @@
 /**
- * Azure Blob Storage for the reports, over its REST API with `fetch` and
- * `node:crypto`: put a block blob, get one, and a SAS link to one.
+ * Azure Blob Storage for the reports and for an azurerm backend's state,
+ * over its REST API with `fetch` and `node:crypto`: put a block blob, get
+ * one, and a SAS link to one; for a state, a blob's properties and
+ * metadata, one version or snapshot of it, a snapshot, and the blob lease
+ * the backend locks a state with.
  *
  * With the job's Azure OIDC identity (the ARM_* variables a job with
  * `oidc.azure` sets), the token in ARM_OIDC_TOKEN_FILE_PATH is traded at
@@ -8,7 +11,8 @@
  * backend does it), and a link is a user delegation SAS signed with a key
  * the identity asks the account for. With an account key
  * (AZURE_STORAGE_KEY), requests are signed with Shared Key and a link is a
- * service SAS. Both SAS kinds read one blob and nothing else.
+ * service SAS. Both SAS kinds read one blob and nothing else. An azurerm
+ * backend's `sas_token` (ARM_SAS_TOKEN) rides on each request as it is.
  *
  * Writes are conditional the way S3's are: If-Match the ETag read, or
  * If-None-Match `*` when there was none. Azure answers a lost write with 412
@@ -42,7 +46,22 @@ export interface AzureOidc {
   authority: string;
 }
 
-export type AzureTarget = AzureLocation & ({ accountKey: string } | { oidc: AzureOidc });
+export type AzureTarget = AzureLocation & ({ accountKey: string } | { oidc: AzureOidc } | { sas: string });
+
+/** A blob's properties, as a HEAD answers them: never its body. */
+export interface BlobHead {
+  exists: boolean;
+  etag?: string;
+  /** x-ms-version-id: the account keeps each version of the blob. */
+  versionId?: string;
+  /** x-ms-lease-state: `leased` while a lease holds it. */
+  leaseState?: string;
+  /** Its metadata, by name without the x-ms-meta- prefix. */
+  metadata: Record<string, string>;
+}
+
+/** Which earlier state of a blob: a version (blob versioning) or a snapshot. */
+export type BlobAt = { versionid: string } | { snapshot: string };
 
 /** The target from `reports` and the job's environment. An account key wins over the job's OIDC identity. */
 export function azureFromEnv(where: { account: string; container: string; endpoint?: string }, env: NodeJS.ProcessEnv = process.env): AzureTarget {
@@ -130,8 +149,10 @@ export class AzureBlobClient implements ObjectStore {
     return `az://${this.target.account}/${this.target.container}`;
   }
 
-  private blobUrl(key: string): string {
-    return `${this.target.endpoint}/${this.target.container}/${encodePath(key)}`;
+  private blobUrl(key: string, query = ""): string {
+    const t = this.target;
+    const q = [query, "sas" in t ? t.sas.replace(/^\?/, "") : ""].filter(Boolean).join("&");
+    return `${t.endpoint}/${t.container}/${encodePath(key)}${q ? `?${q}` : ""}`;
   }
 
   /** The storage token for the OIDC identity: once per client, again a minute before it expires. */
@@ -178,6 +199,7 @@ export class AzureBlobClient implements ObjectStore {
     const h: Record<string, string> = { "x-ms-date": new Date().toUTCString(), "x-ms-version": AZURE_VERSION, ...extra };
     const t = this.target;
     if ("accountKey" in t) return { ...h, authorization: sharedKey(t.account, t.accountKey, method, url, h) };
+    if ("sas" in t) return h;
     return { ...h, authorization: `Bearer ${await this.bearer(t.oidc)}` };
   }
 
@@ -204,6 +226,80 @@ export class AzureBlobClient implements ObjectStore {
 
   async get(key: string): Promise<string | undefined> {
     return (await this.read(key)).body;
+  }
+
+  /** A blob's properties and metadata, from a HEAD: of the blob, or of one version or snapshot of it. */
+  async head(key: string, at?: BlobAt): Promise<BlobHead> {
+    const url = this.blobUrl(key, at ? new URLSearchParams(at as Record<string, string>).toString() : "");
+    const res = await this.fetchFn(url, { method: "HEAD", headers: await this.headers("HEAD", url, {}) });
+    // A HEAD has no body to say why: an id Azure never issued is a 400.
+    if (res.status === 404 || (at && res.status === 400)) return { exists: false, metadata: {} };
+    if (!res.ok) throw new StoreError(`HEAD ${this.location}/${key}: ${res.status}`);
+    const get = (n: string): string | undefined => res.headers?.get(n) ?? undefined;
+    const metadata: Record<string, string> = {};
+    const all = res.headers as unknown as { forEach?: (fn: (v: string, k: string) => void) => void } | undefined;
+    all?.forEach?.((v, k) => {
+      if (k.toLowerCase().startsWith("x-ms-meta-")) metadata[k.toLowerCase().slice("x-ms-meta-".length)] = v;
+    });
+    const etag = get("etag");
+    const versionId = get("x-ms-version-id");
+    const leaseState = get("x-ms-lease-state");
+    return { exists: true, ...(etag ? { etag } : {}), ...(versionId ? { versionId } : {}), ...(leaseState ? { leaseState } : {}), metadata };
+  }
+
+  /** One version or snapshot of a blob's text; undefined when there is none such. */
+  async readAt(key: string, at: BlobAt): Promise<string | undefined> {
+    const url = this.blobUrl(key, new URLSearchParams(at as Record<string, string>).toString());
+    const res = await this.fetchFn(url, { method: "GET", headers: await this.headers("GET", url, {}) });
+    if (res.status === 404 || res.status === 400) return undefined;
+    if (!res.ok) throw new StoreError(`GET ${this.location}/${key} ${JSON.stringify(at)}: ${res.status} ${why(await res.text())}`);
+    return res.text();
+  }
+
+  /** Take a snapshot of a blob: its id, the time Azure gives it. */
+  async snapshot(key: string): Promise<string> {
+    const url = this.blobUrl(key, "comp=snapshot");
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, { "content-length": "0" }) });
+    if (!res.ok) throw new StoreError(`snapshot of ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    const id = res.headers?.get("x-ms-snapshot");
+    if (!id) throw new StoreError(`snapshot of ${this.location}/${key}: Azure answered without x-ms-snapshot`);
+    return id;
+  }
+
+  /** Write a block blob with metadata, under a lease when one holds it. */
+  async putBlob(key: string, body: string, contentType: string, options: { leaseId?: string; metadata?: Record<string, string>; ifNoneMatch?: boolean } = {}): Promise<boolean> {
+    const url = this.blobUrl(key);
+    const meta = Object.fromEntries(Object.entries(options.metadata ?? {}).map(([k, v]) => [`x-ms-meta-${k}`, v]));
+    const extra: Record<string, string> = {
+      "x-ms-blob-type": "BlockBlob",
+      "content-type": contentType,
+      "content-length": String(Buffer.byteLength(body)),
+      ...meta,
+      ...(options.leaseId ? { "x-ms-lease-id": options.leaseId } : {}),
+      ...(options.ifNoneMatch ? { "if-none-match": "*" } : {}),
+    };
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, extra), body });
+    if (options.ifNoneMatch && (res.status === 409 || res.status === 412)) return false;
+    if (!res.ok) throw new StoreError(`PUT ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    return true;
+  }
+
+  /** A blob lease: acquire one that never expires with the id given (false when one holds it), or release it. */
+  async lease(key: string, action: "acquire" | "release", id: string): Promise<boolean> {
+    const url = this.blobUrl(key, "comp=lease");
+    const extra: Record<string, string> = { "x-ms-lease-action": action, "content-length": "0", ...(action === "acquire" ? { "x-ms-lease-duration": "-1", "x-ms-proposed-lease-id": id } : { "x-ms-lease-id": id }) };
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, extra) });
+    if (action === "acquire" && res.status === 409) return false;
+    if (!res.ok) throw new StoreError(`${action} the lease of ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    return true;
+  }
+
+  /** Set a blob's metadata, all of it, under its lease when one holds it. */
+  async setMetadata(key: string, metadata: Record<string, string>, leaseId?: string): Promise<void> {
+    const url = this.blobUrl(key, "comp=metadata");
+    const extra = { "content-length": "0", ...Object.fromEntries(Object.entries(metadata).map(([k, v]) => [`x-ms-meta-${k}`, v])), ...(leaseId ? { "x-ms-lease-id": leaseId } : {}) };
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, extra) });
+    if (!res.ok) throw new StoreError(`set the metadata of ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
   }
 
   /** Get User Delegation Key, valid from now until `expiry`: one per expiry, so the estate's one link asks once. */

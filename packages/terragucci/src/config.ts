@@ -194,9 +194,35 @@ export interface OidcSettings {
   /** The AWS token's audience. Default `sts.amazonaws.com`. */
   audience?: string;
   /** GCP Workload Identity Federation: the provider's resource name and a service account per stage. */
-  gcp?: { workload_identity_provider: string; plan_service_account: string; apply_service_account: string; /** Default `https://sts.googleapis.com/v1/token`; a regional endpoint such as `https://sts.europe-west3.rep.googleapis.com/v1/token`. */ token_url?: string };
+  gcp?: {
+    workload_identity_provider: string;
+    plan_service_account: string;
+    apply_service_account: string;
+    /** Default `https://sts.googleapis.com/v1/token`; a regional endpoint such as `https://sts.europe-west3.rep.googleapis.com/v1/token`. */
+    token_url?: string;
+    /**
+     * Service accounts by root glob (plain roots): a root's binary, and what
+     * reads its state, impersonate the pair of the first glob it matches, so
+     * each environment's roots reach that environment's state alone. A root no
+     * glob matches takes plan_service_account and apply_service_account.
+     */
+    roles?: Record<string, RolePair>;
+  };
   /** An Entra app registration or managed identity per stage, with a federated credential for the forge. */
-  azure?: { tenant_id: string; subscription_id: string; plan_client_id: string; apply_client_id: string; /** The token's audience. Default `api://AzureADTokenExchange`; `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China. */ audience?: string };
+  azure?: {
+    tenant_id: string;
+    subscription_id: string;
+    plan_client_id: string;
+    apply_client_id: string;
+    /** The token's audience. Default `api://AzureADTokenExchange`; `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China. */
+    audience?: string;
+    /**
+     * Client ids by root glob (plain roots), as `gcp.roles` gives service
+     * accounts; each client needs a federated credential for the forge. A root
+     * no glob matches takes plan_client_id and apply_client_id.
+     */
+    roles?: Record<string, RolePair>;
+  };
 }
 
 /** A plan role and an apply role, for the units under one path. */
@@ -1528,7 +1554,8 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
       problems.push(`${where}.${cloud} must be a map with ${keys.join(", ")}`);
       return undefined;
     }
-    const all = [...keys, ...optional];
+    const all = [...keys, ...optional, "roles"];
+    if (c.roles !== undefined) checkRoles(c.roles, `${where}.${cloud}.roles`, problems, what);
     for (const k of Object.keys(c)) if (!all.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${all.join(", ")})`);
     for (const k of optional) if (c[k] !== undefined && (typeof c[k] !== "string" || c[k] === "")) problems.push(`${where}.${cloud}.${k} must be a non-empty string`);
     for (const k of keys) if (typeof c[k] !== "string" || c[k] === "") problems.push(`${where}.${cloud}.${k} must be set`);
@@ -1546,14 +1573,20 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
     for (const k of ["plan_service_account", "apply_service_account"]) {
       if (g && typeof g[k] === "string" && g[k] !== "" && !/^[^@\s]+@[^@\s]+$/.test(g[k] as string)) problems.push(`${where}.gcp.${k} must be a service account's email`);
     }
+    for (const [glob, p] of g && isObject(g.roles) ? Object.entries(g.roles) : []) {
+      for (const k of ["plan", "apply"]) {
+        const v = isObject(p) ? p[k] : undefined;
+        if (typeof v === "string" && v !== "" && !/^[^@\s]+@[^@\s]+$/.test(v)) problems.push(`${where}.gcp.roles["${glob}"].${k} must be a service account's email`);
+      }
+    }
   }
   if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client", ["audience"]);
 }
 
-/** `oidc.roles`: a plan role and an apply role per root glob, the two different. */
-function checkRoles(r: unknown, where: string, problems: string[]): void {
+/** `oidc.roles`, `oidc.gcp.roles`, `oidc.azure.roles`: a plan and an apply identity per root glob, the two different. */
+function checkRoles(r: unknown, where: string, problems: string[], what = "role"): void {
   if (!isObject(r) || Object.keys(r).length === 0) {
-    problems.push(`${where} must map root globs to a plan and an apply role, such as "envs/prod/**": { plan: <role>, apply: <role> }`);
+    problems.push(`${where} must map root globs to a plan and an apply ${what}, such as "envs/prod/**": { plan: <${what}>, apply: <${what}> }`);
     return;
   }
   for (const [glob, pair] of Object.entries(r)) {
@@ -1563,8 +1596,8 @@ function checkRoles(r: unknown, where: string, problems: string[]): void {
       continue;
     }
     for (const k of Object.keys(pair)) if (k !== "plan" && k !== "apply") problems.push(`${at}.${k} is not a setting (settings: plan, apply)`);
-    for (const k of ["plan", "apply"] as const) if (typeof pair[k] !== "string" || pair[k] === "") problems.push(`${at}.${k} must name a role`);
-    if (typeof pair.plan === "string" && pair.plan !== "" && pair.plan === pair.apply) problems.push(`${at}: plan and apply are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+    for (const k of ["plan", "apply"] as const) if (typeof pair[k] !== "string" || pair[k] === "") problems.push(`${at}.${k} must name a ${what}`);
+    if (typeof pair.plan === "string" && pair.plan !== "" && pair.plan === pair.apply) problems.push(`${at}: plan and apply are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
   }
 }
 
