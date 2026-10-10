@@ -12,8 +12,8 @@ Two layers.
 
 | Layer | Picks by | Lives in |
 |---|---|---|
-| Door | who you are, what you run, where, and what you are leaving | the picker on the home page (`DoorPicker.astro`), the role doors under it, the "Rooms" and "Coming from" sidebar groups |
-| Room | one community's page: what works, what differs, the first step, what you can count on, then how-to, explanation and reference | `rooms/*.mdx`, each one `Room.astro` over `src/data/rooms.ts` |
+| Door | who you are, what you run, where, and what you are leaving | the picker on the home page (`DoorPicker.astro`), the role doors under it, the "Your setup" and "Coming from" sidebar groups |
+| Room | one community's page: what works, what differs, the first step, what you can count on, then how-to, explanation and reference | `for/*.mdx`, each one `Room.astro` over `src/data/rooms.ts` |
 
 Diataxis decides the order inside a room (task, then explanation, then reference). It does not decide the doors: it sorts pages by the reader's mode, not by what they run, and the site's problem was the second.
 

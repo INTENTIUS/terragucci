@@ -72,7 +72,7 @@ export const BINARIES: { id: string; label: string; adds: string[]; differs: str
 			'One record per resource in a bucket you own, with no lock table',
 		],
 		differs: ['terragucci does not read a root\'s required_version as a choudoufu release.'],
-		href: '/rooms/choudoufu/',
+		href: '/for/choudoufu/',
 	},
 ];
 

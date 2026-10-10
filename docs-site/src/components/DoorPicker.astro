@@ -46,9 +46,9 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 			</select>
 		</span>
 	</div>
-	<nav class="roles" aria-label="Doors by role">
+	<nav class="roles" aria-label="By role">
 		<span>Or start from your role</span>
-		{ROLES.map((r) => <a class="role" href={`${base}/rooms/${r.room}/`}><img src={taco} width="20" height="12" alt="" />{r.label}</a>)}
+		{ROLES.map((r) => <a class="role" href={`${base}/for/${r.room}/`}><img src={taco} width="20" height="12" alt="" />{r.label}</a>)}
 	</nav>
 	<div class="cards" aria-live="polite">
 		<div class="card">
@@ -63,7 +63,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 		<div class="card">
 			<p class="h">First step</p>
 			<a class="go" data-first href={`${base}${first.first.href}`}>{first.first.label}</a>
-			<p class="sub" data-more>Then read the <a href={`${base}/rooms/${first.room}/`}>{first.title} room</a> for what you can count on, and the proof.</p>
+			<p class="sub" data-more>Then read <a href={`${base}/for/${first.room}/`}>terragucci for {first.title}</a>: what you can count on, and the proof.</p>
 		</div>
 	</div>
 	<div class="notes" data-notes hidden>
@@ -118,9 +118,9 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 			const go = $<HTMLAnchorElement>('[data-first]');
 			go.href = data.base + first.href;
 			go.textContent = first.label;
-			const rooms: Node[] = ['Then read the ', link(`${shape.title} room`, `/rooms/${shape.room}/`)];
-			if (binary.href.startsWith('/rooms/')) rooms.push(' and the ', link(`${binary.label} room`, binary.href));
-			$('[data-more]').replaceChildren(...rooms, ' for what you can count on, and the proof.');
+			const pages: Node[] = ['Then read ', link(`terragucci for ${shape.title}`, `/for/${shape.room}/`)];
+			if (binary.href.startsWith('/for/')) pages.push(' and ', link(`for ${binary.label}`, binary.href));
+			$('[data-more]').replaceChildren(...pages, ': what you can count on, and the proof.');
 			try {
 				localStorage.setItem(key, JSON.stringify(pick));
 			} catch {}
