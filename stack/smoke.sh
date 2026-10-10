@@ -308,6 +308,7 @@ blob-gcs-key|with a service_account key file the job writes the report and both 
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
 note-footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
+replan-dispatch|a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
 cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
 apply-outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
@@ -9700,6 +9701,81 @@ claim_note_footer() {
   return $rc
 }
 
+claim_replan_dispatch() {
+  # A scratch repo with two roots and a pull request that changes app. Once
+  # its own plan finished, a user who can only read dispatches the plan
+  # workflow with pr set: Forgejo refuses it with 403 and starts no run. The
+  # admin dispatches it with pr set: the run's replan job re-plans the pull
+  # request, posts a new terragucci/plan status on its head, and the
+  # replan-note job edits the same plan note, the only one on the pull
+  # request.
+  # BREAK: the replan job's condition loses its workflow_dispatch clause, so
+  # the dispatched run plans nothing and the note stays as it was.
+  log() { echo "[smoke replan-dispatch] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/replan-dispatch" wf head pr i before after note0 note1 run code reader="smoke-reader-dispatch" pass rc=0
+  local clause=" || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo replan-dispatch || return 1
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  workflow_dispatch:' "$wf" || { log "the pipeline has no workflow_dispatch trigger"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    # A dispatch runs the default branch's workflow, so the cut goes to main.
+    CLAUSE="$clause" perl -pe 's/\Q$ENV{CLAUSE}\E$// if /^    if: \(github\.event_name == .issue_comment/' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    awk '/^  replan:$/ { on = 1; next } on && /^    if: / { print; exit }' "$wf" | grep -q "workflow_dispatch" && { log "BREAK did not cut the dispatch clause from the replan job"; drop_work "$work"; return 1; }
+    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "replan-dispatch: no dispatch clause")" || return 1
+    wait_run "$repo" "$MAIN_SHA" || return 1
+  fi
+  echo 2 > "$work/tree/app/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" dispatch-change "replan-dispatch: change app")" || return 1
+  pr="$(pr_open "$repo" dispatch-change "replan-dispatch: change app")" || return 1
+  log "pull request $pr for ${head:0:8}"
+  # The pull request's own plan first: pending, then its verdict, and its note.
+  notes() { api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -c '[.[] | select(.body | startswith("<!-- terragucci:plan")) | {id, updated_at}]'; }
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(statuses_of "$repo" "$head" terragucci/plan)" -ge 2 ] && [ "$(notes | jq length)" = 1 ] && break
+    sleep 3
+  done
+  before="$(statuses_of "$repo" "$head" terragucci/plan)"
+  note0="$(notes)"
+  [ "$before" -ge 2 ] && [ "$(jq length <<<"$note0")" = 1 ] || { log "the pull request's own plan never finished with one note ($before statuses, notes $note0)"; drop_work "$work"; return 1; }
+  dispatch() { # curl auth args... -> the HTTP code; the body in $work/dispatch.json
+    curl -sS -o "$work/dispatch.json" -w '%{http_code}' "$@" -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg pr "$pr" '{ref: "main", inputs: {pr: $pr}, return_run_info: true}')" \
+      "$URL/api/v1/repos/$repo/actions/workflows/terragucci.yml/dispatches"
+  }
+  # A reader may not dispatch: Forgejo answers 403 and starts nothing.
+  pass="Smoke-$STAMP-r9"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$reader" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || { log "could not create $reader"; rc=1; }
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"read"}' "$URL/api/v1/repos/$repo/collaborators/$reader" || { log "could not add $reader as a reader"; rc=1; }
+  code="$(dispatch -u "$reader:$pass")"
+  log "a reader's dispatch: $code $(jq -r '.message // empty' "$work/dispatch.json" 2>/dev/null)"
+  [ "$code" = 403 ] || { log "Forgejo did not refuse the dispatch of a reader"; rc=1; }
+  # The admin's dispatch: a run of its own, whose replan job plans the pull request.
+  code="$(dispatch -H "Authorization: token $TOKEN")"
+  run="$(jq -r '.id // empty' "$work/dispatch.json" 2>/dev/null)"
+  [ "$code" = 201 ] && [ -n "$run" ] || { log "the dispatch answered $code with no run"; drop_work "$work"; return 1; }
+  ephemeral_wait "$repo" "$run"
+  log "run $run, jobs: $(api "$URL/api/v1/repos/$repo/actions/runs/$run/jobs" | jq -r 'map("\(.name) \(.status)") | join(", ")')"
+  for i in $(seq 1 20); do
+    after="$(statuses_of "$repo" "$head" terragucci/plan)"
+    note1="$(notes)"
+    [ "$after" -gt "$before" ] && [ "$note1" != "$note0" ] && break
+    sleep 3
+  done
+  log "terragucci/plan statuses on the head: $before before, $after after; plan notes $note0 then $note1"
+  [ "$after" -gt "$before" ] || { log "the dispatch posted no new terragucci/plan status on the head"; rc=1; }
+  [ "$(jq length <<<"$note1")" = 1 ] && [ "$(jq -r '.[0].id' <<<"$note1")" = "$(jq -r '.[0].id' <<<"$note0")" ] || { log "the re-plan did not keep one plan note"; rc=1; }
+  [ "$(jq -r '.[0].updated_at' <<<"$note1")" != "$(jq -r '.[0].updated_at' <<<"$note0")" ] || { log "the re-plan did not update the plan note"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "a reader's dispatch was refused; the admin's dispatch of pull request $pr re-planned it and updated its one note"
+  return $rc
+}
+
 claim_comment_refused() {
   # A scratch repo with two roots and a pull request that changes app. Once
   # its own plan finished, the admin comments /terragucci approve, merge,
@@ -16332,6 +16408,7 @@ blob-gcs-key         gcs! weight=120
 blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
 note-footer          runner self! weight=150
+replan-dispatch      runner self! weight=150
 cdf-shared-bucket    weight=120
 cdktn-synth          runner self! weight=200
 audit                weight=150
