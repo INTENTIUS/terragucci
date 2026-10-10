@@ -51,7 +51,7 @@ Each job runs in terragucci's image, so the runner must start containers: Docker
 
 ## Agent features
 
-Setup and every pull request feature are plain CI jobs that need no agent; two opt-in features run a coding agent.
+Setup and every pull request feature are plain CI jobs that need no agent; four opt-in features run a model.
 
 | CI jobs, no agent | Page |
 |---|---|
@@ -69,13 +69,15 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
 | Opt-in: coding agent | Off until | Page |
 |---|---|---|
 | The `/terragucci agent <ask>` comment (GitHub and Forgejo) | `agent.comment` is set, with a model API key secret | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
+| A code change that matches what drift found, in a pull request (GitHub and Forgejo) | `agent.drift` is set, with a model API key secret | [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) |
+| A note comparing a pull request's description with its plan (on GitLab through the `comments:` schedule) | `review.agent` is set, with a model API key secret | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
 | A summary of a refused wave | you add its job by hand, with a model API key secret | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
 ## Prerequisites
 
 | You need | For |
 |---|---|
-| Terraform, OpenTofu or Terragrunt roots | what `init` finds |
+| Terraform or OpenTofu roots, or a Terragrunt, Atmos, Terramate or CDK Terrain repo | what `init` finds |
 | Node.js 22 or later on your machine | running `init` |
 | admin on the repo or project | the token, the cloud roles and the required status |
 

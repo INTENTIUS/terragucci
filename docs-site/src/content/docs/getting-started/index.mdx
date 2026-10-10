@@ -1,6 +1,6 @@
 ---
 title: Get your first plan note
-description: Add terragucci to a Terraform, OpenTofu or Terragrunt repo and see one grouped plan note on a pull request, in about 10 minutes.
+description: Add terragucci to a Terraform, OpenTofu, Terragrunt, Atmos, Terramate or CDK Terrain repo and see one grouped plan note on a pull request, in about 10 minutes.
 claims: [zero-config]
 prompt: |
   Read https://intentius.io/terragucci/getting-started/ and https://intentius.io/terragucci/getting-started/agents/.
@@ -48,7 +48,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
 | You need | Why |
 |---|---|
-| a repo with Terraform, OpenTofu or Terragrunt roots, on GitHub, GitLab or Forgejo | terragucci reads the roots and the forge from the repo |
+| a repo of Terraform or OpenTofu roots, or a Terragrunt, Atmos, Terramate or CDK Terrain repo, on GitHub, GitLab or Forgejo | terragucci reads the roots and the forge from the repo |
 | Node.js 22 or later, on your machine only | `init` is an npm package; the pipeline runs in terragucci's CI image |
 | a way for CI to read your state and providers | the plan job runs `plan`; see [Environment variables and credentials](/terragucci/reference/environment/) |
 | push access to the repo | you commit the generated pipeline |

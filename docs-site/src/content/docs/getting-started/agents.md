@@ -6,7 +6,7 @@ prompt: setup
 
 Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only four opt-in features [run a model](/terragucci/#opt-in-coding-agent).
 
-Give the prompt above to an agent working in a repository of Terraform, OpenTofu or Terragrunt roots.
+Give the prompt above to an agent working in a repository of Terraform or OpenTofu roots, including a Terragrunt, Atmos, Terramate or CDK Terrain repo.
 
 ## Agent inputs
 

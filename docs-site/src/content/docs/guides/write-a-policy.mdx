@@ -1,0 +1,112 @@
+---
+title: Write a policy
+description: Write a Rego rule, turn on policy checks, see a denial in the plan note, and let one denied plan through with an override.
+claims: [policy, policy-wave, policy-delete-key, policy-override]
+prompt: |
+  Read https://intentius.io/terragucci/guides/write-a-policy/.
+  Write a Rego rule under the policy directory that denies the case I name, with a test, run `conftest verify --policy policy`,
+  add the `policy:` key to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A rule in your repo that fails `tf-plan` for each root whose plan it denies, names the denial in the plan note, and keeps a denied wave from applying.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The pipeline from [Get your first plan note](/terragucci/getting-started/) | the plan, check and apply jobs run the policy |
+| [conftest](https://www.conftest.dev/) on your machine, to run the tests before you push | the jobs download the engine themselves |
+
+## Steps
+
+<Steps>
+
+1. Write the rule in `policy/`. It reads one root's plan, `show -json`, as `input`:
+
+   ```rego
+   # policy/sqs.rego
+   package main
+
+   import rego.v1
+
+   deny_long_retention contains msg if {
+     some rc in input.resource_changes
+     rc.type == "aws_sqs_queue"
+     rc.change.after.message_retention_seconds > 345600
+     msg := sprintf("%s keeps messages longer than four days", [rc.address])
+   }
+   ```
+
+   `deny`, `violation` and any `deny_<name>` fail the root; `warn` only warns. [Policy](/terragucci/reference/policy/#counted-rules) lists the rules and the [input](/terragucci/reference/policy/#rego-input).
+
+2. Test it beside the rule and run the tests:
+
+   ```rego
+   # policy/sqs_test.rego
+   package main
+
+   import rego.v1
+
+   test_denies_a_week if {
+     count(deny_long_retention) == 1 with input as {"resource_changes": [{"address": "aws_sqs_queue.jobs", "type": "aws_sqs_queue", "change": {"after": {"message_retention_seconds": 604800}}}]}
+   }
+   ```
+
+   ```bash
+   conftest verify --policy policy
+   ```
+
+   `tf-check` runs the same tests on the default branch's policy and fails on a failing one.
+
+3. Turn policy on in `terragucci.yml`:
+
+   ```yaml
+   policy:
+     engine: conftest
+     path: policy
+   ```
+
+4. Check the file and write the pipeline again:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+5. Open a pull request with the rule, its test, the key and the pipeline, and merge it.
+
+   A pull request is checked against the `policy` key and directory on its base branch. Until they merge, a change that edits or deletes the policy cannot loosen it.
+
+6. Open a pull request with a change the rule denies. The plan job fails, and the note names the root and the denial:
+
+   <Shot step="policy" view="note" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
+
+   The denial and its rule id, such as `main.deny_long_retention`, are in `roots[].policy` of the report. A sensitive value in a message is redacted before it reaches the note or the log.
+
+7. Clear the denial. Change the code until the rule passes, or change the rule in a pull request your reviewers approve and merge.
+
+</Steps>
+
+## Override a denial
+
+When a denied plan has to go out, a person you list can let that one plan through `tf-apply`. Name them at base:
+
+```yaml
+policy:
+  engine: conftest
+  path: policy
+  override: [github:alice, github:bob]
+```
+
+The wave records the denial and prints a `terragucci override` command for the root. [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) has the steps, and [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) what an override binds. `tf-plan` still fails the root; the override counts only in the apply wave, and only for that plan and those rules.
+
+## Next
+
+- [Policy](/terragucci/reference/policy/) has a shared policy source, `opa`, HCP Terraform policy sets, cost and review input.
+- [The audit trail](/terragucci/reference/audit-trail/) keeps every override with its reason.

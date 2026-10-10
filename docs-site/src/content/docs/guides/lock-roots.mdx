@@ -1,0 +1,95 @@
+---
+title: Lock roots to a pull request
+description: Hold the roots a pull request reaches from its first plan, or from a comment, so a second pull request that reaches one is refused until the first merges, closes or unlocks.
+claims: [pr-lock, plan-lock, plan-lock-release, pr-apply-lock, pr-close-release]
+prompt: |
+  Read https://intentius.io/terragucci/guides/lock-roots/.
+  Add `locks: plan` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.
+  Tell me the status check to require in branch protection; do not change branch protection yourself.
+  Never comment `/terragucci lock` or `/terragucci unlock`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Each root an open change reaches is held for it. A second change that reaches a held root is refused, and the reply names the root and its holder.
+
+These holds work across pull requests. The backend's state lock keeps two writers off one state file while a binary runs, a separate layer ([Locking and staleness](/terragucci/concepts/locking-and-staleness/)).
+
+## Modes
+
+| Setting | Roots are held | Forges |
+|---|---|---|
+| `locks: apply` (the default), with `apply.when: pull-request` | when the change applies before merge, or a writer comments `/terragucci lock` | GitHub, GitLab, Forgejo |
+| `locks: plan` | from the first plan, and again on each push or `/terragucci plan` | GitHub, Forgejo |
+
+Under the defaults, `apply.when: merge` and `locks: apply`, nothing is held.
+
+`init` and `config check` refuse `locks: plan` on GitLab. The hold is taken by a job that runs from the default branch, and no merge request event on GitLab runs such a job. With [`apply.when: pull-request`](/terragucci/guides/apply-before-merge/) on GitLab, the [comments](/terragucci/guides/re-plan-from-a-comment/) schedule reads `/terragucci apply` and `/terragucci lock` on a merge request and takes the hold.
+
+## Steps
+
+<Steps>
+
+1. Set the mode in `terragucci.yml`:
+
+   ```yaml
+   locks: plan
+   ```
+
+2. Check the file and write the pipeline again:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+   `init` adds the `pr-lock` job. It runs from the default branch on each event and comment, with no checkout of the change and no cloud role, and reads the change as data from git.
+
+3. Open a pull request with the file and the pipeline, and merge it.
+
+4. Require `terragucci/lock` in branch protection. Under `apply.when: merge` the hold gates nothing by itself; the required status keeps a refused change from merging.
+
+5. Open a change. `terragucci/lock` passes and names the roots it holds. A second change that reaches one gets a failing `terragucci/lock` and a reply naming the root and the holder.
+
+</Steps>
+
+Nothing queues a refused change. Once the holder lets go, comment `/terragucci plan` on it to take the roots.
+
+## Comments
+
+| Comment, by anyone with write access | Does |
+|---|---|
+| `/terragucci lock` | holds every root the change reaches and applies nothing; the reply names the roots |
+| `/terragucci unlock` | lets go of the change's roots; the reply names them |
+
+On GitLab a Developer or above comments, and the comments schedule answers on its next run. Both need `apply.when: pull-request` or `locks: plan`.
+
+## Release
+
+| Event | Held roots |
+|---|---|
+| the holder merges or closes | released |
+| `/terragucci unlock` on the holder | released |
+| a push stops reaching a root, with `locks: plan` | that root is released |
+
+The holds are kept in `_locks/tf-apply.json` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). A hold whose pull request merged or closed counts as released. A fork's pull request takes none.
+
+## Reach
+
+Outside plain roots, a change reaches more than the files it touches:
+
+| Repo | Held |
+|---|---|
+| Terragrunt | the units it touches and every unit whose `dependency` or `dependencies` block names one, followed through; a change outside every unit, such as `root.hcl`, holds every unit |
+| Atmos | the instances of each component it touches and their dependents; a stack manifest or `atmos.yaml` holds every instance |
+| `synth`, such as CDK Terrain | every stack, for any file but Markdown |
+
+A Markdown-only change holds nothing. [Locks](/terragucci/guides/apply-before-merge/#locks) has the full rules.
+
+## Next
+
+- [Release a state lock a killed job left](/terragucci/guides/release-a-state-lock/) frees a backend's state lock.
+- [Plan locks](/terragucci/reference/pipeline/#plan-locks) lists what the `pr-lock` job has and never has.

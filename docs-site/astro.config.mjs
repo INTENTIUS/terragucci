@@ -75,27 +75,47 @@ export default defineConfig({
 				PageTitle: './src/components/PageTitle.astro',
 				Footer: './src/components/Footer.astro',
 			},
-			description: 'One workflow, one audit trail and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
+			description: 'One workflow, one audit trail and one place to enforce policy for every Terraform and OpenTofu repo, Terragrunt, Atmos, Terramate and CDK Terrain included, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],
 			editLink: {
 				baseUrl: 'https://github.com/INTENTIUS/terragucci/edit/main/docs-site/',
 			},
-			// The sections follow what the reader is doing. The validation page is the
-			// one people link to, so it has a fixed place.
+			// The doors come first: a room per repo shape, binary and role, the pages
+			// for people leaving another tool, and the proof. The guides then follow
+			// what the reader is doing.
 			sidebar: [
-				{ label: 'The launch party', slug: 'launch-party' },
 				{
-					label: 'Getting started',
+					label: 'Start here',
 					items: [
-						{ label: 'Architecture', slug: 'concepts/how-it-works' },
 						{ label: 'Get your first plan note', slug: 'getting-started' },
+						{ label: 'Architecture', slug: 'concepts/how-it-works' },
 					],
 				},
 				{
 					label: 'Tutorial',
 					items: [{ autogenerate: { directory: 'tutorial' } }],
+				},
+				{
+					label: 'Rooms',
+					items: [{ autogenerate: { directory: 'rooms' } }],
+				},
+				{
+					label: 'Coming from',
+					items: [
+						{ label: 'Atlantis, OpenTaco or Terrateam', slug: 'guides/coming-from-atlantis-or-opentaco' },
+						{ label: 'HCP Terraform, Scalr or OTF', slug: 'guides/coming-from-hcp-terraform-scalr-or-otf' },
+						{ label: 'Spacelift or env zero', slug: 'guides/coming-from-spacelift-or-env-zero' },
+						{ label: 'Terragrunt Scale', link: '/guides/use-terragrunt/#terragrunt-scale' },
+					],
+				},
+				{
+					label: 'Proof',
+					items: [
+						{ label: 'Validation', slug: 'reference/validation' },
+						{ label: 'Scale', slug: 'reference/scale' },
+					],
 				},
 				{
 					label: 'How-to guides',
@@ -117,6 +137,16 @@ export default defineConfig({
 							],
 						},
 						{
+							label: 'Policy and audit',
+							items: [
+								{ label: 'Write a policy', slug: 'guides/write-a-policy' },
+								{ label: 'Read the audit trail', slug: 'guides/read-the-audit-trail' },
+								{ label: 'Lock roots to a pull request', slug: 'guides/lock-roots' },
+								{ label: 'Keep secrets out of plan notes and logs', slug: 'guides/keep-secrets-out-of-notes' },
+								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
+							],
+						},
+						{
 							label: 'Watch and keep',
 							items: [
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
@@ -127,24 +157,34 @@ export default defineConfig({
 								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
 								{ label: 'Query the estate with SQL', slug: 'guides/query-with-sql' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
+								{ label: 'Watch a choudoufu wave apply', slug: 'guides/watch-a-choudoufu-wave' },
 							],
 						},
 						{
-							label: 'Set it up your way',
+							label: 'Your repo shape',
 							items: [
-								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
-								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
-								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 								{ label: 'Use Atmos', slug: 'guides/use-atmos' },
 								{ label: 'Use Terramate', slug: 'guides/use-terramate' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
+								{ label: 'Generate backend and provider files', slug: 'guides/generate-root-files' },
+								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
+							],
+						},
+						{
+							label: 'Many repos',
+							items: [
+								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
+								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
+							],
+						},
+						{
+							label: 'Integrations',
+							items: [
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
 								{ label: 'Approve from Slack and Teams', slug: 'guides/approve-from-chat' },
 								{ label: 'Estimate the cost of a change', slug: 'guides/estimate-cost' },
-								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
-								{ label: 'Generate backend and provider files', slug: 'guides/generate-root-files' },
 							],
 						},
 						{
@@ -174,6 +214,7 @@ export default defineConfig({
 						{ label: 'Webhook event schema', slug: 'reference/notify-event' },
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
 						{ label: 'Migration files', slug: 'reference/migration-files' },
+						{ label: 'State backends', slug: 'reference/state-backends' },
 						{ label: 'Delivery metrics', slug: 'reference/delivery-metrics' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },
@@ -203,12 +244,8 @@ export default defineConfig({
 						{ label: 'Access and identity', slug: 'standards/access-and-identity' },
 					],
 				},
-				{ label: 'Coming from Atlantis, OpenTaco or Terrateam', slug: 'guides/coming-from-atlantis-or-opentaco' },
-				{ label: 'Coming from HCP Terraform, Scalr or OTF', slug: 'guides/coming-from-hcp-terraform-scalr-or-otf' },
-				{ label: 'Coming from Spacelift or env zero', slug: 'guides/coming-from-spacelift-or-env-zero' },
-				{ label: 'Validation', slug: 'reference/validation' },
-				{ label: 'Scale', slug: 'reference/scale' },
 				{ label: 'Changes in 0.4.5', slug: 'reference/whats-new' },
+				{ label: 'The launch party', slug: 'launch-party' },
 			],
 		}),
 	],

@@ -1,0 +1,85 @@
+---
+title: Watch a choudoufu wave apply
+description: Follow each resource of a choudoufu wave as it applies, done, in flight or waiting, and read each record's past versions afterward.
+claims: [cdf-live-progress, resource-history]
+prompt: |
+  Read https://intentius.io/terragucci/guides/watch-a-choudoufu-wave/.
+  For the commit I name, read run.json under my reports prefix and tell me, for each wave applying, how many resources are done, in flight and waiting, and which ones.
+  Read only: write nothing to the bucket.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import ApplyProgress from '../../../components/ApplyProgress.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+While a wave applies, each resource its plans change shows as done, in flight or waiting. After it applies, each changed resource lists its record's past versions.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| [`binary: choudoufu`](/terragucci/guides/use-a-binary/#choudoufu) and roots under live resource markers with a record store | progress is read from the estate's records |
+| [Reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) | the run view and the estate page live there; without one, only the job's log and `progress.json` show it |
+| The [estate page](/terragucci/guides/see-every-project/), with its `terragucci audit` step | the resource history and the counts across projects |
+
+## Progress
+
+The wave reads its estates' records, not the apply's output. A resource is done once its record is written or removed, which choudoufu does as each resource's apply returns. It is in flight once every resource it depends on is done, and waiting before that.
+
+<ApplyProgress />
+
+<Steps>
+
+1. Push a change. When a wave's gate lets it through and its roots start applying, the job's log names what it follows, then prints a line each time the records move:
+
+   ```text
+   wave 1 of 2: following 4 resources in the records of app
+   wave 1 of 2: progress 2 of 4 done, 1 in flight, 1 waiting
+   ```
+
+2. Open the run view, `<prefix>/<project>/runs/<commit>/run.html` in the bucket. The applying wave's column lists each resource with its state, and the page reloads every 15 seconds while a wave applies. `run.json` carries the same list in `waves[].progress`.
+
+3. Or read `terragucci-report/progress.json` in the job's report, written each time the list changes.
+
+4. On the estate page, each project with a wave applying shows `wave <n> applying` with its counts, linked to the run view, as of the estate job's last run.
+
+</Steps>
+
+| Setting | Effect |
+|---|---|
+| `TG_PROGRESS_SECONDS` | seconds between reads of the records; 5 by default |
+
+A store terragucci cannot read, such as a `kubernetes` record store, gives no records: the job logs it once, and that root's resources show done when its apply returns. Once a root's apply fails, what it did not finish shows as not applied.
+
+## Record history
+
+After it applies, a `tf-apply` wave runs `choudoufu live-history` in each choudoufu root for each resource the apply changed, under the identity it reads that root's records with. It keeps each version's id, its time, and whether it is current or deleted, never a value.
+
+<Steps>
+
+1. Read the wave's log, one line per root:
+
+   ```text
+   app: record versions: aws_sqs_queue.jobs 3 versions; terraform_data.seed 1 version
+   ```
+
+2. On the estate page, each resource of the estate shows its version count beside it, linked to its history.
+
+3. The history page, `history.html`, lists each apply that changed the resource with who approved it, and below it the record's versions, newest first. Reading one version's contents takes `aws s3api get-object --version-id` with your own identity.
+
+</Steps>
+
+| The store | The history says |
+|---|---|
+| `s3` | each version the bucket keeps; listing takes `s3:ListBucketVersions` on the record store bucket |
+| `local` or `kubernetes` | no past versions kept: the store replaces a record in place |
+| the identity cannot list them | versions not listed, with choudoufu's error; the wave still applies |
+
+`roots[].applied_changes[].record_versions` in the wave's report holds the same ([Report JSON schema](/terragucci/reference/report-schema/)).
+
+## Next
+
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/#the-run-view) has the run view's other parts.
+- [Locking and staleness](/terragucci/concepts/locking-and-staleness/#with-choudoufu) explains why choudoufu takes no state lock.

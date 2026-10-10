@@ -1,4 +1,11 @@
 {
+  "recorded": {
+    "aws": "2026-10-04",
+    "forgejo": "2026-10-07",
+    "github": "2026-10-07",
+    "github.com": "2026-10-10",
+    "gitlab": "2026-10-09"
+  },
   "claims": [
     {
       "forge": "aws",

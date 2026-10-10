@@ -3,10 +3,15 @@ title: Validation
 description: Every pipeline feature is proven on a local Forgejo against an AWS emulator; the per-forge claims list what is also proven on GitHub, github.com and GitLab.
 ---
 
+import CoverageGrid from '../../../components/CoverageGrid.astro';
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
 Each smoke claim runs twice and passes only when both runs hold: as written it must pass, and with its property broken on purpose (the BREAK) it must fail.
+
+<CoverageGrid />
+
+Every check behind the grids is listed in [the per-forge claims](#the-per-forge-claims) and [the example's checks](#the-examples-checks) below.
 
 | Forge | What runs |
 |---|---|
@@ -29,7 +34,12 @@ The github.com claims run the newest published release against real GitHub pull 
 | no model key | the agent comment and the refused-wave job run a stand-in agent that makes one edit or prints the summary input |
 | BREAK for the locking and report claims alone | `pr-lock`, `pr-lock-fmt`, `apply-serial`, `pr-apply-lock`, `pr-apply-stale`, `report-keys`, `report-oidc` and `estate-job` run a second time each night with their property broken (a lock dropped from [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a guard cut from the committed pipeline, `undiverged` left out of `apply.requires`, or the job's keys or token taken away); the other claims have no BREAK run, so they read "passes" |
 
+<details>
+<summary>Every per-forge claim</summary>
+
 <ValidationClaims />
+
+</details>
 
 ## The example's checks
 
@@ -42,7 +52,12 @@ The Terraform and choudoufu columns list the core checks run again on that binar
 | Terraform | each root's `required_version`, which pins OpenTofu's release line, takes that release or later, and its `.terraform.lock.hcl` is the one Terraform writes, for Terraform's registry |
 | choudoufu | each root's backend becomes a `live` block: an estate per root, its records in an S3 record store; a service reads the platform's logs bucket through `terraform_estate_outputs` instead of `terraform_remote_state`, and its registration in that bucket is a `terraform_data`, since choudoufu admits no `aws_s3_object`; `drift` is left out, since it is a config error there, which the drift row shows |
 
+<details>
+<summary>Every check on the example</summary>
+
 <SmokeClaims />
+
+</details>
 
 The same setup runs on your laptop. [The tutorial](/terragucci/tutorial/) boots it with one command and walks through each feature.
 
