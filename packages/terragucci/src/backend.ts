@@ -8,8 +8,11 @@
  * stateVersion answers what an apply left: the backend's version id of the
  * state object, read from the object's metadata (an S3 HEAD). It reads S3
  * and S3-compatible stores, where the version id is the bucket's
- * `x-amz-version-id`, and a local backend, which keeps no versions. Any
- * other backend is recorded by type with versioning `unknown`.
+ * `x-amz-version-id`, and a local backend, which keeps no versions. A
+ * backend that keeps no history either (pg, kubernetes, consul, and an http
+ * backend other than GitLab's) is recorded `off`, with why. Any other backend
+ * keeps versions terragucci does not read (gcs, azurerm, remote, GitLab's
+ * http), and is recorded by type with versioning `unknown`.
  *
  * The S3 request is signed with the job's own credentials (the variables
  * report/s3.ts reads) unless the backend's configuration names static keys.
@@ -21,6 +24,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { S3Client, s3FromEnv, type S3Fetch, type S3Target } from "./report/s3";
 import type { ReportStateVersion } from "./report/schema";
+import { literal, stateAddress } from "./state-address";
 
 /** The backend `init` recorded: its type and configuration. */
 export interface InitialisedBackend {
@@ -32,9 +36,40 @@ export interface InitialisedBackend {
 export type StateObject =
   | { backend: "s3"; bucket: string; key: string; region: string; endpoint?: string; lockfile: boolean; dynamodb: boolean; target: S3Target }
   | { backend: "local"; path: string }
-  | { backend: string; unsupported: string };
+  | { backend: string; unsupported: string; location?: string; versions?: { versioning: "off" | "unknown"; note: string } };
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
+
+/**
+ * Why a backend keeps no history, for the types that keep none: each write
+ * replaces the state in place. GitLab's http backend keeps each version by
+ * serial, so an http backend is in this list only when its address is not
+ * GitLab's state API.
+ */
+const NO_HISTORY: Record<string, string> = {
+  pg: "a pg backend keeps one row per workspace, which each write replaces",
+  kubernetes: "a kubernetes backend keeps one Secret per workspace, which each write replaces",
+  consul: "a consul backend keeps one key per workspace, which each write replaces",
+  http: "an http backend keeps what its server holds at the address and names no versions",
+};
+
+/** GitLab's state API: `/api/v4/projects/<id>/terraform/state/<name>`. */
+const GITLAB_STATE = /\/api\/v4\/projects\/[^/]+\/terraform\/state\//;
+
+/** Whether the backend keeps no history of the state: false for one that keeps none, undefined when it may keep some. */
+export function keepsHistory(b: InitialisedBackend): false | undefined {
+  if (!(b.type in NO_HISTORY)) return undefined;
+  if (b.type === "http" && GITLAB_STATE.test(str(b.config.address) ?? "")) return undefined;
+  return false;
+}
+
+/** The state's address (./state-address.ts) from the configuration init recorded, credentials left out. */
+function initAddress(b: InitialisedBackend): string | undefined {
+  const workspaces = Array.isArray(b.config.workspaces) ? b.config.workspaces[0] : b.config.workspaces;
+  const get = (n: string): string | null | undefined => literal(b.config[n] ?? (workspaces && typeof workspaces === "object" ? (workspaces as Record<string, unknown>)[n] : undefined));
+  const a = stateAddress(b.type, get, "");
+  return "key" in a ? a.key : undefined;
+}
 
 /** The root's data dir: `TF_DATA_DIR` (relative to the root, as the binary run with `-chdir` reads it), else `.terraform`. */
 export function dataDir(dir: string, env: NodeJS.ProcessEnv = process.env): string {
@@ -117,7 +152,14 @@ export function stateObject(dir: string, env: NodeJS.ProcessEnv = process.env, b
     const path = ws === "default" ? (str(c.path) ?? "terraform.tfstate") : join(str(c.workspace_dir) ?? "terraform.tfstate.d", ws, "terraform.tfstate");
     return { backend: "local", path };
   }
-  if (backend.type !== "s3") return { backend: backend.type, unsupported: `terragucci reads state versions from s3 and local backends, and this root's backend is ${backend.type}` };
+  if (backend.type !== "s3") {
+    const location = initAddress(backend);
+    const at = location ? { location } : {};
+    const unsupported = `terragucci reads state versions from s3 and local backends, and this root's backend is ${backend.type}`;
+    if (keepsHistory(backend) === false) return { backend: backend.type, unsupported, ...at, versions: { versioning: "off", note: NO_HISTORY[backend.type] } };
+    const kept = backend.type === "http" ? "GitLab keeps each version of the state by serial" : `a ${backend.type} backend can keep versions of the state`;
+    return { backend: backend.type, unsupported, ...at, versions: { versioning: "unknown", note: `${kept}, which terragucci does not read` } };
+  }
   const c = backend.config;
   const bucket = str(c.bucket);
   const key = str(c.key);
@@ -164,7 +206,7 @@ export function stateClient(o: Extract<StateObject, { target: S3Target }>, fetch
  */
 export async function stateVersion(dir: string, env: NodeJS.ProcessEnv = process.env, fetchFn?: S3Fetch, backend?: InitialisedBackend): Promise<ReportStateVersion> {
   const o = backend ? stateObject(dir, env, backend) : stateObject(dir, env);
-  if ("unsupported" in o) return { backend: o.backend, versioning: "unknown", note: o.unsupported };
+  if ("unsupported" in o) return { backend: o.backend, ...(o.location ? { location: o.location } : {}), versioning: o.versions?.versioning ?? "unknown", note: o.versions?.note ?? o.unsupported };
   if (o.backend === "local") return { backend: "local", location: (o as { path: string }).path, versioning: "off", note: "a local backend keeps only the latest state" };
   const s3 = o as Extract<StateObject, { target: S3Target }>;
   const location = `s3://${s3.bucket}/${s3.key}`;

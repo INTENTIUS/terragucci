@@ -8,6 +8,7 @@ import { join, relative } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { ConfigError, forgeFromHost, type Binary, type ForgeName } from "./config";
 import { atmosStateReads } from "./atmos";
+import { literal, stateAddress, type Attr } from "./state-address";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
 
@@ -237,6 +238,16 @@ interface RemoteRead extends StateRef {
   repeated: boolean;
 }
 
+/** What a root's code says about state: its own address and the addresses it reads, and each that the code does not say, with why. */
+export interface RootStateCode {
+  own?: StateRef;
+  reads: RemoteRead[];
+  /** Why its own state has no address: its backend's address is not all plain strings in the code. */
+  ownUnresolved?: string;
+  /** Its `terraform_remote_state` blocks whose address is not all plain strings in the code. */
+  unresolved: { name: string; why: string }[];
+}
+
 function blockBody(text: string, start: number): string {
   let depth = 0;
   for (let i = text.indexOf("{", start); i < text.length; i++) {
@@ -250,32 +261,69 @@ function attr(body: string, name: string): string | undefined {
   return body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
 }
 
+/** An HCL block's attribute: its string, `null` when it is written as anything but a plain string, undefined when it is not written. */
+const hclAttr =
+  (body: string): Attr =>
+  (name) => {
+    const m = body.match(new RegExp(`(?<![\\w.-])${name}\\s*=(?!=)\\s*(.)`));
+    if (!m) return undefined;
+    if (m[1] !== '"') return null;
+    const start = m.index! + m[0].length;
+    let out = "";
+    for (let i = start; i < body.length; i++) {
+      if (body[i] === "\\") {
+        out += body[++i] ?? "";
+        continue;
+      }
+      if (body[i] === '"') return literal(out) ?? null;
+      out += body[i];
+    }
+    return null;
+  };
+
 const objectOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 /** A block in Terraform's JSON syntax: an object, or a list of objects whose first is taken. */
 const firstOf = (v: unknown): Record<string, unknown> | undefined => objectOf(Array.isArray(v) ? v[0] : v);
-const stringOf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+/** A JSON block's attribute, or its `workspaces` block's. */
+const jsonAttr =
+  (b: Record<string, unknown> | undefined): Attr =>
+  (name) => {
+    const v = b?.[name] ?? firstOf(b?.workspaces)?.[name];
+    return literal(v);
+  };
+
+/** One state the code names: its address, or why it has none. */
+function addressed(type: string | null | undefined, get: Attr, root: string): { ref?: StateRef; why?: string } {
+  if (type === null) return { why: "its backend is an expression, not a plain string" };
+  const a = stateAddress(type ?? "local", get, root);
+  return "unresolved" in a ? { why: a.unresolved } : { ref: a };
+}
 
 /**
  * The backend and the `terraform_remote_state` blocks of a file in Terraform's
- * JSON syntax, as CDK Terrain writes them: `terraform.backend.<type>` and
- * `data.terraform_remote_state.<name>.config`, each a block or a list of them.
+ * JSON syntax, as CDK Terrain writes them: `terraform.backend.<type>` (or
+ * `terraform.cloud`) and `data.terraform_remote_state.<name>.config`, each a
+ * block or a list of them.
  */
-function jsonState(raw: string): { own?: StateRef; reads: RemoteRead[] } {
+function jsonState(raw: string, root: string): RootStateCode & { declared: boolean } {
   let doc: unknown;
+  const out: RootStateCode & { declared: boolean } = { reads: [], unresolved: [], declared: false };
   try {
     doc = JSON.parse(raw);
   } catch {
-    return { reads: [] };
+    return out;
   }
-  let own: StateRef | undefined;
-  const reads: RemoteRead[] = [];
   const top = objectOf(doc);
   for (const t of Array.isArray(top?.terraform) ? top.terraform : [top?.terraform]) {
-    const backends = objectOf(objectOf(t)?.backend) ?? {};
-    for (const type of Object.keys(backends)) {
-      const b = firstOf(backends[type]);
-      const key = stringOf(b?.key) ?? stringOf(b?.prefix) ?? stringOf(b?.path);
-      if (key) own = { bucket: stringOf(b?.bucket), key };
+    const backends: [string, unknown][] = Object.entries(objectOf(objectOf(t)?.backend) ?? {});
+    if (objectOf(t)?.cloud !== undefined) backends.push(["cloud", objectOf(t)!.cloud]);
+    for (const [type, v] of backends) {
+      const own = addressed(type, jsonAttr(firstOf(v)), root);
+      out.declared = true;
+      if (own.ref) {
+        out.own = own.ref;
+        delete out.ownUnresolved;
+      } else out.ownUnresolved = own.why;
     }
   }
   for (const d of Array.isArray(top?.data) ? top.data : [top?.data]) {
@@ -283,37 +331,51 @@ function jsonState(raw: string): { own?: StateRef; reads: RemoteRead[] } {
     for (const [name, v] of Object.entries(blocks)) {
       const b = firstOf(v);
       const config = objectOf(b?.config);
-      const key = stringOf(config?.key) ?? stringOf(config?.prefix) ?? stringOf(config?.path);
-      if (key) reads.push({ name, bucket: stringOf(config?.bucket), key, repeated: b?.count !== undefined || b?.for_each !== undefined });
+      const read = config === undefined && b?.config !== undefined ? { why: "its config is an expression, not an object" } : addressed(literal(b?.backend), jsonAttr(config), root);
+      if (read.ref) out.reads.push({ name, ...read.ref, repeated: b?.count !== undefined || b?.for_each !== undefined });
+      else out.unresolved.push({ name, why: read.why! });
     }
   }
-  return { ...(own ? { own } : {}), reads };
+  return out;
 }
 
-/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code (HCL, or Terraform's JSON syntax). */
-export function stateOf(repo: string, root: string): { own?: StateRef; reads: RemoteRead[] } {
-  let own: StateRef | undefined;
-  const reads: RemoteRead[] = [];
+/**
+ * The state a root's backend block (or `cloud` block) names, and the states
+ * its `terraform_remote_state` blocks read, as written in its code (HCL, or
+ * Terraform's JSON syntax), each through ./state-address.ts. A root that
+ * declares no backend keeps its state in `terraform.tfstate` beside its code.
+ */
+export function stateOf(repo: string, root: string): RootStateCode {
+  const out: RootStateCode = { reads: [], unresolved: [] };
+  let declared = false;
+  const own = (o: { ref?: StateRef; why?: string }): void => {
+    declared = true;
+    if (o.ref) {
+      out.own = o.ref;
+      delete out.ownUnresolved;
+    } else out.ownUnresolved = o.why;
+  };
   for (const f of tfFiles(join(repo, root))) {
     if (isJson(f)) {
-      const j = jsonState(readFileSync(f, "utf-8"));
-      if (j.own) own = j.own;
-      reads.push(...j.reads);
+      const j = jsonState(readFileSync(f, "utf-8"), root);
+      if (j.declared) own(j.own ? { ref: j.own } : { why: j.ownUnresolved });
+      out.reads.push(...j.reads);
+      out.unresolved.push(...j.unresolved);
       continue;
     }
     const text = stripComments(readFileSync(f, "utf-8"));
-    for (const m of text.matchAll(/\bbackend\s+"[^"]+"\s*\{/g)) {
-      const body = blockBody(text, m.index!);
-      const key = attr(body, "key") ?? attr(body, "prefix");
-      if (key) own = { bucket: attr(body, "bucket"), key };
-    }
+    for (const m of text.matchAll(/\bbackend\s+"([^"]+)"\s*\{/g)) own(addressed(m[1], hclAttr(blockBody(text, m.index!)), root));
+    for (const m of text.matchAll(/^\s*cloud\s*\{/gm)) own(addressed("cloud", hclAttr(blockBody(text, m.index!)), root));
     for (const m of text.matchAll(/\bdata\s+"terraform_remote_state"\s+"([^"]+)"\s*\{/g)) {
       const body = blockBody(text, m.index!);
-      const key = attr(body, "key") ?? attr(body, "prefix");
-      if (key) reads.push({ name: m[1], bucket: attr(body, "bucket"), key, repeated: /^\s*(count|for_each)\s*=/m.test(body) });
+      const get = hclAttr(body);
+      const read = addressed(get("backend"), get, root);
+      if (read.ref) out.reads.push({ name: m[1], ...read.ref, repeated: /^\s*(count|for_each)\s*=/m.test(body) });
+      else out.unresolved.push({ name: m[1], why: read.why! });
     }
   }
-  return { own, reads };
+  if (!declared) own(addressed("local", () => undefined, root));
+  return out;
 }
 
 /**
@@ -333,6 +395,28 @@ export function remoteStateReads(repo: string, roots: string[]): Map<string, { n
     }
   }
   return out;
+}
+
+/**
+ * The states the roots' code does not address: each `terraform_remote_state`
+ * block whose address is not all plain strings, and, when any root reads
+ * state that way, each root whose own backend's address is not. No edge can
+ * line either up with the root at the other end.
+ */
+export function unaddressedStates(repo: string, roots: string[]): { root: string; own?: string; reads: { name: string; why: string }[] }[] {
+  const states = roots.map((r) => [r, stateOf(repo, r)] as const);
+  const anyReads = states.some(([, s]) => s.reads.length > 0 || s.unresolved.length > 0);
+  return states
+    .map(([root, s]) => ({ root, ...(anyReads && s.ownUnresolved ? { own: s.ownUnresolved } : {}), reads: s.unresolved }))
+    .filter((x) => x.own !== undefined || x.reads.length > 0);
+}
+
+/** config check's warnings for the states the roots' code does not address. */
+export function addressWarnings(repo: string, roots: string[]): string[] {
+  return unaddressedStates(repo, roots).flatMap((u) => [
+    ...(u.own ? [`state: ${u.root} keeps its state where the code does not say (${u.own}), so a root that reads it through terraform_remote_state is not ordered after it`] : []),
+    ...u.reads.map((r) => `state: ${u.root} reads state through terraform_remote_state "${r.name}" where the code does not say (${r.why}), so it is not ordered after the root that writes it`),
+  ]);
 }
 
 /** Where one state is, as a backend block or a `terraform_remote_state` block names it: its bucket, when it names one, and its key. */

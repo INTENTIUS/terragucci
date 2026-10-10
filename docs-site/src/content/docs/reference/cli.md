@@ -492,7 +492,16 @@ With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) in a repo of pl
 | a root reads the state of another environment's root | its `terraform_remote_state` names that root's state key, so its roles must reach that state |
 | a root matches no glob and `oidc` names no pair | the root plans and applies with no AWS role |
 
-Under `terragrunt.credentials` it warns when one role serves two unit globs. Warnings leave the exit code 0.
+Under `terragrunt.credentials` it warns when one role serves two unit globs.
+
+In a repo of plain roots it warns for each `terraform_remote_state` block whose state [address](/terragucci/guides/track-cross-state-edges/#state-addresses) is not plain strings in the code, and, when any root reads state, for each root whose own backend's address is not. No edge orders those roots.
+
+```text
+terragucci.yml: 1 warning(s)
+  state: app reads state through terraform_remote_state "net" where the code does not say (its pg conn_str is an expression, not a plain string), so it is not ordered after the root that writes it
+```
+
+Warnings leave the exit code 0.
 
 ```text
 terragucci.yml: ok
