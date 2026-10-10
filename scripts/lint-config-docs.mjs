@@ -22,8 +22,10 @@ for (const k of keys) if (!rows.has(k)) problems.push(`config.ts accepts \`${k}\
 for (const k of rows) if (!keys.has(k)) problems.push(`the Keys table of config.md lists \`${k}\` and config.ts does not accept it`);
 
 // ── environment variables ────────────────────────────────────────────────────
-// Constants in the source whose names look like variables and are not.
+// Constants in the source whose names look like variables and are not, and
+// variables only the binary reads that terragucci names in a message.
 const NOT_VARIABLES = new Set([
+  "TF_CLOUD_ORGANIZATION",
   "AWS_CLI", "AZURE_AUDIENCE", "AZURE_AUTHORITY", "AZURE_KEY_SECRET", "AZURE_VERSION", "GITHUB_CACHE_KEY", "GITHUB_COMMENT_LIMIT", "GITLAB_NOTE_LIMIT", "GITLAB_STATE", "GITLAB_GCP_TOKEN", "GITLAB_AZURE_TOKEN",
   "RUNNER_TOKEN_VARS", "TG_CACHE_DIR",
 ]);
