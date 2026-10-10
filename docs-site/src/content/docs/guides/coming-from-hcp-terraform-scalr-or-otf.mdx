@@ -1,6 +1,6 @@
 ---
 title: Coming from HCP Terraform, Scalr or OTF
-description: Each HCP Terraform, Scalr and OTF workspace concept, the terragucci key or job that does the same work, how to move a workspace's state into your own bucket by hand, and what has no equivalent.
+description: Each HCP Terraform, Scalr and OTF workspace concept, the terragucci key or job that does the same work, how to move a workspace's state into your own bucket, and what has no equivalent.
 claims: [pass-secrets, runner-label]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/.
@@ -23,7 +23,7 @@ Each workspace becomes a root with its own state in your bucket. The jobs `init`
 |---|---|
 | Workspace | a [root](/terragucci/concepts/glossary/#root): one directory, one state. terragucci runs no CLI workspaces |
 | Several workspaces on one working directory | a directory per workspace, each with its backend key and `terraform.tfvars`, calling a shared module |
-| Workspace state | a key in your S3 bucket, moved [by hand](#state-move) |
+| Workspace state | a key in your S3 bucket, moved by a [backend move](#state-move) |
 | Terraform variables | `terraform.tfvars` in the root, committed |
 | Environment variables, variable sets | [`env`](/terragucci/reference/config/#keys) for values; CI secrets named under [`pass`](#variables) for the rest |
 | Dynamic provider credentials | [`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc): a plan role and an apply role per cloud |
@@ -79,7 +79,26 @@ Each workspace becomes a root with its own state in your bucket. The jobs `init`
 
 ## State move
 
-terragucci's own [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) reads only `s3` and `local` sources, so a workspace's state comes out by hand, with Terraform or OpenTofu (`tofu` in place of `terraform`). Neither binary migrates straight out of a `cloud` block, so the block becomes a `remote` backend first.
+A [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) reads the workspace's current state version over the platform's API and writes it to your bucket, approved by digest like any migration. Change the `cloud` block to the `s3` block and add the migration in one pull request, with the token in `TF_TOKEN_<host>` as a CI secret:
+
+```yaml
+# migrations/move-network.yml
+backends:
+  - root: envs/prod/network
+    from:
+      backend: cloud
+      config:
+        hostname: app.terraform.io
+        organization: acme
+        workspaces:
+          name: prod-network
+```
+
+[Migration files](/terragucci/reference/migration-files/#workspaces) lists the keys.
+
+### By hand
+
+With Terraform or OpenTofu (`tofu` in place of `terraform`). Neither binary migrates straight out of a `cloud` block, so the block becomes a `remote` backend first.
 
 <Steps>
 
@@ -219,7 +238,7 @@ steps:
 
 | On the platform | In terragucci today |
 |---|---|
-| State move | by hand, as above; no importer reads a workspace or its state over the platform's API |
+| State move | one workspace per entry of a backend move; no importer reads a workspace's settings |
 | Workspace settings | no importer; `terragucci.yml` is written by hand or by an agent from this page |
 | Sentinel | not run; each policy is rewritten in Rego |
 | HCP Terraform Stacks | no equivalent; a Stack's components become roots ordered by `terraform_remote_state` |

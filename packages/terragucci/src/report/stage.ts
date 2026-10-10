@@ -31,12 +31,12 @@ import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
-import { applyLayers, detectBinary, driftRefusal, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { applyLayers, detectBinary, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
 import { discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
-import { detectShape, type Shape } from "../shape";
+import { detectShape, fullDriftPlans, type Shape } from "../shape";
 import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
@@ -51,7 +51,7 @@ import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditL
 import { driftOf, type Drifted } from "../respond/drift";
 import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-schedule";
 import { DRIFT_ISSUE_FILE } from "../drift-agent";
-import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
+import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
 import { checkPlans, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
@@ -61,6 +61,7 @@ import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportBlast, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
 import { blastRadius } from "./graph";
+import { blastRootsOf, resourceBlast } from "./resource-blast";
 import { branchCheckouts } from "../branch-checkouts";
 import { changesSomething } from "./changing";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
@@ -947,8 +948,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
-  const noDrift = drift ? driftRefusal(binary, liveRoots(repo, roots)) : undefined;
-  if (noDrift) throw new ConfigError(noDrift);
+  // A root under live resource markers keeps no state to refresh, and every plan of it reads the live system:
+  // drift plans it in full, and what the plan would change is what moved outside the code.
+  const live = new Set(drift && fullDriftPlans(binary) ? liveRoots(repo, roots) : []);
   const planner = plannerForBinary(binary);
   // Each root's binary: the job's, or the version the root pins, installed once per version.
   const binaries = new RootBinaries(repo, binary, settings.version, env, options.installer);
@@ -1125,7 +1127,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
-      const planOnce = () => run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
+      const planOnce = () => run("plan", ...(drift && !live.has(root) ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
       // Linked: the root plans on the planned outputs of the upstreams this run planned, its files put back once the plan is made.
       let linked: Linked | undefined;
       const unlink = (why: string): void => {
@@ -1168,6 +1170,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       } catch {
         return failed(`show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, `${root}: show -json failed`);
       }
+      if (live.has(root)) plan = liveDrift(plan);
       if (!drift) upstreamPlans.set(root, plan);
       const unknownFrom = unknownUpstreams(reads);
       const safe = redactPlan(plan);
@@ -1257,7 +1260,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
 
   // The blast radius: the roots whose plan changes something, and every root that reads their state, followed through.
   const changing = inputs.filter((i) => i.plan !== undefined && !i.error && changesSomething(i.plan)).map((i) => i.path);
-  const blast = !drift && changing.length > 0 ? blastRadius(orderOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  const radius = !drift && changing.length > 0 ? blastRadius(orderOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  // By resource, when a root is downstream: what each changed resource reaches through the plans' references and the outputs roots read.
+  const byResource = radius && radius.downstream.length > 0 ? resourceBlast(blastRootsOf(repo, all, inputs.filter((i) => !i.error), blocksOf), radius.roots) : [];
+  const blast = radius ? { ...radius, ...(byResource.length ? { resources: byResource } : {}) } : undefined;
   // A plain root's dependencies in the report: the roots waves.after puts before it (its reads are in roots[].reads).
   const dependencies = explicit.size ? new Map([...explicit].map(([r, ups]) => [r, [...ups].sort()])) : undefined;
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}), ...(dependencies ? { dependencies } : {}) });

@@ -33,7 +33,7 @@ A scheduled job rebuilds `estate.html` and `estate.json` at the top of your repo
 
 The page reads only the files above and never a report or a plan.
 
-In a Terragrunt repo the graph groups units into the waves their apply cut from `terragrunt find`; an edge links a unit to each unit whose `dependency` or `dependencies` block names it. A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG, so the page loads no script.
+In a Terragrunt repo the graph groups units into the waves their apply cut from `terragrunt find`; an edge links a unit to each unit whose `dependency` or `dependencies` block names it. A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. Under [choudoufu](/terragucci/concepts/glossary/#choudoufu), a root's state is its estate's records, and a `terraform_estate_outputs` read of an estate another project owns is such a read. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG, so the page loads no script.
 
 ## Prerequisites
 

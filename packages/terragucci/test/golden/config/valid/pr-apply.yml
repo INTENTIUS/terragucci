@@ -1,0 +1,8 @@
+apply:
+  when: pull-request
+  merge: auto
+  merge_token_env: MERGE_TOKEN
+  requires: [approved, checks]
+cost: true
+dashboards: true
+own_jobs: .forgejo/own-jobs.yml
