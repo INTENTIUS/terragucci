@@ -50,6 +50,8 @@ for (const f of ["report.schema.json", "report-index.schema.json", "estate.schem
 }
 // The generic webhook's event, terragucci.notify/v1, for a receiver to validate.
 copyFileSync(join(pkg, "src/notify.schema.json"), join(stage, "notify.schema.json"));
+// terragucci.yml's own schema, for editors and the provider (src/config-schema.ts builds it).
+copyFileSync(join(pkg, "src/terragucci.schema.json"), join(stage, "terragucci.schema.json"));
 
 // The config types, for `import type { TerragucciConfig } from "@intentius/terragucci"`.
 execFileSync(
