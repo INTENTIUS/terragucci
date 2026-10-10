@@ -202,7 +202,7 @@ export default defineConfig({
 						{ label: 'Access and identity', slug: 'standards/access-and-identity' },
 					],
 				},
-				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
+				{ label: 'Coming from Atlantis, OpenTaco or Terrateam', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Validation', slug: 'reference/validation' },
 				{ label: 'Scale', slug: 'reference/scale' },
 				{ label: 'Changes in 0.4.4', slug: 'reference/whats-new' },
