@@ -169,6 +169,7 @@ tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
+reconcile-mixed|a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1|
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
 metrics|the metrics of a plan run reach Prometheus with the counts in its report|
 tg-zero-config|init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits|
@@ -1582,6 +1583,80 @@ YML
     [ "$(curl -s -o /dev/null -w '%{http_code}' -I "$FLOCI/$b")" = 200 ] || { log "$b is not in floci"; return 1; }
   done
   log "one pull request on $repo, check green, merged, both roots applied in order; in-line unchanged"
+}
+
+claim_reconcile_mixed() {
+  # A control repo whose projects are on three forges: a Forgejo project on
+  # the stack and a GitHub project on stack/mock-github, each with one root
+  # and no pipeline, and a Forgejo project whose forge does not answer.
+  # terragucci reconcile --mode apply opens a real pull request on Forgejo
+  # with the pipeline init writes for Forgejo, and one on the mock with
+  # GitHub's, fails the third project by name, and exits 1.
+  # BREAK: the Forgejo project is listed as forge: github, so reconcile
+  # speaks GitHub's API to Forgejo and opens no pull request there.
+  log() { echo "[smoke reconcile-mixed] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/reconcile-mixed" forge=forgejo mock="tgs-mockgh-mixed-$STAMP" gh_token=tg-mock-github-token gh_repo=terragucci-admin/mixed
+  local port out n pr files i rc=0
+  [ -n "${BREAK:-}" ] && forge=github
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo reconcile-mixed || { drop_work "$work"; return 1; }
+  mkdir -p "$work/tree/app" "$work/control"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "probe" {}\n' > "$work/tree/app/main.tf"
+  push_tree "$work/tree" "$repo" main "reconcile-mixed: one root, no pipeline" >/dev/null || { drop_work "$work"; return 1; }
+  [ -n "$(remote_head "$repo" main)" ] || { log "main is not on Forgejo"; drop_work "$work"; return 1; }
+  # The GitHub project: the same tree on the mock, which serves git over HTTP and GitHub's REST paths under /api/v3.
+  docker run -d --rm --name "$mock" -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
+    -e PORT=8188 -e MOCK_TOKEN="$gh_token" -e "MOCK_PUBLIC_URL=http://127.0.0.1:8188" \
+    public.ecr.aws/docker/library/node:22-bookworm node /srv/server.mjs >/dev/null || { log "the mock did not start"; drop_work "$work"; return 1; }
+  port="$(docker port "$mock" 8188/tcp | head -1 | sed 's/.*://')"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "http://127.0.0.1:$port/__mock/health" 2>/dev/null && break; sleep 1; done
+  ghm() { curl -fsS -H "Authorization: Bearer $gh_token" -H 'content-type: application/json' "$@"; }
+  ghm -o /dev/null -d '{"name":"mixed","default_branch":"main"}' "http://127.0.0.1:$port/api/v3/user/repos" || { log "could not make the repo on the mock"; rc=1; }
+  git -C "$work/tree" push -q "http://x:$gh_token@127.0.0.1:$port/$gh_repo.git" HEAD:refs/heads/main 2>&1 | sed 's/^/  /' >&2 || true
+  ghm -o /dev/null "http://127.0.0.1:$port/api/v3/repos/$gh_repo/branches/main" || { log "main is not on the mock"; rc=1; }
+  cat > "$work/control/terragucci.yml" <<YML
+defaults:
+  binary: tofu
+projects:
+  localhost/$repo:
+    forge: $forge
+    url: $URL/$repo
+  github.com/$gh_repo:
+    url: http://127.0.0.1:$port/$gh_repo
+  forgejo.invalid/smoke/reconcile-mixed:
+    forge: forgejo
+    url: http://127.0.0.1:9/smoke/reconcile-mixed
+YML
+  if [ $rc = 0 ]; then
+    out="$(cd "$work/control" && FORGEJO_TOKEN="$TOKEN" GITHUB_TOKEN="$gh_token" "$TERRAGUCCI" reconcile --config terragucci.yml --mode apply 2>&1)"; n=$?
+    echo "$out" | sed 's/^/  /' >&2
+    [ "$n" = 1 ] || { log "reconcile exited $n, not 1"; rc=1; }
+    grep -q "^forgejo.invalid/smoke/reconcile-mixed: FAILED " <<<"$out" || { log "reconcile did not name the unreachable project as failed"; rc=1; }
+    # The Forgejo pull request, and the files it adds.
+    pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
+    if [ -z "$pr" ]; then
+      log "no pull request from terragucci/pipeline on Forgejo"; rc=1
+    else
+      files="$(api "$URL/api/v1/repos/$repo/pulls/$pr/files" | jq -r '[.[].filename] | sort | join(",")')"
+      log "Forgejo pull request $pr adds $files"
+      grep -q '.forgejo/workflows/terragucci.yml' <<<"$files" || { log "the Forgejo pull request does not add Forgejo's pipeline"; rc=1; }
+    fi
+    # The mock's pull request, and Forgejo's pipeline nowhere in its branch.
+    pr="$(ghm "http://127.0.0.1:$port/api/v3/repos/$gh_repo/pulls?state=open" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
+    if [ -z "$pr" ]; then
+      log "no pull request from terragucci/pipeline on the mock"; rc=1
+    else
+      git clone -q --branch terragucci/pipeline "http://127.0.0.1:$port/$gh_repo.git" "$work/gh" 2>/dev/null || true
+      log "GitHub pull request $pr on the mock; its branch has $(cd "$work/gh" 2>/dev/null && find .github .forgejo -type f 2>/dev/null | sort | tr '\n' ' ')"
+      [ -f "$work/gh/.github/workflows/terragucci.yml" ] && [ ! -e "$work/gh/.forgejo" ] || { log "the GitHub pull request does not carry GitHub's pipeline alone"; rc=1; }
+    fi
+  fi
+  docker stop "$mock" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "one control repo, three forges: Forgejo and GitHub each got a pull request with their own pipeline, the unreachable project failed by name, and reconcile exited 1"
+  return $rc
 }
 
 # ── the plan report ───────────────────────────────────────────────────────
@@ -16285,6 +16360,7 @@ traces          ex otel! after=boot weight=330
 highlight       ex after=boot weight=300
 tips            ex after=boot weight=300
 reconcile       runner self! weight=300
+reconcile-mixed self! weight=60
 rollout         runner self! weight=250
 fresh-plan      ex after=boot weight=250
 waves           runner self! weight=200

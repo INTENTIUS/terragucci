@@ -1,7 +1,7 @@
 ---
 title: Govern many repos from one place
 description: List your projects in a control repo and let terragucci open a pull request in each one that needs a change.
-claims: [reconcile]
+claims: [reconcile, reconcile-mixed]
 prompt: |
   Read https://intentius.io/terragucci/guides/govern-many-repos/.
   In this control repo, write terragucci.yml with the projects I name, run `npx terragucci config check`, then run the preview, `npx terragucci reconcile --config terragucci.yml`, and show me its output for each project.

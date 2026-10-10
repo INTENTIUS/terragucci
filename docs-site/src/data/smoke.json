@@ -209,6 +209,14 @@
     },
     {
       "claim": "reconcile-mixed",
+      "says": "a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bf5dd40e"
+    },
+    {
+      "claim": "reconcile-mixed",
       "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
       "needs": null,
       "verdict": "pass",
