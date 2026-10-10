@@ -19,7 +19,7 @@ Works with:
 - Binaries: [Terraform, OpenTofu](https://intentius.io/terragucci/guides/use-a-binary/), [Terragrunt](https://intentius.io/terragucci/guides/use-terragrunt/) and [choudoufu](https://intentius.io/terragucci/guides/use-a-binary/#choudoufu)
 - Also: [drift checks](https://intentius.io/terragucci/guides/turn-on-drift-checks/), [module publishing](https://intentius.io/terragucci/guides/publish-modules/) and [pinned rollouts](https://intentius.io/terragucci/guides/roll-out-a-module-version/)
 
-[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the two opt-in agent features run a coding agent. Every pipeline feature on the site is proven on a local Forgejo by a recorded claim that fails when broken, and the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).
+[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the opt-in agent features run a model: the agent comment, the drift agent, the review and the refused-wave summary. Every pipeline feature on the site is proven on a local Forgejo by a recorded claim that fails when broken, and the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).
 
 ```bash
 npm i -D @intentius/terragucci
@@ -40,7 +40,7 @@ Open a pull request with the result.
 Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ```
 
-`llms.txt` lists every page and `llms-full.txt` holds their text. An agent working on this repo itself reads [AGENTS.md](AGENTS.md) instead.
+`llms.txt` lists every page and `llms-full.txt` holds their text. Once set up, an agent reads the estate, a root's last apply and the audit trail through `terragucci mcp`, a read-only MCP server ([Read the estate over MCP](https://intentius.io/terragucci/guides/agent-read-over-mcp/)). An agent working on this repo itself reads [AGENTS.md](AGENTS.md) instead.
 
 ## Working on this repo
 

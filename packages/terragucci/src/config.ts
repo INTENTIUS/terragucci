@@ -133,6 +133,14 @@ export interface ApplySettings {
    * unset. 5 to 60.
    */
   resume?: number;
+  /**
+   * Roots that apply from a branch other than the default: branch name to
+   * root globs. A push to a named branch applies only the roots its globs
+   * match, in waves behind the same gate; a push to the default branch, and
+   * the apply a comment starts from a merge into it, skip every root a glob
+   * here matches. Plain roots only, with `when: merge`.
+   */
+  branches?: Record<string, string[]>;
 }
 
 /**
@@ -171,6 +179,14 @@ export interface PolicySettings {
 export interface OidcSettings {
   plan_role?: string;
   apply_role?: string;
+  /**
+   * AWS roles by root glob (plain roots): a root takes the pair of the first
+   * glob it matches, so each environment's roots plan and apply with roles
+   * that reach that environment's state alone. A root no glob matches takes
+   * `plan_role` and `apply_role`. In a Terragrunt repo, `terragrunt.credentials`
+   * does this.
+   */
+  roles?: Record<string, RolePair>;
   /** The AWS token's audience. Default `sts.amazonaws.com`. */
   audience?: string;
   /** GCP Workload Identity Federation: the provider's resource name and a service account per stage. */
@@ -294,6 +310,18 @@ export interface AgentCommentSettings {
 export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
 
 /**
+ * `agent.drift`: when the drift job opens the drift issue, a job runs a coding
+ * agent on the default branch with the drift report, and a second job opens a
+ * pull request with what it changed, with `agent.token_env`'s token. The
+ * agent's job holds no forge token and no cloud role. Its settings are
+ * `agent.comment`'s (AgentCommentSettings); `true` takes every default.
+ */
+export const AGENT_DRIFT_KEYS = AGENT_COMMENT_KEYS;
+
+/** Why `agent.drift` and `respond.drift: pull-request` do not go together. */
+export const AGENT_DRIFT_RESPOND = "agent.drift opens the drift pull request itself, so the codified one would be a second; set respond.drift to attribute or off";
+
+/**
  * `review`: a model reviews each pull request's intent against its plan
  * (review-agent.ts), off unless `agent` is true. It posts a note and never
  * approves; a `tf-apply` wave's policy reads its risk as `input.review`.
@@ -338,7 +366,7 @@ export interface ProjectSettings {
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
   locks?: Locks;
-  /** `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots spread across (plain roots, GitHub and Forgejo). */
+  /** `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots or units spread across (GitHub and Forgejo). */
   waves?: { canary?: string[]; jobs?: number };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
@@ -436,10 +464,11 @@ export interface ProjectSettings {
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
-   * The agent integration behind `agent.comment`. Its token can comment and
-   * push to a pull request's branch; its role, when named, is read-only.
+   * The agent integration behind `agent.comment` and `agent.drift`. Its token
+   * can comment, push a branch and open a pull request; the agent itself never
+   * holds it.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings };
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -448,6 +477,12 @@ export interface ProjectSettings {
   audit_region?: string;
   /** Dashboards and alert rules written next to the pipeline. Off unless set. */
   dashboards?: boolean | DashboardSettings;
+  /**
+   * Jobs of your own that `init` and `reconcile` write into the generated
+   * pipeline as they are: a map of job name to the job, in the forge's own
+   * syntax, or the path of a YAML file in the repo that holds that map.
+   */
+  own_jobs?: string | Record<string, Record<string, unknown>>;
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
@@ -549,7 +584,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -600,12 +635,14 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
   }
   stringList(s.roots, `${where}.roots`, problems);
+  if (s.roots !== undefined && s.terragrunt !== undefined) problems.push(`${where}.roots: ${ROOTS_NOT_TERRAGRUNT}`);
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
+  if (isObject(s.apply) && s.apply.branches !== undefined && s.terragrunt !== undefined) problems.push(`${where}.apply.branches: ${BRANCHES_NOT_TERRAGRUNT}`);
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
@@ -651,6 +688,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
+  if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }
@@ -682,7 +720,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       else if (typeof jobs === "number" && jobs > 1) {
         if (s.forge === "gitlab") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
         if (isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
-        if (s.terragrunt !== undefined) problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_TERRAGRUNT}`);
       }
     }
   }
@@ -721,12 +758,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (isObject(s.reports) && s.reports.role !== undefined) {
       if (store && store.kind !== "s3") problems.push(`${where}.reports.role is an AWS role, and ${s.reports.bucket} is not an S3 bucket: the job writes it with its own oidc identity`);
       else if (typeof s.reports.role !== "string" || !/^arn:aws[\w-]*:iam::\d{12}:role\/\S+$/.test(s.reports.role)) problems.push(`${where}.reports.role must be an AWS role ARN, such as arn:aws:iam::123456789012:role/terragucci-reports`);
-      else if (isObject(s.oidc) && (s.reports.role === s.oidc.plan_role || s.reports.role === s.oidc.apply_role)) {
+      else if (isObject(s.oidc) && (s.reports.role === s.oidc.plan_role || s.reports.role === s.oidc.apply_role || (isObject(s.oidc.roles) && Object.values(s.oidc.roles).some((p) => isObject(p) && isObject(s.reports) && (p.plan === s.reports.role || p.apply === s.reports.role))))) {
         problems.push(`${where}.reports.role is a job's own role; give reports a role of its own that can write only under the bucket's prefix`);
       }
     }
   }
   if (s.oidc !== undefined) checkOidc(s.oidc, `${where}.oidc`, problems);
+  if (isObject(s.oidc) && s.oidc.roles !== undefined && s.terragrunt !== undefined) problems.push(`${where}.oidc.roles: roles by root glob are for plain roots; in a Terragrunt repo, set terragrunt.credentials`);
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -748,12 +786,20 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!["via", "token_env", "comment"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment)`);
+      for (const k of Object.keys(a)) if (!["via", "token_env", "comment", "drift"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment, drift)`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
       else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
       if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
+      if (a.drift !== undefined) {
+        checkAgentComment(a.drift, a.token_env, `${where}.agent.drift`, problems);
+        // A control repo's defaults and projects are checked apart; init checks the merged settings (render.ts).
+        if (a.drift !== false && where === "config") {
+          if (!s.drift) problems.push(`${where}.agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule`);
+          else if (responseTo(s as ProjectSettings, "drift") === "pull-request") problems.push(`${where}.respond.drift: ${AGENT_DRIFT_RESPOND}`);
+        }
+      }
     }
   }
   if (s.review !== undefined) checkReview(s.review, `${where}.review`, problems);
@@ -761,7 +807,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
-    else checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
+    else {
+      checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
+      if (s.modules.test === true && s.binary === "choudoufu") problems.push(`${where}.modules.test runs the binary's test command on each module, and choudoufu has none; set binary to tofu or terraform`);
+    }
   }
 }
 
@@ -788,7 +837,50 @@ function checkSteps(v: unknown, where: string, problems: string[]): void {
   });
 }
 
-const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted"]);
+const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
+const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
+/** A registry namespace or module name, as the Terraform module registry protocol allows them. */
+export const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
+/** A registry module's system (its target provider): lower-case letters and digits. */
+export const REGISTRY_SYSTEM = /^[0-9a-z]{1,64}$/;
+
+function checkRegistry(r: unknown, where: string, targets: unknown[], problems: string[]): void {
+  if (!isObject(r)) return void problems.push(`${where} must be a map with url, namespace, and a bucket or a dir`);
+  for (const k of Object.keys(r)) if (!REGISTRY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting; use ${REGISTRY_KEYS.join(", ")}`);
+  if ((r.bucket === undefined) === (r.dir === undefined)) problems.push(`${where} writes its files to a bucket or a dir; set one of them`);
+  if (r.bucket !== undefined) {
+    if (typeof r.bucket !== "string") problems.push(`${where}.bucket must be s3://<bucket>, gs://<bucket> or az://<account>/<container>`);
+    else {
+      try {
+        parseReportsBucket(r.bucket);
+      } catch {
+        problems.push(`${where}.bucket must be s3://<bucket>, gs://<bucket> or az://<account>/<container>, not ${r.bucket}`);
+      }
+    }
+  }
+  if (r.dir !== undefined && (typeof r.dir !== "string" || r.dir === "" || r.dir.startsWith("/") || r.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a directory in the repo, such as public`);
+  for (const k of ["endpoint", "prefix"] as const) if (r[k] !== undefined && typeof r[k] !== "string") problems.push(`${where}.${k} must be a string`);
+  if (r.endpoint !== undefined && r.bucket === undefined) problems.push(`${where}.endpoint is the bucket's address; it needs ${where}.bucket`);
+  if (typeof r.url !== "string" || !/^https:\/\/[^/\s?#]+\/?$/.test(r.url)) {
+    problems.push(`${where}.url must be the https address, with no path, that serves the files, such as https://modules.example.com: Terraform and OpenTofu find a registry at its host's root over https`);
+  } else if (!new URL(r.url).hostname.includes(".")) {
+    problems.push(`${where}.url's host is the first part of each module source, and Terraform and OpenTofu read a registry host only when it has a dot, such as modules.example.com`);
+  }
+  if (typeof r.namespace !== "string" || !REGISTRY_NAME.test(r.namespace)) problems.push(`${where}.namespace must be a registry namespace: letters, digits, - and _, such as acme`);
+  if (r.namespaces !== undefined) {
+    if (!isObject(r.namespaces)) problems.push(`${where}.namespaces must map a tag prefix (a path in the repo, such as platform/) to a namespace`);
+    else for (const [prefix, ns] of Object.entries(r.namespaces)) {
+      if (prefix === "" || prefix.startsWith("/")) problems.push(`${where}.namespaces: ${JSON.stringify(prefix)} must be a path in the repo, such as platform/`);
+      if (typeof ns !== "string" || !REGISTRY_NAME.test(ns)) problems.push(`${where}.namespaces.${prefix} must be a registry namespace: letters, digits, - and _`);
+    }
+  }
+  if (r.system !== undefined && (typeof r.system !== "string" || !REGISTRY_SYSTEM.test(r.system))) problems.push(`${where}.system must be lower-case letters and digits, such as aws`);
+  if (r.download !== undefined) {
+    if (!["tarball", "git-tags", "oci"].includes(r.download as string)) problems.push(`${where}.download is ${JSON.stringify(r.download)}; use tarball, git-tags or oci`);
+    else if (r.download === "git-tags" && !targets.includes("git-tags")) problems.push(`${where}.download: git-tags points each version at its git tag, so publish needs git-tags too`);
+    else if (r.download === "oci" && !targets.some((t) => typeof t === "string" && t.startsWith("oci://"))) problems.push(`${where}.download: oci points each version at its OCI artifact, so publish needs an oci:// target too`);
+  }
+}
 
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
@@ -799,6 +891,8 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
       problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
     }
   }
+  if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
+  if (m.test !== undefined && typeof m.test !== "boolean") problems.push(`${where}.test must be true or false`);
   if (m.attest !== undefined) {
     // true reads the public key at cosign.pub.
     if (isObject(m.attest)) {
@@ -806,7 +900,7 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
       const key = m.attest.key;
       if (key !== undefined && (typeof key !== "string" || key === "")) problems.push(`${where}.attest.key must be the path of the public key, such as cosign.pub`);
     } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key`);
-    if (m.attest !== false && m.publish === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish too`);
+    if (m.attest !== false && m.publish === undefined && m.registry === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish or ${where}.registry too`);
   }
   if (m.trusted !== undefined) {
     if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, key and ledger`);
@@ -848,13 +942,40 @@ export interface ModulesSettings {
   require?: "attested";
   /** Publishers in other repos whose releases `require` checks. */
   trusted?: TrustedModuleSource[];
+  /** Run the binary's `test` on each module before a release of it publishes; a module with no tests, or one that fails them, is refused. */
+  test?: boolean;
+  /** Write each release as the Terraform module registry protocol, as static files a bucket or a Pages site serves. */
+  registry?: RegistrySettings;
+}
+
+/** `modules.registry`: the module registry protocol as static files. */
+export interface RegistrySettings {
+  /** The bucket the files go to: `s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`. */
+  bucket?: string;
+  /** Or a directory in the repo, for a Pages site to serve. */
+  dir?: string;
+  /** The bucket's API address, for an S3-compatible store. */
+  endpoint?: string;
+  /** Where the files go in the bucket. The prefix is served as the host's root. */
+  prefix?: string;
+  /** The https address, with no path, that serves the files; its host is the one module sources name. */
+  url: string;
+  /** The namespace a module is published under, unless `namespaces` maps its path. */
+  namespace: string;
+  /** A tag prefix (a path in the repo, such as `platform/`) to the namespace its modules go under. The longest match wins. */
+  namespaces?: Record<string, string>;
+  /** The system (target provider) in each module's address. Default `generic`. */
+  system?: string;
+  /** What a version's download points at: a tarball beside it (the default), its git tag, or its OCI artifact. */
+  download?: "tarball" | "git-tags" | "oci";
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
 /** Why `waves.jobs` is refused on GitLab: a split wave's shares hold one apply lock between them on GitHub and Forgejo, and GitLab's apply jobs take a resource group one job at a time. */
 export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and Forgejo; GitLab runs one apply job at a time in its resource group, so leave waves.jobs unset there";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
-export const WAVE_JOBS_NOT_TERRAGRUNT = "a Terragrunt wave applies its units with one run --all in one job; waves.jobs splits a wave of plain roots, so leave it unset";
+/** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
+export const ROOTS_NOT_TERRAGRUNT = "a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
 
 /**
@@ -930,6 +1051,7 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
     // On GitLab the token also starts the apply pipeline, so it is set with merge: manual too.
     else if (a.merge !== "auto" && forge !== "gitlab") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env (on GitLab, where the token also starts the apply pipeline, set forge: gitlab)`);
   }
+  if (a.branches !== undefined) checkApplyBranches(a.branches, `${where}.branches`, problems, a.when);
   if (a.requires !== undefined) {
     if (!Array.isArray(a.requires) || a.requires.some((r) => !(APPLY_REQUIRES as readonly unknown[]).includes(r))) problems.push(`${where}.requires must be a list of ${APPLY_REQUIRES.join(", ")}`);
     else if (new Set(a.requires).size !== a.requires.length) problems.push(`${where}.requires names a requirement twice`);
@@ -939,7 +1061,58 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
   }
 }
 
-const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume"];
+/** A job name `own_jobs` takes: one every forge's YAML reads as a plain key. */
+export const OWN_JOB_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/** The problems with `own_jobs`: a map of job name to job, or the path of a YAML file in the repo that holds one. */
+export function ownJobsProblems(v: unknown, where: string): string[] {
+  if (typeof v === "string") {
+    return v !== "" && !v.startsWith("/") && !v.split("/").includes("..") && /\.ya?ml$/.test(v)
+      ? []
+      : [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  }
+  if (!isObject(v) || Object.keys(v).length === 0) return [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  const problems: string[] = [];
+  for (const [name, job] of Object.entries(v)) {
+    if (!OWN_JOB_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not a job name terragucci writes as it is; use letters, digits, "_" and "-"`);
+    else if (!isObject(job) || Object.keys(job).length === 0) problems.push(`${where}.${name} must be a job: a map of its keys, in the forge's own syntax`);
+  }
+  return problems;
+}
+
+const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];
+
+/** A branch name `apply.branches` may name: what a forge's rule and the job's shell both take as it is. */
+export const APPLY_BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+
+/** Why `apply.branches` is refused with `apply.when: pull-request`. */
+export const BRANCHES_NOT_PR_APPLY = "apply.when: pull-request applies an open pull request into the default branch, and a push applies nothing, so no branch could apply its roots; leave apply.branches unset";
+/** Why `apply.branches` is refused in a Terragrunt repo. */
+export const BRANCHES_NOT_TERRAGRUNT = "a Terragrunt wave runs its units with one run --all, cut from terragrunt find when it runs; apply.branches maps plain roots, so leave it unset";
+
+function checkApplyBranches(b: unknown, where: string, problems: string[], when: unknown): void {
+  if (!isObject(b) || Object.keys(b).length === 0) {
+    problems.push(`${where} must map branch names to lists of root globs, such as release: ["envs/prod/*"]`);
+    return;
+  }
+  if (when === "pull-request") problems.push(`${where}: ${BRANCHES_NOT_PR_APPLY}`);
+  const seen = new Map<string, string>();
+  for (const [branch, globs] of Object.entries(b)) {
+    if (!APPLY_BRANCH.test(branch) || branch.split("/").some((part) => part === "" || part === "..") || branch.endsWith(".lock")) {
+      problems.push(`${where}: ${JSON.stringify(branch)} is not a branch name terragucci takes; use letters, digits, ".", "_", "-" and "/"`);
+      continue;
+    }
+    if (!Array.isArray(globs) || globs.length === 0 || !globs.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+      problems.push(`${where}.${branch} must be a list of root globs, such as ["envs/prod/*"]`);
+      continue;
+    }
+    for (const g of globs as string[]) {
+      const other = seen.get(g);
+      if (other !== undefined) problems.push(`${where}: ${g} is under both ${other} and ${branch}; a root applies from one branch`);
+      else seen.set(g, branch);
+    }
+  }
+}
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
@@ -1153,11 +1326,14 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
     return;
   }
   for (const k of Object.keys(o)) {
-    if (!["plan_role", "apply_role", "audience", "gcp", "azure"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: plan_role, apply_role, audience, gcp, azure)`);
+    if (!["plan_role", "apply_role", "audience", "roles", "gcp", "azure"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: plan_role, apply_role, audience, roles, gcp, azure)`);
   }
-  const aws = o.plan_role !== undefined || o.apply_role !== undefined || o.audience !== undefined;
+  const pairSet = o.plan_role !== undefined || o.apply_role !== undefined;
+  const aws = pairSet || o.audience !== undefined || o.roles !== undefined;
   if (!aws && o.gcp === undefined && o.azure === undefined) problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
-  if (aws) {
+  if (o.roles !== undefined) checkRoles(o.roles, `${where}.roles`, problems);
+  // With roles, a pair is optional: the roots no glob matches take it, and config check names any root left with no role.
+  if (aws && (pairSet || o.roles === undefined)) {
     for (const k of ["plan_role", "apply_role"] as const) {
       if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
     }
@@ -1191,6 +1367,24 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
     }
   }
   if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client", ["audience"]);
+}
+
+/** `oidc.roles`: a plan role and an apply role per root glob, the two different. */
+function checkRoles(r: unknown, where: string, problems: string[]): void {
+  if (!isObject(r) || Object.keys(r).length === 0) {
+    problems.push(`${where} must map root globs to a plan and an apply role, such as "envs/prod/**": { plan: <role>, apply: <role> }`);
+    return;
+  }
+  for (const [glob, pair] of Object.entries(r)) {
+    const at = `${where}["${glob}"]`;
+    if (!isObject(pair)) {
+      problems.push(`${at} must be a map with plan and apply`);
+      continue;
+    }
+    for (const k of Object.keys(pair)) if (k !== "plan" && k !== "apply") problems.push(`${at}.${k} is not a setting (settings: plan, apply)`);
+    for (const k of ["plan", "apply"] as const) if (typeof pair[k] !== "string" || pair[k] === "") problems.push(`${at}.${k} must name a role`);
+    if (typeof pair.plan === "string" && pair.plan !== "" && pair.plan === pair.apply) problems.push(`${at}: plan and apply are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+  }
 }
 
 /** Check a parsed config and return it typed, or throw with every problem listed. */

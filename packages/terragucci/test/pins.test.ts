@@ -314,9 +314,9 @@ describe("init with roots that pin their own version", () => {
     expect(r.files[0].content).toContain("terragucci install tofu 1.10.6");
   });
 
-  it("refuses a version map in a Terragrunt repo", async () => {
+  it("takes a version map in a Terragrunt repo, pinning its units by glob", async () => {
     const repo = write(tmp(), { "terragucci.yml": 'forge: github\nversion:\n  "live/*": "1.9.1"\n', "root.hcl": "", "live/a/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n' });
-    await expect(init(repo, { dryRun: true, terragrunt: "/nonexistent/terragrunt" })).rejects.toThrow(/version as a map pins plain roots/);
+    expect((await init(repo, { dryRun: true, terragrunt: "/nonexistent/terragrunt" })).pins).toEqual([{ root: "live/a", version: "1.9.1", source: "terragucci.yml version live/*" }]);
   });
 });
 

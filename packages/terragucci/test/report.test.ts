@@ -169,6 +169,21 @@ describe("redaction", () => {
     expect(Object.keys(r.plan as object).sort()).toEqual(Object.keys(full).sort());
   });
 
+  it("replaces a sensitive value wherever else it appears, as terraform_data's unmarked output copies its input", () => {
+    const p = plan([rc("terraform_data.db", ["update"], { id: "i-1", input: "old-password", output: "old-password" }, { id: "i-1", input: "new-password" }, { before_sensitive: { input: true }, after_sensitive: { input: true }, after_unknown: { output: true } })], {
+      prior_state: { values: { root_module: { resources: [{ address: "terraform_data.db", values: { id: "i-1", input: "old-password", output: "old-password", note: "was old-password" }, sensitive_values: { input: true } }] } } },
+    });
+    const r = redactPlan(p);
+    const text = JSON.stringify(r.plan);
+    expect(text).not.toContain("old-password");
+    expect(text).not.toContain("new-password");
+    expect(text).toContain(`"was ${REDACTED}"`);
+    expect(text).toContain('"i-1"');
+    const report = JSON.stringify(buildReport({ run: RUN, roots: [{ path: "app", plan: p, planner: "tofu" }] }));
+    expect(report).not.toContain("old-password");
+    expect(report).not.toContain("new-password");
+  });
+
   it("the report says how many values it redacted, and its marker", () => {
     expect(buildReport({ run: RUN, roots: [], redacted: 3 }).redaction).toEqual({ marker: REDACTED, values: 3 });
   });

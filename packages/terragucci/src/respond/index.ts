@@ -9,6 +9,7 @@ import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, SYNTH_DRIFT_PR, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, findRoots, globMatch } from "../detect";
+import { detectTerragrunt } from "../terragrunt";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
@@ -21,10 +22,12 @@ import { IDENTITY } from "../reconcile";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, route, withoutLeft, type Attributed, type Attribution, type AuditLog } from "./attribute";
 import type { DecideOptions } from "../decide";
 import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } from "./drift";
+import { codifyUnitDrift, driftedUnits, unitDrift, unitRunner } from "./drift-units";
+import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { checkDescription } from "./intent";
 import { moduleNotes } from "./notes";
 import { describeRefused, refusedDiff } from "./refused";
-import { tipProposals } from "./tips";
+import { movedProposals, reportRenames, tipProposals } from "./tips";
 import { versionBumps } from "./version-bump";
 import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
@@ -40,7 +43,7 @@ export interface RespondOptions {
   mode?: "dry-run" | "apply";
   /** Where the response writes its files. Default `terragucci-respond`. */
   out?: string;
-  /** plan: the report directory. */
+  /** plan and description: the report directory. tips: a `stage tf-plan` report, whose plans' renames get a moved block each. */
   report?: string;
   /** wave-refused: the approved plan's report and the current one, each report.json or its directory. */
   approved?: string;
@@ -54,7 +57,7 @@ export interface RespondOptions {
   imports?: { address: string; id: string }[];
   /** tips: the platforms a new lock file holds hashes for. */
   platforms?: string[];
-  /** fmt: the pull request's branch. */
+  /** fmt: the pull request's branch. tips with --report: the branch the moved blocks' pull request goes into (default the default branch). */
   branch?: string;
   /** publish: one module's path, and a version of it. */
   module?: string;
@@ -76,6 +79,9 @@ export interface RespondOptions {
   decideOptions?: DecideOptions;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
+  /** drift in a Terragrunt repo: how Terragrunt runs. Default `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
+  terragrunt?: string;
+  terragruntExec?: TerragruntExec;
 }
 
 export interface RespondResult {
@@ -166,7 +172,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   const mode = o.mode ?? "dry-run";
   const out = resolve(repo, o.out ?? "terragucci-respond");
   const roots = () => findRoots(repo, settings.roots).filter((r) => !o.root || globMatch(o.root, r));
-  const binary = () => o.binary ?? settings.binary ?? detectBinary(repo, roots()).value;
+  const binary = () => o.binary ?? settings.binary ?? (detectTerragrunt(repo) ? detectBinary(repo, []).value : detectBinary(repo, roots()).value);
   const need = (v: unknown, flag: string) => {
     if (!v) throw new ConfigError(`respond ${ev} needs ${flag}`);
   };
@@ -187,7 +193,10 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   } else if (ev === "drift") {
     if (settings.synth) throw new ConfigError(`respond drift: ${SYNTH_DRIFT_PR}`);
     const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions, known: knownAttributions(repo, o.attributions) } : undefined;
-    const d = await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
+    const tg = detectTerragrunt(repo) !== undefined;
+    const d = tg
+      ? await driftUnits(repo, binary(), o, env, settings, attributing)
+      : await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
     const body = [
       ...d.routed,
       ...d.notes.map((n) => `- ${n}`),
@@ -198,9 +207,12 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const proposed = await propose(repo, settings, d.files.size ? [{ branch: "terragucci/drift", title: "Codify drift", body: `A refresh-only plan found drift. Merging this accepts the change made outside Terraform.\n\n${body}`, files: d.files }] : [], { mode, env, fetch: o.fetch });
     r = { text: [body || "no drift", ...proposed.map(said)].join("\n"), data: { codified: d.codified, imports: d.imports, left: d.left, ...(attributing ? { attributions: d.attributions, notes: d.notes } : {}) }, proposals: proposed };
   } else if (ev === "tips") {
+    // With a plan's report, the tips its plans show (a rename's moved block), into --branch; otherwise the repo's own.
     // With synth the roots are on disk only once the command has run, as the tips job runs it.
-    if (settings.synth && roots().length === 0) throw new ConfigError(`respond tips found no roots: synth writes them, so run ${settings.synth} first`);
-    const tips = tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: Boolean(settings.synth) });
+    if (!o.report && settings.synth && roots().length === 0) throw new ConfigError(`respond tips found no roots: synth writes them, so run ${settings.synth} first`);
+    const tips = o.report
+      ? { proposals: movedProposals(repo, reportRenames(resolve(repo, o.report)).filter((x) => !o.root || globMatch(o.root, x.root)), o.branch), left: [] as string[] }
+      : tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: Boolean(settings.synth) });
     const proposed = await propose(repo, settings, tips.proposals, { mode, env, fetch: o.fetch });
     r = { text: [...tips.left, ...proposed.map(said)].join("\n") || "no tip to fix", proposals: proposed };
   } else if (ev === "fmt") {
@@ -311,6 +323,36 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
   return d;
 }
 
+/**
+ * Drift in a Terragrunt repo's units (./drift-units.ts): each drifted unit
+ * planned again through Terragrunt, attributed as a root is, and brought in
+ * line in its own terragrunt.hcl where its inputs set the value.
+ */
+async function driftUnits(repo: string, binary: string, o: RespondOptions, env: NodeJS.ProcessEnv, settings: ResolvedSettings, attributing?: { audit: AuditLog; decide?: ResolvedSettings["decide"]; options?: DecideOptions; known?: Record<string, Attributed> }) {
+  if (o.imports?.length) throw new ConfigError("--import writes import blocks into a root's own files, and a Terragrunt unit's resources are in its module; import into a unit with an import block in its module, through a reviewed change");
+  const r = unitRunner(binary, env, { ...(o.terragrunt ? { terragrunt: o.terragrunt } : {}), ...(o.terragruntExec ? { exec: o.terragruntExec } : {}) });
+  const { units, from } = await driftedUnits(repo, r, { ...(o.report ? { report: o.report } : {}), ...(o.root ? { root: o.root } : {}), ...(settings.terragrunt?.exclude ? { exclude: settings.terragrunt.exclude } : {}) });
+  const d = { codified: [] as Codified[], left: [] as Left[], files: new Map<string, string>(), imports: [] as string[], attributions: [] as Attribution[], routed: [] as string[], notes: [] as string[] };
+  if (units.length === 0) return d;
+  d.notes.push(`${units.length} unit${units.length === 1 ? "" : "s"} from ${from}: ${units.join(", ")}`);
+  for (const unit of units) {
+    let found = await unitDrift(repo, unit, r);
+    if (found.length === 0) continue;
+    if (attributing) {
+      const at = attributing.known?.[unit] ?? (await attribute(unit, found, attributing));
+      const routed = route(at.attributions);
+      found = withoutLeft(found, routed.leave);
+      d.attributions.push(...at.attributions);
+      d.routed.push(...routed.lines.map((l) => `${unit}: ${l.slice(2)}`).map((l) => `- ${l}`));
+      d.notes.push(...at.notes.filter((n) => !d.notes.includes(n)));
+    }
+    const c = await codifyUnitDrift(repo, unit, found, r, d.files);
+    d.codified.push(...c.codified);
+    d.left.push(...c.left);
+  }
+  return d;
+}
+
 // ── fmt ──────────────────────────────────────────────────────────────────────
 
 async function fmt(repo: string, settings: ResolvedSettings, binary: string, mode: string, o: RespondOptions, env: NodeJS.ProcessEnv) {
@@ -324,17 +366,32 @@ async function fmt(repo: string, settings: ResolvedSettings, binary: string, mod
   try {
     const f = spawnSync(binary, ["fmt", "-recursive", "-list=true", ...(mode === "apply" ? [] : ["-check"])], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv(env) });
     if (f.error) throw new ConfigError(`respond fmt could not run ${binary}: ${f.error.message}`);
-    const files = f.stdout.split("\n").filter(Boolean).sort();
+    const listed = f.stdout.split("\n").filter(Boolean);
     // -check exits non-zero when it lists a file; non-zero with nothing listed
     // is a file fmt could not parse, which is not "already formatted".
-    if (f.status !== 0 && files.length === 0) throw new ConfigError(`${branch}: ${binary} fmt failed:\n${tail(f.stderr || f.stdout)}`);
+    if (f.status !== 0 && listed.length === 0) throw new ConfigError(`${branch}: ${binary} fmt failed:\n${tail(f.stderr || f.stdout)}`);
+    const tools = listed.length ? [`${binary} fmt`] : [];
+    let files = listed;
+    // A Terragrunt repo's own files are HCL the binary does not read: terragrunt hcl fmt formats them, in this
+    // throwaway checkout, and git names what it changed.
+    if (detectTerragrunt(tree.dir)) {
+      const terragrunt = env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
+      const h = spawnSync(terragrunt, ["hcl", "fmt", "--no-color"], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv({ ...env, TG_NON_INTERACTIVE: "true" }) });
+      if (h.error) throw new ConfigError(`respond fmt could not run ${terragrunt}: ${h.error.message}`);
+      if (h.status !== 0) throw new ConfigError(`${branch}: terragrunt hcl fmt failed:\n${tail(h.stderr || h.stdout)}`);
+      const changed = git(tree.dir, ["diff", "--name-only"]).split("\n").filter((p) => p.endsWith(".hcl"));
+      if (changed.length) tools.push("terragrunt hcl fmt");
+      files = [...new Set([...files, ...changed])];
+    }
+    files.sort();
     const data = { branch, files };
+    const what = tools.join(" and ");
     if (files.length === 0) return { text: `${branch}: already formatted`, data };
-    if (mode !== "apply") return { text: `${branch}: would commit ${binary} fmt on ${files.join(", ")}`, data };
+    if (mode !== "apply") return { text: `${branch}: would commit ${what} on ${files.join(", ")}`, data };
     git(tree.dir, ["add", "-A"]);
-    git(tree.dir, [...IDENTITY, "commit", "-q", "--no-verify", "-m", `style: ${binary} fmt`]);
+    git(tree.dir, [...IDENTITY, "commit", "-q", "--no-verify", "-m", `style: ${what}`]);
     git(tree.dir, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
-    return { text: `${branch}: committed ${binary} fmt on ${files.join(", ")}`, data };
+    return { text: `${branch}: committed ${what} on ${files.join(", ")}`, data };
   } finally {
     tree.done();
   }

@@ -1,7 +1,7 @@
 ---
 title: Find the state version an apply left
 description: Each apply wave records the version id of each root's state from your bucket's versioning, and the estate page lists them per root, so you know which version to go back to.
-claims: [state-versions]
+claims: [state-versions, tg-state-versions]
 prompt: |
   Read https://intentius.io/terragucci/guides/find-a-state-version/.
   Find the S3 buckets this repo's roots keep their state in, check whether each has versioning on, and write the commands that would turn it on as a file for me to review. Open a pull request.
@@ -33,6 +33,8 @@ terragucci reads the state object's metadata with an S3 `HEAD` request. It never
 | [Reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) | `states.json` and the estate page live there |
 | The [estate page](/terragucci/guides/see-every-project/), to see the list | the page reads `states.json` |
 
+A Terragrunt unit is listed as a root is. Its working directory is in Terragrunt's cache, so terragucci reads its backend from its evaluated `remote_state` block (`terragrunt render --json`).
+
 Other roots are still listed, with what terragucci knows:
 
 | Root | Listed as |
@@ -40,7 +42,7 @@ Other roots are still listed, with what terragucci knows:
 | a bucket with versioning off | versions are off: S3 keeps only the latest state |
 | a `local` backend | versions are off |
 | any other backend (`gcs`, `azurerm`, `http` and so on) | the backend's type, versions unknown |
-| a Terragrunt unit | not listed; its report carries no state version |
+| a Terragrunt unit with no `remote_state` block that runs from Terragrunt's cache | versions unknown, naming why |
 
 ## Steps
 

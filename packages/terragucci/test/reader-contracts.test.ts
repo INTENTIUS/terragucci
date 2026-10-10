@@ -18,6 +18,7 @@ import { DORA_SCHEMA } from "../src/report/dora";
 import { INVENTORY_SCHEMA } from "../src/report/inventory";
 import { STATES_SCHEMA } from "../src/report/state-versions";
 import { RUN_SCHEMA, runSkeleton, withWave } from "../src/report/run-view";
+import { EDGES_SCHEMA } from "../src/report/state-edges";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report } from "../src/report/schema";
 import { copyToRun, INDEX_DESTROYS, INDEX_SCHEMA, runPath, uploadReport, VIEWS_DIR, writeReportDir } from "../src/report/store";
@@ -32,6 +33,7 @@ const ESTATE = schema("estate.schema.json");
 const AUDIT = schema("audit.schema.json");
 const INVENTORY = schema("inventory.schema.json");
 const STATES = schema("state-versions.schema.json");
+const EDGES = schema("state-edges.schema.json");
 const CHANGES = schema("changes.schema.json");
 const HISTORY = schema("history.schema.json");
 const DORA = schema("dora.schema.json");
@@ -81,6 +83,10 @@ function runs(): Report[] {
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
     // A share of a wave split across jobs (waves.jobs).
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 4, share: 2, finished: at(10, 40) }, roots: smallFixture().slice(1, 2), waves: [{ number: 4, roots: ["envs/dev/search"], approval: "approved" }] }),
+    // b reads a's state: a plan of the default branch finds the edge, and a pull request plans b after a applied.
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-drift", finished: at(9) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
+    buildReport({ run: { ...RUN, project: NET, commit: b, finished: at(9, 10) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
+    buildReport({ run: { ...RUN, project: NET, ...LINKS, finished: at(9, 30) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
   ];
 }
 
@@ -99,7 +105,7 @@ const named = (s: Json): string[] => Object.keys(s.properties ?? {});
 
 describe("the reader contracts' schemas", () => {
   it("use only the keywords the check reads, and name the schema id the writer puts in `schema`", () => {
-    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA]] as const) {
+    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA], [EDGES, EDGES_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
       expect(s.properties.schema.const).toBe(id);
@@ -109,7 +115,7 @@ describe("the reader contracts' schemas", () => {
 
   it("ship beside report.schema.json: the build copies each one into dist, which the package publishes", () => {
     const shipped = readdirSync(SRC).filter((f) => f.endsWith(".schema.json")).sort();
-    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "run.schema.json", "state-versions.schema.json"]);
+    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "run.schema.json", "state-edges.schema.json", "state-versions.schema.json"]);
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf-8"));
     expect(pkg.files).toContain("dist");
     const build = readFileSync(join(import.meta.dirname, "../../../scripts/build-cli.mjs"), "utf-8");
@@ -119,14 +125,22 @@ describe("the reader contracts' schemas", () => {
 
 describe("run.json", () => {
   it("is what the waves' jobs write, and between them they carry every field the schema names", () => {
-    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]));
-    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1" }, at(1));
+    const states = new Map([
+      ["net", { state: { bucket: "state", key: "net.tfstate" }, external: [] }],
+      ["app", { state: { key: "app.tfstate" }, external: [{ data: "dns", bucket: "other", key: "dns.tfstate" }] }],
+    ]);
+    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]), states);
+    const spans = [{ phase: "plan" as const, start: at(1), end: at(1, 2) }, { phase: "gate" as const, start: at(1, 2) }, { phase: "apply" as const, start: at(1, 30), share: 1 }];
+    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1", changed: ["net"], spans }, at(1));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "chant approve tf-apply wave-2 --plan d2", shares: 2 }, at(2));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
     expect(validate(RUN_VIEW, v)).toEqual([]);
     expect([...keys([v as unknown as Json])].sort()).toEqual(named(RUN_VIEW).sort());
     expect([...keys(v.roots as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.roots.items).sort());
     expect([...keys(v.waves as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items).sort());
+    expect([...keys(v.waves.flatMap((w) => w.spans ?? []) as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items.properties.spans.items).sort());
+    expect([...keys(v.roots.flatMap((r) => [r.state, ...(r.external ?? [])]).filter(Boolean) as unknown as Json[])].sort()).toEqual(["bucket", "data", "key"]);
+    expect(validate(RUN_VIEW, { ...v, waves: [{ ...v.waves[0], spans: [{ phase: "wait", start: at(1) }] }] })).toEqual(['$.waves[0].spans[0].phase: "wait" not in enum']);
   });
 });
 
@@ -178,6 +192,9 @@ describe("terragucci.estate/v1", () => {
     const { objects, fetch, s3 } = bucket();
     await upload(s3, runs());
     objects.set("acme-reports:reports/audit.json", JSON.stringify({ schema: "terragucci.audit-summary/v1", generated: at(11, 30), entries: 3 }));
+    // The run view of the network project's applied commit, as its waves' jobs write it.
+    const view = withWave(undefined, runSkeleton(NET, "b".repeat(40), [["a"], ["envs/dev/orders", "envs/dev/search"]], new Map([["envs/dev/orders", new Set(["a"])]])), { number: 1, state: "applied" }, at(10, 40));
+    objects.set(`acme-reports:reports/${NET}/runs/${"b".repeat(40)}/run.json`, JSON.stringify(view));
     const config = {
       defaults: { reports: { bucket: "s3://acme-reports", endpoint: "http://minio:9000", prefix: "reports" } },
       projects: { [WEB]: {}, [NET]: {}, "github.com/acme/locked": { reports: { bucket: "s3://locked", endpoint: "http://minio:9000" } }, "github.com/acme/fresh": {} },
@@ -203,6 +220,13 @@ describe("terragucci.estate/v1", () => {
     const stateRoots: Json[] = projects.flatMap((p) => p.states ?? []);
     expect([...keys(stateRoots)].sort()).toEqual(named(ESTATE.$defs.stateRoot).sort());
     expect([...keys(stateRoots.flatMap((r) => r.versions))].sort()).toEqual(named(ESTATE.$defs.stateRoot.properties.versions.items).sort());
+    expect([...keys(projects.flatMap((p) => (p.run_view ? [p.run_view] : [])))].sort()).toEqual(named(ESTATE.$defs.project.properties.run_view).sort());
+    expect([...keys(page.graph.nodes)].sort()).toEqual(named(ESTATE.properties.graph.properties.nodes.items).sort());
+    expect([...keys(page.graph.edges)].sort()).toEqual(named(ESTATE.properties.graph.properties.edges.items).sort());
+    expect([...keys(page.graph.edges.flatMap((e: Json) => [e.from, e.to]))].sort()).toEqual(named(ESTATE.$defs.graphRoot).sort());
+    const edges: Json[] = projects.flatMap((p) => p.edges ?? []);
+    expect([...keys(edges)].sort()).toEqual(named(ESTATE.$defs.edge).sort());
+    expect([...keys(edges.flatMap((e) => [e.consumer_planned, e.producer_applied]))].sort()).toEqual(named(ESTATE.$defs.edgeRun).sort());
   });
 
   it("refuses a project with a status it does not know, and a run with a field it does not name", async () => {
@@ -242,6 +266,20 @@ describe("terragucci.state-versions/v1", () => {
     // Only a wave whose roots recorded their state writes one.
     expect(objects.has(`acme-reports:reports/${WEB}/states.json`)).toBe(false);
     expect(validate(STATES, { ...file, roots: [{ ...file.roots[0], versioning: "maybe" }] })).not.toEqual([]);
+  });
+});
+
+describe("terragucci.state-edges/v1", () => {
+  it("holds the edges.json uploads write, and every field it names is one an upload writes", async () => {
+    const { objects, s3 } = bucket();
+    await upload(s3, runs());
+    const file = JSON.parse(objects.get(`acme-reports:reports/${NET}/edges.json`)!);
+    expect(validate(EDGES, file)).toEqual([]);
+    expect([...keys([file])].sort()).toEqual(named(EDGES).sort());
+    expect([...keys(file.roots)].sort()).toEqual(named(EDGES.properties.roots.items).sort());
+    expect([...keys(file.roots.flatMap((r: Json) => [r.planned, r.applied].filter(Boolean)))].sort()).toEqual(named(EDGES.$defs.run).sort());
+    // A project whose roots read no state and that applied no change writes none.
+    expect(objects.has(`acme-reports:reports/${WEB}/edges.json`)).toBe(false);
   });
 });
 

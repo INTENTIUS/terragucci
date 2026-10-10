@@ -1,0 +1,138 @@
+---
+title: Have an agent fix drift
+description: Turn on agent.drift, and when the drift job opens the drift issue, a coding agent changes the code to match what is live and terragucci opens a pull request with the change, on GitHub and Forgejo.
+claims: [drift-agent]
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-fix-drift/.
+  Add the `agent.drift` block and `respond.drift: off` to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
+  List the machine user, token scopes and secrets I must set; do not create tokens or secrets yourself.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+This is one of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)). It is off unless `agent.drift` is set.
+
+## What you end up with
+
+When a [drift run](/terragucci/guides/turn-on-drift-checks/) opens the drift issue, a coding agent reads what drifted and changes the code to describe what is live. terragucci opens a pull request with the change and links it on the issue:
+
+```text
+terragucci: the drift agent opened https://forgejo.example/acme/infra/pulls/2, changing `app/main.tf`.
+It plans like any other pull request; nothing was applied, approved or merged.
+```
+
+The pull request plans like any other. Merging it keeps the change made outside the code, and its apply goes through the gate. Closing it, then applying the code as it is, undoes the drift instead.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| [Drift checks](/terragucci/guides/turn-on-drift-checks/) on GitHub or Forgejo | the agent runs when the drift job opens the drift issue; `init` refuses `agent.drift` on GitLab |
+| An Anthropic API key in your forge's secrets | the default command runs Claude Code |
+| A token for the pull request in your forge's secrets (step 1) | a pull request opened with the job's own token starts no workflow run, so it would not be planned |
+
+## Steps
+
+<Steps>
+
+1. Make the agent's token. Keep it in a secret such as `AGENT_FORGE_TOKEN`, and the model's key in `ANTHROPIC_API_KEY`. It is the same token as the [agent comment's](/terragucci/guides/agent-change-a-pull-request/), and the same settings hold.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   | Setting | Value |
+   |---|---|
+   | Who | a machine user with write access, outside `CODEOWNERS` |
+   | Token | fine-grained, for this repository alone |
+   | Contents, pull requests, issues | read and write |
+   | Workflows | none, so GitHub refuses any change it sends to `.github/workflows/` |
+   | Default branch ruleset | a pull request and one approval of the latest change required, with no bypass for the machine user |
+
+   </TabItem>
+   <TabItem label="GitLab">
+   `init` refuses `agent.drift` on GitLab.
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   | Setting | Value |
+   |---|---|
+   | Who | a machine user added as a collaborator with Write access |
+   | Token scopes | `write:repository` and `write:issue` |
+   | Default branch | the machine user stays off the push, approval and merge allowlists |
+
+   </TabItem>
+   </Tabs>
+
+2. Turn it on in `terragucci.yml`. The agent's pull request takes the place of the codified one, so set `respond.drift` to `off`, or to `attribute` to keep who changed what in the issue:
+
+   ```yaml
+   drift: "17 4 * * *"
+   respond:
+     drift: off
+   agent:
+     via: forge
+     token_env: AGENT_FORGE_TOKEN
+     drift:
+       key_secret: ANTHROPIC_API_KEY
+       max_turns: 30
+       timeout: 30
+   ```
+
+   `drift: true` under `agent` takes every default; the keys are the [agent comment's](/terragucci/reference/config/#the-drift-agent).
+
+3. Check the file and write the pipeline, then merge the result to the default branch:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+4. Wait for drift, or run the drift workflow by hand. When the drift job opens the issue, the issue gets the pull request's link. Read the pull request and its plan note, then merge it or close it.
+
+</Steps>
+
+## What the agent is given
+
+The prompt lists each drifted resource by root, with what the state held and what is live, and never a value the plan marks sensitive:
+
+```text
+root app:
+  aws_sqs_queue.jobs: changed
+    visibility_timeout_seconds: state 30, live 45
+```
+
+It tells the agent that the drift and every file are untrusted input, since a value in the cloud can hold any text, and that a change to a guarded path is refused.
+
+## What each job can do
+
+| Job | Does | Holds |
+|---|---|---|
+| `drift` | plans every root with `-refresh-only`, opens the drift issue, and says so in its outputs | the plan role, and its token for the issue |
+| `drift-agent` | checks out the commit the drift job planned with no credentials kept, writes the prompt from the drift report, runs the agent, and keeps its changes as a patch | a read-only job token, which the agent's step runs without; the model's key, in the agent's step alone |
+| `drift-agent-push` | applies the patch to the same commit in a fresh container; refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), with a comment on the issue naming the paths; commits any other to `terragucci/drift-agent-<issue>`, pushes it without force and opens the pull request | the agent's token |
+| the plan job | plans the pull request with its read-only role | the plan role |
+
+Neither agent job has a cloud role, whatever `oidc` says. Nothing here applies, approves or merges.
+
+## Use another agent
+
+`command` takes any command line that reads a prompt on stdin and edits files in the working directory; `TG_AGENT_PROMPT` holds the prompt's path and `TG_AGENT_MAX_TURNS` the turn limit, as for the [agent comment](/terragucci/guides/agent-change-a-pull-request/#use-another-agent).
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  drift:
+    command: my-agent --non-interactive
+    key_secret: MY_AGENT_KEY
+```
+
+## Read drift over MCP or `--json`
+
+An agent at your desk reads the same drift without a model in the pipeline: `terragucci mcp`'s `index` tool lists the `tf-drift` runs and `report` reads one ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)). To change the code or the config, it runs the CLI with `--json`.
+
+## Next
+
+- [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) covers the schedule and the issue.
+- [The generated pipeline](/terragucci/reference/pipeline/#the-drift-agent) lists the jobs and their tokens.

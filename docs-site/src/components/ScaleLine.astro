@@ -1,17 +1,29 @@
 ---
-// One sentence on the largest run of the scale bench, from its record.
+// One sentence on the largest run of the scale bench, from its record. With `lead`, the scale
+// page's answer: what the run took, in the reader's terms.
 import record from '../data/scale.json';
+
+interface Props {
+	lead?: boolean;
+}
+const { lead = false } = Astro.props;
 
 const run = [...record.runs].sort((a, b) => b.estate.resources - a.estate.resources)[0];
 const n = (v: number) => v.toLocaleString('en-US');
 const total = run ? Math.round(run.wall_seconds.total / 60) : 0;
+const runner = run ? Math.round(run.runner_minutes.total) : 0;
 // The release a run was built from, never the commit: 0.4.1+9cc0eca, built from main after 0.4.1,
 // reads as "a build just after 0.4.1".
 const [base, after] = run ? run.release.split('+') : ['', ''];
 const built = after ? `a build of terragucci just after ${base}` : `terragucci ${base}`;
 ---
-{run && (
+{run && !lead && (
 	<p>
 		The largest run of the <a href="/terragucci/reference/scale/">scale bench</a> planned and applied {n(run.estate.resources)} resources in {n(run.estate.roots)} roots across {run.estate.repos} repos, governed by one control repo: the control repo's pipeline pull requests opened, every root created, then a change to all of them planned and applied, in {total} minutes on {built}.
+	</p>
+)}
+{run && lead && (
+	<p>
+		It can. The largest run, {n(run.estate.resources)} resources in {n(run.estate.roots)} roots across {run.estate.repos} repos, took {total} minutes end to end, reconcile included, and {runner} runner minutes on one runner taking {run.host.runner_capacity} jobs at once. That includes a change to every root, planned with one plan note per repo and applied. It ran on {built}.
 	</p>
 )}

@@ -60,8 +60,9 @@ For that plan, terragucci points the root's references to the block at a local h
 | a block with `count` or `for_each` | the applied state |
 | a plan on the planned outputs that fails, such as a `for_each` over a value known only after apply | the applied state |
 | a root in JSON syntax, or a block in a child module | the applied state; neither orders the waves either |
-| a Terragrunt unit's `dependency` | the upstream's applied outputs; a unit that depends on a changed unit plans once it applied |
 | `terragucci plan` on your machine | the applied state |
+
+A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#what-a-pull-request-shows-of-later-layers).
 
 ## The run view
 
@@ -78,6 +79,29 @@ With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each 
 
 Each wave's job rewrites its own column when it starts applying and when it ends, and links its report. A wave's `report.json` says the same in `waves[].state`, and a pull request's report marks the waves that plan again in `waves[].replans_after`.
 
+Below the waves the page has two more parts:
+
+| Part | Shows |
+|---|---|
+| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state`, followed through, and the dependency graph of the commit's roots with both marked |
+| Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
+
+A wave that waited has two plans on the timeline: the one that asked for the approval, and the one after it, which applies. In `run.json` each wave carries `changed`, the roots whose plan changes something, and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start`, and `end` once it ended. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
+
+### Blast radius in the plan note
+
+A pull request's plan note names the same radius: the roots whose plan changes something, and each root downstream that reads their state, with its wave. A root the run did not plan, such as one `--root` left out, is marked "not planned in this run".
+
+```text
+**Blast radius:** 1 root changes (`envs/dev/platform`), and 3 roots downstream read their state:
+
+- `envs/dev/orders` (wave 2) reads `envs/dev/platform`
+- `envs/dev/payments` (wave 2) reads `envs/dev/platform`
+- `envs/dev/search` (wave 2) reads `envs/dev/platform`
+```
+
+The note leaves it out when no root reads a changed root's state. `report.json` carries it as `blast`. Terragrunt units are not in it.
+
 ## When a wave waits
 
 The gate policy decides which waves wait for a person.
@@ -92,7 +116,7 @@ A waiting wave exits with code 3 and prints the approval command; run it, then r
 
 ## A wide wave across jobs
 
-`parallelism` bounds what one job runs at once, and every wave gets a single job, so a wave of a few hundred roots keeps one runner busy while the rest idle. Set `waves.jobs` to spread it over several (plain roots, GitHub and Forgejo):
+`parallelism` bounds what one job runs at once, and every wave gets a single job, so a wave of a few hundred roots keeps one runner busy while the rest idle. Set `waves.jobs` to spread it over several (GitHub and Forgejo):
 
 ```yaml
 waves:
@@ -106,7 +130,9 @@ waves:
 
 Shares run side by side as far as runners are free, and the next wave starts after the last of them. The gate, its ledger record and the approve command stay per wave. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
 
-`init` refuses the key on GitLab, in a Terragrunt repo and under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
+In a Terragrunt repo the wave's job plans every unit with one `run --all`, and each share plans and applies its own units with one `run --all --filter`. When the last wave splits, an `apply-rest` job after its shares runs any wave Terragrunt's edges cut past the pipeline's, as the last wave's job does otherwise.
+
+`init` refuses the key on GitLab and under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
 
 ## One apply at a time
 

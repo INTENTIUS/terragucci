@@ -112,6 +112,8 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
    The next drift run that finds every root clean closes the issue.
 
+   Drift the pull request cannot write, such as a value set through a variable or a module, can go to a coding agent instead: with [`agent.drift`](/terragucci/guides/agent-fix-drift/), the drift job's issue starts an agent whose change comes back as a pull request.
+
    Nothing in the drift job applies or merges. The approval of the wave and the report of each run stay as the [audit trail](/terragucci/reference/audit-trail/).
 
    With `respond.drift: attribute`, the issue also says who changed each attribute, read from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)):
