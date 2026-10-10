@@ -565,8 +565,8 @@ export type RunnerSpec = string | string[] | { group: string; labels?: string[] 
 export type RunnerSettings = RunnerSpec | Partial<Record<RunnerStage | "default", RunnerSpec>>;
 
 /** The stages `runner` can name apart; every other job runs on `default`. */
-export const RUNNER_STAGES = ["plan", "apply", "drift"] as const;
-export type RunnerStage = (typeof RUNNER_STAGES)[number];
+export const JOB_STAGES = ["plan", "apply", "drift"] as const;
+export type RunnerStage = (typeof JOB_STAGES)[number];
 
 /** `pass`: secret and variable names handed to the jobs as environment variables. */
 export interface PassSettings {
@@ -579,11 +579,11 @@ export function runnerByStage(v: RunnerSettings): v is Partial<Record<RunnerStag
   return isObject(v) && !("group" in v);
 }
 
-const RUNNER_LABEL = /^[^\s,]+$/;
-const RUNNER_KEYS = ["default", ...RUNNER_STAGES];
+const JOB_LABEL = /^[^\s,]+$/;
+const JOB_STAGE_KEYS = ["default", ...JOB_STAGES];
 
 function runnerSpecProblems(v: unknown, where: string, forge: unknown): string[] {
-  const label = (x: unknown): boolean => typeof x === "string" && RUNNER_LABEL.test(x);
+  const label = (x: unknown): boolean => typeof x === "string" && JOB_LABEL.test(x);
   const labels = (x: unknown): boolean => Array.isArray(x) && x.length > 0 && x.every(label) && new Set(x).size === x.length;
   if (typeof v === "string") return label(v) ? [] : [`${where} must be a runner label, such as self-hosted, with no spaces or commas`];
   if (Array.isArray(v)) return labels(v) ? [] : [`${where} must be a list of distinct runner labels, such as [self-hosted, linux]`];
@@ -600,8 +600,8 @@ function runnerSpecProblems(v: unknown, where: string, forge: unknown): string[]
 export function runnerProblems(v: unknown, where: string, forge?: unknown): string[] {
   if (!runnerByStage(v as RunnerSettings)) return runnerSpecProblems(v, where, forge);
   const m = v as Record<string, unknown>;
-  if (Object.keys(m).length === 0) return [`${where} must name a runner, or map ${RUNNER_KEYS.join(", ")} to one`];
-  return Object.entries(m).flatMap(([k, spec]) => (RUNNER_KEYS.includes(k) ? runnerSpecProblems(spec, `${where}.${k}`, forge) : [`${where}.${k} is not a setting (settings: ${RUNNER_KEYS.join(", ")}, or group and labels for one GitHub runner group)`]));
+  if (Object.keys(m).length === 0) return [`${where} must name a runner, or map ${JOB_STAGE_KEYS.join(", ")} to one`];
+  return Object.entries(m).flatMap(([k, spec]) => (JOB_STAGE_KEYS.includes(k) ? runnerSpecProblems(spec, `${where}.${k}`, forge) : [`${where}.${k} is not a setting (settings: ${JOB_STAGE_KEYS.join(", ")}, or group and labels for one GitHub runner group)`]));
 }
 
 /** Names `pass` refuses: the forges refuse a secret under these prefixes, and terragucci sets the rest in the jobs itself. */
