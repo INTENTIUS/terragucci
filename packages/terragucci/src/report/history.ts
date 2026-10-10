@@ -12,6 +12,11 @@
  * address with the applies that changed it, oldest first, each with its plan
  * digest, approver and time.
  *
+ * For a choudoufu root the wave also lists each changed resource's record
+ * versions with `choudoufu live-history` (../cdf-history.ts), and the history
+ * keeps the newest listing per address: version ids and times, never what a
+ * version holds.
+ *
  * Values never leave planAppliedChanges: it compares an attribute's value
  * before and after to say whether it changed, and keeps only its name.
  */
@@ -19,7 +24,7 @@ import { createHash } from "node:crypto";
 import type { AuditEntry } from "./audit";
 import { esc } from "./html";
 import { isObject } from "./redact";
-import type { Report, ReportAppliedChange } from "./schema";
+import type { Report, ReportAppliedChange, ReportRecordVersions } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
 export const CHANGES_SCHEMA = "terragucci.changes/v1";
@@ -160,6 +165,8 @@ export interface HistoryResource {
   root: string;
   address: string;
   type: string;
+  /** A choudoufu record's versions, newest first, as the newest apply that changed it listed them. */
+  record_versions?: ReportRecordVersions;
   /** Oldest first. */
   applies: HistoryApply[];
 }
@@ -204,6 +211,7 @@ export function buildHistory(projects: ProjectChanges[], audit: AuditEntry[] | u
       const held = byResource.get(id) ?? { id, project: p.project, root: c.root, address: c.address, type: c.type, applies: [] };
       byResource.set(id, held);
       const entry = applies.get(`${p.project}\n${c.path}`);
+      if (c.record_versions && (!held.record_versions || Date.parse(c.record_versions.read) >= Date.parse(held.record_versions.read))) held.record_versions = c.record_versions;
       held.applies.push({
         actions: c.actions,
         attributes: c.attributes,
@@ -231,6 +239,19 @@ export function buildHistory(projects: ProjectChanges[], audit: AuditEntry[] | u
 
 const ACTION_WORD: Record<ReportAppliedChange["actions"][number], string> = { create: "created", update: "updated", replace: "replaced", delete: "destroyed", import: "imported", move: "moved", forget: "forgotten" };
 
+/** A choudoufu record's versions under its applies: a row per version, that the store keeps none, or why they were not listed. */
+function renderRecordVersions(v: ReportRecordVersions): string {
+  const when = `<time datetime="${esc(v.read)}">${esc(v.read)}</time>`;
+  if (v.error !== undefined) return `\n<p class="record-versions" data-kept="error"><small>Record versions not listed at ${when}:</small></p><pre class="none">${esc(v.error)}</pre>`;
+  if (!v.kept) return `\n<p class="record-versions" data-kept="false"><small>The ${esc(v.store ?? "")} record store keeps no past versions: it replaces a record in place.</small></p>`;
+  const list = v.versions ?? [];
+  const rows = list.map((x) => `<tr data-version="${esc(x.version_id)}"><td><time datetime="${esc(x.last_modified)}">${esc(x.last_modified)}</time></td><td><code>${esc(x.version_id)}</code></td><td>${x.deleted ? "deleted" : x.current ? "current" : ""}</td></tr>`);
+  return `\n<p class="record-versions" data-kept="true" data-versions="${list.length}"><small>Its record: ${list.length} ${list.length === 1 ? "version" : "versions"}, newest first, listed ${when}. Reading one takes <code>aws s3api get-object --version-id</code>.</small></p>
+<div class="scroll"><table><tr><th>Written</th><th>Version id</th><th></th></tr>
+${rows.join("\n")}
+</table></div>`;
+}
+
 /** The page: one section per address, its applies oldest first. The JSON rides inline, as on the estate page. */
 export function renderHistoryHtml(history: History): string {
   const sections = history.resources.map((r) => {
@@ -244,7 +265,7 @@ export function renderHistoryHtml(history: History): string {
     return `<section id="${r.id}"><h2><code>${esc(r.address)}</code></h2><p><small>${esc(r.project)}, root <code>${esc(r.root)}</code>, <code>${esc(r.type)}</code>: ${r.applies.length} ${r.applies.length === 1 ? "apply" : "applies"}</small></p>
 <div class="scroll"><table><tr><th>Applied</th><th>What</th><th>Attributes changed</th><th>Approved by</th><th>Run</th><th>Plan digest</th></tr>
 ${rows.join("\n")}
-</table></div></section>`;
+</table></div>${r.record_versions ? renderRecordVersions(r.record_versions) : ""}</section>`;
   });
   const json = JSON.stringify(history).replace(/</g, "\\u003c");
   return `<!doctype html>
@@ -253,7 +274,7 @@ ${rows.join("\n")}
 ${TACO_ICON}
 <style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:15px;margin:24px 0 2px}p{margin:0 0 6px}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}small,.none{color:var(--dim)}code{font:12.5px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}section:target h2{color:var(--link)}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}small,.none{color:var(--dim)}code,pre{font:12.5px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}pre{white-space:pre-wrap;margin:0 0 6px}section:target h2{color:var(--link)}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Resource history</h1>
 <p>Every apply that changed a resource, oldest first, from the reports in the bucket${history.audit ? " and the audit trail" : ""}, built <time datetime="${esc(history.generated)}">${esc(history.generated)}</time>. Attributes are named, never their values. <a href="estate.html">Estate</a></p>
 ${sections.length ? sections.join("\n") : `<p class="none">No apply has recorded a change yet.</p>`}
