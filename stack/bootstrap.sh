@@ -108,13 +108,13 @@ wait_http() { # url, label, tries (2s apart)
 write_env() { # profile, then KEY=VALUE pairs; written whole, then moved into place, so a reader never sees half
   local profile="$1"; shift
   mkdir -p "$STATE"
-  : > "$STATE/$profile.env.new"
-  local kv
+  local kv tmp="$STATE/$profile.env.$$" # per process: two bootstraps at once must not move each other's file
+  : > "$tmp"
   for kv in "$@"; do
-    echo "export $kv" >> "$STATE/$profile.env.new"
+    echo "export $kv" >> "$tmp"
     echo "export $kv"
   done
-  mv "$STATE/$profile.env.new" "$STATE/$profile.env"
+  mv "$tmp" "$STATE/$profile.env"
   log "wrote $STATE/$profile.env"
 }
 
