@@ -159,14 +159,16 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const now = options.now ?? new Date().toISOString();
   const root = options.root.replace(/\/+$/, "");
   if (!root) throw new ConfigError("state export takes the root whose state to export: terragucci state export <root> [--version <id>]");
+  const configPath = options.config ?? findConfig(repo);
+  const settings = configPath ? resolveRepo(await loadConfig(configPath)) : undefined;
+  const shape = detectShape(repo, settings ?? resolveRepo({}));
+  // A unit an explicit stack generates is generated first, as a wave generates it.
+  await shape.prepareRoots({ roots: [root], ...(options.terragrunt?.path ? { terragrunt: options.terragrunt.path } : {}), ...(options.terragrunt?.exec ? { exec: options.terragrunt.exec } : {}) });
   const why = refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
   const unit = existsSync(join(repo, root, "terragrunt.hcl"));
   const by = options.actor || git(repo, ["config", "user.name"], env) || git(repo, ["config", "user.email"], env);
   if (!by) throw new ConfigError("state export names who asks: set git's user.name, or pass --actor <name>");
-  const configPath = options.config ?? findConfig(repo);
-  const settings = configPath ? resolveRepo(await loadConfig(configPath)) : undefined;
-  const shape = detectShape(repo, settings ?? resolveRepo({}));
   const binary = options.binary ?? settings?.binary ?? shape.binary([root]).value;
 
   // The backend, read by an init in a data dir of the export's own: the checkout's .terraform is left alone.

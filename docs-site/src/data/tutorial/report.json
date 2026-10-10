@@ -1,6 +1,6 @@
 {
   "step": "report",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "be9f7c9320e2bc21",
   "commands": [],
   "shots": {
     "top-light": "26e94bb6878528bb",
@@ -9,7 +9,7 @@
     "root-dark": "be8bb65defae8ae2",
     "plan-light": "c7f048a4430431db",
     "plan-dark": "bb959b74db3c990e",
-    "index-light": "2b313f9677f0e033",
-    "index-dark": "32bd56b22e8ed1bf"
+    "index-light": "09b85f5e4ef37d6f",
+    "index-dark": "cb478705140180a9"
   }
 }

@@ -9,7 +9,7 @@ import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { findRoots, globMatch } from "../detect";
-import { detectShape } from "../shape";
+import { detectShape, type Shape } from "../shape";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
@@ -204,7 +204,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions, known: knownAttributions(repo, o.attributions) } : undefined;
     const tg = shape.engine === "terragrunt";
     const d = tg
-      ? await driftUnits(repo, binary(), o, env, settings, attributing)
+      ? await driftUnits(repo, binary(), o, env, settings, shape, attributing)
       : await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
     const body = [
       ...d.routed,
@@ -337,10 +337,12 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
  * planned again through Terragrunt, attributed as a root is, and brought in
  * line in its own terragrunt.hcl where its inputs set the value.
  */
-async function driftUnits(repo: string, binary: string, o: RespondOptions, env: NodeJS.ProcessEnv, settings: ResolvedSettings, attributing?: { audit: AuditLog; decide?: ResolvedSettings["decide"]; options?: DecideOptions; known?: Record<string, Attributed> }) {
+async function driftUnits(repo: string, binary: string, o: RespondOptions, env: NodeJS.ProcessEnv, settings: ResolvedSettings, shape: Shape, attributing?: { audit: AuditLog; decide?: ResolvedSettings["decide"]; options?: DecideOptions; known?: Record<string, Attributed> }) {
   if (o.imports?.length) throw new ConfigError("--import writes import blocks into a root's own files, and a Terragrunt unit's resources are in its module; import into a unit with an import block in its module, through a reviewed change");
   const r = unitRunner(binary, env, { ...(o.terragrunt ? { terragrunt: o.terragrunt } : {}), ...(o.terragruntExec ? { exec: o.terragruntExec } : {}) });
   const { units, from } = await driftedUnits(repo, r, { ...(o.report ? { report: o.report } : {}), ...(o.root ? { root: o.root } : {}), ...(settings.terragrunt?.exclude ? { exclude: settings.terragrunt.exclude } : {}) });
+  // A drifted unit an explicit stack generates is planned again where the stack generates it.
+  await shape.prepareRoots({ roots: units, binary, terragrunt: r.terragrunt, exec: r.exec });
   const d = { codified: [] as Codified[], left: [] as Left[], files: new Map<string, string>(), imports: [] as string[], attributions: [] as Attribution[], routed: [] as string[], notes: [] as string[] };
   if (units.length === 0) return d;
   d.notes.push(`${units.length} unit${units.length === 1 ? "" : "s"} from ${from}: ${units.join(", ")}`);
@@ -355,7 +357,7 @@ async function driftUnits(repo: string, binary: string, o: RespondOptions, env: 
       d.routed.push(...routed.lines.map((l) => `${unit}: ${l.slice(2)}`).map((l) => `- ${l}`));
       d.notes.push(...at.notes.filter((n) => !d.notes.includes(n)));
     }
-    const c = await codifyUnitDrift(repo, unit, found, r, d.files);
+    const c = await codifyUnitDrift(repo, unit, found, r, d.files, shape.sourceOf(unit));
     d.codified.push(...c.codified);
     d.left.push(...c.left);
   }

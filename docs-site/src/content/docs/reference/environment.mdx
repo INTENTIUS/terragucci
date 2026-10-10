@@ -219,6 +219,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
 | `TF_DATA_DIR`, `TF_WORKSPACE` |  | where a root's initialised backend is recorded and which workspace it runs in; a `tf-apply` wave reads both to find the state whose version it records |
 | `TG_LOCK_STALE` |  | seconds after which a Forgejo apply takes over a lock whose holder stopped renewing; 7200 by default |
+| `TG_BACKEND_BOOTSTRAP` |  | Terragrunt repos, `tf-apply`: when the job sets it, the wave passes it to Terragrunt as it is, so `false` keeps the wave from creating or changing a bucket that `generate.disable_init: false` would bootstrap |
 | `TG_LOCK_POLL` |  | seconds between a waiting Forgejo apply's checks of the lock; 10 by default |
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
@@ -236,7 +237,7 @@ A local run needs none of these.
 |---|---|
 | GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
-| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Variables the generated jobs set
 
@@ -246,6 +247,8 @@ Internal; a value set in `env:` is overwritten.
 |---|---|
 | `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; on GitLab also the `comments` job, which starts the `mr-apply` pipeline with it; no job running pull request code has it |
 | `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
+| `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE`, `TERRAGUCCI_AGENT_HEAD` | GitLab, `agent.comment`: the variables the `comments` job starts the agent's pipeline with, naming the merge request, the `/terragucci agent` note and the head; `agent` and `agent-push` each read the merge request and the note again from GitLab |
+| `TERRAGUCCI_REVIEW_MR`, `TERRAGUCCI_REVIEW_HEAD` | GitLab, `review.agent`: the variables the `comments` job starts the review's pipeline with, naming the merge request and the head to review |
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
 | `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
@@ -255,6 +258,7 @@ Internal; a value set in `env:` is overwritten.
 | `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
+| `TG_BACKEND_BOOTSTRAP` | Terragrunt repos, a `tf-apply` wave, when `generate` gives a unit `disable_init: false` and the job does not set it: `true`, so Terragrunt creates or updates the state bucket ([Bucket bootstrap](/terragucci/guides/generate-root-files/#bucket-bootstrap)) |
 | `TERRAGUCCI_TG_NEXT`, `TERRAGUCCI_TG_PHASE` | Terragrunt repos, the plan stage: the binary the `TG_TF_PATH` wrapper runs, and whether Terragrunt is planning or checking for mock reads, so a later layer is planned on its upstream's planned outputs |
 | `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |
 | `TERRAGUCCI_ROOT_ROLES` | jobs with `oidc.roles`: the stage's roles by root glob, as JSON `[[glob, role], ...]`; each root's `AWS_ROLE_ARN` comes from it |

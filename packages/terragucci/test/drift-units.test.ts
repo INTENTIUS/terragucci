@@ -9,7 +9,7 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { init } from "../src/init";
 import { respond } from "../src/respond";
 import type { AuditLog } from "../src/respond/attribute";
-import { codifyUnit, localModule } from "../src/respond/drift-units";
+import { codifyUnit, codifyUnitDrift, localModule, unitRunner } from "../src/respond/drift-units";
 import { runStage } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
 
@@ -206,5 +206,19 @@ describe("the drift job a Terragrunt repo's pipeline writes", () => {
     const doc = body((await init(live("respond:\n  drift: off\n"), { binary: "tofu", forge: "github", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
     expect(doc.jobs.drift.steps.map((s: any) => s.run ?? "").join("\n")).not.toContain("terragucci respond drift");
     expect(doc.jobs.drift.permissions.contents).toBe("read");
+  });
+});
+
+describe("a unit an explicit stack generates", () => {
+  it("is left, naming the stack file, since its terragrunt.hcl is not in the repo", async () => {
+    const drifted = [{ address: "terraform_data.this", type: "terraform_data", name: "this", action: "update" as const, attributes: [{ path: "input", before: "1", live: "2" }] }];
+    const ran: string[][] = [];
+    const exec: TerragruntExec = async (_c, args) => (ran.push([...args]), { code: 0, stdout: "", stderr: "" });
+    const files = new Map<string, string>();
+    const r = await codifyUnitDrift(tmp(), "live/stk/.terragrunt-stack/base", drifted as never, unitRunner("tofu", {}, { exec }), files, "live/stk/terragrunt.stack.hcl");
+    expect(r.codified).toEqual([]);
+    expect(r.left).toEqual([{ root: "live/stk/.terragrunt-stack/base", address: "terraform_data.this", reason: "live/stk/terragrunt.stack.hcl generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template" }]);
+    expect(files.size).toBe(0);
+    expect(ran).toEqual([]);
   });
 });

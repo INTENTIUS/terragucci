@@ -49,7 +49,7 @@ jobs:
       - name: Record the validation claims
         run: just validation-record
       - name: Capture the tutorial
-        run: CHROME=google-chrome just tutorial-capture
+        run: CHROME=google-chrome TG_STACK=shared just tutorial-capture
       - name: Stop the stack
         if: always()
         run: just stack-down

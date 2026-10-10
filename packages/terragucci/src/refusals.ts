@@ -61,6 +61,9 @@ export const SYNTH_NOT_TERRAMATE = "synth is for roots a command writes; a Terra
 export const TERRAMATE_DRIFT_PR = "the drift pull request writes each live value into a stack's files, and terramate generate owns the generated ones, so the value belongs in the stack's .tm.hcl or its own Terraform; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
 export const TERRAMATE_ROLLOUTS = "a rollout moves a pin in each root's files, and in a Terramate repo the pin is usually in code terramate generate writes from a .tm.hcl, which terragucci does not edit; leave rollouts unset and move the pin there";
 export const TERRAMATE_GENERATE = "terramate generate writes each stack's generated code, its backend and providers among it, and a file terragucci generate wrote would declare a second backend beside it; set them in a generate_hcl block and leave generate unset";
+/** A unit an explicit stack generates: `terragrunt stack generate` writes its files, so git holds none of them. */
+export const STACK_UNIT_DRIFT_PR = "generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template";
+export const STACK_NESTED_GENERATE = "generate reads the units a stack file names in its unit blocks; only Terragrunt can list a nested stack's units, so give each unit its own unit block, or leave generate unset";
 export const OIDC_ROLES_NOT_TERRAGRUNT = "roles by root glob are for plain roots; in a Terragrunt repo, set terragrunt.credentials";
 
 /** The shape each feature is refused in, with why. A shape and feature not listed are allowed. */

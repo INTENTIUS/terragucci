@@ -21,6 +21,7 @@ packages/terragucci/src/render-terragrunt.ts tg-* steward
 packages/terragucci/src/atmos.ts          atmos-* terramate-sharing terramate-affected
 packages/terragucci/src/terramate.ts      terramate-*
 packages/terragucci/src/terragrunt.ts     tg-* atmos-waves terramate-waves
+packages/terragucci/src/tg-stacks.ts      tg-*
 packages/terragucci/src/render-agent.ts   comment-agent drift-agent
 packages/terragucci/src/agent-comment.ts  comment-agent drift-agent
 packages/terragucci/src/drift-agent.ts    drift-agent
@@ -31,7 +32,7 @@ packages/terragucci/src/render-review.ts  review-*
 packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-*
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate tg-generate
 packages/terragucci/src/detect.ts         boot affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-* atmos-affected atmos-upstream-wait atmos-roles terramate-affected terramate-sharing
@@ -52,8 +53,8 @@ packages/terragucci/src/estate.ts         estate estate-* front-door audit* read
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export ephemeral-*
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-*
 packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr
-packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr
-packages/terragucci/src/generate-config.ts generate reconcile tg-generate
+packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr tg-generate-init
+packages/terragucci/src/generate-config.ts generate reconcile tg-generate tg-generate-init
 packages/terragucci/src/notify.ts         notify-chat notify-webhook chat-*
 packages/terragucci/src/relay.ts          chat-approve*
 packages/terragucci/src/unlock.ts         unlock-state
@@ -73,6 +74,7 @@ packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate revie
 
 # Pull request comments (GitLab's files run in the GitLab claims, not here).
 packages/terragucci/src/comment-gitlab.ts
+packages/terragucci/src/gitlab-agent.ts  review-*
 packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* drift-overdue
 packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent
@@ -147,6 +149,7 @@ stack/fixtures/cdf-race                   cdf-*
 stack/fixtures/terraform-lock             boot report drift
 stack/binary-tree.py                      boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan
 stack/fixtures/atmos-two-stacks          atmos-*
+stack/fixtures/tg-stack                  tg-stack-*
 stack/fixtures/atmos-reads               atmos-upstream-wait
 stack/fixtures/terramate-stacks          terramate-waves terramate-affected terramate-stale
 stack/fixtures/terramate-sharing         terramate-sharing

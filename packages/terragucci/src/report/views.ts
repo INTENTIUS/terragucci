@@ -275,6 +275,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
   const binaries = binariesLine(report);
   if (binaries) head.push(binaries, "");
+  const stacks = explicitStacksLine(report);
+  if (stacks) head.push(stacks, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   if (report.cost) head.push(costLine(report.cost), "");
   const gateLine = report.cost ? costGateLine(report.waves) : undefined;
@@ -461,6 +463,23 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     else cut.lines++;
   }
   return top + blocks.map((b) => b.text).join("") + notice() + foot;
+}
+
+/**
+ * The explicit stacks the run's units come from, each stack file with the
+ * units it generates, since a generated unit's own files are not in the repo:
+ * a change to one is made in the stack file or its unit template. Nothing
+ * when no unit is generated.
+ */
+export function explicitStacksLine(report: Report): string | undefined {
+  const by = new Map<string, string[]>();
+  for (const r of report.roots) {
+    const f = r.terragrunt?.stack_file;
+    if (f) by.set(f, [...(by.get(f) ?? []), r.path.slice(r.path.lastIndexOf(".terragrunt-stack/") + ".terragrunt-stack/".length)]);
+  }
+  if (by.size === 0) return undefined;
+  const each = [...by].sort(([a], [b]) => (a < b ? -1 : 1)).map(([f, units]) => `${code(f)} generates ${units.sort().map(code).join(", ")}`);
+  return `Explicit stacks: ${each.join("; ")}.`;
 }
 
 /**

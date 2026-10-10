@@ -36,7 +36,7 @@ export const capture = new Job({
     installAct(),
     new Step({ name: "Record the smoke claims", run: "just smoke-record" }),
     new Step({ name: "Record the validation claims", run: "just validation-record" }),
-    new Step({ name: "Capture the tutorial", run: "CHROME=google-chrome just tutorial-capture" }),
+    new Step({ name: "Capture the tutorial", run: "CHROME=google-chrome TG_STACK=shared just tutorial-capture" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),
     new Step({
       name: "Open a pull request with what changed",
