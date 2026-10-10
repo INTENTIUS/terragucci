@@ -998,6 +998,38 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "apply-per-root",
+      "says": "a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2178b8af"
+    },
+    {
+      "claim": "cdf-rows-overlap",
+      "says": "with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2178b8af"
+    },
+    {
+      "claim": "cdf-rows-wait",
+      "says": "with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2178b8af"
+    },
+    {
+      "claim": "cdf-rows-takeover",
+      "says": "with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2178b8af"
+    },
+    {
       "claim": "resume-approve",
       "says": "terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done",
       "needs": null,
@@ -2176,30 +2208,6 @@
       "commit": "7c2ff19c"
     },
     {
-      "claim": "image",
-      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "env",
-      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "local-plan",
-      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
       "claim": "tg-ephemeral-pr",
       "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
       "needs": null,
@@ -2230,6 +2238,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "e67a400c"
+    },
+    {
+      "claim": "image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
     },
     {
       "claim": "mr-widget",
