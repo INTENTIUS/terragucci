@@ -35,7 +35,7 @@
 import { spawnSync } from "node:child_process";
 import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
-import { reachedRoots, reachedUnits, type ApplyCommentDecision, type Git } from "./comment-apply";
+import { reached, type ApplyCommentDecision, type Git } from "./comment-apply";
 import type { WavesAfter } from "./detect";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
@@ -307,8 +307,8 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
   const now = git(["rev-parse", headRemote]).stdout.trim();
   if (now !== sha) return refuse(`!${iid} moved while this note was read (its head is now ${short(now)}); comment again once its plan passes`);
 
-  const lock = async (how: "apply" | "lock"): Promise<{ roots: string[]; every?: string } | ApplyCommentDecision> => {
-    const reach = o.terragrunt ? reachedUnits(git, remote, sha, o.layers) : { units: reachedRoots(repoDir, git, remote, sha, o.layers) };
+  const lock = async (how: "apply" | "lock"): Promise<{ roots: string[]; every?: string; kind: string } | ApplyCommentDecision> => {
+    const reach = reached(repoDir, git, remote, sha, o.layers, o.terragrunt ? { terragrunt: true } : {});
     let locked;
     try {
       locked = await takeLocks(repoDir, reach.units, { pr: iid, by: user, at: new Date().toISOString(), head: sha, ...(how === "lock" ? { via: "lock" as const } : {}) }, async (n) => (await api("GET", `/projects/${id}/merge_requests/${n}`))?.state === "opened");
@@ -318,7 +318,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
     if (!locked.ok) {
       return refuse(`${describeHeld(locked.held, (n) => `merge request !${n}`)}, so !${iid} is not ${how === "lock" ? "locked" : "applied"}. It ${how === "lock" ? "locks" : "applies"} once that merge request merges or closes, or a Developer comments \`/terragucci unlock\` on it`);
     }
-    return { roots: reach.units, ...(reach.every ? { every: reach.every } : {}) };
+    return { roots: reach.units, kind: reach.kind, ...(reach.every ? { every: reach.every } : {}) };
   };
   const isDecision = (x: object): x is ApplyCommentDecision => "go" in x;
   const kind = o.terragrunt ? "unit" : "root";
@@ -327,7 +327,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
     const l = await lock("lock");
     if (isDecision(l)) return l;
     const text = l.roots.length
-      ? `${l.every ? `!${iid} locks every unit: ${l.every}. ` : ""}locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for !${iid} at ${short(sha)}, for ${user}; nothing was applied. The locks hold until it merges or closes, or a Developer comments \`/terragucci unlock\``
+      ? `${l.every ? `!${iid} locks every ${l.kind}: ${l.every}. ` : ""}locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for !${iid} at ${short(sha)}, for ${user}; nothing was applied. The locks hold until it merges or closes, or a Developer comments \`/terragucci unlock\``
       : `!${iid} reaches no ${kind}, so nothing is locked`;
     await reply(text);
     return stop(text);
@@ -341,7 +341,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
   if (verdict) return refuse(verdict.refuse);
   const l = await lock("apply");
   if (isDecision(l)) return l;
-  if (l.every) await reply(`!${iid} locks every unit: ${l.every}. Applying its head ${short(sha)}`);
+  if (l.every) await reply(`!${iid} locks every ${l.kind}: ${l.every}. Applying its head ${short(sha)}`);
   const through = wave !== undefined ? ` through wave ${wave}` : "";
   const locking = l.roots.length ? `, locking ${l.roots.join(", ")}` : "";
   return { go: true, open: true, reason: `apply !${iid}'s head ${short(sha)}${through} for ${user}${locking}`, pr: iid, sha, base, ...(wave !== undefined ? { wave } : {}) };
