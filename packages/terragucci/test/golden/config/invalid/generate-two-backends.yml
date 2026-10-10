@@ -1,0 +1,2 @@
+generate:
+  backend: { s3: { bucket: a }, gcs: { bucket: b } }

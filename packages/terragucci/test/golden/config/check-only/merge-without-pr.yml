@@ -1,0 +1,3 @@
+# apply.merge needs apply.when: pull-request, a rule across two keys.
+apply:
+  merge: auto

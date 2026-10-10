@@ -1,0 +1,4 @@
+# One role for plan and apply: a rule across two keys.
+oidc:
+  plan_role: r
+  apply_role: r

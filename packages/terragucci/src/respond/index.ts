@@ -8,8 +8,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
-import { findRoots, globMatch } from "../detect";
-import { detectShape, type Shape } from "../shape";
+import { findRoots, globMatch, liveRoots } from "../detect";
+import { detectShape, fullDriftPlans, type Shape } from "../shape";
+import { liveDrift } from "../report/drift";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
@@ -298,8 +299,11 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
     const planFile = join(dir, ".terragucci-drift.tfplan");
     try {
       run("init", "-input=false");
-      run("plan", "-refresh-only", "-input=false", "-lock=false", `-out=${planFile}`);
-      let found = driftOf(JSON.parse(run("show", "-json", planFile).stdout));
+      // A root under live resource markers plans in full, its changes read as drift (liveDrift).
+      const live = fullDriftPlans(binary) && liveRoots(repo, [root]).length > 0;
+      run("plan", ...(live ? [] : ["-refresh-only"]), "-input=false", "-lock=false", `-out=${planFile}`);
+      const shown: unknown = JSON.parse(run("show", "-json", planFile).stdout);
+      let found = driftOf(live ? liveDrift(shown) : shown);
       if (attributing) {
         const at = attributing.known?.[root] ?? (await attribute(root, found, attributing));
         const routed = route(at.attributions);

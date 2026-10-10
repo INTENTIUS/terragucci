@@ -125,6 +125,7 @@ export default defineConfig({
 								{ label: 'Find the state version an apply left', slug: 'guides/find-a-state-version' },
 								{ label: 'Export a state version', slug: 'guides/export-a-state-version' },
 								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
+								{ label: 'Query the estate with SQL', slug: 'guides/query-with-sql' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 							],
 						},
