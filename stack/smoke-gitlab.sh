@@ -38,6 +38,8 @@ gl-comments|the comments schedule answers a Developer merge request note once ac
 gl-comment-plan|a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note|
 gl-protected-token|with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan|
 gl-mr-apply|with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it|
+pr-apply-lock|with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
+pr-close-release|with apply.when pull-request, closing a merge request releases the roots it locked: /terragucci lock on a second merge request then takes them|
 gl-pr-review|with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver|
 gl-wave-jobs|with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind|
 gl-comment-agent|a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file|
@@ -66,6 +68,8 @@ gl-comments      runner weight=200
 gl-comment-plan  runner weight=200
 gl-protected-token runner weight=200
 gl-mr-apply      runner weight=250
+pr-apply-lock    runner weight=400
+pr-close-release runner weight=250
 gl-pr-review     runner weight=200
 gl-wave-jobs     runner weight=400
 gl-comment-agent runner weight=350
@@ -1466,6 +1470,127 @@ gitlab_claim_gl_mr_apply() {
   grep -q "pr-merge merges it next" <<<"$replies" || { log "no reply from mr-apply that it applied the head"; rc=1; }
   drop_work "$work"
   [ $rc = 0 ] && log "/terragucci apply started the merge token's pipeline on main, which applied !$MR's head and merged it"
+  return $rc
+}
+
+# ── root locks of apply before merge ──
+# One root, app, with apply.when pull-request and merge: manual, the comments
+# schedule, and TG_MERGE holding the owner's token, which may run a pipeline
+# on main. main is pushed without a pipeline; merge requests A and B each set
+# app's rev.txt (to a and to b) and are planned.
+gl_lock_mrs() { # dir project -> sets MR_A, MR_B and SID
+  local sha_a sha_b
+  gl_var "$2" TG_MERGE "$GL_TOKEN" || { log "could not set TG_MERGE"; return 1; }
+  gl_tree "$1" "$2" "gate: never\n${gl_comments_yml}apply:\n  when: pull-request\n  merge: manual\n  merge_token_env: TG_MERGE\n" || return 1
+  grep -q '^mr-apply:$' "$1/.gitlab/terragucci.yml" || { log "the pipeline has no mr-apply job"; return 1; }
+  gl_push "$1" "$2" main "smoke: main [skip ci]" >/dev/null || return 1
+  echo a > "$1/app/rev.txt"
+  sha_a="$(gl_push "$1" "$2" change-a "smoke: app a")" || return 1
+  git -C "$1" checkout -q main
+  echo b > "$1/app/rev.txt"
+  sha_b="$(gl_push "$1" "$2" change-b "smoke: app b")" || return 1
+  MR_A="$(gl_mr "$2" change-a "smoke: app a")"
+  MR_B="$(gl_mr "$2" change-b "smoke: app b")"
+  [ -n "$MR_A" ] && [ "$MR_A" != null ] && [ -n "$MR_B" ] && [ "$MR_B" != null ] || { log "the merge requests did not open"; return 1; }
+  gl_wait "$2" "$sha_a" merge_request_event && [ "$PIPE_STATUS" = success ] || { log "!$MR_A's pipeline ended $PIPE_STATUS"; return 1; }
+  gl_wait "$2" "$sha_b" merge_request_event && [ "$PIPE_STATUS" = success ] || { log "!$MR_B's pipeline ended $PIPE_STATUS"; return 1; }
+  # apply.requires is every requirement by default: smoke-reviewer, a Developer, approves both heads.
+  local reviewer
+  reviewer="$(gl_user smoke-reviewer "$2" 30)" || return 1
+  gl_approve "$2" "$MR_A" "$reviewer" && gl_approve "$2" "$MR_B" "$reviewer" || { log "smoke-reviewer's approvals failed"; return 1; }
+  SID="$(gl_schedule "$2" comments comments)" || return 1
+}
+
+# A note on a merge request, the comments schedule played, and the pipeline
+# it starts on main waited for; prints terragucci's newest reply on it.
+gl_say() { # project iid text
+  local before
+  before="$(gl_newest "$1")"
+  gl_note_as "$1" "$2" "$3" >/dev/null || return 1
+  gl_play "$1" "$SID" || return 1
+  gl_started "$1" "$before" api >/dev/null || true
+  gl_notes "$1" "$2" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
+}
+
+gl_app_input() { # project -> the input app's state holds, empty when none
+  curl -fsS "$GL_FLOCI/shop-terraform-state/$1/app.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty | if type == "object" then .value else . end' 2>/dev/null || true
+}
+
+gitlab_claim_pr_apply_lock() {
+  # gl_lock_mrs, then /terragucci apply on A: its mr-apply applies app (a) and
+  # A stays open, holding app. /terragucci apply on B must be refused, naming
+  # app and !A, with app still a. /terragucci unlock on A must say it released
+  # app, and /terragucci apply on B must then apply it: app holds b.
+  # BREAK: the lock file is deleted from chant/lifecycle after A applied, so
+  # nothing holds app and the first apply on B applies it.
+  log() { echo "[smoke gitlab pr-apply-lock] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project reply clone rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project pr-apply-lock)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_lock_mrs "$work/tree" "$project" || { drop_work "$work"; return 1; }
+  reply="$(gl_say "$project" "$MR_A" "/terragucci apply")"
+  log "A (!$MR_A): ${reply:-no reply}; app holds $(gl_app_input "$project")"
+  grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
+  [ $rc = 1 ] || [ "$(gl_app_input "$project")" = a ] || { log "app does not hold A's value"; rc=1; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    clone="$work/lifecycle"
+    { git clone -q --branch chant/lifecycle "${GL_URL/#http:\/\//http://oauth2:${GL_TOKEN}@}/$GL_USER/$project.git" "$clone" \
+      && git -C "$clone" rm -q _locks/tf-apply.json \
+      && git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -qm "drop the locks" \
+      && git -C "$clone" push -q origin chant/lifecycle; } 2>&1 | sed "s#${GL_TOKEN}#***#g" >&2
+    [ "${PIPESTATUS[0]}" = 0 ] || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(gl_say "$project" "$MR_B" "/terragucci apply")"
+    log "B (!$MR_B) while A holds the lock: ${reply:-no reply}; app holds $(gl_app_input "$project")"
+    grep -q "\`app\` is locked by merge request !$MR_A" <<<"$reply" || { log "B was not refused for the lock A holds"; rc=1; }
+    [ "$(gl_app_input "$project")" = a ] || { log "app moved while A held it"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(gl_say "$project" "$MR_A" "/terragucci unlock")"
+    log "unlock on A: ${reply:-no reply}"
+    grep -q "released the locks !$MR_A held on \`app\`" <<<"$reply" || { log "the unlock did not release app"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(gl_say "$project" "$MR_B" "/terragucci apply")"
+    log "B after the unlock: ${reply:-no reply}; app holds $(gl_app_input "$project")"
+    [ "$(gl_app_input "$project")" = b ] || { log "B did not apply app after the unlock"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "B was refused while A held app, and applied once A was unlocked"
+  return $rc
+}
+
+gitlab_claim_pr_close_release() {
+  # gl_lock_mrs, then /terragucci lock on A locks app; A is closed unmerged;
+  # /terragucci lock on B must then take app, which the closed A no longer
+  # holds.
+  # BREAK: A stays open, so B is refused for the lock A holds.
+  log() { echo "[smoke gitlab pr-close-release] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project reply rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project pr-close-release)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_lock_mrs "$work/tree" "$project" || { drop_work "$work"; return 1; }
+  reply="$(gl_say "$project" "$MR_A" "/terragucci lock")"
+  log "lock on A (!$MR_A): ${reply:-no reply}"
+  grep -q "locked \`app\` for !$MR_A" <<<"$reply" || { log "the lock on A did not lock app"; rc=1; }
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    glapi -o /dev/null -X PUT "$(gl_p "$project")/merge_requests/$MR_A" --data-urlencode "state_event=close" || { log "could not close !$MR_A"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(gl_say "$project" "$MR_B" "/terragucci lock")"
+    log "lock on B (!$MR_B): ${reply:-no reply}"
+    grep -q "locked \`app\` for !$MR_B" <<<"$reply" || { log "B did not take app"; rc=1; }
+  fi
+  [ -z "$(gl_app_input "$project")" ] || { log "a lock applied app"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "closing A released app, and B locked it"
   return $rc
 }
 

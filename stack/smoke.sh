@@ -253,9 +253,11 @@ atmos-check|the check job of an Atmos repo runs atmos validate stacks before it 
 atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
 terramate-waves|init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate|
 terramate-affected|a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other|
+terramate-pr-apply-lock|with apply.when: pull-request in a Terramate repo, a pull request applied on a comment locks the stack it changes, and a second pull request that changes that stack is refused with the stack and the holder named, its state left as the first applied it|
 terramate-sharing|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
 terramate-stale|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
 atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
+atmos-pr-apply-lock|with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instances it reaches (every instance, for a change to a stack manifest), and a second pull request that changes one is refused with the instance and the holder named, its state left as the first applied it|
 atmos-refuse|config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
@@ -437,7 +439,20 @@ pass-secrets|with pass naming a repo secret and a repo variable, init writes the
 BINARY_CLAIMS='boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan'
 # A core claim that shows something else on a binary, because the feature is
 # refused there as a config error: <binary> <claim>|what its row shows.
-BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan'
+BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan
+terraform lock-wait|with binary: terraform a tf-apply wave whose plan meets a state lock another Terraform plan holds waits for it under the default -lock-timeout terragucci adds, the root'"'"'s plan time in the report covering the wait, and applies once the lock is released
+choudoufu unlock-state|with binary: choudoufu and a root under live resource markers, terragucci unlock-state finds no state file and no state lock: it says there is nothing to release, runs no binary, asks for no approval and records nothing'
+# The locking claims a binary runs besides the core ones: <binary> <claim>...
+# Terraform takes the backend's state lock as OpenTofu does, so it runs all
+# three. choudoufu under live resource markers takes no state lock at all, so
+# it runs unlock-state alone, which there has nothing to release; apply-serial
+# and lock-wait are about a lock it never takes (its own side is
+# cdf-concurrency, cdf-rows-* and cdf-killed-records, and the plain lock-wait
+# row is choudoufu on an s3 backend).
+BINARY_LOCK_CLAIMS='terraform apply-serial unlock-state lock-wait
+choudoufu unlock-state'
+# The claims SMOKE_BINARY runs.
+binary_claims() { echo $BINARY_CLAIMS $(grep "^$SMOKE_BINARY " <<<"$BINARY_LOCK_CLAIMS" | cut -d' ' -f2-); }
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -594,22 +609,26 @@ claim_apply_serial() {
   # The runner has capacity 8, and under BREAK the smoke runner gives this claim
   # the runner to itself (runner! in CLAIM_GROUPS), so a free slot never forces
   # the order: only the concurrency group and the state lock do.
+  # Under SMOKE_BINARY=terraform the repo, its state and its marks are
+  # serial-terraform, and the pipeline runs in the Terraform image.
   log() { echo "[smoke apply-serial] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/serial" sha1 sha2 i listing marks bucket=shop-terraform-state mark
+  local name=serial
+  [ "$SMOKE_BINARY" = tofu ] || name="serial-$SMOKE_BINARY"
+  local work repo="$USER/$name" sha1 sha2 i listing marks bucket=shop-terraform-state mark
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local n; for n in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
   settle "repos/$repo" 404 || return 1
   api -o /dev/null -H 'content-type: application/json' -X POST \
-    -d '{"name":"serial","private":false,"auto_init":false,"default_branch":"main"}' "$URL/api/v1/user/repos"
+    -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
   settle "repos/$repo" 200 || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket"
   # Clear marks and state (with its lock file) from an earlier run.
-  for mark in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+  for mark in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$name/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g') $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$name-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
     curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$mark" || true
   done
   mkdir -p "$work/app"
@@ -636,13 +655,17 @@ resource "terraform_data" "slow" {
   }
 }
 TF
+  if [ "$name" != serial ]; then
+    sed "s#serial/app.tfstate#$name/app.tfstate#; s#/serial-marks/#/$name-marks/#" "$work/app/main.tf" > "$work/app/main.tf.new" && mv "$work/app/main.tf.new" "$work/app/main.tf"
+  fi
   echo 1 > "$work/app/rev.txt"
   # The second push replaces the resource, which on-destroy would hold for an
   # approval; this claim is about the lock, so no wave waits.
-  printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$work/terragucci.yml"
+  printf 'forge: forgejo\nbinary: %s\ngate: never\n' "$SMOKE_BINARY" > "$work/terragucci.yml"
   (cd "$work" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
   # BREAK=1 cuts all three guards; BREAK=lock,group,job names the ones to cut.
   local wf="$work/.forgejo/workflows/terragucci.yml" cut="${BREAK:-}"
+  bin_pipeline "$wf" || { drop_work "$work"; return 1; }
   [ "$cut" = 1 ] && cut=lock,group,job
   case ",$cut," in *,lock,*) sed -i.bak 's#^\( *\)until git push -q origin .*; do#\1until true; do#' "$wf" ;; esac
   case ",$cut," in *,group,*) awk '/^concurrency:/ {skip=1; next} skip && /^ / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
@@ -655,18 +678,18 @@ TF
     awk '{print} /^  TF_INPUT: / {print "  TF_CLI_ARGS_plan: -lock-timeout=3s"; print "  TF_CLI_ARGS_apply: -lock-timeout=3s"}' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
     grep -q 'TF_CLI_ARGS_apply' "$wf" || { log "the pipeline has no env block to set a lock timeout in"; return 1; }
   fi
-  sha1="$(push_tree "$work" "$repo" main "serial: first")"
+  sha1="$(push_tree "$work" "$repo" main "$name: first")"
   for i in $(seq 1 120); do
-    listing="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" || true)"
+    listing="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$name-marks/" || true)"
     case "$listing" in *-start\</Key\>*) break ;; esac
     sleep 2
   done
   echo 2 > "$work/app/rev.txt"
-  sha2="$(push_tree "$work" "$repo" main "serial: second")"
+  sha2="$(push_tree "$work" "$repo" main "$name: second")"
   wait_run "$repo" "$sha1"
   wait_run "$repo" "$sha2"
   [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the second run ended $RUN_STATUS"; drop_work "$work"; return 1; }
-  marks="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g; s#.*/[0-9]*-##' | tr '\n' ' ')"
+  marks="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$name-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g; s#.*/[0-9]*-##' | tr '\n' ' ')"
   log "marks in key order: $marks"
   drop_work "$work"
   # Keys sort by millisecond timestamp, so the listing is the order they happened in.
@@ -4746,6 +4769,88 @@ choudoufu_linux() {
   echo "$out"
 }
 
+lock_wait_terraform() {
+  # SMOKE_BINARY=terraform: the same root, in the Terraform image. A second
+  # Terraform plan takes the lock and holds it at the prompt for 40 seconds.
+  # While its lock object is in the bucket the claimed tf-apply wave starts,
+  # with no -lock-timeout of its own: the default terragucci adds lets its plan
+  # wait. Terraform sends no spans, so there is no State lock wait span; the
+  # wait shows as the root's plan_seconds in the wave's report, which must be
+  # 10 or more, and the wave must apply the root.
+  # BREAK: no second plan, so the plan takes the lock at once.
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=terragucci-smoke-lock
+  local key holder="" i d rc=0 report secs aws_env
+  image="$(image_tag terraform)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; build it first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  key="lock-wait-terraform/$(date +%s)-$$/terraform.tfstate"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  for d in repo holder; do
+    mkdir -p "$work/$d/lock"
+    cat >"$work/$d/lock/main.tf" <<HCL
+terraform {
+  backend "s3" {
+    bucket         = "$bucket"
+    key            = "$key"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+variable "hold" {
+  type = string
+}
+
+resource "terraform_data" "x" {
+  input = "lock-wait"
+}
+HCL
+  done
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke lock-wait terraform $(date +%s%N)"
+  aws_env=(-e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1)
+  if [ -z "${BREAK:-}" ]; then
+    holder="terragucci-smoke-lock-holder-tf-$$"
+    run_copied -d --name "$holder" --network "${TG_NETWORK:-terragucci}" -v "$work/holder:/repo" -w /repo/lock \
+      "${aws_env[@]}" "$image" \
+      sh -c 'terraform init -input=false -no-color >/dev/null && sleep 40 | terraform plan -input=true -no-color' >/dev/null || rc=1
+    for i in $(seq 1 60); do
+      [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/$key.tflock")" = 200 ] && break
+      sleep 1
+    done
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/$key.tflock")" != 200 ]; then
+      log "the second plan never took the lock ($key.tflock is not in $bucket)"; docker logs "$holder" >&2 2>&1 || true; rc=1
+    else
+      log "the second Terraform plan holds $key.tflock"
+    fi
+  fi
+  if [ $rc = 0 ]; then
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      "${aws_env[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TF_VAR_hold=given \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-apply --wave 1 --layers lock --binary terraform --gate never >&2 || { log "the wave did not apply"; rc=1; }
+  fi
+  [ -n "$holder" ] && { docker logs "$holder" 2>&1 | tail -3 | sed 's/^/[holder] /' >&2 || true; docker rm -f "$holder" >/dev/null 2>&1 || true; }
+  report="$work/repo/terragucci-report/report.json"
+  if [ $rc = 0 ]; then
+    if [ ! -f "$report" ]; then
+      log "the wave wrote no report"; rc=1
+    else
+      bin_ran "$report" || rc=1
+      secs="$(jq '[.roots[] | select(.path == "lock") | .timings.plan_seconds // 0] | max // 0 | floor' "$report")"
+      log "the root's plan took ${secs}s"
+      [ "$secs" -ge 10 ] || { log "the plan took ${secs}s: it never waited for the lock"; rc=1; }
+      [ "$(curl -fsS "$FLOCI/$bucket/$key" 2>/dev/null | jq '.resources | length' 2>/dev/null || echo 0)" -gt 0 ] || { log "the state of the root holds no resource: the wave did not apply"; rc=1; }
+    fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] || return 1
+  log "the wave's Terraform plan waited ${secs}s for the lock the second plan held, under the default lock timeout, and applied"
+}
+
 claim_lock_wait() {
   # One root on floci's S3 with use_lockfile, planned by choudoufu. A second
   # plan of the same state takes the lock first and holds it: it waits at the
@@ -4756,7 +4861,9 @@ claim_lock_wait() {
   # two or more attempts, and the collector must hold the `State lock wait`
   # span with those attempts in the wave's trace.
   # BREAK: no second plan, so the lock is free and the plan takes it at once.
+  # Under SMOKE_BINARY=terraform: lock_wait_terraform.
   log() { echo "[smoke lock-wait] $*" >&2; }
+  [ "$SMOKE_BINARY" != terraform ] || { lock_wait_terraform; return; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   collector_up || return 1
@@ -6029,8 +6136,8 @@ claim_comment_apply() {
 # collaborator with write access, approves the pull requests: Forgejo counts no
 # approval from the author of a pull request, who is the admin here.
 
-pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, its pipeline written for apply before merge (or after, with a third argument)
-  gated_repo "$1" || return 1
+pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, its pipeline written for apply before merge (or after, with a third argument); PR_FIXTURE names another fixture than gated-waves
+  gated_repo "$1" "${PR_FIXTURE:-gated-waves}" || return 1
   sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
   [ -n "${3:-}" ] || printf 'apply:\n  when: pull-request\n  merge: %s\n' "$2" >> "$work/tree/terragucci.yml"
   # Forgejo refuses a merge made with the job's own token, so merge: auto merges with the admin's, from a secret.
@@ -8459,6 +8566,110 @@ claim_tg_pr_apply_lock() {
   api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-tg-pr-apply-lock?purge=true" 2>/dev/null || true
   drop_work "$work"
   [ $rc = 0 ] && log "B, which reaches live/canary/one only through the dependencies block of live/fleet/two, was refused while A held it"
+  return $rc
+}
+
+# ── apply before merge in an Atmos or a Terramate repo ──
+# The fixture of each shape with gate never, apply.when: pull-request and
+# apply.merge: manual. Pull requests A and B each change one root (an Atmos
+# instance, a Terramate stack) to a value of their own. A is applied on a
+# comment and stays open, holding that root. /terragucci apply on B must be
+# refused, naming the root and pull request A, and the root's state must
+# still hold A's value.
+# BREAK: the lock file is deleted from chant/lifecycle after A applied, so
+# nothing holds the root and the comment on B applies it.
+shape_pr_apply_lock() { # name fixture root edit-fn state-fn
+  local name="$1" fixture="$2" root="$3" edit="$4" state="$5"
+  local repo="$USER/$name" head_a head_b pr_a pr_b reply clone rc=0
+  PR_FIXTURE="$fixture" pr_repo "$name" manual || return 1
+  [ "$fixture" != atmos-two-stacks ] || atmos_fill "$work/tree" "$name"
+  push_tree "$work/tree" "$repo" main "$name: first" >/dev/null || return 1
+  pr_reviewer "$repo" "smoke-rev-$name" || return 1
+  "$edit" "$work/tree" a
+  head_a="$(push_tree "$work/tree" "$repo" change-a "$name: a")" || return 1
+  git -C "$work/tree" checkout -q main
+  "$edit" "$work/tree" b
+  head_b="$(push_tree "$work/tree" "$repo" change-b "$name: b")" || return 1
+  pr_a="$(pr_open "$repo" change-a "$name: a")" || return 1
+  pr_b="$(pr_open "$repo" change-b "$name: b")" || return 1
+  { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || return 1
+  reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
+  # A change that locks every root says so before it applies; the apply's own reply comes at the end of its run.
+  if grep -q "locks every" <<<"$reply"; then
+    local seen i
+    seen="$(pr_replies "$repo" "$pr_a")"
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do [ "$(pr_replies "$repo" "$pr_a")" -gt "$seen" ] && break; sleep 3; done
+    log "A ($pr_a) first said: $reply"
+    reply="$(api "$URL/api/v1/repos/$repo/issues/$pr_a/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty')"
+  fi
+  log "A ($pr_a): ${reply:-no reply}; $root holds $("$state")"
+  grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
+  [ $rc = 1 ] || [ "$("$state")" = a ] || { log "$root does not hold A's value after A applied"; rc=1; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    clone="$work/lifecycle"
+    { git clone -q --branch chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
+      && git -C "$clone" rm -q _locks/tf-apply.json \
+      && git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -qm "drop the locks" \
+      && git -C "$clone" push -q origin chant/lifecycle; } || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
+    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; $root holds $("$state")"
+    grep -qE "\`$root\`[^;]* (is|are) locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds on $root"; rc=1; }
+    [ "$("$state")" = a ] || { log "$root moved while A held it"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-$name?purge=true" 2>/dev/null || true
+  [ $rc = 0 ] && log "B was refused while A held $root"
+  return $rc
+}
+
+claim_atmos_pr_apply_lock() {
+  # shape_pr_apply_lock on the Atmos fixture: A gives prod's app 4 replicas
+  # and B 5, so both change the instance prod/app, whose state is in the
+  # bucket atmos-pr-apply-lock under app/prod. A change to a stack manifest
+  # reaches every instance (reachedInstances), so A locks all four.
+  log() { echo "[smoke atmos-pr-apply-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 TERRAGUCCI_ATMOS
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  atmos_bucket atmos-pr-apply-lock
+  atmos_lock_edit() { # tree, a|b
+    local n=4; [ "$2" = a ] || n=5
+    sed "s/replicas: [0-9]*/replicas: $n/" "$1/stacks/deploy/prod.yaml" > "$1/prod.yaml.new" && mv "$1/prod.yaml.new" "$1/stacks/deploy/prod.yaml"
+  }
+  atmos_lock_state() {
+    case "$(curl -fsS "$FLOCI/atmos-pr-apply-lock/app/prod/terraform.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty | if type == "object" then .value else . end' 2>/dev/null)" in
+      prod:4) echo a ;; prod:5) echo b ;; prod:3) echo main ;; "") echo none ;; *) echo other ;;
+    esac
+  }
+  shape_pr_apply_lock atmos-pr-apply-lock atmos-two-stacks prod/app atmos_lock_edit atmos_lock_state || rc=1
+  drop_work "$work"
+  return $rc
+}
+
+claim_terramate_pr_apply_lock() {
+  # shape_pr_apply_lock on the Terramate fixture: A and B each change the
+  # input of stacks/db, whose state is terramate-pr-apply-lock/db.tfstate.
+  log() { echo "[smoke terramate-pr-apply-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 TERRAGUCCI_TERRAMATE
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE
+  terramate_lock_edit() { # tree, a|b
+    sed -E "s/:(1|a|b)\"/:$2\"/" "$1/stacks/db/main.tf" > "$1/db.tf.new" && mv "$1/db.tf.new" "$1/stacks/db/main.tf"
+  }
+  terramate_lock_state() {
+    case "$(pr_state_input terramate-pr-apply-lock db)" in
+      *:a) echo a ;; *:b) echo b ;; *:1) echo main ;; "") echo none ;; *) echo other ;;
+    esac
+  }
+  shape_pr_apply_lock terramate-pr-apply-lock terramate-stacks stacks/db terramate_lock_edit terramate_lock_state || rc=1
+  drop_work "$work"
   return $rc
 }
 
@@ -18569,7 +18780,96 @@ unlock_in() { # dir, bundle, command... -> runs it in the CI image in DIR, with 
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e FORGEJO_TOKEN="$TOKEN" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$(image_tag tofu)" "$@"
+    "$(image_tag "$SMOKE_BINARY")" "$@"
+}
+
+unlock_live() {
+  # SMOKE_BINARY=choudoufu: one estate under live resource markers, first and
+  # second, second depending on first and whose provisioner leaves a mark and
+  # then sleeps. A tf-apply wave in the choudoufu CI image is killed once the
+  # mark is there, as a runner kills a job mid-apply. The record store must
+  # then hold first's record and no lock object, and terragucci unlock-state
+  # estate must exit 0 saying there is no state file and no state lock, with
+  # nothing to release and no approval asked for. tf-plan then plans second
+  # as a create, with nothing released.
+  # BREAK: the root keeps an s3 backend with use_lockfile (choudoufu without
+  # live markers), so the killed apply leaves its lock file behind and
+  # unlock-state finds a lock to release.
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate pid i keys held out code=0 got rc=0 lockobj=""
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  estate="smoke-unlock-live-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_estate "$work/a" "$estate" "$(cat <<'HCL'
+resource "terraform_data" "first" {
+  input = "first"
+}
+
+resource "terraform_data" "second" {
+  input      = "second"
+  depends_on = [terraform_data.first]
+
+  provisioner "local-exec" {
+    command = "touch /repo/second-started && sleep 900"
+  }
+}
+HCL
+)"
+  if [ -n "${BREAK:-}" ]; then
+    lockobj="unlock-live/$estate.tfstate.tflock"
+    curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+    perl -0pi -e 's#  live \{.*?\n  \}\n#  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "unlock-live/'"$estate"'.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n#s' "$work/a/estate/main.tf"
+    grep -q 'backend "s3"' "$work/a/estate/main.tf" || { log "could not give the root an s3 backend, so BREAK proves nothing"; cdf_down "$work"; return 0; }
+  fi
+  printf 'second-started\n' >>"$work/a/.gitignore"
+  git -C "$work/a" init -q -b main && git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate" \
+    || { log "could not commit the estate"; cdf_down "$work"; return 1; }
+  ( cdf_run "$work/a" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate never ) >/dev/null 2>&1 &
+  pid=$!
+  started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
+  for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if ! started; then
+    log "second's provisioner never started"; tail -20 "$work/apply.log" >&2
+    docker rm -f "$CDF_ALIAS-apply" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; cdf_down "$work"; return 1
+  fi
+  docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+  log "the wave was killed mid-apply, while second's provisioner ran"
+  if [ -n "$lockobj" ]; then
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/shop-terraform-state/$lockobj")" != 200 ] || { log "the killed apply left its lock file s3://shop-terraform-state/$lockobj"; rc=1; }
+  else
+    keys="$(cdf_keys "$estate")"
+    log "records after the kill: $(grep '/terraform_data/' <<<"$keys" | jq -Rr 'split("/") | last | (try @base64d catch .)' | tr '\n' ' ')"
+    grep '/terraform_data/' <<<"$keys" | jq -Rr 'split("/") | last | (try @base64d catch .)' | grep -q first || { log "the killed wave left no record for terraform_data.first"; rc=1; }
+    held="$(sed "s#^tofu-records/$estate/##" <<<"$keys" | grep -iE '(^|/)[^/]*lock[^/]*$' || true)"
+    [ -z "$held" ] || { log "the record store holds a lock object: $(head -3 <<<"$held" | tr '\n' ' ')"; rc=1; }
+  fi
+  out="$(run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/a:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$(image_tag choudoufu)" terragucci unlock-state estate --binary choudoufu --actor smoke-operator 2>&1)" || code=$?
+  clean_mounted "$work/a"
+  printf '%s\n' "$out" | sed 's/^/  /' >&2
+  [ "$code" = 0 ] || { log "unlock-state exited $code, not 0"; rc=1; }
+  grep -q "no state file and no state lock; nothing to release" <<<"$out" || { log "unlock-state does not say there is no state lock to release"; rc=1; }
+  ! grep -q "chant approve tf-unlock" <<<"$out" || { log "unlock-state asked for an approval"; rc=1; }
+  if [ $rc = 0 ]; then
+    if ! cdf_run "$work/a" "$work/plan.log" "$CDF_ALIAS-plan" choudoufu "" tf-plan --binary choudoufu; then
+      log "tf-plan after the kill failed"; tail -20 "$work/plan.log" >&2; rc=1
+    else
+      got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | "\(.address)=\(.action)"] | sort | join(" ")' "$work/a/terragucci-report/report.json" 2>/dev/null || echo none)"
+      log "the plan after the kill: ${got:-no change}"
+      grep -q 'terraform_data.second=create' <<<"$got" || { log "the plan after the kill does not create terraform_data.second"; rc=1; }
+    fi
+  fi
+  [ -z "$lockobj" ] || curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$lockobj" || true
+  cdf_down "$work"
+  [ $rc = 0 ] && log "the killed apply left first's record and no lock; unlock-state found nothing to release, asked no approval, and the next plan creates second"
+  return $rc
 }
 
 claim_unlock_state() {
@@ -18589,7 +18889,10 @@ claim_unlock_state() {
   # its liveness check passes while the apply is still running: approved, it
   # frees the lock the running job holds, and the claim catches the lock gone
   # while the run is alive.
+  # Under SMOKE_BINARY=terraform the root and its jobs are Terraform's; under
+  # choudoufu the root is under live resource markers: unlock_live.
   log() { echo "[smoke unlock-state] $*" >&2; }
+  [ "$SMOKE_BINARY" != choudoufu ] || { unlock_live; return; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local name=unlock-state work repo="$USER/unlock-state" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" sha run="" status="" lock id="" out code digest done i job task rc=0
@@ -19169,6 +19472,8 @@ cdf-rows-takeover    runner self! weight=300
 approve-command      runner self! weight=250
 tg-pr-apply          runner self! weight=300
 tg-pr-apply-lock     runner self! weight=300
+atmos-pr-apply-lock  runner self! weight=300
+terramate-pr-apply-lock runner self! weight=300
 plan-lock            runner self! weight=250
 plan-lock-release    runner self! weight=200
 policy-override      weight=150
@@ -19317,7 +19622,7 @@ local-plan           ex after=boot weight=90
 FORGEJO_CLAIMS="$CLAIMS"
 # Under SMOKE_BINARY=terraform or choudoufu the claims are the core ones.
 if [ "$SMOKE_BINARY" != tofu ]; then
-  CLAIMS="$(awk -F'|' -v keep=" $(echo $BINARY_CLAIMS) " 'index(keep, " " $1 " ")' <<<"$CLAIMS")"
+  CLAIMS="$(awk -F'|' -v keep=" $(binary_claims) " 'index(keep, " " $1 " ")' <<<"$CLAIMS")"
 fi
 # On GitLab the claims are GitLab's, with their own groups and locks: no lock
 # of a run on the validation stack holds up a run on the lab.
@@ -19643,7 +19948,7 @@ if [ -n "$SMOKE_ONLY" ]; then
   for n in $SMOKE_ONLY; do
     grep -q "^$n|" <<<"$CLAIMS" && continue
     if [ "$SMOKE_FORGE" = gitlab ]; then echo "smoke: no GitLab claim '$n' (GITLAB_CLAIMS in stack/smoke-gitlab.sh)" >&2
-    elif [ "$SMOKE_BINARY" != tofu ]; then echo "smoke: no $SMOKE_BINARY claim '$n'; SMOKE_BINARY runs$(printf ' %s' $BINARY_CLAIMS)" >&2
+    elif [ "$SMOKE_BINARY" != tofu ]; then echo "smoke: no $SMOKE_BINARY claim '$n'; SMOKE_BINARY runs$(printf ' %s' $(binary_claims))" >&2
     else echo "smoke: unknown claim '$n'" >&2; fi
     exit 2
   done
