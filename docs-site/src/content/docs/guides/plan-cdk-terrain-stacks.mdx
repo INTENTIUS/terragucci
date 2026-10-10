@@ -1,7 +1,7 @@
 ---
 title: Plan CDK Terrain stacks
 description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the CDK Terrain stacks its change affects.
-claims: [cdktn-synth, cdktn-affected, cdktn-apply, cdktn-tips, cdktn-refused, cdktn-migrate]
+claims: [cdktn-synth, cdktn-affected, cdktn-apply, cdktn-tips, cdktn-refused, cdktn-migrate, cdktn-ephemeral, cdktn-generate, cdktn-linked]
 prompt: |
   Read https://intentius.io/terragucci/guides/plan-cdk-terrain-stacks/.
   Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,

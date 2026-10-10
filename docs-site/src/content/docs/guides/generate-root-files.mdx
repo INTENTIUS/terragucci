@@ -1,7 +1,7 @@
 ---
 title: Generate backend and provider files
 description: Write the backend, provider and version files of every root from terragucci.yml, and have tf-check refuse a hand edit.
-claims: [generate, tg-generate]
+claims: [generate, tg-generate, cdktn-generate]
 prompt: |
   Read https://intentius.io/terragucci/guides/generate-root-files/.
   Read the backend, provider and required_version blocks in my Terraform directories and propose a generate key for terragucci.yml that writes the same values: shared values at the top, per-directory values under dirs, single-directory values under roots.
