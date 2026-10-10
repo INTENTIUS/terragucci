@@ -45,6 +45,10 @@ export class Notes {
   terrateam(kind: Exclude<NoteKind, "left-out">, key: string, row: TerrateamRow, detail?: string): void {
     this.add(kind, key, row, terrateamCell(row), detail);
   }
+  /** A note by a row of another guide's table, with that row's terragucci cell as its text. */
+  cell(kind: NoteKind, key: string, row: string, text: string, detail?: string): void {
+    this.add(kind, key, row, text, detail);
+  }
   /** A note outside the settings table, in its own words: when the change applies, and the requirements' one list. */
   own(key: string, kind: NoteKind, text: string, detail?: string): void {
     this.add(kind, key, "", text, detail);
