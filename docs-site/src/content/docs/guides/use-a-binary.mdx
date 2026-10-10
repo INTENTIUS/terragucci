@@ -18,7 +18,7 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 
 | | choudoufu | Terraform | OpenTofu | Terragrunt |
 |---|---|---|---|---|
-| State | no state file: one record per resource in an S3 backend, and a tag on each resource | your backend | your backend | each unit's backend |
+| State | one record per resource in an S3 backend, and a tag on each resource; the state file is a cache | your backend | your backend | each unit's backend |
 | What `tf-check` runs | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` |
 | What the report times | each resource; [slow provider calls](/terragucci/reference/observability/#report-contents), [summed timings](/terragucci/reference/observability/#report-contents) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend | per-resource timings: not reported (Terraform sends no traces) | each resource | each unit, from Terragrunt's run report |
 | CI image | `terragucci-choudoufu`, choudoufu 0.23.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
@@ -60,14 +60,14 @@ binary: choudoufu
 | You get | Where you see it |
 |---|---|
 | A live check in `tf-check` on every push, before the apply waves, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
-| No state file, and locks that settle at the API: one record per resource in an S3 backend, each write conditional, so there is no lock table or database to run | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
-| Each address finds its real resource: the apply writes a tag on each resource and the next plan reads it back | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+| One record per resource in an S3 backend, each write conditional, with no lock table or database to run. The state file is a cache: never the record of what you own, and losing it costs a refresh | [Record writes](/terragucci/concepts/locking-and-staleness/#record-writes) |
+| Each address finds its real resource: the apply writes a tag on each resource and the next plan reads it back | [Live resource markers](/terragucci/concepts/locking-and-staleness/#live-resource-markers) |
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
 | Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#report-contents) |
 | Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#report-contents) |
-| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner and a write conflict naming it | [your applies](/terragucci/concepts/locking-per-resource/#locking-per-resource); the loser's re-plan shows the value that landed |
-| A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
-| One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
+| A killed apply leaves no lock to release. The pipeline still applies one change at a time; applies that meet outside it settle per resource, and two on one record leave one winner, named | [Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/) |
+| A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-and-staleness/#live-resource-markers) |
+| One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-and-staleness/#one-backend-for-all-your-estates) |
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 

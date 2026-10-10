@@ -95,7 +95,7 @@ choudoufu adds two more:
 
 ### State lock waits
 
-With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait is a `State lock wait` span with its attempts, listed in the report and carried by `terragucci_lock_wait_seconds`.
+With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait is a `State lock wait` span with its attempts, listed in the report and carried by `terragucci_lock_wait_seconds`. An estate with a record store takes no lock, so it shows no waits ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 | Run | State lock wait |
 |---|---|

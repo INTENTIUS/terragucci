@@ -138,7 +138,7 @@ An unreadable default-branch config fails the wave before anything applies.
 
 ## Locks
 
-These locks are on roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), two applies that change different resources of one estate also run at once, settled per resource at the backend ([Locking per resource](/terragucci/concepts/locking-per-resource/)).
+These locks are on roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), a killed apply leaves no state lock behind ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 | Event | Lock |
 |---|---|
