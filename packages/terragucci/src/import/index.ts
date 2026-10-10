@@ -1,9 +1,10 @@
 /**
  * `terragucci import atlantis [atlantis.yaml]`, `terragucci import digger
- * [digger.yml]` and `terragucci import terrateam [.terrateam/config.yml]`:
- * write terragucci.yml from an Atlantis repo config, an OpenTaco (digger)
- * config or a Terrateam config (./terrateam.ts), and say what became of
- * every setting.
+ * [digger.yml]`, `terragucci import terrateam [.terrateam/config.yml]` and
+ * `terragucci import terragrunt-scale [.gruntwork]`: write terragucci.yml from
+ * an Atlantis repo config, an OpenTaco (digger) config, a Terrateam config
+ * (./terrateam.ts) or a Terragrunt Scale repo's Pipelines HCL
+ * (./terragrunt-scale.ts), and say what became of every setting.
  *
  * The mapping is the guide's (./guide.ts holds its tables, which a test holds
  * equal to the page). Each setting the file carries ends up as one note:
@@ -38,13 +39,14 @@ import {
   type ProjectSettings,
 } from "../config";
 import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
-import { APPLY_TIMING_TABLE, GUIDE_URL, plain, TERRATEAM_URL, type SettingRow } from "./guide";
+import { APPLY_TIMING_TABLE, GUIDE_URL, plain, TERRATEAM_URL, SCALE_URL, type SettingRow } from "./guide";
 import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind } from "./notes";
+import { readTerragruntScale } from "./terragrunt-scale";
 import { convertTerrateam, type RepoShape } from "./terrateam";
 
 export { rootOf, type ImportNote, type NoteKind } from "./notes";
 
-export const IMPORT_SOURCES = ["atlantis", "digger", "terrateam"] as const;
+export const IMPORT_SOURCES = ["atlantis", "digger", "terrateam", "terragrunt-scale"] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 /** The file each source reads when none is named, first found wins. */
@@ -52,9 +54,13 @@ export const SOURCE_FILES: Record<ImportSource, string[]> = {
   atlantis: ["atlantis.yaml", "atlantis.yml"],
   digger: ["digger.yml", "digger.yaml"],
   terrateam: [".terrateam/config.yml", ".terrateam/config.yaml"],
+  "terragrunt-scale": [".gruntwork"],
 };
 
-const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", terrateam: "Terrateam" };
+const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", terrateam: "Terrateam", "terragrunt-scale": "Terragrunt Scale" };
+
+/** The page each source's mapping is on. */
+const SOURCE_URLS: Record<ImportSource, string> = { atlantis: GUIDE_URL, digger: GUIDE_URL, terrateam: TERRATEAM_URL, "terragrunt-scale": SCALE_URL };
 
 export interface Converted {
   settings: ProjectSettings;
@@ -352,7 +358,7 @@ function readDigger(doc: Record<string, unknown>, g: Gathered, notes: Notes): vo
 // ── both ────────────────────────────────────────────────────────────────────
 
 /** Turn a parsed atlantis.yaml, digger.yml or .terrateam/config.yml into terragucci settings and a note per setting. */
-export function convert(source: ImportSource, doc: unknown, o: ImportOptions = {}): Converted & { missing?: string[] } {
+export function convert(source: Exclude<ImportSource, "terragrunt-scale">, doc: unknown, o: ImportOptions = {}): Converted & { missing?: string[] } {
   if (!isMap(doc)) throw new ConfigError(`the ${SOURCE_NAMES[source]} config is not a map of settings`);
   if (source === "terrateam") return convertTerrateam(doc, o);
   const notes = new Notes();
@@ -473,6 +479,11 @@ function repoShape(repo: string): RepoShape {
 
 /** Read the source file in `repo`, convert it, and write terragucci.yml unless `dryRun`. */
 export function importConfig(repo: string, source: ImportSource, o: ImportOptions & { file?: string; dryRun?: boolean; force?: boolean } = {}): ImportResult {
+  if (source === "terragrunt-scale") {
+    if (o.applyWhen) throw new ConfigError("import terragrunt-scale takes no --apply-when: Pipelines applies after merge, terragucci's default");
+    const r = readTerragruntScale(repo, o.file ?? SOURCE_FILES[source][0]);
+    return write(repo, source, r.from, r.settings, r.notes, r.missing, o);
+  }
   const file = o.file ? resolve(repo, o.file) : SOURCE_FILES[source].map((f) => join(repo, f)).find((f) => existsSync(f));
   if (!file || !existsSync(file)) throw new ConfigError(`import ${source} reads ${o.file ?? SOURCE_FILES[source].join(" or ")}, and there is none in ${repo}`);
   let doc: unknown;
@@ -484,8 +495,13 @@ export function importConfig(repo: string, source: ImportSource, o: ImportOption
   const forge = o.forge ?? detectForge(repo)?.value;
   const { settings, notes, missing: unmatched } = convert(source, doc, { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}), repo: repoShape(repo) });
   const from = relative(repo, file) || file;
-  const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
   const missing = unmatched ?? (settings.roots ?? []).filter((r) => findRoots(repo, [r]).length === 0);
+  return write(repo, source, from, settings, notes, missing, o);
+}
+
+/** Write terragucci.yml from converted settings, unless `dryRun`. */
+function write(repo: string, source: ImportSource, from: string, settings: ProjectSettings, notes: ImportNote[], missing: string[], o: { dryRun?: boolean; force?: boolean }): ImportResult {
+  const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${SOURCE_URLS[source]}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
   const existing = findConfig(repo);
   let wrote: string | undefined;
   if (!o.dryRun) {
@@ -521,7 +537,13 @@ export function describeImport(r: ImportResult): string {
       out.push(`  ${n.key}${n.row ? ` (${n.row})` : ""}: ${detail}${quoted}`);
     }
   }
-  if (r.missing.length) out.push("", r.source === "terrateam" ? `No root matches the dirs ${r.missing.join(", ")}; check those keys.` : `No directory with Terraform files matches ${r.missing.join(", ")}; check those projects' dir.`);
-  out.push("", `Next: \`npx terragucci init\` writes the pipeline for these settings. Every mapping: ${r.source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}`);
+  if (r.missing.length) {
+    const what =
+      r.source === "terrateam" ? `No root matches the dirs ${r.missing.join(", ")}; check those keys.`
+      : r.source === "terragrunt-scale" ? `No unit matches ${r.missing.join(", ")}; check those filter paths.`
+      : `No directory with Terraform files matches ${r.missing.join(", ")}; check those projects' dir.`;
+    out.push("", what);
+  }
+  out.push("", `Next: \`npx terragucci init\` writes the pipeline for these settings. Every mapping: ${SOURCE_URLS[r.source]}`);
   return out.join("\n");
 }
