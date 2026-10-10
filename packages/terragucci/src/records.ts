@@ -4,7 +4,8 @@
  * choudoufu keeps one record per resource instead of a state file, and from
  * 0.24.0 writes each one when that resource's apply returns, so a failed or
  * killed apply leaves a record for every resource it finished. A plan's
- * `prior_state` (`show -json`) is those records as the plan read them.
+ * `prior_state` (`show -json`) is those records as the plan read them, with no
+ * read of the store; ./cdf-records.ts reads the store itself, while an apply runs.
  */
 
 /** The addresses of the managed resource instances a plan read from its root's records. Data sources are not records. */

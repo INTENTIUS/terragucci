@@ -490,6 +490,14 @@
       "commit": "ff7d397e"
     },
     {
+      "claim": "import-tg-scale",
+      "says": "terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6792b9e1"
+    },
+    {
       "claim": "waves-after",
       "says": "waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three",
       "needs": null,
@@ -1111,6 +1119,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "77c1fba3"
+    },
+    {
+      "claim": "cdf-live-progress",
+      "says": "with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "cdf-iam",
@@ -2020,6 +2036,22 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "migrate-backend-pg",
+      "says": "a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
+      "claim": "migrate-backend-k8s",
+      "says": "a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "migrate-revert",

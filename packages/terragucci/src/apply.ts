@@ -142,6 +142,8 @@ import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedC
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
 import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
+import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
+import { readRecords, recordStoreOf } from "./cdf-records";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -1082,7 +1084,7 @@ function logReads(label: string, reads: Map<string, ReportRead[]>, waves: readon
  * when the config names a reports bucket. A view that cannot be written is
  * logged; it never fails the wave.
  */
-async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, row: Partial<RunWave>): Promise<void> {
+async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, row: Partial<RunWave>, quiet = false): Promise<void> {
   const settings = w.settings;
   if (!settings?.reports?.bucket) return;
   const env = options.env ?? process.env;
@@ -1096,7 +1098,7 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     const spans = waveSpans(w);
     const timing = { ...(spans.length ? { spans } : {}), ...(w.changedRoots ? { changed: w.changedRoots } : {}) };
     const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...timing, ...row });
-    console.log(`wave ${options.wave}: run view at ${key}`);
+    if (!quiet) console.log(`wave ${options.wave}: run view at ${key}`);
   } catch (e) {
     console.log(`wave ${options.wave}: the run view was not written: ${(e as Error).message}`);
   }
@@ -1351,11 +1353,15 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
   const ok: boolean[] = new Array(planned.length);
+  const progress = changes > 0 ? await watchProgress(repo, options, w, label, planned) : undefined;
   try {
     await eachLimited(planned, limit.value, async (p, i) => {
+      await progress?.phase(p.root, "applying");
       ok[i] = await applyRoot(repo, p, w.observer, ws);
+      await progress?.phase(p.root, ok[i] ? "applied" : "failed");
     });
   } finally {
+    await progress?.stop();
     await hold.release();
   }
   finishApplied(repo, label, w, ok.includes(false) ? "failed" : "applied", options.now);
@@ -1398,6 +1404,39 @@ function finishApplied(repo: string, label: string, w: WaveRun, result: Finished
   } catch (e) {
     console.log(`${label}: how its apply ended was not recorded (${(e as Error).message}); the resume job may apply what is left again, and each change it makes is one the approval covered`);
   }
+}
+
+/**
+ * Follow a choudoufu wave's applies per resource (./apply-progress.ts): each
+ * time the records move, the progress goes to `terragucci-report/progress.json`
+ * and to the wave's row in the run view. Undefined when no root of the wave
+ * is a choudoufu estate that changes something.
+ */
+async function watchProgress(repo: string, options: ApplyWaveOptions, w: WaveRun, label: string, planned: PlannedRoot[]): Promise<ApplyProgress | undefined> {
+  const roots = planned.flatMap((p) => {
+    if (!p.plan || !changesSomething(p.plan) || applyScope(p.bin.name ?? p.binary) !== "resource") return [];
+    const dir = join(repo, p.root);
+    const { estate } = estateOf(dir);
+    const store = estate ? recordStoreOf(dir, estate) : undefined;
+    return store ? [{ root: p.root, plan: p.plan, store, env: p.env }] : [];
+  });
+  if (roots.length === 0) return undefined;
+  const env = options.env ?? process.env;
+  const file = join(repo, "terragucci-report", "progress.json");
+  const watch = new ApplyProgress(roots, {
+    intervalMs: progressInterval(env),
+    read: (store, e) => readRecords(store, e),
+    log: (l) => console.log(`${label}: ${l}`),
+    changed: async (p) => {
+      console.log(`${label}: progress ${progressLine(p)}`);
+      mkdirSync(join(file, ".."), { recursive: true });
+      writeFileSync(file, JSON.stringify({ wave: options.wave, ...p }, null, 2) + "\n");
+      await noteRunView(repo, options, w, { progress: p }, true);
+    },
+  });
+  console.log(`${label}: following ${watch.total} resource${watch.total === 1 ? "" : "s"} in the records of ${roots.map((r) => r.root).join(", ")}`);
+  await watch.start();
+  return watch;
 }
 
 /**
