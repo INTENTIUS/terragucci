@@ -1,0 +1,3 @@
+# A list at the top level: the file must be a mapping of settings (#803).
+- binary: tofu
+- gate: on-destroy
