@@ -470,7 +470,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "ff7d397e"
     },
     {
       "claim": "import-terrateam",
@@ -478,7 +478,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "b3147603"
+      "commit": "ff7d397e"
+    },
+    {
+      "claim": "waves-after",
+      "says": "waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "ff7d397e"
     },
     {
       "claim": "comment-atlantis",
