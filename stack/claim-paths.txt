@@ -49,7 +49,7 @@ packages/terragucci/src/install.ts        root-pins tg-root-pins tg-choudoufu pi
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-mixed reconcile-parallelism estate-control audit-control provider-project
-packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-*
+packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-* behold-view
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export ephemeral-*
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-*
 packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr
@@ -87,13 +87,13 @@ packages/terragucci/src/import/          import-atlantis
 # Reports and what reads them.
 packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics cost-policy review-policy
 packages/terragucci/src/report/drift      drift drift-* tg-drift respond-drift drift-agent tg-drift-*
-packages/terragucci/src/report/estate.ts  estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges ephemeral-*
+packages/terragucci/src/report/estate.ts  estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges ephemeral-* behold-view
 packages/terragucci/src/report/inventory.ts inventory reader-contracts
 packages/terragucci/src/report/state-versions.ts state-versions reader-contracts mcp-last-apply
 packages/terragucci/src/report/state-edges.ts state-edges reader-contracts
 packages/terragucci/src/report/history.ts resource-history reader-contracts
 packages/terragucci/src/report/dora.ts    dora reader-contracts
-packages/terragucci/src/report/store.ts   report highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* reader-contracts inventory resource-history wave-jobs dora state-versions state-edges mcp-last-apply
+packages/terragucci/src/report/store.ts   report highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* reader-contracts inventory resource-history wave-jobs dora state-versions state-edges mcp-last-apply behold-view
 packages/terragucci/src/report/report.schema.json reader-contracts root-pins state-edges tg-root-pins
 packages/terragucci/src/report/report-index.schema.json reader-contracts
 packages/terragucci/src/report/estate.schema.json reader-contracts state-edges

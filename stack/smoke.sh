@@ -265,6 +265,7 @@ ledger-default|with no approval key a wave counts an unsigned approval of its se
 approval-at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
 sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
 estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
+behold-view|the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue|
 drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
 pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review|
 pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest|
@@ -8709,6 +8710,116 @@ HCL
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "three projects on one page, estate-wave wave 1 waiting and estate-drift drifted, with a presigned link"
+  return $rc
+}
+
+claim_behold_view() {
+  # One project whose queue is deleted outside OpenTofu: its drift check finds
+  # it and copies the report to the bucket, and `terragucci estate` writes the
+  # page. Then the step "See every project" gives for a behold view, in the CI
+  # image with the job's credentials: `behold export` reads the reports from
+  # the bucket and publishes the view to <prefix>/views/behold/. Holds when the
+  # view is in the bucket, its marks name the deleted queue's card, and
+  # headless Chrome, opening the view from the bucket, draws that drift mark.
+  # SMOKE_BEHOLD names the package (default @intentius/behold).
+  # BREAK: the step runs without --terragucci, so the view carries no marks.
+  log() { echo "[smoke behold-view] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 prefix queue url out dom chrome="${CHROME:-}" card="behold-drift/queue/aws_sqs_queue.jobs" view snap
+  local behold="${SMOKE_BEHOLD:-@intentius/behold}"
+  local reads=(--terragucci) ; [ -n "${BREAK:-}" ] && reads=()
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  if [ -z "$chrome" ]; then
+    for c in google-chrome google-chrome-stable chromium chromium-browser "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+      if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then chrome="$c"; break; fi
+    done
+  fi
+  [ -n "$chrome" ] || { log "no Chrome or Chromium found; set CHROME"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # Plain and BREAK run at once: each its own prefix and queue.
+  prefix="behold-view-$(date +%s)-$$${BREAK:+-break}"
+  queue="behold-view-$(date +%s)-$$${BREAK:+-break}"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/behold-drift/queue"
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/behold-drift/terragucci.yml"
+  cat > "$work/behold-drift/queue/main.tf" <<HCL
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+
+  backend "local" {}
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_sqs_queue" "jobs" {
+  name = "$queue"
+}
+HCL
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/behold-drift/queue/"
+  git -C "$work/behold-drift" init -q -b main
+  git -C "$work/behold-drift" add -A && git -C "$work/behold-drift" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke behold-view"
+  in_image() { # the command
+    run_copied --rm --network terragucci -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" "$@"
+  }
+  in_image sh -c 'cd queue && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { log "the queue did not apply"; rc=1; }
+  clean_mounted "$work/behold-drift" "$image"
+  if [ $rc = 0 ]; then
+    sqs() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.$1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] && sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null || { log "could not delete $queue from floci"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci stage tf-drift --layers queue >&2 || true
+    clean_mounted "$work/behold-drift" "$image"
+    jq -e '[.roots[] | select(.changes | length > 0)] | length == 1' "$work/behold-drift/terragucci-report/report.json" >/dev/null 2>&1 || { log "the drift check found no drift"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/behold-drift" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    # The step the guide gives, with the job's credentials (AWS_DOCKER_ENV); the
+    # view is built outside the checkout so the checkout stays as it was.
+    out="$(in_image npx --yes -p "$behold" -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0 \
+      behold export . ${reads[@]+"${reads[@]}"} ${reads[@]+"s3://$REPORT_BUCKET/$prefix"} --no-source --out /tmp/behold-view \
+      --publish "s3://$REPORT_BUCKET/$prefix/views/behold" 2>&1)" || { printf '%s\n' "$out" >&2; log "behold export failed"; rc=1; }
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/behold-drift" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    view="$FLOCI/$REPORT_BUCKET/$prefix/views/behold"
+    curl -fsS -o "$work/index.html" "$view/index.html" && grep -q '__BEHOLD_STATIC__' "$work/index.html" || { log "no view at $view/index.html"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    snap="$(curl -fsS "$view/manifest.json" | jq -r '.keyToFile["/api/terragucci"] // empty')"
+    if [ -z "$snap" ]; then
+      log "the view carries no terragucci marks"; rc=1
+    else
+      curl -fsS "$view/$snap" | jq -e --arg c "$card" '.cards[$c] | map(select(.verdict == "drift" and .action == "delete")) | length == 1' >/dev/null || { log "the view does not mark $card as deleted outside Terraform"; rc=1; }
+    fi
+  fi
+  if [ $rc = 0 ]; then
+    # Rendered from the bucket, the way a link to it opens: the page's scripts
+    # fetch the snapshots and stamp the cards.
+    dom="$("$chrome" --headless=new --disable-gpu --no-first-run --virtual-time-budget=20000 --dump-dom "$view/index.html?detail=2" 2>/dev/null)" || true
+    grep -q 'data-tg-mark="1"[^>]*>⚠ drift' <<<"$dom" || { log "Chrome drew no drift mark from $view/index.html"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the view is in the bucket under $prefix/views/behold, and draws the deleted queue's drift"
   return $rc
 }
 
@@ -18067,6 +18178,7 @@ ledger-default       runner self! weight=200
 approval-at-base     runner self! weight=250
 sealed-migrate       runner self! weight=250
 estate               weight=120
+behold-view          weight=120
 drift-overdue        self! weight=60
 pr-review            runner self! weight=300
 pr-review-moved      runner self! weight=300
