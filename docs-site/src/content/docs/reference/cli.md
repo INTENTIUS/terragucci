@@ -12,7 +12,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | Command | Does |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
-| `import` | writes `terragucci.yml` from an `atlantis.yaml` or a `digger.yml`, and prints what became of each setting |
+| `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml`, a Terrateam config or a Terragrunt Scale `.gruntwork`, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
@@ -105,6 +105,27 @@ It exits 2 when the file is missing or not YAML, or when `terragucci.yml` exists
 `import terrateam` writes no `roots`, since terragucci detects the directories Terrateam plans, and names each `dirs` key that matches no root. It reads `depends_on` against the roots' `terraform_remote_state` reads and writes `waves.canary` for an order the reads do not give ([Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam)). A `run` hook or workflow step becomes a [step](/terragucci/guides/run-steps/). Run [`init`](#init) next to write the pipeline.
 
 `import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 2 on a repo with no Terragrunt or a legacy `config.yml`.
+
+### From a platform's workspaces
+
+```bash
+terragucci import hcp [--hostname <host>] --organization <org> [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
+terragucci import otf --hostname <host> --organization <org> [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
+terragucci import scalr --hostname <account>.scalr.io [--environment <name or ID>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
+```
+
+Reads the workspaces over the platform's API, with the token in `TF_TOKEN_<host>` or `credentials.tfrc.json` (for Scalr, also `SCALR_TOKEN`), and writes `terragucci.yml` and a `terraform.tfvars` in each root that has none, by [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/#import-the-workspaces). It only reads: no workspace, variable or run changes. A sensitive variable's value is never read; its name goes under `pass.secrets`.
+
+| Flag | Meaning |
+|---|---|
+| `--hostname` | the platform's host; `app.terraform.io` for `hcp` when not given |
+| `--organization` | the organization whose workspaces are read (`hcp`, `otf`) |
+| `--environment` | one Scalr environment, by name or ID; every one the token sees when not given |
+| `--repo` | this repo as the platform's VCS connection names it; the `origin` remote's `owner/name` when not given |
+| `--forge` | the forge, when the remote cannot tell; on GitLab the secrets are listed as masked CI/CD variables to create, with no `pass` |
+| `--dry-run`, `--force` | as above |
+
+It exits 2 when the host refuses the token or names no TFE API, and, before it reads anything, when `terragucci.yml` exists and `--force` is not given.
 
 ## reconcile
 

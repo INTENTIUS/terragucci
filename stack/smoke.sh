@@ -208,6 +208,8 @@ policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the 
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
 import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
+import-hcp|terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask|
+import-scalr|terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group|
 import-tg-scale|terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own|
 waves-after|waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three|
 comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
@@ -4624,6 +4626,167 @@ YAML
   [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves depends_on asks for, $want"; rc=1; }
   drop_work "$tree"
   [ $rc = 0 ] && log "the imported pipeline applies dev, then staging's platform, then prod's platform with staging's services, then prod's services"
+  return $rc
+}
+
+# The TFE API mock (stack/fixtures/tfe-api/tfe.mjs) on the claims' network as
+# host, serving fixture (hcp.json or scalr.json) over HTTPS with a certificate
+# made here; sets TFE_MOCK (the container) and TFE_CTL (its control URL).
+tfe_mock() { # work, host, token, fixture
+  local work="$1" host="$2" token="$3" fixture="$4" image port i
+  image="$(image_tag tofu)"
+  mkdir -p "$work/tfe"
+  cp "$HERE/fixtures/tfe-api/tfe.mjs" "$work/tfe/" && cp "$HERE/fixtures/tfe-api/$fixture" "$work/tfe/api.json" || return 1
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" \
+    -keyout "$work/tfe/key.pem" -out "$work/tfe/cert.pem" >/dev/null 2>&1 || { echo "openssl could not make the API's certificate" >&2; return 1; }
+  TFE_MOCK="$(run_copied -d --name "$host" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::8080 -e "TOKEN=$token" -v "$work/tfe:/tfe:ro" "$image" node /tfe/tfe.mjs)" || { echo "the TFE API did not start" >&2; return 1; }
+  port="$(docker port "$TFE_MOCK" 8080/tcp | head -1 | sed 's/.*://')"
+  TFE_CTL="http://127.0.0.1:$port"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "$TFE_CTL/status" 2>/dev/null && return 0; sleep 1; done
+  echo "the TFE API never answered on $TFE_CTL" >&2
+  return 1
+}
+
+# terragucci, from the bundle, in the CI image on the claims' network, in
+# tree, with the token for host and the mock's certificate trusted.
+tfe_terragucci() { # work, tree, host, token, args...
+  local work="$1" tree="$2" host="$3" token="$4"; shift 4
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$tree:/repo" -w /repo \
+    -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    -e "TF_TOKEN_$host=$token" -e NODE_EXTRA_CA_CERTS=/tfe-ca/cert.pem -v "$work/tfe:/tfe-ca:ro" -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$(image_tag tofu)" terragucci "$@"
+}
+
+claim_import_hcp() {
+  # The example as HCP Terraform runs it: organization acme
+  # (stack/fixtures/tfe-api/hcp.json, served by the TFE API mock over HTTPS,
+  # five workspaces to a page) holds a workspace per dev and staging root of
+  # repo acme/shop, two workspaces on envs/prod/orders, one on another repo
+  # and one CLI-driven. dev-platform and staging-platform set a Terraform
+  # variable, an env variable and a sensitive variable; a variable set on
+  # dev-orders adds a sensitive one; staging-platform's run trigger comes
+  # from dev-orders, an order no terraform_remote_state read gives.
+  # `terragucci import hcp`, run in the CI image with the token in
+  # TF_TOKEN_<host>, only GETs from the API and writes terragucci.yml and the
+  # tfvars; it lists envs/prod/orders to split and names both secrets; no
+  # sensitive value (the mock sends one, as the real API never does) lands in
+  # the tree or the output. `config check` passes, and `init --dry-run`
+  # plans the ten roots in the waves the reads and the trigger ask for: dev's
+  # platform, dev's services, staging's platform, staging's services, with
+  # both secrets passed to the jobs.
+  # BREAK: the written waves block, the run trigger's order, is dropped before
+  # init, so staging's platform applies beside dev's.
+  log() { echo "[smoke import-hcp] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local tree work image rc=0 host="tgtfe$$x$RANDOM" token="smoke-tfe-$STAMP" out got wf status
+  local want="envs/dev/platform|envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search|envs/staging/platform|envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$EXAMPLE/." "$tree/"
+  TFE_MOCK=""
+  tfe_mock "$work" "$host" "$token" hcp.json || rc=1
+  if [ $rc = 0 ]; then
+    # The example's own terragucci.yml gives way to the imported one.
+    out="$(tfe_terragucci "$work" "$tree" "$host" "$token" import hcp --hostname "$host" --organization acme --repo acme/shop --forge forgejo --force 2>&1)" || { log "import failed: $out"; rc=1; }
+    printf '%s\n' "$out" >&2
+  fi
+  if [ $rc = 0 ]; then
+    grep -q '^  workspaces\[prod-orders, prod-orders-blue\] (Several workspaces on one working directory): envs/prod/orders runs 2 workspaces' <<<"$out" || { log "the import did not list envs/prod/orders to split"; rc=1; }
+    grep -q '^Secrets to create .*: TF_VAR_api_token, TF_VAR_db_password$' <<<"$out" || { log "the import did not name the two sensitive variables as secrets to create"; rc=1; }
+    grep -q '^region = "us-east-1"$' "$tree/envs/dev/platform/terraform.tfvars" 2>/dev/null || { log "envs/dev/platform/terraform.tfvars does not hold dev-platform's region"; rc=1; }
+    if grep -rq never-copy-this "$tree" || grep -q never-copy-this <<<"$out"; then log "a sensitive value reached the tree or the output"; rc=1; fi
+    status="$(curl -fsS "$TFE_CTL/status")"
+    [ "$(jq '[.calls[] | select(startswith("GET ") | not)] | length' <<<"$status")" = 0 ] || { log "the import did more than read: $(jq -c '[.calls[] | select(startswith("GET ") | not)]' <<<"$status")"; rc=1; }
+    [ "$(jq '[.calls[] | select(test("organizations/acme/workspaces"))] | length' <<<"$status")" = 3 ] || { log "the import did not read the three pages of workspaces"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    awk '/^waves:/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  if [ $rc = 0 ]; then
+    cat "$tree/terragucci.yml" >&2
+    (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; rc=1; }
+    out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    got="$(jq -r '[.results.roots[].path] | sort | join(",")' <<<"$out")"
+    [ "$got" = "$(tr '|' ',' <<<"$want" | tr ',' '\n' | sort | paste -sd, -)" ] || { log "init found the roots $got, not the ten workspaces'"; rc=1; }
+    got="$(jq -r '.results.layers | map(sort | join(",")) | join("|")' <<<"$out")"
+    [ "$got" = "$want" ] || { log "the pipeline applies $got, not the order the reads and the run trigger ask for, $want"; rc=1; }
+    wf="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out")"
+    for got in TF_VAR_api_token TF_VAR_db_password; do
+      grep -qF "$got: '\${{ secrets.$got }}'" <<<"$wf" || { log "the pipeline does not pass the secret $got to the jobs"; rc=1; }
+    done
+  fi
+  [ -n "$TFE_MOCK" ] && { docker rm -f "$TFE_MOCK" >/dev/null 2>&1 || true; }
+  drop_work "$work"; drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline applies dev, then staging's platform after dev's orders, then staging's services, with both secrets passed and no value copied"
+  return $rc
+}
+
+claim_import_scalr() {
+  # The example as Scalr runs it: account <host> (stack/fixtures/tfe-api/
+  # scalr.json on Scalr's own API, /api/iacp/v3/, by the same mock) holds
+  # environments staging and prod, five OpenTofu workspaces of acme/shop
+  # and one CLI-driven, a sensitive DATADOG_API_KEY on each environment, an
+  # account variable TEAM, a sensitive db_password on staging-platform, and a
+  # policy group cost-guard with a hard-mandatory, a soft-mandatory and an
+  # advisory policy. `terragucci import scalr`, run in the CI image with the
+  # token, only GETs from Scalr's API, writes the five roots with binary:
+  # tofu, TEAM in env and both secrets under pass, names each policy's level
+  # and what it becomes, and copies no sensitive value. `config check`
+  # passes, and `init --dry-run` plans the five roots with both secrets
+  # passed to the jobs.
+  # BREAK: the written pass block is dropped before init, so the jobs get
+  # neither secret.
+  log() { echo "[smoke import-scalr] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local tree work image rc=0 host="tgscalr$$x$RANDOM" token="smoke-scalr-$STAMP" out got wf status
+  local want="envs/prod/email,envs/prod/orders,envs/prod/platform,envs/staging/orders,envs/staging/platform"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$EXAMPLE/." "$tree/"
+  TFE_MOCK=""
+  tfe_mock "$work" "$host" "$token" scalr.json || rc=1
+  if [ $rc = 0 ]; then
+    out="$(tfe_terragucci "$work" "$tree" "$host" "$token" import scalr --hostname "$host" --repo acme/shop --forge forgejo --force 2>&1)" || { log "import failed: $out"; rc=1; }
+    printf '%s\n' "$out" >&2
+  fi
+  if [ $rc = 0 ]; then
+    grep -q '^  policy-groups\[cost-guard\] (Scalr OPA policy group): on staging, prod, from acme/policies/cost at main; .*max_monthly_cost (hard-mandatory): a deny rule; instance_types (soft-mandatory): a deny rule that a person in policy.override can let through; owner_tags (advisory): a warn rule' <<<"$out" \
+      || { log "the import did not name the policy group's policies and what each level becomes"; rc=1; }
+    grep -q '^  workspaces\[prod/prod-legacy\] (Workspace): no VCS connection' <<<"$out" || { log "the import did not list the CLI-driven workspace as skipped"; rc=1; }
+    if grep -rq never-copy-this "$tree" || grep -q never-copy-this <<<"$out"; then log "a sensitive value reached the tree or the output"; rc=1; fi
+    status="$(curl -fsS "$TFE_CTL/status")"
+    [ "$(jq '[.calls[] | select(startswith("GET /api/iacp/v3/") | not)] | length' <<<"$status")" = 0 ] || { log "the import did more than read Scalr's API: $(jq -c '[.calls[] | select(startswith("GET /api/iacp/v3/") | not)]' <<<"$status")"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    awk '/^pass:/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  if [ $rc = 0 ]; then
+    cat "$tree/terragucci.yml" >&2
+    [ "$(sed -n 's/^binary: //p' "$tree/terragucci.yml")" = tofu ] || { log "terragucci.yml does not run tofu, as the workspaces' iac-platform asks"; rc=1; }
+    (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; rc=1; }
+    out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    got="$(jq -r '[.results.roots[].path] | sort | join(",")' <<<"$out")"
+    [ "$got" = "$want" ] || { log "init found the roots $got, not the five workspaces' $want"; rc=1; }
+    wf="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out")"
+    for got in DATADOG_API_KEY TF_VAR_db_password; do
+      grep -qF "$got: '\${{ secrets.$got }}'" <<<"$wf" || { log "the pipeline does not pass the secret $got to the jobs"; rc=1; }
+    done
+  fi
+  [ -n "$TFE_MOCK" ] && { docker rm -f "$TFE_MOCK" >/dev/null 2>&1 || true; }
+  drop_work "$work"; drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline plans the five Scalr workspaces' roots on tofu with both secrets passed, the policy group named, and no value copied"
   return $rc
 }
 
@@ -21267,6 +21430,8 @@ comment-plan    runner self! weight=150
 comment-atlantis runner self! weight=150
 import-atlantis ex after=boot weight=150
 import-terrateam weight=30
+import-hcp      weight=60
+import-scalr    weight=60
 import-tg-scale weight=30
 waves-after     runner self! weight=150
 lock-wait       otel! self! weight=150
