@@ -75,6 +75,7 @@ import {
 import { applyLayers, backendBlock, findRoots, globMatch } from "./detect";
 import { detectShape, type Shape } from "./shape";
 import { call, type Fetch } from "./forge";
+import { isGitLabAddress, shownUrl, suffixedGitLabAddress } from "./gitlab-state";
 import { unitPlace } from "./migrate";
 import { RootBinaries } from "./pins";
 import { storeFromEnv } from "./report/bucket";
@@ -114,8 +115,41 @@ export function suffixedKey(key: string, suffix: string): string {
   return /\.tfstate$/.test(k) ? k.replace(/\.tfstate$/, `-${suffix}.tfstate`) : `${k}-${suffix}`;
 }
 
-/** The backends whose state key a copy can be given, and the attribute that holds it. */
-export const KEY_ATTRIBUTE: Record<string, string> = { s3: "key", azurerm: "key", gcs: "prefix", local: "path" };
+/**
+ * The backends whose state key a copy can be given, and the attribute that
+ * holds it. An http backend's is its address, when that is a GitLab
+ * project's state API: the copy is the state named `<name>-pr-<n>`, which
+ * GitLab creates on its first write, and its lock and unlock addresses
+ * (HTTP_LOCK_ATTRIBUTES) take the same name.
+ */
+export const KEY_ATTRIBUTE: Record<string, string> = { s3: "key", azurerm: "key", gcs: "prefix", local: "path", http: "address" };
+
+/** The http backend's attributes that name the state too: its lock's, `<address>/lock` on GitLab. */
+export const HTTP_LOCK_ATTRIBUTES = ["lock_address", "unlock_address"] as const;
+
+/**
+ * A GitLab-managed state's attributes for its copy: the address and each
+ * lock address with the state name suffixed. Each is the given one, else
+ * its `TF_HTTP_*` variable, as the binary reads it; `-backend-config` then
+ * names the copy's, over the variable. Throws ConfigError for an address
+ * that is not GitLab's state API.
+ */
+export function gitlabCopy(root: string, attrs: Record<string, string>, env: NodeJS.ProcessEnv, suffix: string): { key: string; extra: Record<string, string> } {
+  const given = (name: string): string | undefined => attrs[name] || env[`TF_HTTP_${name.toUpperCase()}`] || undefined;
+  const address = given("address");
+  if (!address) throw new ConfigError(`${root}'s http backend names no address, in the block or TF_HTTP_ADDRESS, so there is no state name to give its copy a suffix`);
+  const key = suffixedGitLabAddress(address, suffix);
+  if (!key) throw new ConfigError(`${root}'s http backend address ${shownUrl(address)} is not a GitLab project's state API (.../projects/<id>/terraform/state/<name>), and ephemeral gives an http backend's copy its own state on GitLab-managed state only`);
+  const extra: Record<string, string> = {};
+  for (const name of HTTP_LOCK_ATTRIBUTES) {
+    const v = given(name);
+    if (!v) continue;
+    const suffixed = suffixedGitLabAddress(v, suffix);
+    if (!suffixed || suffixedGitLabAddress(v.replace(/\/lock\/?$/, ""), suffix) !== key) throw new ConfigError(`${root}'s http backend ${name} ${shownUrl(v)} is not the lock of its state, ${shownUrl(address)}/lock, so its copy's lock could not be named`);
+    extra[name] = suffixed;
+  }
+  return { key, extra };
+}
 
 /**
  * The variable a Terragrunt unit's `remote_state` key reads for the copy's
@@ -158,7 +192,7 @@ export function remoteStateReadsSuffix(repo: string): { ok: true } | { ok: false
  * directory, from `.terraform/terraform.tfstate`: its type, the attribute
  * that holds the key, the key, and where that is. Undefined when there is none.
  */
-export function unitBackend(dir: string, env: NodeJS.ProcessEnv = {}): { type: string; attribute: string; key: string; location: string } | undefined {
+export function unitBackend(dir: string, env: NodeJS.ProcessEnv = {}): { type: string; attribute: string; key: string; location: string; locks?: string[] } | undefined {
   const file = join(dir, env.TF_DATA_DIR ?? ".terraform", "terraform.tfstate");
   let doc: { backend?: { type?: unknown; config?: Record<string, unknown> } };
   try {
@@ -172,6 +206,7 @@ export function unitBackend(dir: string, env: NodeJS.ProcessEnv = {}): { type: s
   const key = attribute && typeof config[attribute] === "string" ? (config[attribute] as string) : undefined;
   if (!type || !attribute || key === undefined) return type ? { type, attribute: attribute ?? "", key: "", location: "" } : undefined;
   const str = (k: string): string | undefined => (typeof config[k] === "string" ? (config[k] as string) : undefined);
+  if (type === "http") return { type, attribute, key, location: shownUrl(key), locks: HTTP_LOCK_ATTRIBUTES.map((a) => str(a)).filter((v): v is string => v !== undefined) };
   const location = type === "s3" && str("bucket") ? `s3://${str("bucket")}/${key}` : type === "gcs" && str("bucket") ? `gs://${str("bucket")}/${key}` : type === "azurerm" && str("container_name") ? `${str("storage_account_name") ?? "azure"}/${str("container_name")}/${key}` : key;
   return { type, attribute, key, location };
 }
@@ -179,13 +214,21 @@ export function unitBackend(dir: string, env: NodeJS.ProcessEnv = {}): { type: s
 /** Whether a key carries a copy's suffix as suffixedKey puts it. */
 export const carriesSuffix = (key: string, suffix: string): boolean => new RegExp(`-${suffix}(\\.tfstate)?/*$`).test(key);
 
-/** The `-backend-config` a root's copy is initialised with: its backend's key attribute, suffixed. Throws ConfigError for a root no copy can be made of. */
-export function copyBackend(dir: string, root: string, suffix: string): { type: string; attribute: string; key: string; location: string } {
+/**
+ * The `-backend-config` a root's copy is initialised with: its backend's key
+ * attribute, suffixed, and on GitLab-managed state its lock addresses
+ * (`extra`). Throws ConfigError for a root no copy can be made of.
+ */
+export function copyBackend(dir: string, root: string, suffix: string, env: NodeJS.ProcessEnv = {}): { type: string; attribute: string; key: string; location: string; extra?: Record<string, string> } {
   const b = backendBlock(dir);
   if (b && "cloud" in b) throw new ConfigError(`${root} keeps its state in HCP Terraform (a cloud block), where a state is a workspace and not a key; ephemeral copies roots whose backend is ${Object.keys(KEY_ATTRIBUTE).join(", ")}`);
   const type = b?.type ?? "local";
   const attribute = KEY_ATTRIBUTE[type];
   if (!attribute) throw new ConfigError(`${root}'s backend is ${type}, and ephemeral gives a copy its own state key on ${Object.keys(KEY_ATTRIBUTE).join(", ")} backends only`);
+  if (type === "http") {
+    const copy = gitlabCopy(root, b?.attrs ?? {}, env, suffix);
+    return { type, attribute, key: copy.key, location: shownUrl(copy.key), ...(Object.keys(copy.extra).length ? { extra: copy.extra } : {}) };
+  }
   const given = b?.attrs[attribute] ?? (type === "local" ? "terraform.tfstate" : undefined);
   if (!given) throw new ConfigError(`${root}'s ${type} backend block names no ${attribute}, so there is no key to give its copy a suffix; write the ${attribute} in the block`);
   const key = suffixedKey(given, suffix);
@@ -368,7 +411,11 @@ async function prepareUnit(code: string, unit: string, suffix: string, binary: s
   const b = unitBackend(place.dir, place.env);
   if (!b) throw new SuffixRefused(`${unit}: Terragrunt prepared it with no backend the binary recorded, so its copy has no key of its own; ${SUFFIX_HOW}`);
   if (!b.attribute) throw new SuffixRefused(`${unit}'s backend is ${b.type}, and ephemeral gives a copy its own state key on ${Object.keys(KEY_ATTRIBUTE).join(", ")} backends only`);
-  if (!carriesSuffix(b.key, suffix)) throw new SuffixRefused(`${unit}: its ${b.type} backend's ${b.attribute} is ${b.key || "empty"} with ${EPHEMERAL_SUFFIX_ENV} set, which is the unit's own state, so its copy is refused; ${SUFFIX_HOW}`);
+  if (b.type === "http" && !isGitLabAddress(b.key)) throw new SuffixRefused(`${unit}'s http backend ${b.key ? `address ${shownUrl(b.key)} is not a GitLab project's state API` : "names no address"}, and ephemeral gives an http backend's copy its own state on GitLab-managed state only`);
+  if (!carriesSuffix(b.key, suffix)) throw new SuffixRefused(`${unit}: its ${b.type} backend's ${b.attribute} is ${b.key ? (b.type === "http" ? shownUrl(b.key) : b.key) : "empty"} with ${EPHEMERAL_SUFFIX_ENV} set, which is the unit's own state, so its copy is refused; ${SUFFIX_HOW}`);
+  // A GitLab copy locks its own state: a lock address left at the unit's would lock the unit's state while the copy writes.
+  const own = (b.locks ?? []).find((l) => !carriesSuffix(l.replace(/\/lock\/?$/, ""), suffix));
+  if (own) throw new SuffixRefused(`${unit}: its http backend's lock address is ${shownUrl(own)} with ${EPHEMERAL_SUFFIX_ENV} set, the lock of the unit's own state, so its copy is refused; make lock_address and unlock_address read the suffix as the address does`);
   return { dir: place.dir, env: place.env, location: b.location };
 }
 
@@ -396,9 +443,10 @@ async function planCopy(code: string, root: string, suffix: string, binaries: Ro
     ({ dir, location } = prepared);
     runEnv = prepared.env;
   } else {
-    const backend = copyBackend(dir, root, suffix);
+    const backend = copyBackend(dir, root, suffix, rootEnv);
     location = backend.location;
-    const init = exec(binary, ["init", "-input=false", "-no-color", "-reconfigure", `-backend-config=${backend.attribute}=${backend.key}`], dir, rootEnv);
+    const configs = Object.entries({ [backend.attribute]: backend.key, ...backend.extra }).map(([k, v]) => `-backend-config=${k}=${v}`);
+    const init = exec(binary, ["init", "-input=false", "-no-color", "-reconfigure", ...configs], dir, rootEnv);
     if (init.status !== 0) return { root, binary, env: rootEnv, dir, location, planFile, changes: 0, destroys: 0, error: `init failed\n${tail(init.out)}` };
   }
   const base = { root, binary, env: runEnv, dir, location, planFile, changes: 0, destroys: 0 };

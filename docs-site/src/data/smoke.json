@@ -148,12 +148,12 @@
     },
     {
       "claim": "drift",
-      "says": "with binary: choudoufu and the roots under live resource markers, each root plans in full: the queue deleted outside choudoufu is named by root in the report and one drift issue, the change waiting on main shows as drift too, and a run with no drift closes it",
+      "says": "with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "263ec5ea"
+      "commit": "33d0387f"
     },
     {
       "claim": "rollout",
@@ -1385,7 +1385,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "b0f19790"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "tg-generate-init",
@@ -1855,7 +1855,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "263ec5ea"
+      "commit": "c64d95fa"
     },
     {
       "claim": "estate-graph",
@@ -1915,7 +1915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "state-roles",
@@ -1931,7 +1931,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "state-edges",
@@ -1955,7 +1955,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bbf48896"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "migrate-backend-tfe",
@@ -1971,7 +1971,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "migrate-resume-never",
@@ -2289,7 +2289,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "79c43672"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "tg-apply-branches",
@@ -2433,7 +2433,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "unlock-state",
@@ -2507,7 +2507,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "7c2ff19c"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "ephemeral-ttl",
@@ -2523,7 +2523,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "e67a400c"
+      "commit": "33f6c5e8"
     },
     {
       "claim": "cdktn-ephemeral",
@@ -2714,6 +2714,51 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-state-versions",
+      "says": "on GitLab-managed state, each apply wave logs the state address of the root and the serial GitLab holds after it, and GitLab keeps each of those versions",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-state-export",
+      "says": "terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-unlock-state",
+      "says": "terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-ephemeral",
+      "says": "the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "gl-state-edges",
+      "says": "a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
     }
   ]
 }

@@ -43,7 +43,12 @@ pr-close-release|with apply.when pull-request, closing a merge request releases 
 gl-pr-review|with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver|
 gl-wave-jobs|with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind|
 gl-comment-agent|a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file|
-gl-review-agent|the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk|'
+gl-review-agent|the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk|
+gl-state-versions|on GitLab-managed state, each apply wave logs the state address of the root and the serial GitLab holds after it, and GitLab keeps each of those versions|
+gl-state-export|terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle|
+gl-unlock-state|terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies|
+gl-ephemeral|the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was|
+gl-state-edges|a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
@@ -74,6 +79,11 @@ gl-pr-review     runner weight=200
 gl-wave-jobs     runner weight=400
 gl-comment-agent runner weight=350
 gl-review-agent  runner weight=400
+gl-state-versions weight=80
+gl-state-export  weight=100
+gl-unlock-state  weight=100
+gl-ephemeral     weight=100
+gl-state-edges   runner weight=200
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -1956,5 +1966,336 @@ REGO
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the review note flags the destroy from the default branch's instructions with no forge token in reach, and the wave's policy read its risk and denied it"
+  return $rc
+}
+
+# ── GitLab-managed state ──────────────────────────────────────────────────
+# The claims below keep a root's state in a lab project's state API: an http
+# backend at http://gitlab:8929/api/v4/projects/<id>/terraform/state/<name>,
+# with GitLab's lock. gl-state-edges runs a pipeline; the others run the CLI
+# in this tree's CI image on the lab's network, as an apply job or a person
+# at a shell would, with the lab's token as TF_HTTP_PASSWORD (never on a
+# command line) and GL_STATE_BUNDLE in place of the bundle under BREAK.
+
+gl_state_project() { # claim -> sets GS_PROJECT, GS_PID and GS_API, the state API as the image sees it
+  GS_PROJECT="$(gl_project "$1")" || return 1
+  GS_PID="$(glapi "$(gl_p "$GS_PROJECT")" | jq -r .id)"
+  GS_API="http://gitlab:8929/api/v4/projects/$GS_PID/terraform/state"
+  log "project $GL_URL/$GL_USER/$GS_PROJECT"
+}
+
+gl_state_backend() { # state name [username] -> a backend "http" block on GitLab-managed state
+  printf '  backend "http" {\n    address        = "%s/%s"\n    lock_address   = "%s/%s/lock"\n    unlock_address = "%s/%s/lock"\n    lock_method    = "POST"\n    unlock_method  = "DELETE"\n    username       = "%s"\n  }\n' \
+    "$GS_API" "$1" "$GS_API" "$1" "$GS_API" "$1" "${2:-root}"
+}
+
+gl_state_root() { # work, input -> $1/wave/app on GitLab state app
+  mkdir -p "$1/wave/app"
+  { printf 'terraform {\n'; gl_state_backend app; printf '}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$2"; } > "$1/wave/app/main.tf"
+}
+
+# The state API from the host, with the lab's token.
+gl_state_get() { glapi "$GL_URL/api/v4/projects/$GS_PID/terraform/state/$1"; }
+
+gl_state_in() { # work, command... -> runs it in the CI image on the lab's network, in /repo ($1/wave), with /origin.git
+  local work="$1" bundle="${GL_STATE_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}"; shift
+  TF_HTTP_PASSWORD="$GL_TOKEN" GITLAB_TOKEN="$GL_TOKEN" run_copied --rm --network "$TGLAB_NETWORK" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_HTTP_PASSWORD -e GITLAB_TOKEN -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    ${GL_STATE_EXTRA[@]+"${GL_STATE_EXTRA[@]}"} "$(image_tag tofu)" "$@"
+}
+
+gl_state_apply() { # work, n -> wave 1 applies app; its log in $1/apply-<n>.log
+  local code=0
+  gl_state_in "$1" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never > "$1/apply-$2.log" 2>&1 || code=$?
+  clean_mounted "$1/wave"
+  [ "$code" = 0 ] || { cat "$1/apply-$2.log" >&2; log "apply $2 exited $code, not 0"; return 1; }
+}
+
+gl_state_input() { # work, input -> app's input changed and committed
+  gl_state_root "$1" "$2"
+  git -C "$1/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input $2"
+}
+
+gl_state_setup() { # claim [extra terragucci.yml] [forge] -> work in WORK, the project, app on its state, origin pushed; forge names the project as the forge
+  build_cli || return 1
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image $(image_tag tofu); run 'just gitlab-lab up' first"; return 1; }
+  WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$WORK"
+  gl_state_project "$1" || return 1
+  gl_state_root "$WORK" "$1-1"
+  printf 'binary: tofu\ngate: never\n%b' "${2:-}" > "$WORK/wave/terragucci.yml"
+  [ "${3:-}" != forge ] || printf 'forge: gitlab\nurl: http://gitlab:8929/%s/%s\n' "$GL_USER" "$GS_PROJECT" >> "$WORK/wave/terragucci.yml"
+  audit_origin "$WORK"
+}
+
+gitlab_claim_gl_state_versions() {
+  # One root, app, on GitLab-managed state. tf-apply wave 1 applies it, then
+  # again with a new input. Each wave's log names app's state at its GitLab
+  # address with the serial GitLab holds then, the second one greater, and
+  # GitLab keeps both versions by those serials.
+  # BREAK: the bundle reads no GitLab-managed state (backend.ts), so the log
+  # names no serial.
+  log() { echo "[smoke gitlab gl-state-versions] $*" >&2; }
+  gl_load || return 1
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local rc=0 n serial line s1="" s2="" GL_STATE_BUNDLE=""
+  gl_state_setup gl-state-versions || return 1
+  if [ -n "${BREAK:-}" ]; then
+    GL_STATE_BUNDLE="$WORK/break.mjs"
+    break_bundle "$GL_STATE_BUNDLE" backend.ts '    if (gitlab) return { backend: "http", gitlab' '    if (gitlab && false) return { backend: "http", gitlab' || { drop_work "$WORK"; return 1; }
+  fi
+  for n in 1 2; do
+    [ $rc = 0 ] || break
+    [ $n = 1 ] || gl_state_input "$WORK" "gl-state-versions-2"
+    gl_state_apply "$WORK" "$n" || { rc=1; break; }
+    line="$(grep '^app: state' "$WORK/apply-$n.log" || true)"
+    log "apply $n: ${line:-no state line}"
+    serial="$(gl_state_get app | jq -r .serial)"
+    [ "$line" = "app: state $GS_API/app version $serial" ] || { log "apply $n's log does not name app's state at $GS_API/app with GitLab's serial $serial"; rc=1; }
+    [ $n = 1 ] && s1="$serial"
+    [ $n = 2 ] && s2="$serial"
+  done
+  if [ $rc = 0 ]; then
+    [ "$s2" -gt "$s1" ] || { log "the second serial $s2 is not greater than the first $s1"; rc=1; }
+    for serial in "$s1" "$s2"; do
+      [ "$(glapi -o /dev/null -w '%{http_code}' "$GL_URL/api/v4/projects/$GS_PID/terraform/state/app/versions/$serial")" = 200 ] || { log "GitLab keeps no version $serial of app"; rc=1; }
+    done
+  fi
+  drop_work "$WORK"
+  [ $rc = 0 ] && log "each apply's log named app's GitLab state with the serial GitLab holds ($s1, then $s2), and GitLab keeps both"
+  return $rc
+}
+
+gitlab_claim_gl_state_export() {
+  # app on GitLab-managed state applies twice. As a person at a shell would:
+  # terragucci state export app --version <the first serial> --actor alice
+  # records a request naming the state's address and that serial, and exits
+  # 3. bob approves it in a clone. The same export then writes the version
+  # to /out, mode 0600, byte for byte the version GitLab keeps by that
+  # serial, and done.jsonl names alice, app, the address, the serial and bob.
+  # BREAK: the bundle downloads the current state in place of the version
+  # (gitlab-state.ts), so the file is not the first version.
+  log() { echo "[smoke gitlab gl-state-export] $*" >&2; }
+  gl_load || return 1
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local rc=0 n v1 code digest clone done GL_STATE_BUNDLE=""
+  local -a GL_STATE_EXTRA=()
+  gl_state_setup gl-state-export || return 1
+  if [ -n "${BREAK:-}" ]; then
+    GL_STATE_BUNDLE="$WORK/break.mjs"
+    break_bundle "$GL_STATE_BUNDLE" gitlab-state.ts 'const r = await fetchFn(versionUrl(s, serial), { method: "GET"' 'const r = await fetchFn(s.address, { method: "GET"' || { drop_work "$WORK"; return 1; }
+  fi
+  gl_state_apply "$WORK" 1 || rc=1
+  v1="$(gl_state_get app | jq -r .serial)"
+  [ $rc = 0 ] && { gl_state_input "$WORK" gl-state-export-2; gl_state_apply "$WORK" 2 || rc=1; }
+  mkdir -p "$WORK/out"
+  GL_STATE_EXTRA=(-v "$WORK/out:/out")
+  if [ $rc = 0 ]; then
+    code=0
+    gl_state_in "$WORK" terragucci state export app --version "$v1" --actor alice > "$WORK/ask.log" 2>&1 || code=$?
+    clean_mounted "$WORK/wave"
+    cat "$WORK/ask.log" >&2
+    [ "$code" = 3 ] || { log "the request exited $code, not 3"; rc=1; }
+    grep -qF "asks for app's state, $GS_API/app version $v1" "$WORK/ask.log" || { log "the request does not name $GS_API/app version $v1"; rc=1; }
+    digest="$(grep -o 'chant approve tf-state-export app --plan sha256:[0-9a-f]*' "$WORK/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "the request printed no chant approve command"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    clone="$WORK/approver"
+    git clone -q "$WORK/origin.git" "$clone"
+    (cd "$clone" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost \
+      "$HERE/../node_modules/.bin/chant" approve tf-state-export app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the request"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    gl_state_in "$WORK" sh -c 'terragucci state export app --version "$0" --actor alice --out /out/app.tfstate && stat -c "mode %a" /out/app.tfstate' "$v1" > "$WORK/get.log" 2>&1 || code=$?
+    clean_mounted "$WORK/wave"
+    cat "$WORK/get.log" >&2
+    [ "$code" = 0 ] || { log "the export after bob's approval exited $code, not 0"; rc=1; }
+    [ -f "$WORK/out/app.tfstate" ] || { log "no file at /out/app.tfstate"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q '^mode 600$' "$WORK/get.log" || { log "the file is not mode 600"; rc=1; }
+    log "the file holds serial $(jq -r .serial "$WORK/out/app.tfstate"), input $(jq -r '.resources[0].instances[0].attributes.input' "$WORK/out/app.tfstate")"
+    cmp -s "$WORK/out/app.tfstate" <(gl_state_get "app/versions/$v1") || { log "the file is not version $v1 as GitLab keeps it"; rc=1; }
+    git -C "$clone" fetch -q origin "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"
+    done="$(git -C "$clone" show "refs/remotes/origin/chant/lifecycle:_gates/tf-state-export/done.jsonl" 2>/dev/null)"
+    printf '%s\n' "$done" >&2
+    jq -se --arg v "$v1" --arg l "$GS_API/app" --arg d "$digest" 'map(select(.kind == "state-export" and .root == "app" and .location == $l and .version_id == $v and .exportedBy == "alice" and .approvedBy == "bob" and .planDigest == $d)) | length == 1' <<<"$done" >/dev/null \
+      || { log "done.jsonl does not record alice exporting app's $GS_API/app version $v1, approved by bob"; rc=1; }
+  fi
+  drop_work "$WORK"
+  [ $rc = 0 ] && log "alice exported version $v1 of app's GitLab state once bob approved it, the file the version GitLab keeps, recorded on chant/lifecycle"
+  return $rc
+}
+
+gitlab_claim_gl_unlock_state() {
+  # app on GitLab-managed state applies, then a killed apply's lock is left
+  # on its state: taken on GitLab's lock endpoint with an ID of its own. As a
+  # person at a shell would, with the project's pipelines as the forge's
+  # runs (it has none): terragucci unlock-state app names that lock's ID and
+  # waits for an approval of it (exit 3), and GitLab still holds it. bob
+  # approves it in a clone; unlock-state then releases it (exit 0), GitLab
+  # holds no lock on app, done.jsonl names the ID and bob, and the next wave
+  # applies.
+  # BREAK: the bundle reads no lock on GitLab-managed state (unlock.ts), so
+  # it says there is nothing to release and GitLab still holds the lock.
+  log() { echo "[smoke gitlab gl-unlock-state] $*" >&2; }
+  gl_load || return 1
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local rc=0 code id="killed-$STAMP" digest clone done locked GL_STATE_BUNDLE=""
+  gl_state_setup gl-unlock-state "" forge || return 1
+  if [ -n "${BREAK:-}" ]; then
+    GL_STATE_BUNDLE="$WORK/break.mjs"
+    break_bundle "$GL_STATE_BUNDLE" unlock.ts '      read: () => asked(() => probeLock(gl, fetchFn)),' '      read: async () => undefined,' || { drop_work "$WORK"; return 1; }
+  fi
+  gl_state_apply "$WORK" 1 || rc=1
+  gl_locked() { glapi -H 'content-type: application/json' "$GL_URL/api/graphql" -d "{\"query\":\"{ projects(ids: [\\\"gid://gitlab/Project/$GS_PID\\\"]) { nodes { terraformStates { nodes { name lockedAt } } } } }\"}" | jq -r '.data.projects.nodes[0].terraformStates.nodes[] | select(.name == "app") | .lockedAt // "free"'; }
+  if [ $rc = 0 ]; then
+    glapi -o /dev/null -X POST -H 'content-type: application/json' "$GL_URL/api/v4/projects/$GS_PID/terraform/state/app/lock" \
+      -d "{\"ID\":\"$id\",\"Operation\":\"OperationTypeApply\",\"Info\":\"\",\"Who\":\"runner@killed-job\",\"Version\":\"1.10.0\",\"Created\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"Path\":\"\"}" \
+      || { log "could not take app's lock"; rc=1; }
+    log "app's lock $id taken at $(gl_locked)"
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    gl_state_in "$WORK" terragucci unlock-state app --actor dana > "$WORK/ask.log" 2>&1 || code=$?
+    clean_mounted "$WORK/wave"
+    cat "$WORK/ask.log" >&2
+    [ "$code" = 3 ] || { log "the first unlock-state exited $code, not 3"; rc=1; }
+    grep -qF "$GS_API/app/lock holds lock $id" "$WORK/ask.log" || { log "unlock-state does not name lock $id on $GS_API/app/lock"; rc=1; }
+    digest="$(grep -o 'chant approve tf-unlock app --plan [^ ]*' "$WORK/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "unlock-state printed no chant approve command"; rc=1; }
+    [ "$(gl_locked)" != free ] || { log "GitLab holds no lock on app before any approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    clone="$WORK/approver"
+    git clone -q "$WORK/origin.git" "$clone"
+    (cd "$clone" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost \
+      "$HERE/../node_modules/.bin/chant" approve tf-unlock app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the release"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    gl_state_in "$WORK" terragucci unlock-state app --actor dana > "$WORK/release.log" 2>&1 || code=$?
+    clean_mounted "$WORK/wave"
+    cat "$WORK/release.log" >&2
+    [ "$code" = 0 ] || { log "unlock-state after bob's approval exited $code, not 0"; rc=1; }
+    locked="$(gl_locked)"
+    log "app's lock after the release: $locked"
+    [ "$locked" = free ] || { log "GitLab still holds a lock on app"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    git -C "$clone" fetch -q origin "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"
+    done="$(git -C "$clone" show "refs/remotes/origin/chant/lifecycle:_gates/tf-unlock/done.jsonl" 2>/dev/null)"
+    printf '%s\n' "$done" >&2
+    jq -se --arg id "$id" --arg l "$GS_API/app/lock" 'map(select(.kind == "unlock" and .root == "app" and .location == $l and .lock.ID == $id and .approvedBy == "bob" and .releasedBy == "dana")) | length == 1' <<<"$done" >/dev/null \
+      || { log "done.jsonl does not record dana releasing lock $id on $GS_API/app/lock, approved by bob"; rc=1; }
+    gl_state_input "$WORK" gl-unlock-state-2
+    gl_state_apply "$WORK" 2 || rc=1
+  fi
+  [ -n "${BREAK:-}" ] && glapi -o /dev/null -X DELETE "$GL_URL/api/v4/projects/$GS_PID/terraform/state/app/lock" 2>/dev/null
+  drop_work "$WORK"
+  [ $rc = 0 ] && log "unlock-state released lock $id on app's GitLab state only after bob approved that ID, recorded it, and the next wave applied"
+  return $rc
+}
+
+gitlab_claim_gl_ephemeral() {
+  # app on GitLab-managed state applies, and ephemeral names it. terragucci
+  # ephemeral up --pr 7 applies app's copy to the GitLab state app-pr-7,
+  # which then holds app's resource, unlocked, and app's own state keeps its
+  # serial. ephemeral down --pr 7 --reason closed destroys the copy: app-pr-7
+  # holds no resource, app's serial is unchanged, and done.jsonl records the
+  # apply and the destroy at app-pr-7's address.
+  # BREAK: the bundle gives the copy app's own address (ephemeral.ts), so the
+  # copy writes app's state.
+  log() { echo "[smoke gitlab gl-ephemeral] $*" >&2; }
+  gl_load || return 1
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local rc=0 code head serial copy done GL_STATE_BUNDLE=""
+  gl_state_setup gl-ephemeral 'ephemeral:\n  roots: [app]\n' || return 1
+  if [ -n "${BREAK:-}" ]; then
+    GL_STATE_BUNDLE="$WORK/break.mjs"
+    break_bundle "$GL_STATE_BUNDLE" ephemeral.ts 'return { type, attribute, key: copy.key, location' 'return { type, attribute, key: copy.key.replace(/-pr-\d+$/, ""), location' || { drop_work "$WORK"; return 1; }
+  fi
+  gl_state_apply "$WORK" 1 || rc=1
+  serial="$(gl_state_get app | jq -r .serial)"
+  head="$(git -C "$WORK/wave" rev-parse HEAD)"
+  if [ $rc = 0 ]; then
+    code=0
+    gl_state_in "$WORK" terragucci ephemeral up --pr 7 --head "$head" --actor alice > "$WORK/up.log" 2>&1 || code=$?
+    clean_mounted "$WORK/wave"
+    cat "$WORK/up.log" >&2
+    [ "$code" = 0 ] || { log "ephemeral up exited $code, not 0"; rc=1; }
+    copy="$(gl_state_get app-pr-7 2>/dev/null || true)"
+    [ -n "$copy" ] || copy='{}'
+    log "app-pr-7: serial $(jq -r '.serial // "none"' <<<"$copy") with $(jq '[.resources[]?] | length' <<<"$copy") resource(s); app: serial $(gl_state_get app | jq -r .serial), was $serial"
+    jq -e '[.resources[]? | select(.type == "terraform_data" and .name == "app")] | length == 1' <<<"$copy" >/dev/null || { log "GitLab's app-pr-7 holds no copy of app's resource"; rc=1; }
+    [ "$(gl_state_get app | jq -r .serial)" = "$serial" ] || { log "the copy changed app's own state"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    gl_state_in "$WORK" terragucci ephemeral down --pr 7 --reason closed --actor alice > "$WORK/down.log" 2>&1 || code=$?
+    clean_mounted "$WORK/wave"
+    cat "$WORK/down.log" >&2
+    [ "$code" = 0 ] || { log "ephemeral down exited $code, not 0"; rc=1; }
+    jq -e '[.resources[]? | select(.mode == "managed")] | length == 0' <<<"$(gl_state_get app-pr-7)" >/dev/null || { log "app-pr-7 still holds a resource"; rc=1; }
+    [ "$(gl_state_get app | jq -r .serial)" = "$serial" ] || { log "the destroy changed app's own state"; rc=1; }
+    done="$(git --git-dir "$WORK/origin.git" show "chant/lifecycle:_gates/tf-ephemeral/done.jsonl" 2>/dev/null)"
+    printf '%s\n' "$done" >&2
+    jq -se --arg l "$GS_API/app-pr-7" '[.[] | select(.pr == 7) | [.kind, .result, (.roots[0].location == $l)]] == [["ephemeral-apply", "applied", true], ["ephemeral-destroy", "destroyed", true]]' <<<"$done" >/dev/null \
+      || { log "done.jsonl does not record the copy applied and destroyed at $GS_API/app-pr-7"; rc=1; }
+  fi
+  drop_work "$WORK"
+  [ $rc = 0 ] && log "pull request 7's copy of app lived in GitLab's state app-pr-7, apart from app's, and its destroy left app's state as it was"
+  return $rc
+}
+
+gitlab_claim_gl_state_edges() {
+  # Two roots on GitLab-managed state with the job token: net, and app, which
+  # reads net's state through terraform_remote_state by its address. init
+  # puts net in wave 1 and app in wave 2, and main's pipeline applies them in
+  # that order: app's state then holds net's output.
+  # BREAK: the bundle init runs gives an http backend no address of its own
+  # (state-address.ts), so nothing orders app after net.
+  log() { echo "[smoke gitlab gl-state-edges] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work rc=0 sha r cli="$TERRAGUCCI" layers
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gl_state_project gl-state-edges || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    cli="$work/break.mjs"
+    break_bundle "$cli" state-address.ts '    case "http": {' '    case "http-cut": {' || { drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree/net" "$work/tree/app"
+  { printf 'terraform {\n'; gl_state_backend net gitlab-ci-token; printf '}\n\noutput "name" {\n  value = "net-%s"\n}\n' "$STAMP"; } > "$work/tree/net/main.tf"
+  { printf 'terraform {\n'; gl_state_backend app gitlab-ci-token
+    printf '}\n\ndata "terraform_remote_state" "net" {\n  backend = "http"\n  config = {\n    address  = "%s/net"\n    username = "gitlab-ci-token"\n  }\n}\n\noutput "seen" {\n  value = data.terraform_remote_state.net.outputs.name\n}\n' "$GS_API"; } > "$work/tree/app/main.tf"
+  # shellcheck disable=SC2016 # GitLab expands it in the job
+  printf 'forge: gitlab\nbinary: tofu\ngate: never\nenv:\n  TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"\n' > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && git init -q -b main && "$cli" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  layers="$(grep -o -- "--layers '[^']*'" "$work/tree/.gitlab/terragucci.yml" | head -1)"
+  log "init's waves: $layers; apply jobs: $(grep -o '^apply-wave-[0-9]*' "$work/tree/.gitlab/terragucci.yml" | tr '\n' ' ')"
+  [ "$layers" = "--layers 'net;app'" ] || { log "init does not put net in wave 1 and app in wave 2"; rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(gl_push "$work/tree" "$GS_PROJECT" main "gl-state-edges: net and app")" || rc=1
+    [ $rc = 1 ] || gl_wait "$GS_PROJECT" "$sha" push || rc=1
+    [ $rc = 1 ] || [ "$PIPE_STATUS" = success ] || { log "main's pipeline ended $PIPE_STATUS"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    for r in 1 2; do
+      gl_trace "$GS_PROJECT" "$(gl_job "apply-wave-$r")" | grep -E '^(net|app): (applied|state)' | sed "s/^/  wave $r: /" >&2 || true
+    done
+    gl_trace "$GS_PROJECT" "$(gl_job apply-wave-1)" | grep -qE '^net: state \S+/net version [0-9]+$' || { log "apply-wave-1 did not apply net"; rc=1; }
+    gl_trace "$GS_PROJECT" "$(gl_job apply-wave-2)" | grep -qE '^app: state \S+/app version [0-9]+$' || { log "apply-wave-2 did not apply app"; rc=1; }
+    [ "$(gl_state_get app | jq -r '.outputs.seen.value')" = "net-$STAMP" ] || { log "app's state does not hold net's output"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "app's read of net's GitLab state by its address put app in wave 2, and it applied with net's output"
   return $rc
 }
