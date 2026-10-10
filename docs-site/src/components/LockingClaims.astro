@@ -45,9 +45,10 @@ const SPEC: Spec[] = [
 	{ layer: 'Pull request locks', shape: 'Terragrunt', claim: 'tg-lock-fanout' },
 	{ layer: 'Pull request locks', shape: 'Atmos', claim: 'atmos-pr-apply-lock' },
 	{ layer: 'Pull request locks', shape: 'Terramate', claim: 'terramate-pr-apply-lock' },
-	{ layer: 'Pull request locks', shape: 'CDK Terrain', claim: null },
+	{ layer: 'Pull request locks', shape: 'CDK Terrain', claim: 'cdktn-pr-apply-lock' },
 	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply-serial' },
 	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply-per-root' },
+	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply-stand-down' },
 	{ layer: 'Applies kept apart', shape: 'Terragrunt, Atmos, Terramate, CDK Terrain', claim: null },
 	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'refuse' },
 	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'audit-refused' },
@@ -68,6 +69,7 @@ const SPEC: Spec[] = [
 // choudoufu's claims: [claim, forge, binary].
 const CDF: [string, string, string][] = [
 	['cdf-concurrency', 'forgejo', 'tofu'],
+	['cdf-concurrency-time', 'forgejo', 'tofu'],
 	['cdf-write-race', 'forgejo', 'tofu'],
 	['cdf-rows-overlap', 'forgejo', 'tofu'],
 	['cdf-rows-wait', 'forgejo', 'tofu'],
