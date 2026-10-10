@@ -210,6 +210,8 @@ export interface GitLabApplyOptions {
   terragrunt?: boolean;
   /** `waves.after` of plain roots: a root it puts after a reached root is reached too. */
   after?: WavesAfter;
+  /** A repo whose roots a command writes (`synth`): the locks are on every root a change can reach. */
+  synth?: boolean;
   wait?: (ms: number) => Promise<void>;
 }
 
@@ -308,7 +310,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
   if (now !== sha) return refuse(`!${iid} moved while this note was read (its head is now ${short(now)}); comment again once its plan passes`);
 
   const lock = async (how: "apply" | "lock"): Promise<{ roots: string[]; every?: string; kind: string } | ApplyCommentDecision> => {
-    const reach = reached(repoDir, git, remote, sha, o.layers, o.terragrunt ? { terragrunt: true } : {});
+    const reach = reached(repoDir, git, remote, sha, o.layers, { ...(o.terragrunt ? { terragrunt: true } : {}), ...(o.synth ? { synth: true } : {}) });
     let locked;
     try {
       locked = await takeLocks(repoDir, reach.units, { pr: iid, by: user, at: new Date().toISOString(), head: sha, ...(how === "lock" ? { via: "lock" as const } : {}) }, async (n) => (await api("GET", `/projects/${id}/merge_requests/${n}`))?.state === "opened");
