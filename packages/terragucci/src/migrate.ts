@@ -41,7 +41,12 @@
  * digests. It moves states between `s3` backends that take a lock file,
  * `gcs`, `azurerm` and `local` backends, in roots of `.tf` files and CDK
  * Terrain's synthesized `*.tf.json` stacks alike, and refuses roots with a
- * `cloud` block. A backend move also reads a state from a workspace over the
+ * `cloud` block. A backend that keeps no versions (pg, kubernetes, consul,
+ * an http backend other than GitLab's) takes the general path: the binary
+ * reads it with `state pull` and writes it with `state push` under the
+ * backend's own lock, which refuses a state of another lineage or an older
+ * serial; the digest binds each state's contents, since there is no version
+ * id to bind. A backend move also reads a state from a workspace over the
  * TFE API (`remote` or `cloud`) or from an exported state file
  * (./state-source.ts).
  *
@@ -71,6 +76,7 @@ import { rootRoleEnv } from "./roles";
 import { liveRoots } from "./detect";
 import { applyEstateMigration, planEstateMigration, type EstatePlan, type Retag, type Stamp } from "./migrate-estate";
 import { EXTERNAL_BACKENDS, externalProblems, externalSource, type ExternalSource } from "./state-source";
+import { literal, stateAddress } from "./state-address";
 
 export const MIGRATE_OP = "tf-migrate";
 export const MIGRATE_LEDGER = `_gates/${MIGRATE_OP}.jsonl`;
@@ -204,8 +210,23 @@ export function parseMigration(file: string, text: string): Migration {
 /** The backends that take a migration's writes: S3 with a lock file, GCS, Azure Blob Storage, and a local file. */
 const BACKENDS = ["s3", "gcs", "azurerm", "local"];
 
+/** The backends the binary reads and writes for a migration, under their own lock: those that keep no versions. */
+export const PULLED_BACKENDS = ["pg", "kubernetes", "consul", "http"];
+
 /** The settings a backend move's `from.config` must give, by backend: where the state is. */
-const FROM_NEEDS: Record<string, string[]> = { s3: ["bucket", "key"], gcs: ["bucket"], azurerm: ["storage_account_name", "container_name", "key"] };
+const FROM_NEEDS: Record<string, string[]> = { s3: ["bucket", "key"], gcs: ["bucket"], azurerm: ["storage_account_name", "container_name", "key"], kubernetes: ["secret_suffix"], consul: ["path"], http: ["address"] };
+
+/** Settings of a pulled backend that hold a credential, which the job gives in the backend's own variables instead. */
+const SECRET_KEYS: Record<string, string> = { password: "the backend's password variable", token: "the backend's token variable", client_key: "KUBE_CLIENT_KEY_DATA", access_token: "CONSUL_HTTP_TOKEN" };
+
+/** Problems with the config of a pulled source: a credential written in the repo. */
+function pulledProblems(at: string, backend: string, config: Record<string, unknown>): string[] {
+  const p: string[] = [];
+  for (const k of Object.keys(config)) if (k in SECRET_KEYS) p.push(`${at}.from.config.${k}: a credential does not belong in the repo; the job gives it in ${SECRET_KEYS[k]}`);
+  const conn = config.conn_str;
+  if (backend === "pg" && typeof conn === "string" && (/^postgres(ql)?:\/\/[^/@]*:[^/@]*@/i.test(conn) || /(^|\s)password\s*=/.test(conn))) p.push(`${at}.from.config.conn_str holds a password, which does not belong in the repo; the job gives it in PGPASSWORD`);
+  return p;
+}
 
 function parseBackends(raw: unknown, problems: string[], rootOf: (at: string, k: string, v: unknown) => string | undefined, file: string): BackendMove[] {
   const out: BackendMove[] = [];
@@ -224,10 +245,11 @@ function parseBackends(raw: unknown, problems: string[], rootOf: (at: string, k:
       continue;
     }
     for (const k of Object.keys(from)) if (!["backend", "config"].includes(k)) problems.push(`${at}.from.${k} is not a key; from has backend and config`);
-    const kinds = [...BACKENDS, ...EXTERNAL_BACKENDS];
+    const kinds = [...BACKENDS, ...PULLED_BACKENDS, ...EXTERNAL_BACKENDS];
     if (typeof from.backend !== "string" || !kinds.includes(from.backend)) problems.push(`${at}.from.backend must be ${kinds.join(", ")}`);
     const config = from.config && typeof from.config === "object" && !Array.isArray(from.config) ? (from.config as Record<string, unknown>) : {};
     if (typeof from.backend === "string" && EXTERNAL_BACKENDS.includes(from.backend)) problems.push(...externalProblems(at, from.backend, config));
+    if (typeof from.backend === "string" && PULLED_BACKENDS.includes(from.backend)) problems.push(...pulledProblems(at, from.backend, config));
     const needs = typeof from.backend === "string" ? FROM_NEEDS[from.backend] : undefined;
     if (needs && needs.some((k) => typeof config[k] !== "string")) problems.push(`${at}.from.config must name the ${needs.join(", ").replace(/, ([^,]*)$/, " and $1")} of the state`);
     if (root && typeof from.backend === "string") out.push({ root, from: { backend: from.backend, config } });
@@ -547,7 +569,7 @@ export function refusal(repo: string, root: string): string | undefined {
   // A CDK Terrain stack is a root whose code is JSON: cdktf.out/stacks/<stack>/cdk.tf.json.
   const files = readdirSync(dir).filter((f) => (f.endsWith(".tf") || f.endsWith(".tf.json")) && f !== OVERRIDE_FILE);
   if (files.length === 0) return `${root} holds no .tf or .tf.json files`;
-  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations write state to s3, gcs, azurerm and local backends, so point its code at one and move the state with a backend move from cloud`;
+  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations write state to s3, gcs, azurerm, local, pg, kubernetes, consul and http backends, so point its code at one and move the state with a backend move from cloud`;
   for (const f of files) {
     const text = readFileSync(join(dir, f), "utf-8");
     if (f.endsWith(".tf")) {
@@ -572,9 +594,17 @@ function jsonCloud(doc: unknown): boolean {
   return blocks.some((b) => b && typeof b === "object" && "cloud" in (b as object));
 }
 
-/** Which backends a migration writes to, or why not. */
-export function backendRefusal(root: string, o: StateObject): string | undefined {
-  if ("unsupported" in o) return `${root}: ${o.unsupported.replace(READS_VERSIONS, "migrates state in s3, gcs, azurerm and local backends")}`;
+/**
+ * A state the binary reads and writes for a migration, under the backend's
+ * own lock: one whose backend keeps no versions (pg, kubernetes, consul, an
+ * http backend other than GitLab's).
+ */
+export const isPulled = (o: StateObject): boolean => "unsupported" in o && (o as { versions?: { versioning: string } }).versions?.versioning === "off" && PULLED_BACKENDS.includes(o.backend);
+
+/** Which backends a migration writes to, or why not; with `pulled`, a backend the binary reads and writes for it is one. */
+export function backendRefusal(root: string, o: StateObject, pulled = false): string | undefined {
+  if (pulled && isPulled(o)) return undefined;
+  if ("unsupported" in o) return `${root}: ${o.unsupported.replace(READS_VERSIONS, pulled ? "migrates state in s3, gcs, azurerm and local backends, and through the binary in pg, kubernetes, consul and http backends" : "migrates state in s3, gcs, azurerm and local backends")}`;
   if ("gitlab" in o) return `${root}: its state is GitLab-managed (${o.location}), and terragucci migrates state in s3, gcs, azurerm and local backends`;
   if (o.backend === "s3" && !(o as { lockfile: boolean }).lockfile) return `${root}: its s3 backend takes no lock file (use_lockfile = true), so a migration could not hold its lock`;
   return undefined;
@@ -729,10 +759,13 @@ export interface PlannedMigration {
   /** Where each root's binary runs (a Terragrunt unit's working directory). */
   places: Map<string, Place>;
   /** By root: the new state's file in the job's work dir, the backend it writes to, and, for a backend move, where the state is now. */
-  files: Map<string, { path: string; object: StateObject; state: StateFile; beforeCount: number; source?: Source }>;
+  files: Map<string, { path: string; object: StateObject; state: StateFile; beforeCount: number; source?: Source; replacesEmpty?: boolean }>;
   /** A migration into or between choudoufu estates, which writes markers on live resources instead of states. */
   estate?: EstatePlan;
 }
+
+/** A state with no resources and no outputs: what a backend writes at init before anything is applied. */
+const isEmptyState = (s: StateFile): boolean => s.resources.length === 0 && Object.keys(s.outputs ?? {}).length === 0;
 
 /** The empty state a root with none gets, or that a revert puts back where a migration found none. */
 const emptyState = (lineage: string, serial: number, terraformVersion = "1.0.0"): StateFile => ({ version: 4, terraform_version: terraformVersion, serial, lineage, outputs: {}, resources: [], check_results: null });
@@ -777,7 +810,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     const { dir, env: renv, init: ws } = places.get(root)!;
     await initRoot(exec, options.binary, root, dir, renv, ws);
     const o = stateObject(dir, renv);
-    const why = backendRefusal(root, o);
+    const why = backendRefusal(root, o, true);
     if (why) throw new ConfigError(`migration ${m.name} cannot run: ${why}`);
     objects.set(root, o);
     versions.set(root, await versionOf(o, options.fetch));
@@ -785,6 +818,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   }
   const after = new Map<string, StateFile>();
   const sources = new Map<string, Source & { version?: string; state: StateFile }>();
+  const replaces = new Set<string>();
   const restored = new Map<string, string | null>();
   if (m.kind === "moves") {
     for (const [root, s] of moveResources(m.name, m.moves, before)) after.set(root, s);
@@ -797,12 +831,15 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
         source = { external };
       } else {
         const object = stateObject(dir, renv, { type: b.from.backend, config: b.from.config });
-        const why = backendRefusal(b.root, object);
+        const why = backendRefusal(b.root, object, true);
         if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it moves from: ${why}`);
-        if (locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
+        if (locationOf(object) !== undefined && locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
         source = { object, block: backendBlock(b.from.backend, b.from.config), data: join(options.work, `source-${i}`) };
       }
-      if (before.get(b.root)) throw new ConfigError(`migration ${m.name}: the backend ${b.root}'s code names, ${locationOf(objects.get(b.root)!)}, already holds a state, so a move would overwrite it`);
+      // A kubernetes backend writes an empty state of its own lineage at init: a move replaces it, and the digest binds it.
+      const held = before.get(b.root);
+      if (held && isPulled(objects.get(b.root)!) && isEmptyState(held)) replaces.add(b.root);
+      else if (held) throw new ConfigError(`migration ${m.name}: the backend ${b.root}'s code names, ${locationOf(objects.get(b.root)!)}, already holds a state, so a move would overwrite it`);
       const { state, version } = await readSource(source, exec, options.binary, b.root, dir, renv, options.fetch);
       if (!state) throw new ConfigError(`migration ${m.name}: ${sourceAt(source).location ?? b.from.backend} holds no state of ${b.root} to move`);
       sources.set(b.root, { ...source, ...(version ? { version } : {}), state });
@@ -842,7 +879,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     const path = join(options.work, `${i}.tfstate`);
     writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
     const src = sources.get(root);
-    files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(src ? { source: "external" in src ? { external: src.external } : { object: src.object, block: src.block, data: src.data } } : {}) });
+    files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(replaces.has(root) ? { replacesEmpty: true } : {}), ...(src ? { source: "external" in src ? { external: src.external } : { object: src.object, block: src.block, data: src.data } } : {}) });
     const proof = await proofPlan(exec, options.binary, places.get(root)!, root, path, options.work, i);
     log(`${root}: ${proof.changes.length === 0 ? "no changes against its new state" : `${proof.changes.length} change${proof.changes.length === 1 ? "" : "s"} against its new state: ${proof.changes.join(", ")}`}`);
     const o = objects.get(root)!;
@@ -875,7 +912,8 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   return { record, files, places };
 }
 
-export const locationOf = stateLocation;
+/** Where a state is, as the record names it: a pulled backend's address (./state-address.ts), when its configuration gives one. */
+export const locationOf = (o: StateObject): string | undefined => stateLocation(o) ?? (isPulled(o) ? (o as { location?: string }).location : undefined);
 
 /**
  * Plan a root against a state file: an override file switches its backend
@@ -1004,7 +1042,8 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
         log(`${r.root}: wrote its new state`);
         continue;
       }
-      const lockArgs = isStored(f.object) ? ["-lock=false"] : [];
+      // Over the empty state a backend wrote at init, of another lineage, the push is forced; the digest check above found it still empty.
+      const lockArgs = isStored(f.object) ? ["-lock=false"] : f.replacesEmpty ? ["-force"] : [];
       const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
       const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
       if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
@@ -1039,6 +1078,10 @@ function fromOf(b: BackendMove): string {
   const s = (k: string): string | undefined => (typeof c[k] === "string" ? (c[k] as string) : undefined);
   if (b.from.backend === "file") return `the state file ${String(c.path)}`;
   if (b.from.backend === "remote" || b.from.backend === "cloud") return `its ${b.from.backend} workspace ${typeof c.hostname === "string" ? c.hostname : "app.terraform.io"}/${String(c.organization)}/${String((c.workspaces as { name?: unknown } | undefined)?.name)}`;
+  if (PULLED_BACKENDS.includes(b.from.backend)) {
+    const a = stateAddress(b.from.backend, (n) => literal(c[n]), "");
+    return `its ${b.from.backend} backend${"key" in a ? ` ${a.key}` : ""}`;
+  }
   const where = b.from.backend === "s3" && s("bucket") ? ` s3://${s("bucket")}/${s("key")}` : b.from.backend === "gcs" && s("bucket") ? ` gs://${s("bucket")}/${s("prefix") ?? ""}` : b.from.backend === "azurerm" && s("storage_account_name") ? ` az://${s("storage_account_name")}/${s("container_name")}/${s("key")}` : "";
   return `its ${b.from.backend} backend${where}`;
 }
