@@ -23,8 +23,11 @@
  * `terragucci audit` lists each record as a `state-export` entry.
  *
  * The record holds the version id and the digest of what was written, never
- * a state's contents. It reads states in s3 backends that keep versions, and
- * refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
+ * a state's contents. It reads states in backends that keep versions: s3
+ * (bucket versioning), gcs (object versioning, a version is a generation)
+ * and azurerm (blob versioning, or the snapshots an apply's version record
+ * takes when the backend sets `snapshot = true`), and refuses roots with a
+ * `cloud` block. A Terragrunt unit is prepared the way a
  * migration prepares one (unitPlace): Terragrunt inits it, and the backend is
  * the one that init recorded in the directory Terragrunt ran the binary in.
  */
@@ -36,11 +39,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { appendLifecycle, appendPending, readLedger, type PendingRecord, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
-import { stateClient, stateObject, type StateObject } from "./backend";
+import { isStored, stateObject, stateStore, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
 import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
-import type { S3Fetch, S3Target } from "./report/s3";
+import type { StoreFetch } from "./report/object-store";
 import { sealRefusal } from "./seal";
 
 export const EXPORT_OP = "tf-state-export";
@@ -96,7 +99,7 @@ export interface ExportOptions {
   exec?: BinaryExec;
   /** How a Terragrunt unit is prepared (MigrateOptions.terragrunt). */
   terragrunt?: MigrateOptions["terragrunt"];
-  fetch?: S3Fetch;
+  fetch?: StoreFetch;
   now?: string;
   log?: (line: string) => void;
 }
@@ -190,17 +193,17 @@ export async function exportState(repo: string, options: ExportOptions): Promise
     rmSync(data, { recursive: true, force: true });
   }
   if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace("reads state versions from", "exports state from")}`);
-  if (object.backend !== "s3" || !("target" in object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3 state by its id`);
-  const s3 = object as Extract<StateObject, { target: S3Target }>;
-  const location = `s3://${s3.bucket}/${s3.key}`;
-  const client = stateClient(s3, options.fetch);
+  if (!isStored(object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3, gcs or azurerm state by its id`);
+  const store = await stateStore(object, options.fetch);
+  const location = store.location;
   let version = options.version;
   if (!version) {
-    const head = await client.head(s3.key);
-    if (!head.exists) throw new ConfigError(`state export: ${location} holds no state`);
-    if (!head.versionId) throw new ConfigError(`state export: ${s3.bucket} keeps no versions, so there is no version id to export; turn on bucket versioning`);
-    version = head.versionId;
-  } else if (!(await client.hasVersion(s3.key, version))) {
+    // The version there now; an azurerm backend that keeps snapshots and no versions gets one, which names it.
+    const now = await store.version(true);
+    if (!now.exists) throw new ConfigError(`state export: ${location} holds no state`);
+    if (!now.versionId) throw new ConfigError(`state export: ${location} keeps no versions, so there is no version id to export: ${now.off ?? "the store gave none"}`);
+    version = now.versionId;
+  } else if (!(await store.hasVersion(version))) {
     throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
   }
 
@@ -259,7 +262,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   }
 
   const file = outPath(repo, options.out, root, version);
-  const body = await client.readVersion(s3.key, version);
+  const body = await store.readVersion(version);
   if (body === undefined) throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
   const line: ExportRecord = {
     version: 1,

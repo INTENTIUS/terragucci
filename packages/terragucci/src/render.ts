@@ -173,7 +173,7 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { ROOT_ROLES_ENV, rootRoles } from "./roles";
+import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
@@ -735,10 +735,15 @@ function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply"
   return [`export AWS_ROLE_SESSION_NAME=${sh(session)}`, 'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', tokenScript(forge, oidc.audience ?? AUDIENCE, undefined, undefined, check), ...roles].join("\n");
 }
 
+/** A stage's GCP service accounts or Azure clients by root glob, exported for the stage to hand each root's binary (rootRoleEnv in ./roles.ts). */
+const cloudRoles = (name: string, roles: Record<string, { plan: string; apply: string }> | undefined, stage: "plan" | "apply"): string[] =>
+  roles && Object.keys(roles).length > 0 ? [`export ${name}=${sh(JSON.stringify(rootRoles(roles, stage)))}`] : [];
+
 /**
  * Shell for a stage's cloud identities: the AWS role, the GCP service
  * account and the Azure client `oidc` names for it, each with the forge's
- * token for that cloud's audience. Drift takes the plan identities.
+ * token for that cloud's audience, and with `roles` under `gcp` or `azure`
+ * the stage's identities by root glob. Drift takes the plan identities.
  */
 export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, stage: "plan" | "apply", session: string): string[] {
   if (!oidc) return [];
@@ -748,8 +753,8 @@ export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, s
   return [
     ...(shared ? [tokenCheck(forge)] : []),
     ...(hasAws(oidc) ? [awsScript(forge, oidc, stage, session, !shared)] : []),
-    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, !shared)] : []),
-    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, !shared)] : []),
+    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, !shared), ...cloudRoles(ROOT_GCP_ENV, oidc.gcp.roles, stage)] : []),
+    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, !shared), ...cloudRoles(ROOT_AZURE_ENV, oidc.azure.roles, stage)] : []),
   ];
 }
 

@@ -7,8 +7,12 @@
  * usual fix is a `force-unlock` by hand, with nothing recorded and nothing
  * checking that the job is really gone. This command does that instead:
  *
- *   1. It inits the root and reads the lock: the lock file the S3 backend's
- *      `use_lockfile` takes, `<key>.tflock`, with its ID, who took it and when.
+ *   1. It inits the root and reads the lock, with its ID, who took it and
+ *      when: the lock file the S3 backend's `use_lockfile` takes,
+ *      `<key>.tflock`; the gcs backend's lock object,
+ *      `<prefix>/<workspace>.tflock`, whose generation is the lock's ID; or
+ *      the lease an azurerm backend holds on the state blob, with the lock
+ *      info in the blob's metadata.
  *   2. It asks the forge which of the repository's runs are still running or
  *      waiting. A run that began before the lock was taken may be the one
  *      holding it, so while any such run is alive the lock is not released.
@@ -31,13 +35,12 @@ import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/pl
 import { appendLifecycle, appendPending, decideGate, readLedger, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
-import { stateClient, stateObject, type StateObject } from "./backend";
+import { isStored, stateObject, stateStore, type StateObject, type StoredState } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "./detect";
 import { detectShape } from "./shape";
 import { call, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
-import { lockKey } from "./migrate";
-import type { S3Fetch, S3Target } from "./report/s3";
+import type { StoreFetch } from "./report/object-store";
 import { forgeOf } from "./respond/change";
 import { sealRefusal } from "./seal";
 
@@ -140,8 +143,8 @@ export interface UnlockOptions {
   now?: string;
   /** The forge's HTTP calls, for tests. */
   fetch?: Fetch;
-  /** The S3 calls, for tests. */
-  s3Fetch?: S3Fetch;
+  /** The state store's calls (S3, GCS, Azure Blob Storage), for tests. */
+  s3Fetch?: StoreFetch;
   /** Runs the binary in the root, for tests. */
   exec?: (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => { status: number; out: string };
   log?: (line: string) => void;
@@ -194,13 +197,14 @@ const describeLock = (l: LockInfo): string => `lock ${l.ID}${l.Operation ? `, ${
 
 const describeRun = (r: LiveRun): string => `run ${r.id} (${r.status}${r.started ? `, began ${r.started}` : ""})${r.url ? ` ${r.url}` : ""}`;
 
-/** The S3 state a root's lock file guards, or why this command cannot read its lock. */
-function lockedObject(root: string, o: StateObject): Extract<StateObject, { target: S3Target }> {
-  if ("unsupported" in o) throw new ConfigError(`${root}: ${o.unsupported}; unlock-state reads the lock file of an s3 backend`);
-  if (o.backend === "local") throw new ConfigError(`${root} keeps its state in a local file, whose lock goes with the process that took it; unlock-state releases the lock file of an s3 backend`);
-  const s3 = o as Extract<StateObject, { target: S3Target }>;
-  if (!s3.lockfile) throw new ConfigError(`${root}: its s3 backend takes no lock file (use_lockfile = true)${s3.dynamodb ? ", only a DynamoDB lock," : ""} and unlock-state releases the lock file`);
-  return s3;
+const WHAT = "unlock-state releases the lock of an s3 backend's lock file, a gcs backend or an azurerm backend";
+
+/** The state whose lock this command reads, or why it cannot read it. */
+function lockedObject(root: string, o: StateObject): StoredState {
+  if ("unsupported" in o) throw new ConfigError(`${root}: ${o.unsupported}; ${WHAT}`);
+  if (!isStored(o)) throw new ConfigError(`${root} keeps its state in a local file, whose lock goes with the process that took it; ${WHAT}`);
+  if (o.backend === "s3" && !o.lockfile) throw new ConfigError(`${root}: its s3 backend takes no lock file (use_lockfile = true)${o.dynamodb ? ", only a DynamoDB lock," : ""} and unlock-state releases the lock file`);
+  return o;
 }
 
 /**
@@ -232,16 +236,17 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   // A root that names its workspace (an Atmos instance) inits in default and keeps its state, and its lock, under its own.
   const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
   if (init.status !== 0) throw new ConfigError(`${rel}: ${binary} init failed:\n${tail(init.out)}`);
-  const object = lockedObject(rel, stateObject(dir, shape.rootEnv(rel, env)));
-  const location = `s3://${object.bucket}/${lockKey(object.key)}`;
-  const client = stateClient(object, options.s3Fetch);
-  const text = await client.get(lockKey(object.key));
-  if (text === undefined) {
+  const store = await stateStore(lockedObject(rel, stateObject(dir, shape.rootEnv(rel, env))), options.s3Fetch);
+  const location = store.lockLocation;
+  const held = await store.heldLock();
+  if (held === undefined) {
     log(`${rel}: no lock is held on ${location}; nothing to release`);
     return { code: UNLOCK_EXIT.released, location };
   }
-  const lock = parseLockInfo(text);
-  if (!lock) throw new ConfigError(`${rel}: ${location} holds no lock ID the binary wrote; read it, and remove it by hand if it is not a lock`);
+  const info = parseLockInfo(held.info);
+  if (!info || !held.id) throw new ConfigError(`${rel}: ${location} holds no lock ID the binary wrote; read it, and release it by hand if it is not a lock`);
+  // The ID force-unlock takes: a gcs lock's is its object's generation, which the binary prints as the lock's ID.
+  const lock: LockInfo = { ...info, ID: held.id };
   const digest = lockDigest(rel, location, lock.ID);
   log(`${rel}: ${location} holds ${describeLock(lock)}`);
 
@@ -326,7 +331,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   }
   const unlock = exec(binary, ["force-unlock", "-force", "-no-color", lock.ID], dir, env);
   if (unlock.status !== 0) throw new ConfigError(`${rel}: ${binary} force-unlock ${lock.ID} failed:\n${tail(unlock.out)}`);
-  if ((await client.head(lockKey(object.key))).exists) throw new ConfigError(`${rel}: ${binary} force-unlock ran, and ${location} is still there`);
+  if (await store.heldLock()) throw new ConfigError(`${rel}: ${binary} force-unlock ran, and ${location} is still locked`);
   const actor = options.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
   const record: UnlockRecord = {
     version: 1,

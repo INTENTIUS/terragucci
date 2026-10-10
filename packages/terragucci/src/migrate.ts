@@ -28,17 +28,20 @@
  * <name>`, on chant/lifecycle: the wave waits until `chant approve
  * tf-migrate <name> --plan <digest>` names it, and refuses when an approval
  * names another digest, naming the roots whose state moved. Approved, the
- * job takes each S3 state's lock file (the lock `use_lockfile` takes),
- * checks under the lock that no state moved since the plan, writes the new
- * states with `state push`, plans every root again against its real backend
+ * job takes each state's lock the way its backend takes it (the lock file
+ * of s3's `use_lockfile` and of gcs, the blob lease of azurerm), checks
+ * under the lock that no state moved since the plan, writes the new states
+ * with `state push` (an azurerm state with a write under its lease, which
+ * keeps the binary out), plans every root again against its real backend
  * and requires no change, and records the version ids before and after on
  * chant/lifecycle (`_gates/tf-migrate/done.jsonl`) and in the report. A
  * migration that applied is never run again.
  *
  * State contents never leave the job: the record holds version ids and
- * digests. It moves states between `s3` backends that take a lock file and
- * `local` backends, in roots of `.tf` files and CDK Terrain's synthesized
- * `*.tf.json` stacks alike, and refuses roots with a `cloud` block.
+ * digests. It moves states between `s3` backends that take a lock file,
+ * `gcs`, `azurerm` and `local` backends, in roots of `.tf` files and CDK
+ * Terrain's synthesized `*.tf.json` stacks alike, and refuses roots with a
+ * `cloud` block.
  *
  * A Terragrunt unit takes part as a root does: Terragrunt prepares it once
  * (unitPlace), and the migration runs the binary in the directory Terragrunt
@@ -56,10 +59,10 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { stateClient, stateObject, type StateObject } from "./backend";
+import { isStored, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
-import type { S3Fetch, S3Target } from "./report/s3";
+import type { S3Fetch } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 import { rootRoleEnv } from "./roles";
@@ -193,8 +196,11 @@ export function parseMigration(file: string, text: string): Migration {
   return { name, file, digest: sha(text), kind, moves, backends: [], restores: [] };
 }
 
-/** The backends that take a migration's writes: S3 with a lock file, and a local file. */
-const BACKENDS = ["s3", "local"];
+/** The backends that take a migration's writes: S3 with a lock file, GCS, Azure Blob Storage, and a local file. */
+const BACKENDS = ["s3", "gcs", "azurerm", "local"];
+
+/** The settings a backend move's `from.config` must give, by backend: where the state is. */
+const FROM_NEEDS: Record<string, string[]> = { s3: ["bucket", "key"], gcs: ["bucket"], azurerm: ["storage_account_name", "container_name", "key"] };
 
 function parseBackends(raw: unknown, problems: string[], rootOf: (at: string, k: string, v: unknown) => string | undefined, file: string): BackendMove[] {
   const out: BackendMove[] = [];
@@ -213,9 +219,10 @@ function parseBackends(raw: unknown, problems: string[], rootOf: (at: string, k:
       continue;
     }
     for (const k of Object.keys(from)) if (!["backend", "config"].includes(k)) problems.push(`${at}.from.${k} is not a key; from has backend and config`);
-    if (typeof from.backend !== "string" || !BACKENDS.includes(from.backend)) problems.push(`${at}.from.backend must be ${BACKENDS.join(" or ")}`);
+    if (typeof from.backend !== "string" || !BACKENDS.includes(from.backend)) problems.push(`${at}.from.backend must be ${BACKENDS.slice(0, -1).join(", ")} or ${BACKENDS[BACKENDS.length - 1]}`);
     const config = from.config && typeof from.config === "object" && !Array.isArray(from.config) ? (from.config as Record<string, unknown>) : {};
-    if (from.backend === "s3" && (typeof config.bucket !== "string" || typeof config.key !== "string")) problems.push(`${at}.from.config must name the bucket and key of the state`);
+    const needs = typeof from.backend === "string" ? FROM_NEEDS[from.backend] : undefined;
+    if (needs && needs.some((k) => typeof config[k] !== "string")) problems.push(`${at}.from.config must name the ${needs.join(", ").replace(/, ([^,]*)$/, " and $1")} of the state`);
     if (root && typeof from.backend === "string") out.push({ root, from: { backend: from.backend, config } });
   }
   if (problems.length > 0) throw new ConfigError(`${file}:\n  ${problems.join("\n  ")}`);
@@ -529,7 +536,7 @@ export function refusal(repo: string, root: string): string | undefined {
   // A CDK Terrain stack is a root whose code is JSON: cdktf.out/stacks/<stack>/cdk.tf.json.
   const files = readdirSync(dir).filter((f) => (f.endsWith(".tf") || f.endsWith(".tf.json")) && f !== OVERRIDE_FILE);
   if (files.length === 0) return `${root} holds no .tf or .tf.json files`;
-  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations move state in s3 and local backends`;
+  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations move state in s3, gcs, azurerm and local backends`;
   for (const f of files) {
     const text = readFileSync(join(dir, f), "utf-8");
     if (f.endsWith(".tf")) {
@@ -632,11 +639,10 @@ async function pullState(exec: BinaryExec, binary: string, root: string, dir: st
   }
 }
 
-/** The version id the backend holds for a state object now, when it keeps versions. */
-async function versionOf(o: StateObject, fetchFn?: S3Fetch): Promise<string | undefined> {
-  if (o.backend !== "s3" || !("target" in o)) return undefined;
-  const head = await stateClient(o as Extract<StateObject, { target: S3Target }>, fetchFn).head((o as { key: string }).key);
-  return head.versionId;
+/** The version id the backend holds for a state object now, when it keeps versions; with `pin`, an azurerm backend that keeps snapshots gets one. */
+async function versionOf(o: StateObject, fetchFn?: S3Fetch, pin = false): Promise<string | undefined> {
+  if (!isStored(o)) return undefined;
+  return (await (await stateStore(o, fetchFn)).version(pin)).versionId;
 }
 
 /** Initialise a root against the backend its code names. `-reconfigure`: a data dir another backend left is not migrated from. */
@@ -761,7 +767,9 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
       const o = objects.get(r.root)!;
       if (locationOf(o) !== r.location) throw new ConfigError(`migration ${m.name}: ${r.root}'s state is at ${locationOf(o)}, and the revert restores ${r.location}`);
       const now = before.get(r.root) ?? null;
-      if (versions.get(r.root) !== r.from_version_id) {
+      // Still at the version the migration left: an azurerm state named by a snapshot is compared with it.
+      const still = r.from_version_id === null ? versions.get(r.root) === undefined : isStored(o) ? await (await stateStore(o, options.fetch)).isAt(r.from_version_id) : false;
+      if (!still) {
         throw new ConfigError(`migration ${m.name}: ${r.root}'s state is at version ${versions.get(r.root) ?? "none"}, and ${m.revert} left ${r.from_version_id}; it moved since, so putting the older version back would undo that change too`);
       }
       const lineage = now?.lineage || derivedLineage(m.name, r.root);
@@ -770,8 +778,8 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
       if (r.version_id === null) {
         state = emptyState(lineage, serial, now?.terraform_version);
       } else {
-        if (o.backend !== "s3" || !("target" in o)) throw new ConfigError(`migration ${m.name}: ${r.root}'s backend keeps no versions to put back`);
-        const text = await stateClient(o as Extract<StateObject, { target: S3Target }>, options.fetch).readVersion((o as { key: string }).key, r.version_id);
+        if (!isStored(o)) throw new ConfigError(`migration ${m.name}: ${r.root}'s backend keeps no versions to put back`);
+        const text = await (await stateStore(o, options.fetch)).readVersion(r.version_id);
         if (text === undefined) throw new ConfigError(`migration ${m.name}: ${r.location} has no version ${r.version_id}; a lifecycle rule may have expired it`);
         const old = JSON.parse(text) as StateFile;
         state = { ...old, resources: Array.isArray(old.resources) ? old.resources : [], lineage, serial };
@@ -821,7 +829,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   return { record, files, places };
 }
 
-const locationOf = (o: StateObject): string | undefined => ("bucket" in o ? `s3://${(o as { bucket: string }).bucket}/${(o as { key: string }).key}` : "path" in o ? (o as { path: string }).path : undefined);
+const locationOf = stateLocation;
 
 /**
  * Plan a root against a state file: an override file switches its backend
@@ -846,31 +854,34 @@ export function lockInfo(path: string, now: string, who = `terragucci@${hostname
 
 interface HeldLock {
   root: string;
+  /** The state the lock is on, and the store that holds it. */
+  object: StateObject;
+  store: StateStore;
   release: () => Promise<void>;
 }
 
-/** Take the lock file of each S3 state a migration writes or moves from. Releases what it took and throws when one is held. */
+/** Take the lock of each state a migration writes or moves from, as its backend takes it. Releases what it took and throws when one is held. */
 async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {
   const held: HeldLock[] = [];
   const objects = [...files].flatMap(([root, f]) => [{ root, object: f.object }, ...(f.source ? [{ root, object: f.source.object }] : [])]);
   for (const { root, object } of objects) {
-    if (object.backend !== "s3" || !("target" in object)) continue;
-    const o = object as Extract<StateObject, { target: S3Target }>;
-    const client = stateClient(o, fetchFn);
-    const key = lockKey(o.key);
+    if (!isStored(object)) continue;
+    let store: StateStore | undefined;
     let got: boolean;
     try {
-      got = await client.putIfAbsent(key, lockInfo(`${o.bucket}/${o.key}`, now), "application/json");
+      store = await stateStore(object, fetchFn);
+      got = await store.lock(lockInfo(store.location.replace(/^[a-z0-9]+:\/\//, ""), now));
     } catch (e) {
       for (const h of held) await h.release().catch(() => {});
-      throw new ConfigError(`${root}: the lock s3://${o.bucket}/${key} could not be taken: ${(e as Error).message}`);
+      throw new ConfigError(`${root}: the lock ${store?.lockLocation ?? stateLocation(object)} could not be taken: ${(e as Error).message}`);
     }
     if (!got) {
       for (const h of held) await h.release().catch(() => {});
-      const info = await client.get(key).catch(() => undefined);
-      throw new ConfigError(`${root}: its state is locked (s3://${o.bucket}/${key}${info ? `: ${info.slice(0, 300)}` : ""}), so nothing was written`);
+      const info = await store.heldLock().catch(() => undefined);
+      throw new ConfigError(`${root}: its state is locked (${store.lockLocation}${info ? `: ${info.info.slice(0, 300)}` : ""}), so nothing was written`);
     }
-    held.push({ root, release: () => client.remove(key) });
+    const s = store;
+    held.push({ root, object, store: s, release: () => s.unlock() });
   }
   return held;
 }
@@ -915,10 +926,29 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
   try {
     const moved = await movedSince(repo, plan, options);
     if (moved.length > 0) return { ...record, status: "refused", moved };
+    // The version each state is at before the write, when only a write names it (an azurerm backend's snapshot).
+    const pinned = new Map<string, string>();
+    for (const r of record.roots) {
+      const f = plan.files.get(r.root)!;
+      if (r.before.version_id || r.before.digest === null || !isStored(f.object)) continue;
+      const v = await versionOf(f.object, options.fetch, true);
+      if (v) pinned.set(r.root, v);
+    }
     const order = [...record.roots].sort((a, b) => gained(plan, b.root) - gained(plan, a.root) || (a.root < b.root ? -1 : 1));
     for (const r of order) {
       const f = plan.files.get(r.root)!;
-      const lockArgs = f.object.backend === "s3" ? ["-lock=false"] : [];
+      // A state whose lock keeps the binary out (azurerm's lease) is written under it; the binary writes the others with the lock held for it.
+      const write = locks.find((l) => l.object === f.object)?.store.write;
+      if (write) {
+        try {
+          await write(readFileSync(f.path, "utf-8"));
+        } catch (e) {
+          return { ...record, status: "failed", error: `the write of ${r.root}'s state failed: ${(e as Error).message}` };
+        }
+        log(`${r.root}: wrote its new state`);
+        continue;
+      }
+      const lockArgs = isStored(f.object) ? ["-lock=false"] : [];
       const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
       const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
       if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
@@ -928,9 +958,10 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
     for (const [i, r] of record.roots.entries()) {
       const f = plan.files.get(r.root)!;
       const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
-      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `${i}-verify`, f.object.backend !== "s3");
-      const v = await versionOf(f.object, options.fetch);
-      roots.push({ ...r, after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify });
+      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `${i}-verify`, !isStored(f.object));
+      const v = await versionOf(f.object, options.fetch, true);
+      const was = pinned.get(r.root);
+      roots.push({ ...r, ...(was ? { before: { ...r.before, version_id: was } } : {}), after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify });
       log(`${r.root}: ${verify.changes.length === 0 ? "no changes against its backend" : `${verify.changes.length} changes against its backend: ${verify.changes.join(", ")}`}`);
     }
     const changed = roots.filter((r) => r.verify!.changes.length > 0).map((r) => r.root);
@@ -946,9 +977,19 @@ function gained(plan: PlannedMigration, root: string): number {
   return f.state.resources.length - f.beforeCount;
 }
 
+/** Where a backend move reads the state, as its configuration names it. */
+function fromWhere(f: BackendMove["from"]): string {
+  const c = f.config;
+  const s = (k: string): string | undefined => (typeof c[k] === "string" ? (c[k] as string) : undefined);
+  if (f.backend === "s3" && s("bucket")) return ` s3://${s("bucket")}/${s("key")}`;
+  if (f.backend === "gcs" && s("bucket")) return ` gs://${s("bucket")}/${s("prefix") ?? ""}`;
+  if (f.backend === "azurerm" && s("storage_account_name")) return ` az://${s("storage_account_name")}/${s("container_name")}/${s("key")}`;
+  return "";
+}
+
 /** What a migration does, in one line. */
 export function describeChange(m: Migration): string {
-  if (m.kind === "backends") return `moving the state of ${m.backends.map((b) => `${b.root} from its ${b.from.backend} backend${typeof b.from.config.bucket === "string" ? ` s3://${b.from.config.bucket}/${String(b.from.config.key)}` : ""}`).join("; ")} to the backend its code names`;
+  if (m.kind === "backends") return `moving the state of ${m.backends.map((b) => `${b.root} from its ${b.from.backend} backend${fromWhere(b.from)}`).join("; ")} to the backend its code names`;
   if (m.kind === "revert") return `putting back the states ${m.revert} wrote: ${m.restores.map((r) => `${r.root} to ${r.version_id ?? "no state"}`).join(", ")}`;
   return `moving ${m.moves.map((x) => `${x.addresses.join(", ")} from ${x.from} to ${x.to}`).join("; ")}`;
 }
@@ -983,7 +1024,7 @@ export function revertMigration(name: string, done: string): { name: string; tex
   const problems: string[] = [];
   const restores = roots.map((r) => {
     const root = String(r.root);
-    if (typeof r.location !== "string" || !r.location.startsWith("s3://")) problems.push(`${root}: its backend keeps no versions, so there is no earlier state to put back`);
+    if (typeof r.location !== "string" || !/^(s3|gs|az):\/\//.test(r.location)) problems.push(`${root}: its backend keeps no versions, so there is no earlier state to put back`);
     if (r.before === null && r.before_digest !== null) problems.push(`${root}: its bucket kept no version before ${name} wrote, so there is no earlier state to put back`);
     if (typeof r.after !== "string") problems.push(`${root}: ${name} recorded no version after its write, so a later change could not be told apart`);
     return { root, location: String(r.location), version_id: typeof r.before === "string" ? r.before : null, from_version_id: typeof r.after === "string" ? r.after : null };
