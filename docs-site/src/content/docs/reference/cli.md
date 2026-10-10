@@ -12,7 +12,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | Command | Does |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
-| `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml` or a Terrateam config, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
+| `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml`, a Terrateam config or a Terragrunt Scale `.gruntwork`, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
