@@ -51,11 +51,6 @@ export function detectAtmos(repo: string): string | undefined {
   return existsSync(join(repo, ATMOS_MARKER)) ? ATMOS_MARKER : undefined;
 }
 
-/** The synth a repo's jobs run: its own `synth`, else the Atmos write in an Atmos repo. */
-export function effectiveSynth(repo: string, synth: string | undefined): string | undefined {
-  return synth ?? (detectAtmos(repo) ? ATMOS_WRITE : undefined);
-}
-
 /** One deployed instance of a Terraform component in a stack. */
 export interface AtmosInstance {
   /** `<stack>/<component>`: the root's name, and where it is written. */

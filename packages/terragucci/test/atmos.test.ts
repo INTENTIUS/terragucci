@@ -13,7 +13,6 @@ import {
   atmosInstances,
   atmosWrite,
   detectAtmos,
-  effectiveSynth,
   generatedFiles,
   instanceWaves,
   rewriteSources,
@@ -33,7 +32,8 @@ import { checkScript } from "../src/render";
 import { stateAccess } from "../src/roles";
 import { runStage } from "../src/report/stage";
 import { synthAffected } from "../src/synth";
-import { validateConfig } from "../src/config";
+import { resolveRepo, validateConfig } from "../src/config";
+import { detectShape } from "../src/shape";
 import { workspaceEnv, workspaceInit, WORKSPACE_FILE } from "../src/backend";
 import { applyWave } from "../src/apply";
 import { ROOTS_NOT_ATMOS } from "../src/config";
@@ -90,13 +90,12 @@ const COMPONENTS = {
 };
 
 describe("detectAtmos", () => {
-  it("finds atmos.yaml at the root, and the Atmos write is the synth unless terragucci.yml names one", () => {
+  it("finds atmos.yaml at the root, and the Atmos write is what every job runs first", () => {
     const repo = write(tmp(), { "atmos.yaml": "base_path: .\n" });
     expect(detectAtmos(repo)).toBe("atmos.yaml");
     expect(detectAtmos(tmp())).toBeUndefined();
-    expect(effectiveSynth(repo, undefined)).toBe(ATMOS_WRITE);
-    expect(effectiveSynth(repo, "make roots")).toBe("make roots");
-    expect(effectiveSynth(tmp(), undefined)).toBeUndefined();
+    expect(detectShape(repo, resolveRepo({})).prepare).toBe(ATMOS_WRITE);
+    expect(detectShape(tmp(), resolveRepo({})).prepare).toBeUndefined();
   });
 });
 

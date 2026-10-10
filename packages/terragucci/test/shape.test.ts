@@ -1,14 +1,23 @@
 // The repo's shape: one detector, one refusal table read by config check and
 // init alike, and the per-shape answers the commands take from it.
-import { chmodSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { atmosInstances, writeInstances } from "../src/atmos";
 import { main } from "../src/cli";
 import { resolveRepo } from "../src/config";
+import { copyBinary } from "../src/ephemeral";
+import { exportState } from "../src/export";
 import { init } from "../src/init";
-import { ATMOS_DRIFT_PR, ATMOS_GENERATE, ATMOS_ROLLOUTS, OIDC_ROLES_NOT_TERRAGRUNT, SYNTH_DRIFT_PR } from "../src/refusals";
+import { plan } from "../src/plan";
+import { ATMOS_DRIFT_PR, ATMOS_EPHEMERAL, ATMOS_GENERATE, ATMOS_ROLLOUTS, OIDC_ROLES_NOT_TERRAGRUNT, SYNTH_DRIFT_PR } from "../src/refusals";
+import { renderPipeline } from "../src/render";
+import { respond } from "../src/respond";
+import { rollout } from "../src/rollout";
 import { detectShape } from "../src/shape";
-import { tmp, write } from "./helpers";
+import { unlockState } from "../src/unlock";
+import { bareFrom, tmp, write } from "./helpers";
 
 type Obj = Record<string, unknown>;
 
@@ -145,5 +154,107 @@ describe("init in an Atmos repo with no binary named", () => {
     const r = await init(repo, { atmos: stubAtmos(), dryRun: true });
     expect(r.roots).toEqual(["dev/app", "dev/vpc", "prod/app", "prod/vpc"]);
     expect(r.binary).toEqual({ value: "tofu", reason: ".tofu files" });
+  });
+});
+
+/** An Atmos repo with its instances written, as every job's atmos write leaves it. */
+function writtenAtmos(yml = "forge: forgejo\nbinary: tofu\nurl: https://forge.test/acme/infra\n"): string {
+  const repo = write(tmp(), { ...ATMOS_REPO, "terragucci.yml": yml });
+  writeInstances(repo, atmosInstances(twoStacks()));
+  return repo;
+}
+
+/** The backend init records in a data dir, as the binary writes it: s3, with Atmos's workspace_key_prefix. */
+const initialised = (dataDir: string): void => {
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, "terraform.tfstate"), JSON.stringify({ backend: { type: "s3", config: { bucket: "state", key: "terraform.tfstate", region: "us-east-1", workspace_key_prefix: "vpc", use_lockfile: true, endpoints: { s3: "http://s3.test" } } } }));
+};
+
+const S3_ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
+const missing = async () => ({ ok: false, status: 404, text: async () => "", headers: { get: () => null } });
+
+describe("an Atmos instance runs in its own workspace outside the plan and apply jobs", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("terragucci plan inits in default, selects the instance's workspace, and plans in it", async () => {
+    const repo = writtenAtmos();
+    const bin = tmp("fake-tofu-");
+    const log = join(bin, "calls.log");
+    writeFileSync(join(bin, "tofu"), `#!/bin/sh\necho "\${TF_WORKSPACE:-unset} $*" >> ${JSON.stringify(log)}\n[ "$2" = plan ] && echo "No changes."\nexit 0\n`);
+    chmodSync(join(bin, "tofu"), 0o755);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    vi.stubEnv("TERRAGUCCI_ATMOS", stubAtmos());
+    const results = await plan(repo, { root: "dev/vpc" }, () => {});
+    expect(results).toEqual([{ root: "dev/vpc", ok: true, summary: "No changes." }]);
+    const calls = readFileSync(log, "utf-8").trim().split("\n").map((l) => l.replace(repo, "<repo>"));
+    expect(calls).toEqual(["default -chdir=<repo>/dev/vpc init -input=false -no-color", "unset -chdir=<repo>/dev/vpc workspace select -or-create=true dev", "dev -chdir=<repo>/dev/vpc plan -input=false -no-color"]);
+  });
+
+  it("unlock-state looks for the lock of the instance's workspace, not default's", async () => {
+    const repo = writtenAtmos();
+    const envs: (string | undefined)[] = [];
+    const exec = (_b: string, _a: string[], dir: string, env: NodeJS.ProcessEnv) => {
+      envs.push(env.TF_WORKSPACE);
+      initialised(join(dir, ".terraform"));
+      return { status: 0, out: "" };
+    };
+    const r = await unlockState(repo, "dev/vpc", { env: S3_ENV, exec, s3Fetch: missing, log: () => {} });
+    expect(envs).toEqual(["default"]);
+    expect(r.location).toBe("s3://state/vpc/dev/terraform.tfstate.tflock");
+  });
+
+  it("state export reads the instance's workspace's state", async () => {
+    const repo = writtenAtmos();
+    const exec = async (_b: string, _a: string[], _dir: string, env: NodeJS.ProcessEnv) => {
+      initialised(env.TF_DATA_DIR!);
+      return { code: 0, stdout: "", out: "" };
+    };
+    await expect(exportState(repo, { root: "prod/vpc", env: S3_ENV, exec, fetch: missing, actor: "dana", log: () => {} })).rejects.toThrow("state export: s3://state/vpc/prod/terraform.tfstate holds no state");
+  });
+});
+
+describe("Atmos respond paths edit the component, or are refused", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const checkout = (): string => {
+    const bare = bareFrom(write(tmp(), { ...ATMOS_REPO, "terragucci.yml": "forge: forgejo\nbinary: tofu\nurl: https://forge.test/acme/infra\ntoken_env: FORGE_TOKEN\n" }));
+    const repo = tmp();
+    execFileSync("git", ["clone", "-q", bare, "."], { cwd: repo });
+    writeInstances(repo, atmosInstances(twoStacks()));
+    return repo;
+  };
+
+  it("tips propose lock files for the components git holds, never for the written instances", async () => {
+    const repo = checkout();
+    vi.stubEnv("TERRAGUCCI_ATMOS", stubAtmos());
+    const r = await respond("tips", repo, { binary: "tofu" });
+    const locks = r.proposals?.find((p) => p.branch === "terragucci/tip/lock-files");
+    expect(locks?.title).toBe("Add .terraform.lock.hcl for 2 root(s)");
+    expect(r.text).not.toMatch(/dev\/vpc|prod\/app/);
+  });
+
+  it("the drift pull request and a rollout are refused in Atmos's words", async () => {
+    const repo = checkout();
+    await expect(respond("drift", repo, { binary: "tofu" })).rejects.toThrow(`respond drift: ${ATMOS_DRIFT_PR}`);
+    await expect(rollout(repo, { kind: "provider", name: "hashicorp/aws", to: "5.0.0" })).rejects.toThrow(`terragucci rollout: ${ATMOS_ROLLOUTS}`);
+    expect(existsSync(join(repo, "dev/vpc/main.tf"))).toBe(true);
+  });
+
+  it("ephemeral is refused in an Atmos repo, at config check, rather than copied into the default workspace", async () => {
+    const repo = write(tmp(), { ...ATMOS_REPO, "terragucci.yml": 'forge: forgejo\nbinary: tofu\nephemeral:\n  roots: ["dev/*"]\n' });
+    expect((await configCheck(repo)).problems).toEqual([`config.ephemeral: ${ATMOS_EPHEMERAL}`]);
+  });
+});
+
+describe("ephemeral in a Terragrunt repo runs the binary the other jobs run", () => {
+  it("defaults to the detected binary, not tofu, and the jobs pass --binary", () => {
+    const repo = write(tmp(), { ...TG_REPO, ".terraform-version": "1.13.1\n" });
+    expect(copyBinary(repo, resolveRepo({ ephemeral: { roots: ["live/*"] } }))).toBe("terraform");
+    for (const forge of ["github", "gitlab"] as const) {
+      const rendered = renderPipeline({ forge, binary: "terraform", version: "1.13.1", image: "img:1", layers: [["live/vpc"]], env: {}, ephemeral: { sweep: 15 } } as never);
+      const all = [rendered.content, ...(rendered.extra ?? []).map((f) => f.content)].join("\n");
+      const calls = all.split("\n").filter((l) => /terragucci ephemeral (up|down|sweep)/.test(l));
+      expect(calls.length, forge).toBeGreaterThan(0);
+      for (const c of calls) expect(c, forge).toContain("--binary terraform");
+    }
   });
 });

@@ -57,7 +57,8 @@ import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, t
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
-import { ConfigError, findConfig, type Approval } from "./config";
+import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
+import { detectShape, type RootInit } from "./shape";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
@@ -564,6 +565,8 @@ function backendRefusal(root: string, o: StateObject): string | undefined {
 export interface Place {
   dir: string;
   env: NodeJS.ProcessEnv;
+  /** How a root that names its workspace (an Atmos instance) is initialised: in default, then its own selected. */
+  init?: RootInit;
 }
 
 /**
@@ -599,10 +602,17 @@ export async function unitPlace(repo: string, unit: string, binary: string, env:
 /** Each root's place: a unit's as Terragrunt prepares it, a plain root's where it is. */
 async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv): Promise<Map<string, Place>> {
   const out = new Map<string, Place>();
+  const shape = detectShape(repo, resolveRepo({}));
   for (const root of roots) {
     // Each root with its own role, when `oidc.roles` names one (./roles.ts); a unit is prepared under it too.
     const renv = rootRoleEnv(env, root);
-    out.set(root, existsSync(join(repo, root, "terragrunt.hcl")) ? await unitPlace(repo, root, options.binary, renv, options.work, options.terragrunt) : { dir: join(repo, root), env: renv });
+    if (existsSync(join(repo, root, "terragrunt.hcl"))) {
+      out.set(root, await unitPlace(repo, root, options.binary, renv, options.work, options.terragrunt));
+      continue;
+    }
+    // A root that names its workspace (an Atmos instance) runs in it, so the migration moves that workspace's state.
+    const init = shape.rootInit(root, renv);
+    out.set(root, { dir: join(repo, root), env: shape.rootEnv(root, renv), ...(init ? { init } : {}) });
   }
   return out;
 }
@@ -631,9 +641,12 @@ async function versionOf(o: StateObject, fetchFn?: S3Fetch): Promise<string | un
 }
 
 /** Initialise a root against the backend its code names. `-reconfigure`: a data dir another backend left is not migrated from. */
-async function initRoot(exec: BinaryExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv): Promise<void> {
-  const init = await exec(binary, ["init", "-input=false", "-no-color", "-reconfigure"], dir, env);
+async function initRoot(exec: BinaryExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv, ws?: RootInit): Promise<void> {
+  const init = await exec(binary, ["init", "-input=false", "-no-color", "-reconfigure"], dir, ws?.init ?? env);
   if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${firstLine(init.out)}`);
+  if (!ws) return;
+  const sel = await exec(binary, ws.select, dir, ws.selectEnv);
+  if (sel.code !== 0) throw new ConfigError(`workspace select in ${root} failed: ${firstLine(sel.out)}`);
 }
 
 /** An HCL value from the JSON of a backend's configuration. */
@@ -712,8 +725,8 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   const objects = new Map<string, StateObject>();
   const versions = new Map<string, string | undefined>();
   for (const root of roots) {
-    const { dir, env: renv } = places.get(root)!;
-    await initRoot(exec, options.binary, root, dir, renv);
+    const { dir, env: renv, init: ws } = places.get(root)!;
+    await initRoot(exec, options.binary, root, dir, renv, ws);
     const o = stateObject(dir, renv);
     const why = backendRefusal(root, o);
     if (why) throw new ConfigError(`migration ${m.name} cannot run: ${why}`);
