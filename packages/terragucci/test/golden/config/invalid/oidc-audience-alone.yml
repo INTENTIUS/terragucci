@@ -1,0 +1,2 @@
+oidc:
+  audience: sts.amazonaws.com

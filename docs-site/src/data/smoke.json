@@ -148,12 +148,12 @@
     },
     {
       "claim": "drift",
-      "says": "with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan",
+      "says": "with binary: choudoufu and the roots under live resource markers, each root plans in full: the queue deleted outside choudoufu is named by root in the report and one drift issue, the change waiting on main shows as drift too, and a run with no drift closes it",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "33d0387f"
+      "commit": "263ec5ea"
     },
     {
       "claim": "rollout",
@@ -1137,6 +1137,14 @@
       "commit": "fd59fd2a"
     },
     {
+      "claim": "cdf-drift",
+      "says": "with binary: choudoufu a queue changed outside choudoufu on a root under live resource markers is drift: tf-drift plans the root in full, its report and one drift issue name the root and the attribute, and a run with no change closes the issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "263ec5ea"
+    },
+    {
       "claim": "cdf-rows-takeover",
       "says": "with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call",
       "needs": null,
@@ -1758,6 +1766,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "audit",
+      "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "audit",
+      "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
       "claim": "audit-override",
       "says": "the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it",
       "needs": null,
@@ -1790,8 +1816,52 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
       "claim": "estate-graph",
       "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate-graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate-graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "resource-history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1803,7 +1873,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "resource-history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "query-sql",
+      "says": "terragucci query, run on the reports bucket with no server, answers the SQS queues changed in the last 7 days with their approvers with the rows the audit trail holds",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c30cf05d"
     },
     {
       "claim": "state-versions",
@@ -1851,7 +1939,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "bbf48896"
+    },
+    {
+      "claim": "migrate-backend-tfe",
+      "says": "a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bbf48896"
     },
     {
       "claim": "migrate-revert",
