@@ -217,8 +217,8 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 | `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |
 | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
 | `TF_DATA_DIR`, `TF_WORKSPACE` |  | where a root's initialised backend is recorded and which workspace it runs in; a `tf-apply` wave reads both to find the state whose version it records |
-| `TG_LOCK_STALE` |  | seconds after which a Forgejo apply takes over a lock whose holder stopped renewing; 7200 by default |
-| `TG_LOCK_POLL` |  | seconds between a waiting Forgejo apply's checks of the lock; 10 by default |
+| `TG_LOCK_STALE` |  | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), seconds after which a wave takes over the resources another run holds, whatever its forge says of that run; 7200 by default |
+| `TG_LOCK_POLL` |  | with choudoufu, seconds between a waiting wave's checks of the resources another run holds; 10 by default |
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
