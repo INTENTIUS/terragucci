@@ -109,7 +109,7 @@ On every exit but a usage error, `stage tf-apply` writes its wave's outcome to t
 | Field | Holds |
 |---|---|
 | `schema` | `terragucci.outcome/v1`. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `status`, `exit` | `applied` (0), `waiting` (3), `refused` (4) or `failed` (1) |
+| `status`, `exit` | `applied` (0), `waiting` (3), `refused` (4; 5 when another run's apply holds a resource it changes; 6 when a newer push superseded it) or `failed` (1) |
 | `wave`, `roots` | the wave and its roots (units in a Terragrunt repo); `roots` is empty when the repo has no such wave |
 | `line` | the line the job's `terragucci/apply` status carries, when the wave wrote one (`TG_OUTCOME`) |
 | `set_digest` | the set digest over the roots that change: what an approval binds |

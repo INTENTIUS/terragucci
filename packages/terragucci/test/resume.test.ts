@@ -132,7 +132,10 @@ describe("apply.resume in the pipeline", () => {
     const w = doc(extra.content);
     expect(w.on).toEqual({ schedule: [{ cron: "*/10 * * * *" }], workflow_dispatch: {} });
     if (forge === "github") expect(w.jobs.resume.permissions.contents).toBe("write");
-    if (forge === "forgejo") expect(JSON.stringify(w.jobs.resume.steps)).toContain("terragucci-apply-lock");
+    // It applies beside any other run; a wave of it waits for what another run is applying.
+    expect(JSON.stringify(w.jobs.resume.steps)).not.toContain("terragucci-apply-lock");
+    expect(w.jobs.resume.concurrency).toBeUndefined();
+    expect(JSON.stringify(w.jobs.resume.steps)).not.toContain("--on-held refuse");
     expect(JSON.stringify(w.jobs.resume.steps)).toContain(`terragucci resume --forge ${forge} --out terragucci-resume.env`);
     // The pipeline itself is unchanged, and without apply.resume there is no resume workflow.
     expect(r.content).toBe(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"], ["b"]], env: {}, gate: "always" }).content);

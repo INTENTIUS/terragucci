@@ -358,9 +358,6 @@ jobs:
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')
-    concurrency:
-      group: terragucci-apply-${{ github.repository }}
-      cancel-in-progress: false
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
@@ -435,29 +432,6 @@ jobs:
           last=4
           [ "$TG_WAVE" = "-" ] || last="$TG_WAVE"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          lock_ref="refs/tags/terragucci-apply-lock"
-          empty="$(git mktree </dev/null)"
-          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
-          tries=0
-          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
-            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
-            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
-              lease="$(git log -1 --format=%s "$lock_ref")"
-              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
-              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
-                echo "the apply lock was held by run $holder, which is gone; taking it over"
-                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
-              fi
-            fi
-            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
-            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
-          done
-          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
-          terragucci comment-apply --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --forge forgejo --out terragucci-comment.json || exit 1
-          read -r again _ _ <<EOF
-          $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
-          EOF
-          [ -n "$again" ] || exit 0
           git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }
           tg status terragucci/apply pending "applying on a comment"
           outcome="$(mktemp)"
@@ -465,7 +439,7 @@ jobs:
           done_waves=""
           for wave in $(seq 1 "$last"); do
             : >"$outcome"
-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy 2>&1 | tee "$log"
+            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --on-held refuse 2>&1 | tee "$log"
             rc=${PIPESTATUS[0]}
             case "$rc" in
               0) done_waves="${done_waves:+$done_waves, }$wave" ;;
@@ -480,6 +454,10 @@ jobs:
                 terragucci respond wave-refused --wave "$wave" --approved terragucci-report/approved --current terragucci-report/current || true
                 tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"
                 exit 4 ;;
+              5)
+                tg status terragucci/apply failure "$(cat "$outcome")"
+                tg reply "wave $wave was not applied: another run is applying what it changes (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). Comment \`/terragucci apply\` again once that run is done. $run_url"
+                exit 5 ;;
               *)
                 tg status terragucci/apply failure "an apply failed"
                 terragucci respond apply-failed --log "$log" || true
@@ -507,9 +485,6 @@ jobs:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
     needs: check
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    concurrency:
-      group: terragucci-apply-${{ github.repository }}
-      cancel-in-progress: false
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -587,24 +562,6 @@ jobs:
           done
           # The base branch moved under these roots: plan notes that cover them are stale.
           tg stale "$moved" "${TG_BRANCH:-}"
-          lock_ref="refs/tags/terragucci-apply-lock"
-          empty="$(git mktree </dev/null)"
-          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
-          tries=0
-          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
-            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
-            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
-              lease="$(git log -1 --format=%s "$lock_ref")"
-              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
-              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
-                echo "the apply lock was held by run $holder, which is gone; taking it over"
-                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
-              fi
-            fi
-            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
-            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
-          done
-          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
@@ -614,12 +571,13 @@ jobs:
           tg status terragucci/apply pending "applying"
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
             3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
             4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 1 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
+            6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           echo "wave 1 of 4 applied"
@@ -636,9 +594,6 @@ jobs:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
     needs: apply-wave-1
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    concurrency:
-      group: terragucci-apply-${{ github.repository }}
-      cancel-in-progress: false
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -705,24 +660,6 @@ jobs:
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
           }' -- "$@"; }
-          lock_ref="refs/tags/terragucci-apply-lock"
-          empty="$(git mktree </dev/null)"
-          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
-          tries=0
-          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
-            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
-            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
-              lease="$(git log -1 --format=%s "$lock_ref")"
-              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
-              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
-                echo "the apply lock was held by run $holder, which is gone; taking it over"
-                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
-              fi
-            fi
-            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
-            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
-          done
-          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
@@ -731,12 +668,13 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
             3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
             4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 2 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
+            6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           echo "wave 2 of 4 applied"
@@ -753,9 +691,6 @@ jobs:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
     needs: apply-wave-2
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    concurrency:
-      group: terragucci-apply-${{ github.repository }}
-      cancel-in-progress: false
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -822,24 +757,6 @@ jobs:
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
           }' -- "$@"; }
-          lock_ref="refs/tags/terragucci-apply-lock"
-          empty="$(git mktree </dev/null)"
-          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
-          tries=0
-          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
-            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
-            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
-              lease="$(git log -1 --format=%s "$lock_ref")"
-              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
-              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
-                echo "the apply lock was held by run $holder, which is gone; taking it over"
-                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
-              fi
-            fi
-            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
-            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
-          done
-          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
@@ -848,12 +765,13 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
             3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
             4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 3 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
+            6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           echo "wave 3 of 4 applied"
@@ -870,9 +788,6 @@ jobs:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
     needs: apply-wave-3
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    concurrency:
-      group: terragucci-apply-${{ github.repository }}
-      cancel-in-progress: false
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -939,24 +854,6 @@ jobs:
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
           }' -- "$@"; }
-          lock_ref="refs/tags/terragucci-apply-lock"
-          empty="$(git mktree </dev/null)"
-          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
-          tries=0
-          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
-            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
-            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
-              lease="$(git log -1 --format=%s "$lock_ref")"
-              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
-              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
-                echo "the apply lock was held by run $holder, which is gone; taking it over"
-                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
-              fi
-            fi
-            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
-            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
-          done
-          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
@@ -965,12 +862,13 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
             3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
             4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 4 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
+            6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           tg status terragucci/apply success "15 roots in 2 groups applied"

@@ -72,10 +72,20 @@
  * since applies nothing and exits 4. The gate, its ledger record and the
  * applied record stay one per wave.
  *
+ * Applies are kept apart per root, by the backend's state lock, except with
+ * choudoufu, whose waves hold the resources their plans change (./apply-rows.ts)
+ * once the gate let them through and before they apply. A resource another
+ * run's apply holds makes a push's wave wait, then plan again once that run
+ * let go; with `--on-held refuse` (the apply a comment starts) the wave exits
+ * 5 naming that run. With `--stand-down` (a push's wave) a wave that finds a
+ * newer push on its branch, once it holds its resources, applies nothing and
+ * exits 6: the newer push applies the whole tree.
+ *
  * Exit codes: 0 applied (or nothing to apply; for a wave split across jobs,
  * decided and its shares may apply); 1 a root failed; 3 the wave waits for an
  * approval; 4 the wave's plans changed after approval, or a share's after its
- * wave decided.
+ * wave decided; 5 another run's apply holds a resource it changes; 6 a newer
+ * push superseded it.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -91,7 +101,7 @@ import {
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
-import { globMatch, remoteStateReads, rootDependencies, rootStates } from "./detect";
+import { estateOf, globMatch, remoteStateReads, rootDependencies, rootStates } from "./detect";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
@@ -125,6 +135,7 @@ import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
+import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
 import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
 
@@ -138,7 +149,9 @@ export const approveLine = (wave: number, digest: string, mode: Approval = "ledg
 /** The migration files in a repo's migrations/. */
 
 /** Exit codes of `stage tf-apply`. */
-export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
+export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4, held: 5, superseded: 6 } as const;
+/** runWave's answer when the run it waited for let go: the wave plans again (applyOneWave). Never an exit code. */
+const REPLAN = -1;
 
 /**
  * The waves a plain repo applies in: the canary roots first, then the rest,
@@ -699,6 +712,90 @@ async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, 
   return false;
 }
 
+/** The tip of the branch a push's wave applies, when a newer push moved it past the commit the wave runs. */
+function newerPush(repo: string, env: NodeJS.ProcessEnv): string | undefined {
+  const branch = env.GITHUB_REF_NAME || env.CI_COMMIT_BRANCH;
+  const sha = env.GITHUB_SHA || env.CI_COMMIT_SHA;
+  if (!branch || !sha) return undefined;
+  const r = git(repo, ["ls-remote", "origin", `refs/heads/${branch}`]);
+  const tip = r.status === 0 ? r.stdout.split(/\s/)[0]?.trim() : "";
+  return tip && tip !== sha ? tip : undefined;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Hold the resources a wave's plans change, once its gate let it through
+ * and before it applies (./apply-rows.ts), for the roots whose binary
+ * applies per resource. Returns how to let them go, or the wave's answer
+ * when it applies nothing: refused (5) when another run holds one and the
+ * wave refuses, REPLAN when the run it waited for let go, superseded (6)
+ * when a newer push is on the branch, failed after an hour's wait.
+ */
+async function holdRows(
+  repo: string,
+  options: ApplyWaveOptions,
+  label: string,
+  plans: { root: string; plan?: unknown; binary: string }[],
+  w: WaveRun,
+): Promise<{ code?: number; release: () => Promise<void> }> {
+  const env = options.env ?? process.env;
+  const free = { release: async () => {} };
+  const standDown = (release: () => Promise<void>): Promise<{ code: number; release: () => Promise<void> }> | undefined => {
+    const tip = options.standDown ? newerPush(repo, env) : undefined;
+    if (!tip) return undefined;
+    console.log(`${label}: a newer push to ${env.GITHUB_REF_NAME || env.CI_COMMIT_BRANCH} (${tip.slice(0, 8)}) applies everything; standing down`);
+    w.refused = { reason: "superseded", roots: w.changedRoots ?? [] };
+    writeOutcome(env, `superseded by a newer push`, w);
+    return release().then(() => ({ code: EXIT.superseded, release: free.release }));
+  };
+  // shape: only a binary that applies per resource holds rows; the others rely on the backend's state lock.
+  const rows = plans.filter((p) => p.plan && applyScope(p.binary) === "resource").flatMap((p) => planRows(p.root, estateOf(join(repo, p.root)).estate, p.plan));
+  if (rows.length === 0) return (await standDown(free.release)) ?? free;
+  // Outside a clone (no origin to hold them on) no other run can be told, so nothing is held.
+  if (git(repo, ["remote", "get-url", "origin"]).status !== 0) {
+    console.log(`${label}: this checkout has no origin, so nothing holds the resources it changes`);
+    return free;
+  }
+  const keys = [...new Set(rows.map((r) => r.key))];
+  const me = rowHolder(env);
+  const alive = options.liveness ?? forgeLiveness(env);
+  const poll = (Number(env.TG_LOCK_POLL) > 0 ? Number(env.TG_LOCK_POLL) : 10) * 1000;
+  let waited = false;
+  for (let tries = 0; ; tries++) {
+    const r = await takeRows(repo, rows, me, alive);
+    if (r.ok) {
+      for (const h of r.tookOver) console.log(`${label}: run ${h.run} held resources and is gone; this wave takes them over, and each apply re-reads what that run left`);
+      const n = new Set(rows.map((x) => `${x.root} ${x.address}`)).size;
+      console.log(`${label}: holding ${n === 1 ? "the resource" : `the ${n} resources`} its plans change, as run ${me.run}`);
+      const release = async () => {
+        if (await releaseRows(repo, keys, me.run)) console.log(`${label}: let go of the resources it held`);
+        else console.log(`${label}: could not let go of the resources it held; the next apply takes them over once this run is gone`);
+      };
+      return (await standDown(release)) ?? { release };
+    }
+    const line = describeHeld(r.held, rows);
+    if (options.onHeld === "refuse") {
+      console.log(`${label}: ${line}, so nothing in it was applied; apply again once that run is done`);
+      const holder = r.held[0]!.holder;
+      w.refused = { reason: "held", roots: [...new Set(r.held.map((h) => rows.find((x) => x.key === h.key)?.root ?? ""))].filter(Boolean).sort(), holder: { run: holder.run, ...(holder.url ? { url: holder.url } : {}) } };
+      writeOutcome(env, `held: ${line}`, w);
+      return { code: EXIT.held, release: free.release };
+    }
+    if (!waited) console.log(`${label}: ${line}; waiting for it`);
+    waited = true;
+    if (tries >= 360) {
+      console.log(`${label}: another run has held resources this wave changes for an hour (${line}), so nothing in it was applied`);
+      writeOutcome(env, `held for an hour: ${line}`, w);
+      return { code: EXIT.failed, release: free.release };
+    }
+    await sleep(poll);
+    // A run that let go may have changed what these plans were made against: plan again. One that is gone is taken over on the next try.
+    const now = await heldBy(readRows(repo), keys, me.run, alive);
+    if (now.live.length === 0 && now.gone.length === 0) return { code: REPLAN, release: free.release };
+  }
+}
+
 export interface ApplyWaveOptions {
   wave: number;
   layers: string[][];
@@ -742,6 +839,14 @@ export interface ApplyWaveOptions {
   branch?: string;
   /** Set by `apply.branches`: the roots (units) the pipeline lists that another branch applies, which this push leaves alone. */
   elsewhere?: string[];
+  /** What a wave does when another run's apply holds a resource it changes: wait for it (a push's wave, the default) or refuse at once (the apply a comment starts). */
+  onHeld?: "wait" | "refuse";
+  /** A push's wave: once it holds its resources, it stands down if a newer push is on its branch. */
+  standDown?: boolean;
+  /** Whether a run that holds resources is gone. Default: ask the forge (forgeLiveness). */
+  liveness?: Liveness;
+  /** Set when the wave plans again after the run it waited for let go: migrations ran the first time. */
+  replanned?: boolean;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
@@ -772,10 +877,17 @@ async function applyOneWave(repo: string, options: ApplyWaveOptions): Promise<{ 
   // How the wave ended, for its stage span and the waves dashboard's gauges.
   const facts: WaveFacts = {};
   observer.wave = { number: options.wave, facts };
-  const wave: WaveRun = { observer };
+  let wave: WaveRun = { observer };
   let code: number | undefined;
   try {
     code = await runWave(repo, options, work, wave, facts);
+    // The run this wave waited for let go: what it applied may be what these plans were made against, so the wave plans again.
+    while (code === REPLAN) {
+      console.log(`wave ${options.wave}: the run it waited for let go; planning again`);
+      wave = { observer };
+      for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k];
+      code = await runWave(repo, { ...options, replanned: true }, work, wave, facts);
+    }
     observer.wave.code = code;
     return { code, ...(wave.count !== undefined ? { count: wave.count } : {}) };
   } finally {
@@ -880,7 +992,7 @@ export function waveSpans(w: Pick<WaveRun, "started" | "plannedAt" | "gateSince"
 export function waveState(code: number, w: Pick<WaveRun, "decided" | "refused">): WaveState {
   if (code === EXIT.applied) return w.decided ? "applying" : "applied";
   if (code === EXIT.waiting) return "waiting";
-  if (code === EXIT.refused || w.refused?.reason === "policy") return "refused";
+  if (code === EXIT.refused || code === EXIT.held || code === EXIT.superseded || w.refused?.reason === "policy") return "refused";
   return "failed";
 }
 
@@ -1061,7 +1173,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     throw new ConfigError("--share must be a share number from 1 to --shares");
   }
   // A state migration in the change runs before the first wave plans, behind its own gate (./migrate.ts); a share of a split wave leaves that to the wave's job.
-  if (wave === 1 && options.share === undefined) {
+  if (wave === 1 && options.share === undefined && !options.replanned) {
     const held = await migrationsFirst(repo, options, w);
     if (held !== undefined) return held;
   }
@@ -1170,14 +1282,20 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     return EXIT.applied;
   }
 
+  const hold = await holdRows(repo, options, label, planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary })), w);
+  if (hold.code !== undefined) return hold.code;
   w.applyStarted = new Date().toISOString();
   if (changes > 0) await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), digest });
   // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
   const ok: boolean[] = new Array(planned.length);
-  await eachLimited(planned, limit.value, async (p, i) => {
-    ok[i] = await applyRoot(repo, p, w.observer, ws);
-  });
+  try {
+    await eachLimited(planned, limit.value, async (p, i) => {
+      ok[i] = await applyRoot(repo, p, w.observer, ws);
+    });
+  } finally {
+    await hold.release();
+  }
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
   if (ok.includes(false)) {
@@ -1356,11 +1474,17 @@ async function runShare(
     writeOutcome(options.env, `wave ${wave} share ${share} changed since the wave decided: ${moved.join(", ")}`, w);
     return EXIT.refused;
   }
+  const hold = await holdRows(repo, options, label, planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary })), w);
+  if (hold.code !== undefined) return hold.code;
   w.applyStarted = new Date().toISOString();
   const ok: boolean[] = new Array(planned.length);
-  await eachLimited(planned, limit.value, async (p, i) => {
-    ok[i] = await applyRoot(repo, p, w.observer, ws);
-  });
+  try {
+    await eachLimited(planned, limit.value, async (p, i) => {
+      ok[i] = await applyRoot(repo, p, w.observer, ws);
+    });
+  } finally {
+    await hold.release();
+  }
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
   if (ok.includes(false)) {
@@ -2095,9 +2219,11 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
       return EXIT.failed;
     }
     // The saved plans, and nothing planned anew.
+    const hold = await holdRows(repo, options, label, changing.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary })), w);
+    if (hold.code !== undefined) return hold.code;
     w.applyStarted = new Date().toISOString();
     await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
-    const applied = await applyWaveGroups(groups, changing.map((p) => p.root), { dir: repo, exec });
+    const applied = await applyWaveGroups(groups, changing.map((p) => p.root), { dir: repo, exec }).finally(() => hold.release());
     console.log(applied.log.trim());
     const bad = applied.results.filter((r) => r.status !== "succeeded");
     // A unit with no change had nothing to apply; a changing one applied when Terragrunt says it succeeded.
@@ -2279,7 +2405,7 @@ export type OutcomeStatus = "applied" | "waiting" | "refused" | "failed";
 export interface WaveOutcome {
   schema: typeof OUTCOME_SCHEMA;
   status: OutcomeStatus;
-  /** The stage's exit code: 0, 3, 4 or 1. */
+  /** The stage's exit code: 0, 3, 4, 5, 6 or 1. */
   exit: number;
   wave: number;
   /** The wave's roots (units, in a Terragrunt repo). Empty when the repo has no such wave. */
@@ -2308,7 +2434,7 @@ export interface WaveOutcome {
 
 /** The wave's outcome as `terragucci.outcome/v1`. */
 export function waveOutcome(wave: number, code: number, w: WaveRun): WaveOutcome {
-  const status: OutcomeStatus = code === EXIT.applied ? "applied" : code === EXIT.waiting ? "waiting" : code === EXIT.refused ? "refused" : "failed";
+  const status: OutcomeStatus = code === EXIT.applied ? "applied" : code === EXIT.waiting ? "waiting" : code === EXIT.refused || code === EXIT.held || code === EXIT.superseded ? "refused" : "failed";
   const denied = w.refused && (w.refused.reason === "policy" || w.refused.reason === "override") ? w.refused.roots : [];
   const failed = [...new Set([...(w.planned ?? []).filter((p) => p.error && !denied.includes(p.root)).map((p) => p.root), ...(w.failed ?? [])])].sort();
   return {
