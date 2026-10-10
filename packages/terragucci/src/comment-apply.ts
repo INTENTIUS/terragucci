@@ -95,6 +95,8 @@ export interface ApplyCommentOptions {
   terragrunt?: boolean;
   /** `waves.after` of plain roots: a root it puts after a reached root is reached too. */
   after?: WavesAfter;
+  /** A repo whose roots a command writes (`synth`, CDK Terrain's stacks): the locks are on every root a change can reach (reachedSynthesized). */
+  synth?: boolean;
   /** The decision made again once the apply lock is held (Forgejo): it does not repeat the note on a lock of every unit. */
   again?: boolean;
 }
@@ -331,10 +333,27 @@ export function reachedInstances(repo: string, git: Git, from: string, to: strin
   return { units: [...selected].sort(), kind: "instance" };
 }
 
+/**
+ * The roots a change from `from` to `to` reaches in a repo whose roots a
+ * command writes (`synth`, CDK Terrain's stacks). The roots are not in git,
+ * so no diff names them, and the command is the pull request's own code,
+ * which no lock runs before a review. So any changed file that is not
+ * Markdown can change any root: it reaches every root, and `every` says why.
+ */
+export function reachedSynthesized(git: Git, from: string, to: string, layers: string[][]): Reach {
+  const all = [...new Set(layers.flat())].sort();
+  const diff = git(["diff", "--name-only", "--no-renames", `${from}...${to}`]);
+  if (diff.status !== 0) return { units: all, every: "git could not list the files it changes", kind: "root" };
+  const file = diff.stdout.split("\n").map((l) => l.trim()).find((f) => f && !READS_NOTHING.test(f));
+  if (file === undefined) return { units: [], kind: "root" };
+  return { units: all, every: `it changes \`${file}\`, and the synth command writes every root from the repo's files`, kind: "root" };
+}
+
 /** The roots, units or instances a change reaches, by the repo's shape. */
-export function reached(repo: string, git: Git, from: string, to: string, layers: string[][], o: { terragrunt?: boolean; after?: WavesAfter } = {}): Reach {
+export function reached(repo: string, git: Git, from: string, to: string, layers: string[][], o: { terragrunt?: boolean; after?: WavesAfter; synth?: boolean } = {}): Reach {
   if (o.terragrunt) return { ...reachedUnits(git, from, to, layers), kind: "unit" };
   if (detectAtmos(repo)) return reachedInstances(repo, git, from, to, layers, o.after);
+  if (o.synth) return reachedSynthesized(git, from, to, layers);
   return { units: reachedRoots(repo, git, from, to, layers, o.after), kind: "root" };
 }
 
@@ -479,7 +498,7 @@ async function openHead(i: OpenInput): Promise<OpenHead | ApplyCommentDecision> 
  */
 async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[]; every?: string; kind: Reach["kind"] } | ApplyCommentDecision> {
   const repo = i.repo ?? process.cwd();
-  const reach = reached(repo, i.git, h.remote, h.sha, i.layers, { ...(i.terragrunt ? { terragrunt: true } : {}), ...(i.after ? { after: i.after } : {}) });
+  const reach = reached(repo, i.git, h.remote, h.sha, i.layers, { ...(i.terragrunt ? { terragrunt: true } : {}), ...(i.after ? { after: i.after } : {}), ...(i.synth ? { synth: true } : {}) });
   const roots = reach.units;
   let locked;
   try {
@@ -616,7 +635,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
       }
       return stop(`pull request ${number} moved since this event; its next run locks the new head`);
     }
-    const reach = reached(repoDir, git, remote, sha, o.layers, { ...(o.terragrunt ? { terragrunt: true } : {}), ...(o.after ? { after: o.after } : {}) });
+    const reach = reached(repoDir, git, remote, sha, o.layers, { ...(o.terragrunt ? { terragrunt: true } : {}), ...(o.after ? { after: o.after } : {}), ...(o.synth ? { synth: true } : {}) });
     const author = typeof pr?.user?.login === "string" && LOGIN.test(pr.user.login) ? pr.user.login : "its author";
     let locked;
     try {

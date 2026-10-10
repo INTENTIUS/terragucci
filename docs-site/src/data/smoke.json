@@ -503,7 +503,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ff7d397e"
+      "commit": "9d37d383"
     },
     {
       "claim": "comment-atlantis",
@@ -789,7 +789,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "9d37d383"
     },
     {
       "claim": "pr-apply-lock",
@@ -926,7 +926,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1813d451"
+      "commit": "9d37d383"
     },
     {
       "claim": "terramate-sharing",
@@ -1097,6 +1097,14 @@
       "commit": "fd59fd2a"
     },
     {
+      "claim": "cdf-concurrency-time",
+      "says": "with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a86647ee"
+    },
+    {
       "claim": "cdf-write-race",
       "says": "with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
       "needs": null,
@@ -1135,6 +1143,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "1d6ba08a"
+    },
+    {
+      "claim": "apply-stand-down",
+      "says": "a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "cdf-rows-overlap",
@@ -1240,7 +1256,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bf5dd40e"
+      "commit": "9d37d383"
     },
     {
       "claim": "plan-lock-release",
@@ -2176,6 +2192,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "cdktn-pr-apply-lock",
+      "says": "with synth and apply.when: pull-request, a pull request applied on a comment locks every CDK Terrain stack, since its change to the app can reach any, and a second pull request that changes a stack is refused with the stack and the holder named, its state left as the first applied it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "cdktn-tips",
