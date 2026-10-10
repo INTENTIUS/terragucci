@@ -12,7 +12,7 @@
   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
@@ -126,7 +126,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
@@ -205,11 +205,16 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
   return { cmd, flags, args };
+}
+
+function onHeldFlag(v: string): "wait" | "refuse" {
+  if (v !== "wait" && v !== "refuse") throw new ConfigError("--on-held must be wait or refuse");
+  return v;
 }
 
 function str(flags: Record<string, string | true>, k: string): string | undefined {
@@ -362,6 +367,8 @@ export async function main(argv: string[]): Promise<number> {
             ...(str(flags, "decided") ? { decided: str(flags, "decided") } : {}),
             ...(str(flags, "branches") ? { branches: parseBranches(str(flags, "branches")!) } : {}),
             ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
+            ...(str(flags, "on-held") ? { onHeld: onHeldFlag(str(flags, "on-held")!) } : {}),
+            ...(flags["stand-down"] === true ? { standDown: true } : {}),
           });
         }
         const result = await runStage(args[0] ?? "", cwd, {

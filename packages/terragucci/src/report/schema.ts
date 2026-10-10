@@ -527,13 +527,19 @@ export interface ReportWaveCost {
  * through.
  */
 export interface ReportRefusal {
-  reason: "approval" | "review" | "override" | "policy";
+  /**
+   * `held` (minor 30): another run's apply held a resource the wave changes, and the wave refuses rather than waits (the apply a comment starts).
+   * `superseded` (minor 30): a push's wave found a newer push on its branch once it held its resources, and stood down for it.
+   */
+  reason: "approval" | "review" | "override" | "policy" | "held" | "superseded";
   /** The digest the approval, review or override was for. */
   approved?: string;
   /** Who wrote it, as the ledger or the review names them. */
   by?: string;
-  /** The roots that planned differently since (every changing root, for a review), or the roots the policy denied. */
+  /** The roots that planned differently since (every changing root, for a review), or the roots the policy denied, or those whose resources another run held. */
   roots: string[];
+  /** With `held`, the run that held them, and its page (minor 30). */
+  holder?: { run: string; url?: string };
 }
 
 export type NamedAction = "delete" | "replace" | "refused" | "forget" | "import";

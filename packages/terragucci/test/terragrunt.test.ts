@@ -364,10 +364,10 @@ describe("init in a Terragrunt repo", () => {
     expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "apply-wave-3", "apply-wave-4"]);
     const applyRun = (job: string): string => doc.jobs[job].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
     const apply = applyRun("apply-wave-1");
-    expect(apply).toContain(`terragucci stage tf-apply --wave 1 --layers ${layers} --binary tofu --gate on-destroy --terragrunt 2>&1`);
+    expect(apply).toContain(`terragucci stage tf-apply --wave 1 --layers ${layers} --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1`);
     expect(apply).not.toContain("--rest");
     // The last job also runs any wave past the ones init found.
-    expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destroy --terragrunt --rest`);
+    expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destroy --stand-down --terragrunt --rest`);
     expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
     // approval: ledger is the default, so no gate is declared for a seal.

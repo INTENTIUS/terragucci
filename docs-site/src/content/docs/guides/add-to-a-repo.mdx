@@ -33,9 +33,9 @@ A plan note and a `terragucci/plan` status on every pull request or merge reques
 | Cloud roles over OIDC | GitHub's identity token | `id_tokens` | Forgejo 15 and Runner 12.5 or later |
 | Require | `terragucci/plan` in branch protection | "Pipelines must succeed" | `terragucci/plan` in branch protection |
 | Report | `terragucci-report` artifact of the run the note links | a job artifact the note links, plus the merge-request widget | `terragucci-report` artifact of the run the note links |
-| Applies wait in | a concurrency group | a resource group | a named group and a lock |
+| Two pushes' applies | side by side | side by side | side by side, each push to the default branch in a group of its own commit |
 
-Self-managed GitLab works the same. See [one apply at a time](/terragucci/reference/pipeline/#one-apply-at-a-time) for the queue.
+Self-managed GitLab works the same. See [applies side by side](/terragucci/reference/pipeline/#applies-side-by-side).
 
 ## Agent features
 

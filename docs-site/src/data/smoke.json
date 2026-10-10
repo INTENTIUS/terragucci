@@ -297,78 +297,6 @@
       "commit": "02e7f08"
     },
     {
-      "claim": "gl-comments",
-      "says": "the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-comment-plan",
-      "says": "a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-protected-token",
-      "says": "with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-mr-apply",
-      "says": "with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-pr-review",
-      "says": "with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-wave-jobs",
-      "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-comment-agent",
-      "says": "a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
-      "claim": "gl-review-agent",
-      "says": "the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "abe26e67"
-    },
-    {
       "claim": "traces",
       "says": "each plan run is one trace, with a span per root and the binary spans inside it",
       "needs": null,
@@ -1108,6 +1036,38 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "apply-per-root",
+      "says": "a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d6ba08a"
+    },
+    {
+      "claim": "cdf-rows-overlap",
+      "says": "with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d6ba08a"
+    },
+    {
+      "claim": "cdf-rows-wait",
+      "says": "with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d6ba08a"
+    },
+    {
+      "claim": "cdf-rows-takeover",
+      "says": "with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2178b8af"
     },
     {
       "claim": "resume-approve",
@@ -2436,6 +2396,78 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "02e7f08"
+    },
+    {
+      "claim": "gl-comments",
+      "says": "the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-comment-plan",
+      "says": "a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-protected-token",
+      "says": "with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-mr-apply",
+      "says": "with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-pr-review",
+      "says": "with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-wave-jobs",
+      "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-comment-agent",
+      "says": "a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-review-agent",
+      "says": "the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
     }
   ]
 }

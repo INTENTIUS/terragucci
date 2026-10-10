@@ -164,7 +164,8 @@ On a merged pull request, `/terragucci apply` re-runs `tf-apply` for the waves a
 |---|---|
 | Workflow | `apply-comment` runs the default branch's workflow at the merge commit, never the head |
 | Checks | `terragucci comment-apply` checks the comment before any credential, against the [merged-PR column](/terragucci/reference/pipeline/#ignored-comments) |
-| Credentials | the job holds a push's apply lock and assumes `oidc.apply_role` |
+| Credentials | the job assumes `oidc.apply_role`, beside any push's apply |
+| Another run's resources | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave that changes a resource another run is applying is refused; the reply names that run, and you comment again once it is done |
 | Waves | from wave 1 until one does not apply; `wave-<n>` stops after wave n |
 | A waiting wave | waits as on a push |
 | A refused wave | prints its diff (`respond.wave-refused`) |

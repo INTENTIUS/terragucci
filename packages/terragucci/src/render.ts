@@ -17,7 +17,10 @@
  *        and a wave the gate policy holds waits for a person's approval of
  *        its set digest (`chant approve`); one whose plans changed after the
  *        approval applies nothing. A root that reads another's state applies
- *        after it. One apply per project at a time; posts one
+ *        after it. Applies of different roots run at once, and the
+ *        backend's state lock keeps one root's apart; with choudoufu a
+ *        wave holds only the resources its plans change (./apply-rows.ts).
+ *        A wave that finds a newer push on its branch stands down. Posts one
  *        terragucci/apply status and marks plan notes the push made stale.
  *        A Terragrunt repo's waves are the same jobs over its units' dependency
  *        layers, each behind the same gate; the last job also runs any layer
@@ -56,6 +59,7 @@
 // Each lexicon's serializer and generated entities, never its entry point: the
 // entry points carry lint rules, codegen and the TypeScript compiler, which the
 // bundle must not (terragucci#18).
+import { applyScope } from "./apply-rows";
 import { Job, Step, Workflow } from "@intentius/chant-lexicon-github/generated/index";
 import { githubSerializer } from "@intentius/chant-lexicon-github/serializer";
 import { applyForgejoDialect } from "@intentius/chant-lexicon-forgejo/dialect";
@@ -723,7 +727,8 @@ export function movedRoots(roots: string[]): string {
 }
 
 /**
- * Applies on Forgejo run one at a time through a tag on the remote. The tag
+ * Under a repo-wide scope (applyScope), applies on Forgejo run one at a time
+ * through a tag on the remote. The tag
  * points at a commit whose subject is the holder's lease, "run <id> <epoch>".
  * A runner that kills a job never runs its exit trap, so a waiter takes the
  * lock over, atomically, when the holder's run is no longer running or the
@@ -815,9 +820,11 @@ export function sharedApplyLock(job: string, forge: ForgeName = "github"): strin
 
 /**
  * A push's wave that runs once the branch has moved past its commit stands
- * down, because the newer push applies the whole tree. On Forgejo it runs
- * once the wave holds the lock tag; on GitHub at the top of the wave, which
- * the apply concurrency group starts only when no other apply runs.
+ * down, because the newer push applies the whole tree. It runs at the top of
+ * the wave on GitHub and Forgejo, and the stage checks again once the wave
+ * may apply (`--stand-down`), so a push that lands while it plans still wins.
+ * Under a repo-wide scope it runs once the wave holds the lock tag on
+ * Forgejo, and on GitHub once the apply concurrency group starts the wave.
  */
 export const STAND_DOWN = [
   'tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"',
@@ -829,7 +836,7 @@ export const STAND_DOWN = [
 ].join("\n");
 
 /**
- * The concurrency group of every apply job on GitHub: each wave of a push and
+ * Under a repo-wide scope, the concurrency group of every apply job on GitHub: each wave of a push and
  * the apply a comment starts. One runs at a time. `queue: max` keeps up to 100
  * waiting, in the order they began to wait; with the default (`single`) a job
  * that starts waiting cancels the one already waiting, whatever
@@ -931,6 +938,9 @@ export function applyScript(
   // A Terragrunt pipeline whose last wave splits ends with a job past it, which runs any later wave with --rest.
   const last = input.wave >= count && input.shares === undefined;
   const triage = responds(input.respond, "apply-failed");
+  // shape: a repo-wide scope serializes the waves under a lock; otherwise a push's wave stands down for a newer push once it may apply.
+  const scope = applyScope(binary);
+  const repoWide = scope === "repo";
   // A share refused for plans that moved since its wave decided has no approved report for respond to compare.
   const refused = responds(input.respond, "wave-refused") && share === undefined;
   const args = [
@@ -940,6 +950,7 @@ export function applyScript(
     "--binary", binary,
     "--gate", gate,
     ...(input.approval ? ["--approval", input.approval] : []),
+    ...(repoWide ? [] : ["--stand-down"]),
     ...(tg ? ["--terragrunt"] : []),
     ...(tg && last ? ["--rest"] : []),
     ...(input.shares !== undefined ? ["--shares", String(input.shares)] : []),
@@ -957,12 +968,14 @@ export function applyScript(
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
-    // GitLab's lock tags go up with the project's token, as the ledger's pushes do.
-    ...(input.sharedLock ? [...(forge === "gitlab" ? [gitlabPushRemote] : []), sharedApplyLock(input.sharedLock, forge)] : forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
+    // GitLab's lock tags go up with the project's token, as the ledger's pushes do. A split wave's jobs hold their run's shared lock
+    // whatever the scope; otherwise only a repo-wide scope serializes, and a push's wave stands down for a newer push.
+    ...(input.sharedLock ? [...(forge === "gitlab" ? [gitlabPushRemote] : []), sharedApplyLock(input.sharedLock, forge)] : repoWide && forge === "forgejo" ? [forgejoLock()] : forge === "github" || forge === "forgejo" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
     // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
-    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.policy || input.costGate) ? [gitlabPushRemote] : []),
+    // A wave that holds the resources it changes (scope resource) records them there too.
+    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.policy || input.costGate || scope === "resource") ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -974,6 +987,8 @@ export function applyScript(
     `  3) tg status terragucci/apply ${forge === "gitlab" ? "failure" : "pending"} "$(cat "$outcome")"; ${input.notify ? notifyLine("waiting", waveNow) : ""}exit 3 ;;`,
     // A wave waiting at a gate (3) is not a failure. A refused wave (4) and a failed apply are, and each gets its response before the job fails.
     `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${waveNow} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}${input.notify ? notifyLine("refused", waveNow) : ""}exit 4 ;;`,
+    // A newer push applies the whole tree; this wave stood down once it could apply (--stand-down).
+    ...(repoWide ? [] : ['  6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;']),
     `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}${input.notify ? notifyLine("failed", waveNow) : ""}exit 1 ;;`,
     "esac",
     ...(last
@@ -1035,13 +1050,13 @@ export interface CommentApplyInput {
  * In a Terragrunt repo a comment that asks for every wave runs the last one
  * with `--rest`, so the waves past the pipeline's jobs apply too.
  */
-function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, base: string, again = COMMENT_AGAIN, statuses = true): string[] {
+function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, base: string, again = COMMENT_AGAIN, statuses = true, refuseHeld = false): string[] {
   // GitLab's mr-apply job posts no status on the head: a failed one would fail the merge request's own pipeline, and with it the next apply's checks.
   const status = (line: string): string[] => (statuses ? [line] : []);
   const triage = responds(input.respond, "apply-failed");
   const refused = responds(input.respond, "wave-refused");
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(input.branches ? ["--branches", sh(branchesArg(input.branches))] : []), ...(base ? [base] : [])];
+  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(refuseHeld ? ["--on-held", "refuse"] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(input.branches ? ["--branches", sh(branchesArg(input.branches))] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
@@ -1072,6 +1087,16 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
     '      tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"',
     ...(input.notify ? [`      ${notifyLine("refused", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
     "      exit 4 ;;",
+    // Another run is applying a resource this wave changes (--on-held refuse): the reply names it, and a person asks again.
+    ...(refuseHeld
+      ? [
+          "    5)",
+          ...status('      tg status terragucci/apply failure "$(cat "$outcome")"'),
+          '      tg reply "wave $wave was not applied: another run is applying what it changes (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). Comment \\`/terragucci apply\\` again once that run is done. $run_url"',
+          ...(input.notify ? [`      ${notifyLine("refused", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
+          "      exit 5 ;;",
+        ]
+      : []),
     "    *)",
     ...status('      tg status terragucci/apply failure "an apply failed"'),
     ...(triage ? [`      terragucci respond apply-failed --log "$log"${base ? ` ${base}` : ""} || true`] : []),
@@ -1180,7 +1205,7 @@ export function gitlabMergeScript(): string {
  * answers `/terragucci lock` and `unlock`, which apply nothing). The job then
  * checks out the head the decision checked and runs its waves from wave 1,
  * reading the gate rule, the signers and the settings from the default
- * branch (`--base`), under the apply jobs' resource group. It posts no
+ * branch (`--base`), beside any other apply. It posts no
  * status on the head; its replies say what happened.
  */
 export function gitlabApplyScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
@@ -1207,7 +1232,7 @@ export function gitlabApplyScript(binary: Binary, layers: string[][], oidc?: Pip
     ...(input.synth ? [synthScript(input.synth)] : []),
     ...cloudScripts("gitlab", oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
-    ...waveLoop(binary, layers, input, "$tf_base", COMMENT_AGAIN, false),
+    ...waveLoop(binary, layers, input, "$tf_base", COMMENT_AGAIN, false, applyScope(binary) !== "repo"),
     ...openReply(count, input.merge, "gitlab"),
   ].join("\n");
 }
@@ -1258,7 +1283,8 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     `last=${count}`,
     '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
     'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    ...(forge === "forgejo" || input.lockTag
+    // shape: only a repo-wide scope holds the lock tag here; otherwise the waves refuse what another run is applying.
+    ...(applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag)
       ? [
           forgejoLock(false),
           // A push may have applied while this run waited for the lock: decide again, now that nothing else applies.
@@ -1281,7 +1307,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "applying on a comment"',
-    ...waveLoop(binary, layers, input, prMode ? "$tf_base" : ""),
+    ...waveLoop(binary, layers, input, prMode ? "$tf_base" : "", COMMENT_AGAIN, true, applyScope(binary) !== "repo"),
     `if [ "$last" = ${count} ]; then`,
     input.terragrunt
       ? '  tg status terragucci/apply success "every wave of units applied"'
@@ -1322,7 +1348,7 @@ export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<
     `last=${count}`,
     'TG_WAVE="-"',
     'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    ...(forge === "forgejo" || input.lockTag ? [forgejoLock(false)] : []),
+    ...(applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag) ? [forgejoLock(false)] : []),
     'git checkout --quiet --detach "$TG_SHA" || { echo "terragucci: could not check out ${TG_SHA:0:8}" >&2; exit 1; }',
     ...(input.synth ? [synthScript(input.synth)] : []),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
@@ -1857,6 +1883,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const sharesOf = (i: number): number => (waveJobs && cut[i] ? waveShares(cut[i], waveJobs).length : 1);
   // Once one wave splits, every apply job holds the run's shared lock, so the shares apply side by side and no other run applies meanwhile.
   const split = cut.some((_, i) => sharesOf(i) > 1);
+  // shape: how the binary keeps applies apart (./apply-rows.ts). Only a repo-wide scope serializes the repo's apply jobs.
+  const scope = applyScope(binary);
+  const repoWide = scope === "repo";
+  // A split wave's jobs hold their run's shared lock tag on every forge, whatever the scope, so the shares apply side by side.
+  const sharedLock = split;
   const applyJobs: ApplyJob[] = [];
   let before: string[] = [];
   for (let i = 0; i < waveCount; i++) {
@@ -1864,19 +1895,19 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const n = sharesOf(i);
     const name = `apply-wave-${wave}`;
     const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
-    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(split ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
+    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
     before = [name];
     if (n > 1) {
       before = Array.from({ length: n }, (_, s) => `${name}-share-${s + 1}`);
       for (const [s, share] of before.entries()) {
-        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, sharedLock: share }) });
+        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, ...(sharedLock ? { sharedLock: share } : {}) }) });
       }
     }
   }
   // The last wave's shares end side by side: one job after them all posts the success. In a Terragrunt repo that job
   // also runs, with --rest, any wave Terragrunt's edges cut past the pipeline's, so it applies like a wave's job.
   if (before.length > 1 && tg) {
-    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), sharedLock: "apply-rest" };
+    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
     applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest) });
   } else if (before.length > 1) {
     applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
@@ -1891,7 +1922,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
   // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
@@ -2026,9 +2057,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: onApply })],
-        // One apply at a time per project. With waves.jobs a wave's shares apply side by side, so the jobs hold
+        // Under a repo-wide scope, one apply at a time per project. With waves.jobs a wave's shares apply side by side, so the jobs hold
         // the run's shared lock tag instead of the resource group, which runs one job at a time (sharedApplyLock).
-        ...(split ? {} : { resource_group: "terragucci-apply" }),
+        ...(repoWide && !split ? { resource_group: "terragucci-apply" } : {}),
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", job.body))],
@@ -2056,7 +2087,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: mrApplyRule })],
-        resource_group: "terragucci-apply",
+        ...(repoWide ? { resource_group: "terragucci-apply" } : {}),
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", gitlabApplyScript(binary, layers, oidc, prInput)))],
@@ -2267,10 +2298,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // applying, unless the workflow names a concurrency group. A group that does
     // not cancel makes a later run wait instead.
     // A pull_request_target run's ref is the default branch's, so with locks: plan it gets a group of its own pull request's.
+    // shape: unless one apply at a time is the rule (a repo-wide scope), each push to the default branch gets a group of its own
+    // commit, so a later push's run neither cancels nor waits for an earlier one's: their waves apply side by side, kept apart per
+    // root by the backend's state lock (with choudoufu by the rows each holds), and a wave a newer push superseded stands down.
     ...(forge === "forgejo"
-      ? { concurrency: { group: locksPlan || ephemeral
-        ? `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}`
-        : `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.ref }}`, "cancel-in-progress": false } }
+      ? { concurrency: { group: `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || ${locksPlan || ephemeral ? "github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || " : ""}${repoWide ? "" : "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && format('{0}-{1}', github.ref, github.sha) || "}github.ref }}`, "cancel-in-progress": false } }
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
@@ -2447,7 +2479,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   // `/terragucci apply` on a merged pull request re-runs its apply from the merge commit, with the
-  // apply role, under the lock a push's apply holds. The workflow is the default branch's, as for
+  // apply role, beside any other apply: its waves refuse what another run is applying. The workflow is the default branch's, as for
   // every comment; commentApplyScript decides before it asks for any credential. A Terragrunt repo's
   // job runs its waves of units with --terragrunt, after the apply jobs' prelude.
   entities.set("apply-comment", new Job({
@@ -2455,9 +2487,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     container: { image },
     if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
     // Before merge it also pushes the root locks and merges (contents: write), and reads the head's checks.
-    permissions: { contents: writesLedger || prApply || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: writesLedger || prApply || sharedLock || scope === "resource" ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
-    concurrency: applyConcurrency(forge),
+    ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
     env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
     ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
@@ -2557,10 +2589,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       needs: job.needs.length === 0 ? "check" : job.needs.length === 1 ? job.needs[0] : job.needs,
       if: applyIf,
       // contents: write only to record a waiting wave's plan on the chant/lifecycle branch, and with a wave split across jobs to hold the shared lock's tags.
-      permissions: { contents: writesLedger || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
+      permissions: { contents: writesLedger || sharedLock || scope === "resource" ? "write" : "read", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      // One apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares apply side by side, under the run's shared lock.
-      ...(job.share === undefined ? { concurrency: applyConcurrency(forge) } : {}),
+      // Under a repo-wide scope, one apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares apply side by side, under the run's shared lock.
+      ...(job.share === undefined && repoWide ? { concurrency: applyConcurrency(forge) } : {}),
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
@@ -2699,7 +2731,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         container: { image },
         permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
         ...openid(needsToken),
-        concurrency: applyConcurrency(forge),
+        ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
         env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
         steps: [
           ...steps(new Step({ name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),

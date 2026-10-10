@@ -172,6 +172,7 @@ terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
     [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
+    [--on-held wait|refuse] [--stand-down]
 ```
 
 | Flag | Environment | Meaning |
@@ -205,6 +206,8 @@ Both `stage tf-plan` and `stage tf-drift` write the report even when a root refu
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
 | `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots (in a Terragrunt repo, the units) of `--branch` when the map names it, and otherwise every root no branch's glob matches |
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
+| `--on-held` | `TG_LOCK_POLL` | with `binary: choudoufu`, when another run's apply holds a resource the wave changes: `wait` (the default) polls every `TG_LOCK_POLL` seconds (10) for up to an hour, then plans again; `refuse` exits 5 naming that run, as the apply a comment starts does |
+| `--stand-down` | | a push's wave: once it may apply, it applies nothing and exits 6 if a newer push is on its branch, which applies the whole tree |
 
 ## publish
 
@@ -327,7 +330,7 @@ terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--for
     [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
 ```
 
-Reads a `/terragucci apply [wave-<n>]` comment and, after checking the commenter's permission as `comment` does, writes a decision to `--out`: the merge commit and last wave to apply, or why nothing applies. It runs in the generated `apply-comment` job before any credential, and on Forgejo again once that job holds the apply lock. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
+Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permission as `comment` does, and writes a decision to `--out`: the merge commit and last wave to apply, or why nothing applies. The generated `apply-comment` job runs it before any credential. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
 
 | `--when` | An open pull request |
 |---|---|
