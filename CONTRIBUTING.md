@@ -300,6 +300,27 @@ just binary-claims choudoufu waves,drift  # some of them on choudoufu
 
 The coverage grids on the validation page count each claim under a feature area from `docs-site/src/data/claim-areas.json`, keyed by claim name. The recorders rewrite `smoke.json` and `validation.json`, so the areas live in that file and not in the rows. A new claim in `CLAIMS`, `GITLAB_CLAIMS`, `stack/validation.sh` or `PROVE_CLAIMS` needs a line there, and `just test` fails until it has one (`test/claim-areas.test.ts`). A claim that sets the binary in its own config (`with binary: terraform` in its description, or a `cdf-` claim) also goes under `binary`, so its row counts in that binary's column. The grid's repo shape comes from the claim's prefix (`tg-`, `atmos-`, `terramate-`, `cdktn-`); `import-tg-scale` counts as Terragrunt too.
 
+### Filling the coverage gaps
+
+`just coverage-gaps` lists what the validation page still lacks, and what fills each gap:
+- grid cells that are not proven, from the code the grids render with (`docs-site/src/data/coverage.ts`);
+- claims a table defines with no recorded row;
+- captures under `docs-site/src/data/tutorial` that quote a command terragucci no longer prints.
+
+The page's "What is left" list shows the same cells, without the commands.
+
+`just coverage-fill` with no step prints the plan. With steps it runs them in order, each holding one source:
+- `forgejo`
+- `terraform`
+- `choudoufu`
+- `gitlab`, which boots the lab and takes it down again if it booted it
+- `github`, the github.com sandbox: prove, prove under BREAK, then captures
+- `validation`, which takes the whole stack down, so it runs only with `--exclusive`
+
+Run it on demand, when the host is quiet. Review the rows and captures it writes, and commit them. A cell that reads "none" for a repo shape, or for a forge, needs a new claim first. `coverage-gaps` names which.
+
+Neither command runs in CI.
+
 ### The real-AWS pilot (SMOKE_AWS=1)
 
 floci is the AWS the smoke claims run against, in `just smoke`, `just smoke-record` and CI. `SMOKE_AWS=1` runs five of them on a real account instead, the one the default AWS CLI profile signs in to: boot, drift, respond-drift, tg-drift and report. Any other claim exits with a refusal under it, and so does `--record`, since `smoke.json` is floci's record. forgejo-oidc stays on floci. The ruling and the cost research are in terragucci#116.
