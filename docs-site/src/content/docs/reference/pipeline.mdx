@@ -310,7 +310,9 @@ env:
   TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
 ```
 
-GitLab expands the references in each job. The example names one state, `infra`, for a root with an empty `backend "http" {}` block. For several roots, give each root's block its own `address`, `lock_address` and `unlock_address`; the credentials stay in `env:`.
+GitLab expands the references in each job. The example names one state, `infra`, for a root with an empty `backend "http" {}` block. For several roots, give each root's block its own `address`, `lock_address` and `unlock_address`; the credentials stay in `env:`. An address in the block also gives a `terraform_remote_state` read of it an [edge](/terragucci/guides/track-cross-state-edges/).
+
+On GitLab-managed state, each apply records the state's [serial](/terragucci/guides/find-a-state-version/#gitlab-managed-state), and [`state export`](/terragucci/guides/export-a-state-version/#gitlab-managed-state), [`unlock-state`](/terragucci/guides/release-a-state-lock/#gitlab-managed-state) and [ephemeral copies](/terragucci/guides/ephemeral-environments/) work as on `s3`.
 
 ### The agent comment
 

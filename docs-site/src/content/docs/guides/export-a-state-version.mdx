@@ -1,7 +1,7 @@
 ---
 title: Export a state version
 description: Download one version of a root's state to your machine, once someone else approved the request, with the export recorded on chant/lifecycle and in the audit trail.
-claims: [state-export, tg-state-export]
+claims: [state-export, tg-state-export, gl-state-export]
 prompt: |
   Read https://intentius.io/terragucci/guides/export-a-state-version/.
   Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3 backend, bucket versioning), from the roots' backend blocks.
@@ -21,7 +21,7 @@ The state goes only to the person who runs the command; no job writes it to the 
 
 | You need | Why |
 |---|---|
-| A root with an `s3` backend in a bucket with versioning on | the export reads a version by its id; [Find the state version an apply left](/terragucci/guides/find-a-state-version/) turns versioning on and lists the ids |
+| A root with an `s3` backend in a bucket with versioning on, or on [GitLab-managed state](#gitlab-managed-state) | the export reads a version by its id; [Find the state version an apply left](/terragucci/guides/find-a-state-version/) turns versioning on and lists the ids |
 | Your own cloud identity that can read the state object | the command runs on your machine with your credentials |
 | A checkout whose `origin` you can push to | the request and the record go to `chant/lifecycle` |
 | Someone else to approve | an approval by the person who asked does not count |
@@ -64,6 +64,12 @@ A Terragrunt unit exports the same way: name the unit, such as `terragucci state
 </Steps>
 
 A request exports once; running the command again records a new request for a new approval.
+
+## GitLab-managed state
+
+The version id is GitLab's serial, and `--version` takes it: `terragucci state export envs/dev/app --version 7`. Without `--version`, the export takes the current serial. The command calls GitLab with the backend's credentials: set `TF_HTTP_USERNAME` to your GitLab username and `TF_HTTP_PASSWORD` to a personal access token with the `api` scope and the Developer role or higher on the project.
+
+The request checks the version with a `HEAD` and never reads it. Without `--version`, it reads the current state for its serial, since GitLab answers the serial no other way, and keeps nothing else.
 
 ## In the audit trail
 
