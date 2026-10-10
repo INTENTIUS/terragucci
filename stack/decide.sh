@@ -16,7 +16,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
-COMPOSE=(docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile decide)
+COMPOSE=(docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" --profile decide)
 PORT="${TERRAGUCCI_DECIDE_PORT:-8790}"
 
 log() { echo "[decide] $*" >&2; }

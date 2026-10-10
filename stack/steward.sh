@@ -43,9 +43,9 @@ MODULES="/usr/local/lib/node_modules"
 
 fountain_env() {
   if [ -z "${TERRAGUCCI_FOUNTAIN_TOKEN:-}" ]; then
-    [ -f "$HERE/.state/fountain.env" ] || fail "no stack/.state/fountain.env; run 'stack/bootstrap.sh fountain' first"
+    [ -f "${TG_STATE:-$HERE/.state}/fountain.env" ] || fail "no stack/.state/fountain.env; run 'stack/bootstrap.sh fountain' first"
     # shellcheck disable=SC1091
-    . "$HERE/.state/fountain.env"
+    . "${TG_STATE:-$HERE/.state}/fountain.env"
   fi
   FOUNTAIN="$TERRAGUCCI_FOUNTAIN_URL"
   FKEY="$TERRAGUCCI_FOUNTAIN_TOKEN"
@@ -69,7 +69,7 @@ case "$CMD" in
     # authenticates, so the environment it is written into stays the same
     # from one boot to the next. It pushes the gate's pending facts and the
     # run ledger to chant/lifecycle; the clone itself is anonymous.
-    STEWARD_STATE="$HERE/.state/steward.env"
+    STEWARD_STATE="${TG_STATE:-$HERE/.state}/steward.env"
     stoken=""
     [ -f "$STEWARD_STATE" ] && stoken="$(sed -n 's/^STEWARD_FORGEJO_TOKEN=//p' "$STEWARD_STATE")"
     if [ -z "$stoken" ] || ! curl -fs -o /dev/null -H "Authorization: token $stoken" "$URL/api/v1/user"; then
