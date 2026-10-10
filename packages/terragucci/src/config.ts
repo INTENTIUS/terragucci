@@ -762,7 +762,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       const jobs = s.waves.jobs;
       if (jobs !== undefined && !(Number.isInteger(jobs) && (jobs as number) >= 1)) problems.push(`${where}.waves.jobs must be a whole number of 1 or more`);
       else if (typeof jobs === "number" && jobs > 1) {
-        if (s.forge === "gitlab") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
         if (isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
       }
     }
@@ -1017,8 +1016,6 @@ export interface RegistrySettings {
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
-/** Why `waves.jobs` is refused on GitLab: a split wave's shares hold one apply lock between them on GitHub and Forgejo, and GitLab's apply jobs take a resource group one job at a time. */
-export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and Forgejo; GitLab runs one apply job at a time in its resource group, so leave waves.jobs unset there";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
 /** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
 /** Why `roots` is refused in an Atmos repo. */
@@ -1076,9 +1073,26 @@ export const PR_APPLY_NEEDS_ON_GITLAB = {
  */
 export const PROTECTED_TOKEN_NEEDS_COMMENTS = "protected needs comments: <cron>: a merge request's pipeline then holds no token that may post the plan note, so the comments schedule's job posts it";
 
-/** The problems with a GitLab project's `apply.when: pull-request` and `gitlab.token: protected`, when it has any. */
+/**
+ * Why `agent.comment` and `review` need `comments:` on GitLab: a merge
+ * request note starts no pipeline, and a merge request's own pipeline runs
+ * its own pipeline file, so the comments schedule's job starts the agent's and
+ * the review's pipelines on the default branch.
+ */
+export const NEEDS_COMMENTS_ON_GITLAB = {
+  agent: "agent.comment on GitLab needs comments: <cron>: a merge request note starts no pipeline, so the comments schedule's job reads `/terragucci agent` and starts the agent's pipeline on the default branch",
+  review: "review on GitLab needs comments: <cron>: a merge request's own pipeline runs the merge request's own pipeline file, so the comments schedule's job starts each review in a pipeline of the default branch",
+};
+
+/** The problems with a GitLab project's `apply.when: pull-request`, `gitlab.token: protected`, `agent.comment` and `review`, when it has any. */
 export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string): string[] {
-  const token = isObject(s.gitlab) && s.gitlab.token === "protected" && !s.comments ? [`${where}.gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`] : [];
+  const agentOn = isObject(s.agent) && s.agent.comment !== undefined && s.agent.comment !== false;
+  const reviewOn = isObject(s.review) && s.review.agent === true;
+  const token = [
+    ...(isObject(s.gitlab) && s.gitlab.token === "protected" && !s.comments ? [`${where}.gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`] : []),
+    ...(agentOn && !s.comments ? [`${where}.agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`] : []),
+    ...(reviewOn && !s.comments ? [`${where}.review: ${NEEDS_COMMENTS_ON_GITLAB.review}`] : []),
+  ];
   const a = s.apply;
   if (!isObject(a) || a.when !== "pull-request") return token;
   return [

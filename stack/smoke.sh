@@ -17692,7 +17692,6 @@ fi
 if [ "$SMOKE_FORGE" = gitlab ]; then
   CLAIMS="$GITLAB_CLAIMS"
   CLAIM_GROUPS="$GITLAB_CLAIM_GROUPS"
-  SMOKE_LOCK_DIR="${SMOKE_LOCK_DIR:-$HERE/gitlab/.state/locks}"
 fi
 # shellcheck source=locks.sh
 . "$HERE/locks.sh"
