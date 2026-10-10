@@ -14741,7 +14741,7 @@ claim_tg_stack_drift() {
   printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "${get_repo_root()}/modules/queue"\n}\n\ngenerate "provider" {\n  path      = "provider.tf"\n  if_exists = "overwrite_terragrunt"\n  contents  = "provider \\"aws\\" {\\n  region = \\"us-east-1\\"\\n}\\n"\n}\n\ninputs = {\n  name = values.name\n}\n' > "$work/repo/catalog/units/queue/terragrunt.hcl"
   printf '\nunit "queue" {\n  source = "${get_repo_root()}/catalog/units/queue"\n  path   = "queue"\n\n  values = {\n    name = "%s"\n  }\n}\n' "$queue" >> "$work/repo/live/stk/terragrunt.stack.hcl"
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "a queue unit"
-  tg_in_image "$work/repo" -e TG_TF_PATH=tofu -- sh -c 'terragrunt stack generate --non-interactive --no-color && terragrunt run --all --non-interactive --no-color -- apply -auto-approve -input=false -no-color' >"$work/apply.log" 2>&1 \
+  tg_in_image "$work/repo" -e TG_TF_PATH=tofu -- sh -c 'terragrunt stack generate --non-interactive --no-color && terragrunt run --all --non-interactive --no-color --filter "!./catalog/**" -- apply -auto-approve -input=false -no-color' >"$work/apply.log" 2>&1 \
     || { cat "$work/apply.log" >&2; log "the stack did not apply"; rc=1; }
   clean_mounted "$work/repo" "$image"
   url="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || url=""

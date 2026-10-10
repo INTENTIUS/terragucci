@@ -3,7 +3,7 @@ include "root" {
 }
 
 terraform {
-  source = "${get_repo_root()}/modules/rev"
+  source = "${dirname(find_in_parent_folders("root.hcl"))}/modules/rev"
 }
 
 inputs = {
