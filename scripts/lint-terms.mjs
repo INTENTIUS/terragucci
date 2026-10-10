@@ -40,6 +40,12 @@ export const TERMS = [
     defines: ["guides/use-a-binary"],
   },
   {
+    term: "control repo",
+    re: /\bcontrol repos?\b/i,
+    links: ["/terragucci/concepts/control-repo/", "/terragucci/concepts/glossary/#control-repo"],
+    defines: ["concepts/control-repo"],
+  },
+  {
     term: "chant/lifecycle",
     re: /chant\/lifecycle/,
     links: ["/terragucci/concepts/glossary/#chantlifecycle", "/terragucci/concepts/approvals-as-records/"],
