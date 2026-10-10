@@ -77,6 +77,17 @@ restores:
 
 The revert goes through the same proof, gate and lock as any migration, so revert the code of the migration in the same change. A backend move is put back with a backend move the other way. The command refuses a root on a local backend or a bucket that kept no version, since it has nothing to put back.
 
+## Estates
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu) as the binary, when every root a file names has a `live` block:
+
+| File | Change | Refused when |
+|---|---|---|
+| `moves` | `retag`: each resource's tags are rewritten by `choudoufu live-mv -from-estate`, run in `to` | the roots are one estate, an address is a module call, or `from`'s plan does not destroy the address |
+| `backends` | `adopt`: the state in `from` is read once and `choudoufu live-import` stamps each resource it verifies | the state is missing, or the `s3` backend takes no lock file |
+
+A file whose roots mix estates and roots with a state is refused, as is any other binary. An address with `count` or `for_each` moves each instance the source plan destroys.
+
 ## The new states
 
 A changed state keeps its lineage and gets the next serial. A root with no state gets a new one at serial 1. Its lineage is derived from the migration and the root, so the same migration planned twice gives the same digest.
@@ -89,11 +100,13 @@ The proof plan runs the root's own binary against its new state, through a `terr
 
 | Field | Holds |
 |---|---|
-| `name`, `file`, `file_digest`, `change` | the migration file, and its kind: `moves`, `backends` or `revert` |
+| `name`, `file`, `file_digest`, `change` | the migration file, and its kind: `moves`, `backends`, `revert`, or for estates `retag` or `adopt` |
+| `retags[]` | a retag: each instance's `address`, its roots `from` and `to`, `from_estate`, `to_estate`, the `live_id` of the resource, and the `followers` that move with it |
+| `stamps[]` | an adoption: each instance of the old state, its `status` as `live-import` verified it, and its `live_id` |
 | `moves`, `backends`, `revert` | what it does: the moves; each root and where its state was; the migration a revert puts back |
 | `digest` | what an approval binds |
 | `status` | `planned`, `proof-failed`, `waiting`, `refused`, `applied` or `failed` |
-| `roots[].root`, `backend`, `location` | each affected root and where its state is |
+| `roots[].root`, `backend`, `location` | each affected root and where its state is; for an estate, `estate` and `estate <name>` |
 | `roots[].before` | `version_id`, when the backend keeps versions, and `digest`, `null` for a root with no state |
 | `roots[].after` | the new state's `digest`, and its `version_id` once written |
 | `roots[].source` | a backend move: where the state was read from, its `version_id` and `digest` |
