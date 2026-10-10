@@ -1,0 +1,4 @@
+projects:
+  github.com/acme/infra:
+    version:
+      "envs/*": 1.8.5
