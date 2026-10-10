@@ -247,6 +247,7 @@ Internal; a value set in `env:` is overwritten.
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
 | `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
+| `TERRAGUCCI_EPHEMERAL_SUFFIX` | Terragrunt repos, the `ephemeral` job, while it prepares a unit: `-pr-<n>`, which a unit's `remote_state` key reads; empty in every other job |
 | `TG_ACTION` | the `ephemeral` job on GitHub and Forgejo: the pull request event's action; `closed` destroys the pull request's [ephemeral environment](/terragucci/guides/ephemeral-environments/) |
 | `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
 | `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
