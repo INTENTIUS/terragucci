@@ -24,10 +24,13 @@
  *
  * The record holds the version id and the digest of what was written, never
  * a state's contents. It reads states in backends that keep versions: s3
- * (bucket versioning), gcs (object versioning, a version is a generation)
- * and azurerm (blob versioning, or the snapshots an apply's version record
- * takes when the backend sets `snapshot = true`), and refuses roots with a
- * `cloud` block. A Terragrunt unit is prepared the way a
+ * (bucket versioning), gcs (object versioning, a version is a generation),
+ * azurerm (blob versioning, or the snapshots an apply's version record
+ * takes when the backend sets `snapshot = true`), and GitLab-managed states
+ * (./gitlab-state.ts), whose version id is the serial. A GitLab request with
+ * `--version` checks it with a HEAD; one without reads the current state for
+ * its serial, which GitLab answers no other way, and keeps nothing else of
+ * it. It refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
  * migration prepares one (unitPlace): Terragrunt inits it, and the backend is
  * the one that init recorded in the directory Terragrunt ran the binary in.
  */
@@ -39,10 +42,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { appendLifecycle, appendPending, readLedger, type PendingRecord, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
-import { isStored, stateObject, stateStore, type StateObject } from "./backend";
+import { isStored, READS_VERSIONS, stateObject, stateStore, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
 import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
+import { currentSerial, hasVersion, readVersion } from "./gitlab-state";
 import type { StoreFetch } from "./report/object-store";
 import { sealRefusal } from "./seal";
 
@@ -192,19 +196,46 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   } finally {
     rmSync(data, { recursive: true, force: true });
   }
-  if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace("reads state versions from", "exports state from")}`);
-  if (!isStored(object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3, gcs or azurerm state by its id`);
-  const store = await stateStore(object, options.fetch);
-  const location = store.location;
+  if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace(READS_VERSIONS, "exports state from s3, gcs and azurerm backends and GitLab-managed state")}`);
+  let location: string;
   let version = options.version;
-  if (!version) {
-    // The version there now; an azurerm backend that keeps snapshots and no versions gets one, which names it.
-    const now = await store.version(true);
-    if (!now.exists) throw new ConfigError(`state export: ${location} holds no state`);
-    if (!now.versionId) throw new ConfigError(`state export: ${location} keeps no versions, so there is no version id to export: ${now.off ?? "the store gave none"}`);
-    version = now.versionId;
-  } else if (!(await store.hasVersion(version))) {
-    throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
+  let download: (v: string) => Promise<string | undefined>;
+  if ("gitlab" in object) {
+    // GitLab keeps each version by serial: the version id is the serial.
+    const gl = object.gitlab;
+    const fetchFn = options.fetch ?? (globalThis.fetch as unknown as StoreFetch);
+    location = object.location;
+    const gitlab = async <T>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call();
+      } catch (e) {
+        throw new ConfigError(`state export: ${(e as Error).message}`);
+      }
+    };
+    if (!version) {
+      const now = await gitlab(() => currentSerial(gl, fetchFn));
+      if (!now) throw new ConfigError(`state export: ${location} holds no state`);
+      version = String(now.serial);
+    } else if (!/^\d+$/.test(version)) {
+      throw new ConfigError(`state export: ${root}'s state is GitLab-managed, whose versions are serials; --version ${version} is not one`);
+    } else if (!(await gitlab(() => hasVersion(gl, version!, fetchFn)))) {
+      throw new ConfigError(`state export: ${location} has no version ${version}; GitLab keeps no version with that serial`);
+    }
+    download = (v) => gitlab(() => readVersion(gl, v, fetchFn));
+  } else {
+    if (!isStored(object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3, gcs or azurerm state by its id`);
+    const store = await stateStore(object, options.fetch);
+    location = store.location;
+    if (!version) {
+      // The version there now; an azurerm backend that keeps snapshots and no versions gets one, which names it.
+      const now = await store.version(true);
+      if (!now.exists) throw new ConfigError(`state export: ${location} holds no state`);
+      if (!now.versionId) throw new ConfigError(`state export: ${location} keeps no versions, so there is no version id to export: ${now.off ?? "the store gave none"}`);
+      version = now.versionId;
+    } else if (!(await store.hasVersion(version))) {
+      throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
+    }
+    download = (v) => store.readVersion(v);
   }
 
   const ledger = readLedger(repo, EXPORT_LEDGER);
@@ -262,8 +293,8 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   }
 
   const file = outPath(repo, options.out, root, version);
-  const body = await store.readVersion(version);
-  if (body === undefined) throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
+  const body = await download(version);
+  if (body === undefined) throw new ConfigError(`state export: ${location} has no version ${version}; it was deleted since the request`);
   const line: ExportRecord = {
     version: 1,
     kind: "state-export",

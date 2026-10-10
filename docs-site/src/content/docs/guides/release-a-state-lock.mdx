@@ -1,7 +1,7 @@
 ---
 title: Release a state lock a killed job left
 description: When a job is killed mid-apply, free the backend's state lock it left with terragucci unlock-state, which checks the job is gone, waits for an approval of that lock, and records the release.
-claims: [unlock-state, gcs-unlock, azurerm-unlock]
+claims: [unlock-state, gl-unlock-state, gcs-unlock, azurerm-unlock]
 prompt: |
   Read https://intentius.io/terragucci/guides/release-a-state-lock/.
   A plan or apply in this repo fails because the state of a root I name is locked. Read the lock for that root (a lock file, a gcs lock object, or an azurerm blob lease) and tell me its ID, who took it and when, and which of the forge's runs that began before then are still running.
@@ -28,6 +28,7 @@ It reads the lock where the backend keeps it:
 | `s3` with `use_lockfile = true` | the lock file `<key>.tflock` | the ID in the file |
 | `gcs` | the lock object `<prefix>/<workspace>.tflock` | the object's generation, as the binary prints it |
 | `azurerm` | a lease on the state blob, with the lock info in its metadata | the lease's ID |
+| [GitLab-managed state](#gitlab-managed-state) | GitLab's lock on the state | the ID in the lock |
 
 A comment never runs it. With [`binary: choudoufu`](/terragucci/concepts/glossary/#choudoufu) and a record store, a killed job holds no lock, so there is none to release ([locking with choudoufu](/terragucci/concepts/locking-and-staleness/#with-choudoufu)).
 
@@ -69,5 +70,20 @@ A comment never runs it. With [`binary: choudoufu`](/terragucci/concepts/glossar
 6. Rerun the wave or push the next change; its plan takes the state as usual.
 
 </Steps>
+
+## GitLab-managed state
+
+GitLab has no call that reads a lock, so `unlock-state` asks for it. A held lock answers with its ID, the GitLab user who took it and when. A free lock is taken and given back at once. The release is a `DELETE` of that ID on the lock endpoint, which GitLab refuses when another lock holds the state.
+
+| You need | Why |
+|---|---|
+| `lock_address` and `unlock_address` in the block, or `TF_HTTP_LOCK_ADDRESS` and `TF_HTTP_UNLOCK_ADDRESS` | without them the backend takes no lock |
+| `TF_HTTP_USERNAME`, and a personal access token with the Maintainer role in `TF_HTTP_PASSWORD` | GitLab lets Maintainers lock and unlock state |
+
+The log names the lock endpoint:
+
+```text
+terragucci unlock-state: app: https://gitlab.example.com/api/v4/projects/42/terraform/state/app/lock holds lock 1f0c... by deploy-bot at 2026-10-09T18:02:11.420Z
+```
 
 Flags and exit codes are on [CLI commands](/terragucci/reference/cli/#unlock-state).

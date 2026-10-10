@@ -1,7 +1,7 @@
 ---
 title: Track the roots that read other roots' state
 description: The estate page lists each root that reads another root's state, with its last plan against the producer's last apply, and marks it stale when the producer changed after that plan.
-claims: [state-edges]
+claims: [state-edges, gl-state-edges]
 prompt: |
   Read https://intentius.io/terragucci/guides/track-cross-state-edges/.
   List the terraform_remote_state blocks in this repo's roots and the root whose state each reads, from the backend blocks, and tell me which reads terragucci cannot match to a root.
@@ -38,7 +38,7 @@ A read matches a root when both name the same address:
 | `s3`, `gcs`, `azurerm` | `bucket` and `key` (`prefix` for gcs) |
 | `local` | `path`, resolved against the root's directory; a root with no backend block keeps `terraform.tfstate` there |
 | `pg` | the host and database in `conn_str`, `schema_name` and `table_name` |
-| `http` | `address` |
+| `http` | `address`, such as GitLab's `.../projects/<id>/terraform/state/<name>` |
 | `consul` | `address` and `path` |
 | `kubernetes` | `namespace` and `secret_suffix` |
 | `remote`, or a `cloud` block | `hostname`, `organization` and the workspace `name` |

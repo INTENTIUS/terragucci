@@ -19,6 +19,7 @@ Release `0.4.4` is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub rele
 | The [choudoufu](/terragucci/concepts/glossary/#choudoufu) image runs choudoufu 0.24.0, which writes a resource's record when its apply returns: a killed apply leaves records for what it finished (`cdf-killed-records`) | [Locking and staleness](/terragucci/concepts/locking-and-staleness/#stock-and-choudoufu) |
 | `generate.disable_init: false` writes `disable_init = false` in `terragucci.hcl`, and the apply job has Terragrunt create the state bucket | [Generate backend and provider files](/terragucci/guides/generate-root-files/#bucket-bootstrap) |
 | `terragucci import terrateam` writes `terragucci.yml` from a `.terrateam/config.yml`, with `depends_on` as waves | [Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam) |
+| The plan note's blast radius lists each changed resource and the resources that depend on it, in its root and in roots that read an output it reaches | [Resources in the radius](/terragucci/concepts/waves-and-approvals/#resources-in-the-radius) |
 
 ## Security
 
@@ -42,6 +43,7 @@ Release `0.4.4` is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub rele
 |---|---|
 | Each apply records its state version, listed on the estate page | [See every project](/terragucci/guides/see-every-project/) |
 | `terragucci unlock-state` releases a lock a killed job left, only after an approval and with a record of who did it | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
+| GitLab-managed state: each apply records its serial, and `state export`, `unlock-state` and ephemeral copies work on it | [GitLab-managed state](/terragucci/reference/pipeline/#gitlab-managed-state) |
 | Migration files move resources between roots or to a new backend, planned with zero changes, approved by digest, with a gated revert | [Move resources between roots](/terragucci/guides/move-resources-between-roots/) |
 
 ## Approvals and review
