@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseYAML } from "@intentius/chant/yaml";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { parseReportsBucket, type BucketRef } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 import { declaredKind, shapeProblems } from "./refusals";
@@ -1615,7 +1615,10 @@ function checkRoles(r: unknown, where: string, problems: string[], what = "role"
 export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   const problems: string[] = [];
   if (raw === undefined || raw === null) return {};
-  if (!isObject(raw)) throw new ConfigError(`${where}: the config must be a map`);
+  if (!isObject(raw)) {
+    const got = Array.isArray(raw) ? "a list" : `a ${typeof raw}`;
+    throw new ConfigError(`${where}: the config must be a mapping of setting names to values (key: value at the top level), and this file holds ${got}`);
+  }
   const { defaults, projects, ...rest } = raw;
   if (projects !== undefined) {
     if (!isObject(projects)) problems.push(`${where}: projects must map <host>/<path> to settings`);
@@ -1721,7 +1724,7 @@ export async function loadConfig(path: string, mode: ConfigMode = "fold"): Promi
   const text = readFileSync(path, "utf-8");
   let raw: unknown;
   try {
-    raw = path.endsWith(".json") ? JSON.parse(text) : text.trim() === "" ? {} : parseYAML(text);
+    raw = path.endsWith(".json") ? JSON.parse(text) : text.trim() === "" ? {} : parseYAMLDocument(text);
   } catch (e) {
     throw new ConfigError(`${path}: ${(e as Error).message}`);
   }

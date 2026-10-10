@@ -57,12 +57,12 @@ One comment on what changed between the approved plan and the refused one. The a
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
-       `ci/own-jobs.yml`. The job runs in the `terragucci` workflow after the wave's job, and reads that run's artifact.
+       `ci/own-jobs.yml`. The job runs in the `terragucci` workflow after the wave's job, only when that job failed, and reads that run's artifact. A bare `failure()` would also run it on a branch push whose check failed, where the wave never ran.
 
        ```yaml
        explain-refusal:
          needs: apply-wave-2
-         if: failure()
+         if: failure() && needs.apply-wave-2.result == 'failure'
          runs-on: ubuntu-latest
          permissions:
            contents: read
@@ -90,7 +90,7 @@ One comment on what changed between the approved plan and the refused one. The a
        ```
      </TabItem>
      <TabItem label="GitLab">
-       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. After the wave's job fails, it finds the artifact unpacked at `terragucci-report/`. Sharing the apply jobs' rule keeps it out of a branch's pipeline, which has no `apply-wave-2`. Give it `ANTHROPIC_API_KEY` as a masked variable. The summary stays in the job log; nothing is posted.
+       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. After the wave's job fails, it finds the artifact unpacked at `terragucci-report/`. Sharing the apply jobs' rule keeps it out of a branch's pipeline, which has no `apply-wave-2`, and `on_failure` with `needs` runs it only when `apply-wave-2` failed. A wave that failed for another reason leaves no approved report, and the job stops there. Give it `ANTHROPIC_API_KEY` as a masked variable. The summary stays in the job log; nothing is posted.
 
        ```yaml
        explain-refusal:
@@ -101,6 +101,7 @@ One comment on what changed between the approved plan and the refused one. The a
              when: on_failure
          image: node:24
          script:
+           - test -d terragucci-report/approved || exit 0
            - >
              npx -y @intentius/terragucci respond wave-refused
              --approved terragucci-report/approved --current terragucci-report/current --wave 2
@@ -113,12 +114,12 @@ One comment on what changed between the approved plan and the refused one. The a
        ```
      </TabItem>
      <TabItem label="Forgejo">
-       `ci/own-jobs.yml`. Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job runs in the `terragucci` workflow beside the wave's job. `anthropics/claude-code-action` is a GitHub app, so the job runs the CLI and the summary stays in its log. The key is a repository secret; the job needs no write token.
+       `ci/own-jobs.yml`. Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job runs in the `terragucci` workflow beside the wave's job, only when that job failed. `anthropics/claude-code-action` is a GitHub app, so the job runs the CLI and the summary stays in its log. The key is a repository secret; the job needs no write token.
 
        ```yaml
        explain-refusal:
          needs: apply-wave-2
-         if: failure()
+         if: failure() && needs.apply-wave-2.result == 'failure'
          runs-on: docker
          container: node:24
          steps:

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { parseYAML } from "@intentius/chant/yaml";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { describe, expect, it } from "vitest";
 import { ConfigError, SETTING_KEYS, validateConfig } from "../src/config";
 import { CONFIG_SCHEMA_URL, configSchema, configSchemaProblems, type JsonSchema } from "../src/config-schema";
@@ -12,7 +12,7 @@ const SHIPPED = [join(repo, "packages/terragucci/src/terragucci.schema.json"), j
 
 const read = (path: string): unknown => {
   const text = readFileSync(path, "utf-8");
-  return text.trim() === "" ? {} : parseYAML(text);
+  return text.trim() === "" ? {} : parseYAMLDocument(text);
 };
 
 /** Whether config.ts accepts a parsed config. */
@@ -111,7 +111,7 @@ describe("config check and the schema agree", () => {
     for (const b of blocks) {
       let raw: unknown;
       try {
-        raw = parseYAML(b);
+        raw = parseYAMLDocument(b);
       } catch {
         continue;
       }
