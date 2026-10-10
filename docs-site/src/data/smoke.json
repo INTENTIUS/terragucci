@@ -982,6 +982,14 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "behold-view",
+      "says": "the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4e3ccead"
+    },
+    {
       "claim": "drift-overdue",
       "says": "the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run",
       "needs": null,
