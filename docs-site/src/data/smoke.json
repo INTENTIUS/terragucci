@@ -153,7 +153,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "2a54daa5"
+      "commit": "263ec5ea"
     },
     {
       "claim": "rollout",
@@ -1142,7 +1142,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "2a54daa5"
+      "commit": "263ec5ea"
     },
     {
       "claim": "cdf-rows-takeover",
@@ -1771,8 +1771,17 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "audit",
+      "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
       "binary": "choudoufu",
-      "commit": "2a54daa5"
+      "commit": "263ec5ea"
     },
     {
       "claim": "audit-override",
@@ -1812,8 +1821,17 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
       "binary": "choudoufu",
-      "commit": "2a54daa5"
+      "commit": "263ec5ea"
     },
     {
       "claim": "estate-graph",
@@ -1821,7 +1839,16 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate-graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
     },
     {
       "claim": "estate-graph",
@@ -1830,7 +1857,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "2a54daa5"
+      "commit": "263ec5ea"
     },
     {
       "claim": "resource-history",
@@ -1846,8 +1873,17 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "resource-history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
       "binary": "choudoufu",
-      "commit": "2a54daa5"
+      "commit": "263ec5ea"
     },
     {
       "claim": "state-versions",
