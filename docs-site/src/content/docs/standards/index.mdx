@@ -1,0 +1,38 @@
+---
+title: Standards
+description: The evaluations and open standards terragucci answers to, from the tacos.guru criteria to OIDC, OPA, OpenTelemetry, MCP and RFC 8785, each linked to the page that shows it in use.
+---
+
+A security review or a platform evaluation asks the same thing: which standards does this follow, and where is the proof? This section answers with links. Every row names something terragucci does in its code today and links the page that shows it, and most of those pages name the smoke claims that prove it.
+
+| Page | Answers |
+|---|---|
+| [tacos.guru](/terragucci/standards/tacos-guru/) | the 24 criteria and 5 gates of an independent Terraform platform evaluation, one by one |
+| [Access and identity](/terragucci/standards/access-and-identity/) | SSO and RBAC: who decides each action, with no accounts of terragucci's own |
+
+## Open standards
+
+| Standard | terragucci uses it for | Shown in |
+|---|---|---|
+| OpenTofu and Terraform CLI | every plan and apply runs the binary you pin, against the state backend you already have; its plan JSON feeds policy and the report | [Choose your binary](/terragucci/guides/use-a-binary/) |
+| Release checksums (`SHA256SUMS`) | a pinned binary the image lacks is installed in the job only when its checksum matches its release's | [Choose your binary](/terragucci/guides/use-a-binary/) |
+| OpenID Connect federation | each job trades the forge's OIDC token for a short-lived role: AWS STS `AssumeRoleWithWebIdentity`, GCP workload identity federation, Azure federated credentials | [Credentials](/terragucci/reference/pipeline/#credentials) |
+| OPA and Rego | policies over each plan with conftest or OPA, including HCP Terraform's policy-set input and `policies.hcl` | [Policy](/terragucci/reference/policy/) |
+| OpenTelemetry (OTLP) | one trace per run and its metrics, sent as OTLP/JSON over HTTP to the endpoint in the standard `OTEL_EXPORTER_OTLP_*` variables | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
+| DORA metrics | deployment frequency, lead time, change failure rate and time to restore, computed from the audit trail | [Delivery metrics](/terragucci/reference/delivery-metrics/) |
+| Model Context Protocol | `terragucci mcp`, a read-only MCP server on stdio over the estate, reports, state versions and audit trail | [Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/) |
+| SSH signatures | under `approval: sealed`, an approval is an `ssh-keygen -Y sign` signature checked against a file in ssh's `allowed_signers` format | [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) |
+| RFC 8785 (JSON Canonicalization Scheme) | a [plan digest](/terragucci/concepts/glossary/#plan-digest), `jcs1-sha256:`, is SHA-256 over the canonical JSON of the plan's change set, so key order never changes what an approval binds | [Approval binding](/terragucci/concepts/waves-and-approvals/#approval-binding) |
+| Terraform module registry protocol | each module release is written as the protocol's static files to your bucket, so roots pin registry sources | [Serve a module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) |
+| OCI artifacts | modules publish as OCI packages that OpenTofu roots pin | [Publish your modules](/terragucci/guides/publish-modules/) |
+| Conventional Commits and SemVer | commit types decide each module's next version | [Publish your modules](/terragucci/guides/publish-modules/) |
+| SLSA provenance and in-toto | with `modules.attest`, each release carries SLSA v1 provenance in an in-toto statement, signed with cosign | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
+| SPDX | each attested release carries an SPDX 2.3 SBOM of its providers and modules | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
+| JSON Schema | the report, its indexes, the estate, the audit trail and DORA files ship schemas (draft 2020-12) a reader can validate against | [Report JSON schema](/terragucci/reference/report-schema/) |
+| HMAC-SHA256 request signing | webhook events are signed over their body; the chat relay checks Slack's signing secret and the Teams outgoing webhook's HMAC | [Webhook event schema](/terragucci/reference/notify-event/#headers), [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) |
+| Signed object URLs | reports open through S3 presigned links, GCS V4 signed URLs or Azure user delegation SAS, with no public bucket | [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
+
+## Next
+
+- [Validation](/terragucci/reference/validation/): every smoke claim and its result.
+- [Threat model](/terragucci/reference/threat-model/): what each job can reach.

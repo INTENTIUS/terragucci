@@ -297,6 +297,78 @@
       "commit": "02e7f08"
     },
     {
+      "claim": "gl-comments",
+      "says": "the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-comment-plan",
+      "says": "a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-protected-token",
+      "says": "with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-mr-apply",
+      "says": "with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-pr-review",
+      "says": "with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-wave-jobs",
+      "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-comment-agent",
+      "says": "a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "gl-review-agent",
+      "says": "the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
       "claim": "traces",
       "says": "each plan run is one trace, with a span per root and the binary spans inside it",
       "needs": null,
@@ -1239,6 +1311,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "b0f19790"
+    },
+    {
+      "claim": "tg-generate-init",
+      "says": "with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "04983e3b"
     },
     {
       "claim": "root-pins",

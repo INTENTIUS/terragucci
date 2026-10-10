@@ -1,10 +1,10 @@
 {
   "step": "first-pr",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "be9f7c9320e2bc21",
   "commands": [
     {
       "cmd": "just example change one-root",
-      "output": "[example] pushed change/one-root at 2229061f\n[example] run 2 for 2229061f (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1)\n[example] run 3 for 2229061f (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/one-root at d42b45c5\n[example] run 2 for d42b45c5 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1)\n[example] run 3 for d42b45c5 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1 (success)",
       "exit": 0
     }
   ],

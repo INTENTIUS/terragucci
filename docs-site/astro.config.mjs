@@ -192,6 +192,14 @@ export default defineConfig({
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
+				{
+					label: 'Standards',
+					items: [
+						{ label: 'Overview', slug: 'standards' },
+						{ label: 'tacos.guru', slug: 'standards/tacos-guru' },
+						{ label: 'Access and identity', slug: 'standards/access-and-identity' },
+					],
+				},
 				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Validation', slug: 'reference/validation' },
 				{ label: 'Scale', slug: 'reference/scale' },

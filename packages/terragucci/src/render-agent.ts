@@ -1,7 +1,8 @@
 /**
  * The agent comment's two jobs, `agent` and `agent-push`, for GitHub and
- * Forgejo (see agent-comment.ts for what each does and why there are two).
- * GitLab starts no pipeline for a merge request note, so it has neither.
+ * Forgejo (see agent-comment.ts for what each does and why there are two),
+ * and their scripts on GitLab, where the comments job starts them in a
+ * pipeline of the default branch (gitlab-agent.ts).
  */
 import { Job, Step } from "@intentius/chant-lexicon-github/generated/index";
 import { AGENT_CHANGE_DIR, AGENT_DECISION_JS, AGENT_DIR, type AgentCommentInput } from "./agent-comment";
@@ -60,6 +61,54 @@ export function agentRunScript(command: string): string {
     `git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
     `git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"`,
   ].join("\n");
+}
+
+/** The variables the agent's command keeps on GitLab, where every job holds the project's variables: the environment is cleared but for these and the model's key. */
+export const GL_AGENT_ENV = ["PATH", "HOME", "LANG", "TG_AGENT_PROMPT", "TG_AGENT_MAX_TURNS", "TG_REVIEW_PROMPT"];
+
+/** `env -i` with the variables GitLab's agent and review commands keep, and the model's key. */
+export function gitlabCleanEnv(keySecret: string): string {
+  return ["env -i", ...[...GL_AGENT_ENV, keySecret].map((v) => `${v}="\${${v}:-}"`)].join(" ");
+}
+
+/**
+ * The GitLab agent job's script (gitlab-agent.ts): read the ask again, check
+ * out the merge request's head, drop the job token from the remote, and run
+ * the agent with a cleared environment. GitLab hands every job the project's
+ * variables, so the agent sees none of them: only the model's key, the
+ * prompt and the turns. The change and the agent's exit code go to the job's
+ * artifact; an ask that no longer stands leaves `moved`, and the push job
+ * reads the ask again and says why.
+ */
+export function gitlabAgentRunScript(agent: AgentCommentInput, artifact: string): string {
+  return [
+    READS_EXIT,
+    `mkdir -p ${AGENT_CHANGE_DIR}`,
+    `terragucci comment --forge gitlab --agent run --policy-dir ${sh(agent.policyDir)} --out ${AGENT_DIR}/decision.json --prompt ${AGENT_DIR}/prompt.md || exit 1`,
+    "read -r TG_PR TG_SHA TG_HEAD <<EOF",
+    `$(node -e '${AGENT_DECISION_JS}' ${AGENT_DIR}/decision.json)`,
+    "EOF",
+    'if [ -z "$TG_PR" ]; then',
+    `  echo moved >${AGENT_CHANGE_DIR}/rc`,
+    "else",
+    '  git -c core.hooksPath=/dev/null fetch -q origin "+refs/merge-requests/$TG_PR/head:refs/terragucci/agent-head" || exit 1',
+    '  git -c core.hooksPath=/dev/null checkout -q --detach "$TG_SHA" || exit 1',
+    '  git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"',
+    `  export TG_AGENT_PROMPT=${AGENT_DIR}/prompt.md`,
+    `  ${gitlabCleanEnv(agent.keySecret)} bash -c ${sh(agent.command)} <"$TG_AGENT_PROMPT"`,
+    `  echo "$?" >${AGENT_CHANGE_DIR}/rc`,
+    "  git -c core.hooksPath=/dev/null add -A || exit 1",
+    `  git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
+    '  git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"',
+    "fi",
+    // After the diff, so the artifact's directory is never part of the change.
+    `mkdir -p "$CI_PROJECT_DIR/${artifact}" && cp ${AGENT_CHANGE_DIR}/* "$CI_PROJECT_DIR/${artifact}/"`,
+  ].join("\n");
+}
+
+/** The GitLab agent-push job's script: read the ask again with the push token, apply, guard, commit, push and reply (pushGitLabAgentChange). */
+export function gitlabAgentPushScript(policyDir: string, artifact: string): string {
+  return ["set -uo pipefail", `terragucci comment --forge gitlab --agent push --change ${artifact} --policy-dir ${sh(policyDir)}`].join("\n");
 }
 
 /** The push job's step: apply, guard, commit, push and reply (`pushAgentChange`). */
