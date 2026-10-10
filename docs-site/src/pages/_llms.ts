@@ -65,7 +65,7 @@ export async function pages() {
 
 export const PREAMBLE = `# terragucci
 
-> The whole Terraform lifecycle, handled: grouped plans on every pull request, applies in gated waves, drift reports, module publishing and rollouts, for Terraform, OpenTofu and Terragrunt on GitHub, GitLab or Forgejo.
+> The whole Terraform lifecycle, handled: grouped plans on every pull request, applies in gated waves, drift reports, module publishing and rollouts, for Terraform, OpenTofu, choudoufu, Terragrunt, Atmos, Terramate and CDK Terrain on GitHub, GitLab or Forgejo.
 
 Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci. The validation page (${SITE}/reference/validation/) lists the checks every generated pipeline passes.
 
