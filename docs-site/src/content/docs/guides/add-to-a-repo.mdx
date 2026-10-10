@@ -18,7 +18,7 @@ import Shot from '../../../components/Shot.astro';
 
 ## Result
 
-A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. Pick your forge in any tab and the other forge tabs on the site follow.
+A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Everything runs as jobs in your own CI and lands in your git and your bucket; there is no account to create. Pick your forge in any tab and the other forge tabs on the site follow.
 
 <Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green" />
 
@@ -107,7 +107,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    | its own `stages:` | stops unless the list has `.gitlab/terragucci.yml`'s stages (`check`, `plan`, `apply` and the rest) in that order, and names them |
    | a job named like one of terragucci's (`check`, `plan`, `apply-wave-1`) | stops: GitLab would merge the two jobs |
 
-   With no `stages:` of your own, your jobs keep GitLab's defaults: `build` and `test` run before terragucci's stages, `deploy` after the apply. Top-level `variables:` and `default:` in your file reach terragucci's jobs too.
+   With no `stages:` of your own, GitLab's default stages put your `build` and `test` jobs before terragucci's stages and `deploy` after the apply. Your top-level `variables:` and `default:` reach terragucci's jobs too.
 
    </TabItem>
    <TabItem label="Forgejo">
@@ -118,14 +118,14 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    no terragucci.yml needed (defaults fit)
    ```
 
-   `url` in `terragucci.yml` names a host on another scheme or port.
+   For a host on another scheme or port, set `url` in `terragucci.yml`.
 
    </TabItem>
    </Tabs>
 
-   On a host the table does not list, pass `--forge` once and `init` records it in `terragucci.yml`.
+   Pass `--forge` once for a host the table does not list; `init` records it in `terragucci.yml`.
 
-   In a Terragrunt repo, `init` finds the units and writes the same files; [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
+   In a Terragrunt repo `init` finds the units and writes the same files. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
 
 2. Give the pipeline a token.
 
@@ -170,12 +170,12 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    </TabItem>
    <TabItem label="GitLab">
 
-   The jobs get the roles through `id_tokens`. GitLab-managed Terraform state limits concurrent inits, so fewer Terragrunt units run at once.
+   Roles come through `id_tokens`. GitLab-managed Terraform state limits concurrent inits, so fewer Terragrunt units run at once.
 
    </TabItem>
    <TabItem label="Forgejo">
 
-   The jobs set `enable-openid-connect: true`, which needs Forgejo 15 and Forgejo Runner 12.5 or later. The issuer is your Forgejo URL plus `/api/actions`. Older versions serve no token; give their runner static credentials instead.
+   OIDC needs Forgejo 15 and Forgejo Runner 12.5 or later; the jobs set `enable-openid-connect: true`. The issuer is your Forgejo URL plus `/api/actions`. Older versions serve no token; give their runner static credentials instead.
 
    </TabItem>
    </Tabs>
@@ -245,14 +245,14 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
 
    <Shot step="gitlab" view="required" alt="GitLab's merge request settings with Pipelines must succeed checked: merge requests cannot be merged if the latest pipeline did not succeed or is still running" />
 
-   A failed check fails the pipeline:
+   The pipeline fails with the check:
 
    <Shot step="gitlab" view="check" alt="A GitLab check job's log for a change pushed without tofu fmt: the diff tofu fmt would make to envs/dev/orders/locals.tf" />
 
    </TabItem>
    <TabItem label="Forgejo">
 
-   Turn on status checks in the default branch's protection rule, with `terragucci/plan` as the pattern.
+   In the default branch's protection rule, enable status checks with `terragucci/plan` as the pattern.
 
    <Shot step="statuses" view="checks" alt="A pull request's checks in Forgejo, all successful: the plan job, terragucci/plan with its counts of roots, groups and destroys, the plan-note job and the check" />
 
@@ -263,7 +263,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; two o
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A wave that destroys something waits for a person to approve it, with `npx terragucci approve` from a checkout (it runs [chant](/terragucci/concepts/glossary/#chant), so `npm i -D @intentius/chant`) or with a review of the pull request under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes). Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
+6. Make approval possible. A wave that destroys something waits until a person runs `npx terragucci approve` from a checkout (it runs [chant](/terragucci/concepts/glossary/#chant), so `npm i -D @intentius/chant`) or, under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes), reviews the pull request. Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
 
 </Steps>
 

@@ -36,7 +36,7 @@ Decline records nothing; the relay names who declined in the thread, and the wav
 
 <Steps>
 
-1. List each approver's chat ids on their line of `.chant/allowed_signers`, beside their principal, and merge it. The relay reads the file on the default branch for every click.
+1. Add each approver's chat ids beside the principal on their line of `.chant/allowed_signers`, then merge the change. The relay reads the file on the default branch for every click.
 
    ```text
    alice@acme.com,slack:T0123ABCD/U0456EFGH,teams:6f1c2d0e-1a2b-4c3d-8e9f-0a1b2c3d4e5f ssh-ed25519 AAAAC3Nz...
@@ -53,7 +53,7 @@ Decline records nothing; the relay names who declined in the thread, and the wav
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
-       A fine-grained token for this repo alone, with Contents: Read and write and nothing else, from an account that does not administer the repo. The default branch must be protected. The relay refuses a classic token.
+       A fine-grained token for this repo alone, with Contents: Read and write and nothing else, from an account that does not administer the repo. The relay refuses a classic token, and the default branch must be protected.
      </TabItem>
      <TabItem label="GitLab">
        A project access token with the Developer role and the `write_repository` and `read_api` scopes. The default branch must be protected with push allowed to Maintainers or no one, and `chant/lifecycle` protected with push for Developers.
@@ -67,10 +67,10 @@ Decline records nothing; the relay names who declined in the thread, and the wav
 
    <Tabs syncKey="chat">
      <TabItem label="Slack">
-       In the Slack app that holds the channel's incoming webhook, turn on Interactivity and set its Request URL to the relay's address with `/slack`. Copy the app's Signing Secret.
+       Turn on Interactivity in the Slack app that holds the channel's incoming webhook, and set its Request URL to `<relay address>/slack`. Copy the app's Signing Secret.
      </TabItem>
      <TabItem label="Teams">
-       In the team, add an outgoing webhook named `terragucci` whose callback URL is the relay's address with `/teams`. Copy the security token Teams shows once.
+       Add an outgoing webhook named `terragucci` to the team, with `<relay address>/teams` as its callback URL. Teams shows its security token once; copy it.
      </TabItem>
    </Tabs>
 
@@ -88,7 +88,7 @@ Decline records nothing; the relay names who declined in the thread, and the wav
        ```
      </TabItem>
      <TabItem label="Function">
-       An AWS Lambda function from a container image, with a function URL. The [Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter) 1.1.0 extension passes each request to the same server, once `/healthz` answers:
+       An AWS Lambda function built from a container image and reached through a function URL. The [Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter) 1.1.0 extension passes each request to the same server, once `/healthz` answers:
 
        ```dockerfile
        FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>
@@ -104,9 +104,9 @@ Decline records nothing; the relay names who declined in the thread, and the wav
      </TabItem>
    </Tabs>
 
-   The log names the repo, its default branch and the user it pushes as. A token that can do more than approve stops it there, with the reason.
+   The startup log names the repo and default branch, then the user the relay pushes as. A token that can do more than approve stops the relay there, and the log gives the reason.
 
-5. Name the relay in `terragucci.yml`, write the pipeline again and merge it:
+5. Set `notify.relay` in `terragucci.yml` and regenerate the pipeline, then merge:
 
    ```yaml
    apply:

@@ -38,7 +38,7 @@ One comment on what changed between the approved plan and the refused one. The a
    npx terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2 --json
    ```
 
-   The envelope holds each root whose plan digest moved, with what moved inside it.
+   The envelope lists each root whose plan digest moved and what moved inside it.
 
 2. Add the job to a file of your own jobs, and name the file in `terragucci.yml`. Each time `init` rewrites its pipeline file, it writes every job the file holds after its own, unchanged. `reconcile` does the same in each project of a [control repo](/terragucci/concepts/control-repo/).
 
@@ -90,7 +90,7 @@ One comment on what changed between the approved plan and the refused one. The a
        ```
      </TabItem>
      <TabItem label="GitLab">
-       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. It runs after the wave's job, and the artifact unpacks at `terragucci-report/`. It shares the apply jobs' rule, so a branch's pipeline, which has no `apply-wave-2`, does not need it. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing; the summary is in its log.
+       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. After the wave's job fails, it finds the artifact unpacked at `terragucci-report/`. Sharing the apply jobs' rule keeps it out of a branch's pipeline, which has no `apply-wave-2`. Give it `ANTHROPIC_API_KEY` as a masked variable. The summary stays in the job log; nothing is posted.
 
        ```yaml
        explain-refusal:
@@ -113,7 +113,7 @@ One comment on what changed between the approved plan and the refused one. The a
        ```
      </TabItem>
      <TabItem label="Forgejo">
-       `ci/own-jobs.yml`. Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job runs in the `terragucci` workflow beside the wave's job. `anthropics/claude-code-action` is a GitHub app, so run the CLI in the job and read the summary in its log. The key is a repository secret; the job needs no write token.
+       `ci/own-jobs.yml`. Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job runs in the `terragucci` workflow beside the wave's job. `anthropics/claude-code-action` is a GitHub app, so the job runs the CLI and the summary stays in its log. The key is a repository secret; the job needs no write token.
 
        ```yaml
        explain-refusal:

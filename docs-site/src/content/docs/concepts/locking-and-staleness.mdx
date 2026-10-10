@@ -4,13 +4,13 @@ description: What a killed apply, a stale plan and two applies that meet do with
 claims: [apply-serial, unlock-state, lock-wait, audit-refused, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket]
 ---
 
-With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), a killed apply leaves no lock to release. Your repo still applies one change at a time, whatever the binary: a second push's apply waits for the first (`apply-serial`). Applies that meet outside the pipeline, such as a laptop and CI, choudoufu settles per resource.
+[choudoufu](/terragucci/guides/use-a-binary/#choudoufu) is the OpenTofu fork from the team behind terragucci. A killed apply under `binary: choudoufu` leaves no lock to release. With any binary your repo applies one change at a time: a second push's apply waits for the first (`apply-serial`). When applies meet outside the pipeline (a laptop and CI), choudoufu settles them per resource.
 
 Each row names the check that proves it: terragucci's on [Validation](/terragucci/reference/validation/), choudoufu's by claim number on its site.
 
 ## Stock and choudoufu
 
-Stock is a state file behind a lock, as Terraform and OpenTofu keep it; choudoufu is an estate with a [record store](#record-writes).
+Terraform and OpenTofu (stock) keep a state file behind a lock. choudoufu keeps an estate with a [record store](#record-writes).
 
 | | Stock | choudoufu |
 |---|---|---|
@@ -27,7 +27,7 @@ The state file is a cache: never the record of what you own, and losing it costs
 
 ## Record writes
 
-Each resource has its own record in the estate's record store bucket. Every record write is one conditional S3 `PutObject`, so the cloud's API settles two runs that reach one resource:
+The estate's record store bucket holds one record per resource, and every write to it is one conditional S3 `PutObject`. The cloud's API therefore settles two runs that reach one resource:
 
 | Record write | Condition | When another run got there first |
 |---|---|---|
@@ -36,7 +36,7 @@ Each resource has its own record in the estate's record store bucket. Every reco
 
 ## Live resource markers
 
-Each resource carries its identity as tags, written in its create call, or just after it for the few types whose create takes no tags.
+Each resource carries its identity as tags. The create call writes them; for the few types whose create takes no tags, the next call does.
 
 | Tag | Holds |
 |---|---|

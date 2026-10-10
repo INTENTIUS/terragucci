@@ -13,7 +13,7 @@ A shared module change goes out in batches, each after the last; a batch waits o
 
 The roots in `waves.canary` go first, then one dependency layer per wave, so no root in a wave reads another in it. The report's wave 3 is the gate `wave-3`.
 
-Terragrunt units split the same way: the canary units' layers first, then the layers of the rest, each wave one `terragrunt run --all` with its own gate. An approved wave applies exactly the plans its job saved.
+Terragrunt units split the same way, the canary units' layers first. Each wave is one `terragrunt run --all` behind its own gate. Once approved, it applies exactly the plans its job saved.
 
 | Where | Terragrunt waves come from |
 |---|---|
@@ -22,9 +22,9 @@ Terragrunt units split the same way: the canary units' layers first, then the la
 
 ## Approval binding
 
-An approval binds the wave's set digest, so it covers exactly those plans. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. Under `approval: sealed` it counts only when its ssh seal verifies against the signers file.
+The wave's set digest is what an approval binds, so it covers exactly those plans. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. `approval: sealed` also requires its ssh seal to verify against the signers file.
 
-The `approval` key, the signers and the gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule, except a multi-commit rebase: [merge or squash such changes](/terragucci/guides/approve-a-wave/#rule-commit).
+The `approval` key, the signers and the gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule. Only a multi-commit rebase breaks this; [merge or squash such changes](/terragucci/guides/approve-a-wave/#rule-commit).
 
 A gated wave reads the newest approval of its gate:
 
@@ -50,9 +50,9 @@ A root that reads another root's state through `terraform_remote_state` goes in 
 | known only once the upstream applies | `(known after apply)` |
 | of an upstream the change does not reach | the applied value |
 
-The plan note lists each root planned this way and the outputs it read before they were known. A wave that read such an output plans again once the waves it reads have applied, then waits for an approval of that plan. The note gives no digest for it, and under `approval: pr-review` the pull request's review does not approve it. A wave that read only known outputs plans the same digest again when its upstream applies as planned, so an approval or review of the note's digest still counts.
+The plan note lists each root planned this way and the outputs it read before they were known. A wave that read such an output plans again once the waves it reads have applied, then waits for an approval of that plan. No digest for it appears in the note, and under `approval: pr-review` the pull request's review does not approve it. With only known outputs read, the wave plans the same digest again when its upstream applies as planned, so an approval or review of the note's digest still counts.
 
-For that plan, terragucci points the root's references to the block at a local holding the upstream's planned outputs, adds `terragucci_linked.tf` while the plan runs, then puts the files back. A root in Terraform's JSON syntax, such as a CDK Terrain stack's `cdk.tf.json`, is linked the same way: its backend and its `terraform_remote_state` blocks order the waves, and its references are rewritten inside their `${...}` templates. These still plan on the applied state, and the report's `roots[].reads` says why:
+For that plan terragucci adds `terragucci_linked.tf` with a local holding the upstream's planned outputs and points the root's references to the block at it. The files are restored after the plan. A root in Terraform's JSON syntax, such as a CDK Terrain stack's `cdk.tf.json`, is linked the same way: its backend and its `terraform_remote_state` blocks order the waves, and its references are rewritten inside their `${...}` templates. These still plan on the applied state, and the report's `roots[].reads` says why:
 
 | Case | It plans on |
 |---|---|
@@ -86,11 +86,11 @@ Below the waves the page has two more parts:
 | Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state` (in a Terragrunt repo, every unit whose `dependency` or `dependencies` block names it), followed through, and the dependency graph of the commit's roots with both marked |
 | Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
 
-A wave that waited has two plans on the timeline, the one that asked for the approval and the later one that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
+A wave that waited shows the plan that asked for the approval and the later plan that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
 
 ### Blast radius in the plan note
 
-A pull request's plan note names the same radius: the roots whose plan changes something, and each root downstream that reads their state, with its wave. A root the run did not plan, such as one `--root` left out, is marked "not planned in this run".
+Pull requests get the same radius in their plan note, by wave: the roots whose plan changes something and each downstream root that reads their state. A root the run did not plan, such as one `--root` left out, is marked "not planned in this run".
 
 ```text
 **Blast radius:** 1 root changes (`envs/dev/platform`), and 3 roots downstream read their state:
@@ -136,7 +136,7 @@ waves:
 | `apply-wave-<n>` | plans every root, runs the policy, decides the gate on the set digest and records the approval it uses, then hands each plan digest to the shares and changes nothing |
 | `apply-wave-<n>-share-<s>` | plans its part again and applies it if each digest matches what `apply-wave-<n>` decided; otherwise exits 4 and changes nothing |
 
-Shares run side by side as far as runners are free, and the next wave starts after the last of them. The gate, its ledger record and the approve command stay per wave. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
+Shares run side by side as far as runners are free, and the next wave starts after the last of them. Each wave still has one gate with one ledger record and one approve command. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
 
 In a Terragrunt repo the wave's job plans every unit with one `run --all`, and each share plans and applies its own units with one `run --all --filter`. When the last wave splits, an `apply-rest` job after its shares runs any wave Terragrunt's edges cut past the pipeline's, as the last wave's job does otherwise.
 
@@ -144,7 +144,7 @@ On GitLab the shares take each other's place in the apply resource group, which 
 
 ## One apply at a time
 
-A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).
+A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. `locks: plan` makes a pull request hold that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).
 
 ## Next
 

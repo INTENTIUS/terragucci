@@ -9,7 +9,7 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Who can apply to production, and how would you show an auditor that only they did? terragucci answers with the controls you already run. It has no accounts, no login and no roles of its own: every stage is a job in your CI, so sign-in is your forge's and access is your forge's permissions plus your cloud's IAM.
+Every terragucci stage is a job in your CI, so the controls you already run decide who can apply to production and show an auditor who did.
 
 | Need | Comes from |
 |---|---|
@@ -17,7 +17,7 @@ Who can apply to production, and how would you show an auditor that only they di
 | RBAC | forge permissions and branch protection for the code, the `approval` mode for gated waves, and cloud IAM for what each job's role reaches |
 | Audit | the [audit trail](/terragucci/reference/audit-trail/): each approval with its approver, digest and time, and the apply that used it |
 
-The only lists of people terragucci reads are the signers file and `policy.override`, both in the repo. Offboarding someone means the forge, the chat workspace and their lines there.
+The signers file and `policy.override` are the only lists of people terragucci reads; both live in the repo. Offboarding someone takes them off the forge and chat workspace and out of both lists.
 
 ## Actions
 
