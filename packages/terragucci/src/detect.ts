@@ -542,6 +542,22 @@ export function estateOf(dir: string): { estate?: string; reads: string[] } {
   return { estate, reads };
 }
 
+/** The text of a root's choudoufu `live` block, comments stripped: its `estate.chdf.hcl` sidecar, else the block in its `terraform` block. */
+export function liveBody(dir: string): string | undefined {
+  const sidecar = join(dir, "estate.chdf.hcl");
+  if (existsSync(sidecar)) return stripComments(readFileSync(sidecar, "utf-8"));
+  for (const f of tfFiles(dir)) {
+    if (isJson(f)) continue;
+    const text = stripComments(readFileSync(f, "utf-8"));
+    for (const t of text.matchAll(/^\s*terraform\s*\{/gm)) {
+      const body = blockBody(text, t.index!);
+      const live = body.match(/\blive\s*\{/);
+      if (live) return blockBody(body, live.index!);
+    }
+  }
+  return undefined;
+}
+
 /** Each `data "terraform_estate_outputs"` block of a root: its label and the estate whose outputs it reads. */
 export function estateOutputReads(dir: string): { name: string; estate: string }[] {
   const out: { name: string; estate: string }[] = [];
