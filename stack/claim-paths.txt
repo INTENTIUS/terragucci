@@ -33,8 +33,8 @@ packages/terragucci/src/render-review.ts  review-*
 packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply-rows.ts     apply-per-root cdf-rows-* apply-serial
-packages/terragucci/src/apply.ts          cdf-resume boot waves publish-attest apply-serial apply-per-root cdf-rows-* pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init waves-after cdf-live-progress
+packages/terragucci/src/apply-rows.ts     apply-per-root cdf-rows-* apply-serial apply-stand-down
+packages/terragucci/src/apply.ts          cdf-resume boot waves publish-attest apply-serial apply-per-root cdf-rows-* pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init waves-after cdf-live-progress apply-stand-down cdf-concurrency*
 packages/terragucci/src/apply-progress.ts cdf-live-progress estate
 packages/terragucci/src/cdf-records.ts    cdf-live-progress
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
@@ -51,7 +51,7 @@ packages/terragucci/src/tg-preview-gate.ts tg-preview-gate tg-layers tg-gate-* t
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-* token-scrub plan-token-free check
 packages/terragucci/src/pins.ts           root-pins tg-root-pins pinned-install tf-terraform check zero-config note-* report
 packages/terragucci/src/install.ts        root-pins tg-root-pins tg-choudoufu pinned-install tf-terraform tg-terraform cdf-* cost-* atmos-* terramate-*
-packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release atmos-pr-apply-lock terramate-pr-apply-lock
+packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release atmos-pr-apply-lock terramate-pr-apply-lock cdktn-pr-apply-lock
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-mixed reconcile-parallelism estate-control audit-control provider-project
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-* behold-view query-sql
@@ -91,7 +91,7 @@ packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* drift-overdue
 packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent
 packages/terragucci/src/gitlab-ci.ts
-packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard waves-after atmos-pr-apply-lock terramate-pr-apply-lock
+packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard waves-after atmos-pr-apply-lock terramate-pr-apply-lock cdktn-pr-apply-lock tg-pr-apply-lock plan-lock* pr-lock
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard replan-dispatch
 packages/terragucci/src/import/guide.ts   import-atlantis import-terrateam import-tg-scale comment-*
 packages/terragucci/src/import/terrateam.ts import-terrateam
