@@ -1,0 +1,3 @@
+# comments is GitLab's.
+forge: github
+comments: "*/5 * * * *"

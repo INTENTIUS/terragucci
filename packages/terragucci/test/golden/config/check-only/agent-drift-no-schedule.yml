@@ -1,0 +1,5 @@
+# agent.drift runs off the drift job.
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  drift: true

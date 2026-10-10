@@ -30,9 +30,9 @@ export interface GenerateSettings extends GenerateLevel {
 }
 
 export const LEVEL_KEYS = ["backend", "providers", "required_version", "disable_init"] as const;
-const TOP_KEYS = [...LEVEL_KEYS, "dirs", "roots"] as const;
+export const TOP_KEYS = [...LEVEL_KEYS, "dirs", "roots"] as const;
 export const IDENT = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-const PROVIDER_KEY = /^[a-z][a-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)?$/;
+export const PROVIDER_KEY = /^[a-z][a-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)?$/;
 
 // ── validation ───────────────────────────────────────────────────────────────
 

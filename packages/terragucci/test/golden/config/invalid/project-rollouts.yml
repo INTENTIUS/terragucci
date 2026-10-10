@@ -1,0 +1,3 @@
+projects:
+  github.com/acme/infra:
+    rollouts: "0 * * * *"
