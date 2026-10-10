@@ -11,6 +11,7 @@
  * be written is logged; it never fails the wave.
  */
 import { esc } from "./html";
+import { progressCounts, type ProgressStatus, type WaveProgress } from "../apply-progress";
 import { blastRadius, GRAPH_CSS, phaseTotals, renderGraphSvg, renderTimelineSvg, span, type Span } from "./graph";
 import type { ObjectStore } from "./object-store";
 import type { ReportWave, WaveState } from "./schema";
@@ -44,6 +45,8 @@ export interface RunWave {
   changed?: string[];
   /** Its time: each plan, each wait at the gate (no `end` while it waits) and each apply, oldest first. */
   spans?: Span[];
+  /** A choudoufu wave's resources, done, in flight or waiting, as its estates' records stood at the last read (../apply-progress.ts). */
+  progress?: WaveProgress;
   updated?: string;
 }
 
@@ -208,6 +211,24 @@ function timelineSection(view: RunView): string {
 <table class="times"><tr><th>Wave</th><th>Plan</th><th>Gate wait</th><th>Apply</th></tr>${rows.join("")}</table>`;
 }
 
+const PROGRESS_TEXT: Record<ProgressStatus, string> = { done: "done", "in-flight": "in flight", waiting: "waiting", "not-applied": "not applied" };
+const PROGRESS_ORDER: ProgressStatus[] = ["done", "in-flight", "waiting", "not-applied"];
+
+/** A wave's resources: a bar of done, in flight and waiting, then each resource with its status. */
+export function progressSection(p: WaveProgress): string {
+  const c = progressCounts(p);
+  const total = p.resources.length;
+  const bar = PROGRESS_ORDER.filter((s) => c[s] > 0)
+    .map((s) => `<span class="p-${s}" style="flex:${c[s]}" title="${c[s]} ${PROGRESS_TEXT[s]}"></span>`)
+    .join("");
+  const counts = PROGRESS_ORDER.filter((s) => c[s] > 0 || s !== "not-applied").map((s) => `${c[s]} ${PROGRESS_TEXT[s]}`).join(", ");
+  const roots = new Set(p.resources.map((r) => r.root)).size;
+  const items = p.resources
+    .map((r) => `<li data-status="${r.status}" data-address="${esc(r.address)}"><span class="dot p-${r.status}"></span><code>${esc(roots > 1 ? `${r.root}: ${r.address}` : r.address)}</code> ${esc(PROGRESS_TEXT[r.status])}${r.action !== "update" ? ` <small>${esc(r.action)}</small>` : ""}</li>`)
+    .join("");
+  return `<div class="progress" data-done="${c.done}" data-in-flight="${c["in-flight"]}" data-waiting="${c.waiting}" data-total="${total}"><div class="pbar">${bar}</div><p>${c.done} of ${total} resources done: ${esc(counts)}. Read <time datetime="${esc(p.read)}">${esc(p.read)}</time>.</p><ul class="res">${items}</ul></div>`;
+}
+
 /** The run view as one self-contained page: the waves left to right, each root with the roots it reads. */
 export function renderRunHtml(view: RunView): string {
   const rootsOf = new Map<number, RunView["roots"]>();
@@ -219,7 +240,7 @@ export function renderRunHtml(view: RunView): string {
     const command = w.command && w.state === "waiting" ? `<div><code>${esc(w.command)}</code></div>` : "";
     const report = w.report ? `<div><a href="../../${esc(w.report)}/report.html">report</a></div>` : "";
     const list = roots.map((r) => `<li><code>${esc(r.root)}</code>${r.reads.length ? `<div class="reads">reads ${r.reads.map((u) => `<code>${esc(u)}</code>`).join(", ")}</div>` : ""}</li>`).join("");
-    return `<section class="wave" data-wave="${w.number}" data-state="${esc(w.state)}"><h2>Wave ${w.number}</h2><p class="state s-${esc(w.state)}">${esc(STATE_TEXT[w.state] ?? w.state)}</p><p>${gate}</p>${w.reads.length ? `<p>after wave ${w.reads.join(", ")}</p>` : ""}${digest}${command}${report}<ul>${list}</ul></section>`;
+    return `<section class="wave" data-wave="${w.number}" data-state="${esc(w.state)}"><h2>Wave ${w.number}</h2><p class="state s-${esc(w.state)}">${esc(STATE_TEXT[w.state] ?? w.state)}</p><p>${gate}</p>${w.reads.length ? `<p>after wave ${w.reads.join(", ")}</p>` : ""}${digest}${command}${report}${w.progress ? progressSection(w.progress) : ""}<ul>${list}</ul></section>`;
   });
   const title = `${view.project}: apply of ${view.commit.slice(0, 12)}`;
   const blast = runBlast(view);
@@ -232,12 +253,14 @@ export function renderRunHtml(view: RunView): string {
   );
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
-<title>${esc(title)}</title>
+<title>${esc(title)}</title>${view.waves.some((w) => w.state === "applying") ? `\n<meta http-equiv="refresh" content="15">` : ""}
 ${TACO_ICON}
 <style>${TACO_CSS}${GRAPH_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--line:#deded8;--link:#1f5fbf;--ok:#2e7d32;--wait:#9a6700;--bad:#c62828}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--line:#34342f;--link:#8ab4ff;--ok:#81c784;--wait:#e3b341;--bad:#ef9a9a}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}code{font:12.5px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}h2.part{font-size:16px;margin:24px 0 8px}
 .waves{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}.wave{flex:1 1 220px;border:1px solid var(--line);border-radius:6px;padding:8px 12px}.wave h2{font-size:15px;margin:0}.wave p{margin:4px 0}.wave ul{padding-left:18px;margin:6px 0}.reads{font-size:12.5px;opacity:.85}
 .state{font-weight:600}.s-applied{color:var(--ok)}.s-waiting,.s-applying{color:var(--wait)}.s-refused,.s-failed{color:var(--bad)}.digest{font-size:12px}.none{opacity:.7}
+.pbar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--line);margin:6px 0}.p-done{background:var(--ok)}.p-in-flight{background:var(--wait)}.p-waiting{background:var(--line)}.p-not-applied{background:var(--bad)}
+ul.res{list-style:none;padding-left:0}ul.res li{margin:2px 0}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;outline:1px solid var(--line)}
 table.times{border-collapse:collapse}table.times td,table.times th{border-bottom:1px solid var(--line);padding:4px 16px 4px 0;text-align:left}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}${esc(title)}</h1><p>Each wave applies after the waves it reads, behind its own gate. Updated ${esc(view.updated)}.</p>
 <div class="waves">

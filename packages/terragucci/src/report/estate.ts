@@ -35,6 +35,7 @@ import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { GRAPH_CSS, renderGraphSvg, type GraphEdge } from "./graph";
 import type { RunState, RunView } from "./run-view";
+import { progressCounts } from "../apply-progress";
 import type { EphemeralList, EphemeralRow } from "../ephemeral";
 
 export const ESTATE_SCHEMA = "terragucci.estate/v1";
@@ -163,6 +164,8 @@ export interface EstateProject {
   edges?: EstateEdge[];
   /** The run view the graph read: its commit, when a wave last wrote it, and its page when the page can link it. Absent until a wave writes one. */
   run_view?: { commit: string; updated: string; page?: string };
+  /** The waves of that run view still applying that follow their resources (a choudoufu wave): how many are done, in flight and waiting at the last read. */
+  applying?: { wave: number; read: string; total: number; done: number; in_flight: number; waiting: number }[];
   /** The live ephemeral environments, from its ephemeral.json: each pull request's copy and when it expires. Absent when none is live. */
   ephemeral?: EphemeralRow[];
 }
@@ -335,9 +338,21 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     ...(p.inventory ? { inventory: inventoryOf(p.inventory, base) } : {}),
     ...(p.states ? { states: statesOf(p.states, base) } : {}),
     ...(p.run ? { run_view: { commit: p.run.commit, updated: p.run.updated, ...(base !== undefined ? { page: `${base}runs/${p.run.commit}/run.html` } : {}) } } : {}),
+    ...applyingOf(p.run),
     ...(p.edges && edgesOf(p.edges).length > 0 ? { edges: edgesOfProject(p.edges, base) } : {}),
     ...ephemeral,
   };
+}
+
+/** The run view's waves still applying with their resources followed, as counts. */
+function applyingOf(run: RunView | undefined): Pick<EstateProject, "applying"> {
+  const rows = (run?.waves ?? [])
+    .filter((w) => w.state === "applying" && w.progress)
+    .map((w) => {
+      const c = progressCounts(w.progress!);
+      return { wave: w.number, read: w.progress!.read, total: w.progress!.resources.length, done: c.done, in_flight: c["in-flight"], waiting: c.waiting };
+    });
+  return rows.length ? { applying: rows } : {};
 }
 
 const sameState = (a: RunState, b: RunState): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
@@ -451,7 +466,18 @@ function applyCell(p: EstateProject, now: Date): string {
     return `<li>${link(w.report, `wave ${w.wave ?? 0}${w.share !== undefined ? `, share ${w.share}` : ""}`)}: ${state}${w.overridden ? `, <span class="warn">${w.overridden} by policy override</span>` : ""}</li>`;
   });
   const view = p.run_view?.page && p.run_view.commit === p.apply.commit ? ` ${link(p.run_view.page, "run view")}` : "";
-  return `<td><ul>${waves.join("")}</ul><small>${short(p.apply.commit)}${view}</small></td>`;
+  return `<td><ul>${waves.join("")}</ul>${applyingBars(p)}<small>${short(p.apply.commit)}${view}</small></td>`;
+}
+
+/** Each wave still applying, as a bar of its resources done, in flight and waiting. */
+function applyingBars(p: EstateProject): string {
+  return (p.applying ?? [])
+    .map((a) => {
+      const seg = (n: number, cls: string): string => (n > 0 ? `<span class="${cls}" style="flex:${n}"></span>` : "");
+      const bar = `<span class="pbar">${seg(a.done, "p-done")}${seg(a.in_flight, "p-in-flight")}${seg(a.waiting, "p-waiting")}</span>`;
+      return `<div class="applying" data-wave="${a.wave}" data-done="${a.done}" data-in-flight="${a.in_flight}" data-waiting="${a.waiting}">${link(p.run_view?.page, `wave ${a.wave}`)} applying: ${a.done} of ${a.total} done, ${a.in_flight} in flight, ${a.waiting} waiting${bar}</div>`;
+    })
+    .join("");
 }
 
 /** A provider's source address without the public registry's host. */
@@ -604,6 +630,7 @@ ${TACO_ICON}
 <style>${TACO_CSS}${GRAPH_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
+.applying .pbar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--line);margin:4px 0}.p-done{background:#2e7d32}.p-in-flight{background:var(--warn)}.p-waiting{background:var(--line)}
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th,tbody.edges th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
