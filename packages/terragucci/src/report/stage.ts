@@ -15,6 +15,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { rootRoleEnv } from "../roles";
+import { workspaceEnv, workspaceInit } from "../backend";
+import { atmosDependencies, effectiveSynth, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
@@ -310,8 +312,10 @@ export function stateIsEmpty(binary: string, dir: string, env: NodeJS.ProcessEnv
 
 /** `stateIsEmpty` without blocking, its init taking its turn with the roots' inits. */
 export async function stateIsEmptyAsync(binary: string, dir: string, env: NodeJS.ProcessEnv, initTurn: Turn = (fn) => fn()): Promise<boolean | undefined> {
-  const init = await initTurn(() => spawnAsync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], env));
+  const wsInit = workspaceInit(env, dir);
+  const init = await initTurn(() => spawnAsync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], wsInit?.init ?? env));
   if (init.status !== 0) return undefined;
+  if (wsInit && (await spawnAsync(binary, [`-chdir=${dir}`, ...wsInit.select], wsInit.selectEnv)).status !== 0) return undefined;
   const pull = await spawnAsync(binary, [`-chdir=${dir}`, "state", "pull"], env);
   if (pull.status !== 0) return undefined;
   return emptyStateText(pull.stdout);
@@ -909,16 +913,19 @@ export async function runStage(stage: string, repo: string, options: StageOption
     .filter((l) => l.length > 0);
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
   // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
+  // An Atmos repo's instances are written by terragucci atmos write, its synth when terragucci.yml names none.
+  const synth = effectiveSynth(repo, settings.synth);
   if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
-    throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${settings.synth ? `; the synth command (${settings.synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
+    throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${synth ? `; the synth command (${synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
   }
   // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
   const base = drift ? undefined : (options.base ?? baseRef(env));
   // Roots a synth command writes are not in git, so no diff names them: the command runs on the base too, and the roots whose output differs plan.
   const notices: string[] = [];
   let selected: Set<string> | undefined;
-  if (base && settings.synth) {
-    const synthed = await synthAffected(repo, base, settings.synth, layers.flat(), rootDependencies(repo, all), env, log);
+  if (base && synth) {
+    // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
+    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, atmosDependencies(repo, all));
     selected = synthed.selected;
     notices.push(synthed.notice);
   } else if (base) {
@@ -988,6 +995,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // Linked states: the terraform_remote_state blocks of each root, and the plans of the roots this run planned, whose outputs a later layer plans on.
   const blocksOf = drift ? new Map<string, { name: string; upstream: string; repeated: boolean }[]>() : remoteStateReads(repo, all);
   const upstreamPlans = new Map<string, unknown>();
+  // An Atmos instance's reads (../atmos.ts): each upstream's outputs, read once, in its own workspace and with its own role.
+  const outputsRead = new Map<string, Promise<UpstreamOutputs>>();
+  const outputsOf = (up: string): Promise<UpstreamOutputs> => {
+    if (!outputsRead.has(up)) {
+      const upDir = join(repo, up);
+      outputsRead.set(up, binaries.resolve(up).then((b) => b.path, () => binary).then((b) => upstreamOutputs(b, upDir, workspaceEnv(rootRoleEnv(binEnv, up), upDir), initTurn)));
+    }
+    return outputsRead.get(up)!;
+  };
   let redacted = 0;
 
   /** How a root reads each upstream: the links a plan on their planned outputs takes, and the reads the report names. */
@@ -1035,9 +1051,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     let bin = binariesOf(root).expected(root);
     let path = binary;
     // The root's own role, when `oidc.roles` names one (../roles.ts).
-    const rootEnv = rootRoleEnv(binEnv, root);
-    const run = (...args: string[]) =>
-      observer.commandAsync(timing, path, args, rootEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
+    const rootEnv = workspaceEnv(rootRoleEnv(binEnv, root), dir);
+    const runIn = (env: NodeJS.ProcessEnv, ...args: string[]) =>
+      observer.commandAsync(timing, path, args, env, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    const run = (...args: string[]) => runIn(rootEnv, ...args);
     const ran: ReportStep[] = [];
     const holds: string[] = [];
     /** Run one moment's steps; the error when one failed the root. */
@@ -1074,9 +1092,23 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
       let stepError = await step("before-init");
       if (stepError) return failed(stepError, `${root}: a step before init failed`);
-      const init = await initTurn(() => run("init", "-input=false", "-no-color"));
+      const wsInit = workspaceInit(rootEnv, dir);
+      const init = await initTurn(() => (wsInit ? runIn(wsInit.init, "init", "-input=false", "-no-color") : run("init", "-input=false", "-no-color")));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      if (wsInit) {
+        const sel = await runIn(wsInit.selectEnv, ...wsInit.select);
+        if (sel.status !== 0) return failed(`workspace select failed:\n${tail(sel.stderr || sel.stdout)}`, `${root}: workspace select failed`);
+      }
       for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
+      // An Atmos instance that reads another's outputs plans on their values, never on a stand-in: held back while one has none yet.
+      const filled = await fillReads(checkoutOf(root), root, outputsOf);
+      if (filled.errors.length > 0) return failed(filled.errors.join("\n"), `${root}: could not read the state its stacks read`);
+      if (filled.waiting.length > 0) {
+        const after = [...new Set(filled.waiting.map((w) => w.read.upstream))].sort();
+        lines.push(`${root}: held back, ${filled.waiting.map((w) => `${w.read.upstream} ${w.why} (${w.read.var}: ${w.read.function})`).join("; ")}`);
+        return { root, lines, deferred: { unit: root, after, why: `reads ${filled.waiting.map((w) => `${w.read.var} from ${w.read.upstream}, which ${w.why}`).join(", and ")}, so it cannot plan until then`, previewed: false } };
+      }
+      for (const v of filled.filled) lines.push(`${root}: ${v} read from the state its stacks name`);
       stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
@@ -1174,7 +1206,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       await eachLimited(ups, limit.value, async (up) => {
         // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
         const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
-        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), rootRoleEnv(binEnv, up), initTurn));
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), workspaceEnv(rootRoleEnv(binEnv, up), join(repo, up)), initTurn));
       });
       const first = index;
       index += layer.length;

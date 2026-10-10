@@ -1,0 +1,20 @@
+terraform:
+  backend_type: s3
+  backend:
+    s3:
+      bucket: "@BUCKET@"
+      key: terraform.tfstate
+      region: us-east-1
+      use_path_style: true
+      use_lockfile: true
+
+components:
+  terraform:
+    vpc:
+      vars:
+        cidr: 10.0.0.0/16
+    app:
+      # No dependencies.components: the read alone puts app after vpc.
+      vars:
+        replicas: 1
+        vpc_cidr: !terraform.state vpc .cidr

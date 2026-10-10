@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { forgeFromHost, type Binary, type ForgeName } from "./config";
+import { atmosStateReads } from "./atmos";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
 
@@ -455,19 +456,21 @@ export function driftRefusal(binary: string, live: string[]): string | undefined
 }
 
 /**
- * For each root, the roots whose state it reads through
- * `terraform_remote_state`, and under choudoufu the roots whose estate's
- * outputs it reads through `terraform_estate_outputs` (unless `estates` is
- * false, for a caller that reasons about state files alone).
+ * For each root, the roots whose state it reads: through
+ * `terraform_remote_state`, for an Atmos instance through the
+ * `!terraform.state` reads its stacks set (./atmos.ts), and under choudoufu
+ * the roots whose estate's outputs it reads through `terraform_estate_outputs`
+ * (unless `estates` is false, for a caller that reasons about state files alone).
  */
 export function rootDependencies(repo: string, roots: string[], { estates: withEstates = true }: { estates?: boolean } = {}): Map<string, Set<string>> {
   const reads = remoteStateReads(repo, roots);
+  const atmos = atmosStateReads(repo, roots);
   const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, r)) : { reads: [] as string[] }]));
   const owner = new Map<string, string>();
   for (const [r, e] of estates) if ("estate" in e && e.estate) owner.set(e.estate, r);
   return new Map(
     roots.map((r) => {
-      const deps = new Set(reads.get(r)!.map((x) => x.upstream));
+      const deps = new Set([...reads.get(r)!.map((x) => x.upstream), ...(atmos.get(r) ?? [])]);
       for (const e of estates.get(r)!.reads) {
         const up = owner.get(e);
         if (up && up !== r) deps.add(up);

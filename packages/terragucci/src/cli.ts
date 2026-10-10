@@ -16,7 +16,8 @@
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
- *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
+ *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos <version>   (Linux builds, for a CI job)
+ *   terragucci atmos write   (write each Atmos instance to <stack>/<component> from atmos describe stacks; run by the generated pipeline)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
  *   terragucci binary <root> [--binary <b>] [--config <file>]   (print the binary a root runs, installing the version it pins; run by the generated pipeline)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
@@ -76,6 +77,7 @@ import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { detectForge, findRoots } from "./detect";
+import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -414,6 +416,12 @@ export async function main(argv: string[]): Promise<number> {
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
+      case "atmos": {
+        // An Atmos repo's synth: every job writes the instances before it reads them.
+        if (args[0] !== "write") throw new ConfigError("usage: terragucci atmos write");
+        for (const line of await atmosWrite(cwd)) console.log(line);
+        return 0;
+      }
       case "auth-provider": {
         // Terragrunt runs this in each unit's directory and reads the credentials it prints.
         console.log(JSON.stringify(authProviderOutput(cwd, process.env)));
@@ -433,8 +441,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "install": {
         const [tool, version] = args;
-        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign"].includes(tool)) {
-          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>");
+        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign", "atmos"].includes(tool)) {
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos <version>");
         }
         assertLinux();
         console.log(await install(tool as Tool, version));
@@ -768,7 +776,12 @@ export async function main(argv: string[]): Promise<number> {
           const config = await loadConfig(resolve(path), "check");
           // Which state each role reaches, read from the roots' code, and a warning for each that reaches another environment's.
           const repoDir = dirname(resolve(path));
-          if (!config.projects && config.oidc?.roles && detectTerragrunt(repoDir) === undefined) {
+          if (!config.projects && config.oidc?.roles && detectAtmos(repoDir)) {
+            // An Atmos repo's roots are its instances, <stack>/<component>, so a glob such as prod/* gives a stack its roles.
+            const instances = atmosInstances(await describeStacks(repoDir));
+            access = stateAccess(repoDir, instances.map((i) => i.path), config.oidc, { ...instanceStates(instances), via: "!terraform.state" });
+            warnings = access.warnings;
+          } else if (!config.projects && config.oidc?.roles && detectTerragrunt(repoDir) === undefined) {
             access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
             warnings = access.warnings;
           }
