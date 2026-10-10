@@ -359,6 +359,38 @@ export function providerDownloads(initOutput: string): string[] {
 /** Runs a piece of work after the one before it finished. */
 export type Turn = <T>(fn: () => Promise<T>) => Promise<T>;
 
+/**
+ * The env a root's init and plan run with, given the stage's shared provider
+ * cache. A root whose `.terraform.lock.hcl` pins every provider at the
+ * binary's own registry takes its providers from the cache as it is. Any other
+ * root (no lock file, or one that names another registry, as an OpenTofu lock
+ * does for Terraform) would download its providers again at init, over the
+ * copy in the cache that other roots' plans are running, which fails with
+ * "text file busy" (#737). A cache per root would hold some 700 MB of the AWS
+ * provider for each, so such a root keeps the shared cache and sets
+ * TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE, which Terraform and OpenTofu
+ * both read: init takes a provider the cache already holds instead of
+ * downloading it again. Its lock file has no entry to check that copy
+ * against either way. The stage logs how many roots that is, once.
+ */
+export function rootCacheEnv(env: NodeJS.ProcessEnv, dir: string, binaryName: string): NodeJS.ProcessEnv {
+  if (!env.TF_PLUGIN_CACHE_DIR || lockCovers(dir, binaryName)) return env;
+  return { ...env, TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE: "true" };
+}
+
+/** Whether the root's `.terraform.lock.hcl` pins its providers, all of them at the binary's own registry. */
+export function lockCovers(dir: string, binaryName: string): boolean {
+  const registry = binaryName === "terraform" ? "registry.terraform.io" : "registry.opentofu.org";
+  let lock = "";
+  try {
+    lock = readFileSync(join(dir, ".terraform.lock.hcl"), "utf8");
+  } catch {
+    return false;
+  }
+  const hosts = [...lock.matchAll(/^provider\s+"([^"/]+)\//gm)].map((m) => m[1]!);
+  return hosts.length > 0 && hosts.every((h) => h === registry);
+}
+
 export function oneAtATime(): Turn {
   let last: Promise<unknown> = Promise.resolve();
   return <T>(fn: () => Promise<T>): Promise<T> => {
@@ -970,6 +1002,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
   };
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
+  // Roots whose lock file does not pin their providers at the binary's registry take them from the shared cache (#737).
+  const unlocked = roots.filter((r) => !lockCovers(join(checkoutOf(r), r), binariesOf(r).expected(r).name));
+  if (unlocked.length > 0) log(`${unlocked.length === 1 ? `${unlocked[0]} takes its providers` : `${unlocked.length} roots take their providers`} from the shared cache with no lock entry to check them against: commit a .terraform.lock.hcl for the binary's registry to pin them`);
   // The roots share one provider cache, the job's or one of the stage's own, so a provider downloads once per job rather
   // than once per root (some 700 MB for the AWS provider). The binary takes a provider from the cache only for a root
   // whose .terraform.lock.hcl names it; a root without one downloads it again to check the package. The cache is not
@@ -1066,7 +1101,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     let path = binary;
     // The root's own role, when `oidc.roles` names one (../roles.ts).
     // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
-    const rootEnv = workspaceEnv(rootRoleEnv(binEnv, root), dir);
+    const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);
     const runIn = (env: NodeJS.ProcessEnv, ...args: string[]) =>
       observer.commandAsync(timing, path, args, env, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
     const run = (...args: string[]) => runIn(rootEnv, ...args);

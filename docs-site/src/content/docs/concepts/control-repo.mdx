@@ -8,6 +8,8 @@ import ControlRepo from '../../../components/ControlRepo.astro';
 
 Twenty repos with twenty pipelines drift apart: one runs an older binary, one skips the shared policy, one never got the drift schedule. A control repo keeps them alike without editing each one. You change one file, and every project that changes gets a pull request its own team merges.
 
+A control repo is optional. One repo works on its own, with its own `terragucci.yml`; a control repo is for keeping many repos alike.
+
 <ControlRepo />
 
 ## Contents
