@@ -9601,7 +9601,7 @@ cdf_values() { # estate
 # When the record of terraform_data.<name> in an estate was last written.
 cdf_record_version() { # estate name
   local key k
-  key="$(cdf_keys "$1" | grep '/terraform_data/' | while read -r k; do [ "$(jq -Rr 'split("/") | last | (try @base64d catch .)' <<<"$k")" = "$2" ] && echo "$k"; done | head -1)"
+  key="$(cdf_keys "$1" | grep '/terraform_data/' | while read -r k; do [ "$(jq -Rr 'split("/") | last | (try @base64d catch .)' <<<"$k")" = "terraform_data.$2" ] && echo "$k"; done | head -1)"
   [ -n "$key" ] || return 0
   curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=$(jq -rn --arg k "$key" '$k | @uri')" | grep -o '<LastModified>[^<]*</LastModified>' | head -1 | sed -E 's#</?LastModified>##g'
 }
