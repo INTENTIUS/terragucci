@@ -45,7 +45,7 @@ const single = columns.length === 1;
 const result = (c: Row | undefined) => {
 	if (!c) return '';
 	if (c.verdict === 'pending') return 'not recorded';
-	if (c.verdict === 'pass' && c.break === 'caught') return 'passes, and fails when broken';
+	if (c.verdict === 'pass' && c.break === 'caught') return 'proven';
 	if (c.verdict === 'pass') return 'passes';
 	return 'fails';
 };

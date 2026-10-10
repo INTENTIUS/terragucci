@@ -112,7 +112,7 @@ const cdf = CDF.map(([claim, forge, binary]) => ({ claim, row: find(claim, forge
 				)))}
 			</tbody>
 		</table>
-		<p class="legend"><span class="proven">proven</span> passes, and fails when broken · <span class="pass">passes</span> passes, no broken run on that forge · <span class="gap">not proven</span> no claim has run</p>
+		<p class="legend"><span class="proven">proven</span> passes, and fails with the lock cut out · <span class="pass">passes</span> not yet run with it cut out · <span class="gap">not proven</span> no claim has run</p>
 	</div>
 ) : (
 	<div class="tg-locking not-content">

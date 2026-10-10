@@ -40,7 +40,7 @@ const blocks = CRITERIA.map((c) => ({ ...c, state: state(c) }));
 const sum = (s: string) => blocks.filter((b) => b.state === s).reduce((n, b) => n + b.weight, 0);
 const total = blocks.reduce((n, b) => n + b.weight, 0);
 const LABEL: Record<string, string> = {
-	proven: 'a passing claim, also failing when broken',
+	proven: 'proven by a claim',
 	forge: "the forge's, by design",
 	license: 'Apache-2.0, nothing hosted',
 	open: 'a claim not passing',
