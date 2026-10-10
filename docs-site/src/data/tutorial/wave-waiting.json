@@ -4,18 +4,18 @@
   "commands": [
     {
       "cmd": "just example change destroy",
-      "output": "[example] pushed change/destroy at 87abd9c3\n[example] run 8 for 87abd9c3 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for 87abd9c3 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/destroy at 56c5c84b\n[example] run 8 for 56c5c84b (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for 56c5c84b (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
       "exit": 0
     },
     {
       "cmd": "just example merge destroy",
-      "output": "[example] listed the reader's key in .chant/allowed_signers\n[example] merged change/destroy into main\n\n  Merged    pull request 4 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/11/jobs/0/attempt/1 (failure)\n    chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "output": "[example] listed the reader's key in .chant/allowed_signers\n[example] merged change/destroy into main\n\n  Merged    pull request 4 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/11/jobs/0/attempt/1 (failure)\n    terragucci approve wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
       "exit": 0
     }
   ],
   "shots": {
-    "note-light": "163a26c78ecf26bb",
-    "note-dark": "27a6e738347f914f",
+    "note-light": "d13c133232daf6ed",
+    "note-dark": "e2808ed00cfc33a2",
     "log-light": "d11a57e20f5b353e",
     "log-dark": "3a64d8430b2fc839"
   }
