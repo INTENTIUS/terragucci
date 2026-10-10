@@ -94,8 +94,9 @@ Settings by where the policy came from:
 | written for terragucci | `input: plan`, the default |
 | HCP Terraform OPA policy set | `input: hcp`, with `engine: opa` ([below](#hcp-terraform-policy-sets)) |
 | Spacelift | `input: plan`, and change `input.terraform` to `input` in the policy |
+| Scalr OPA policy group | `input: plan`, and change `input.tfplan` to `input` in the policy; `input.tfrun` has no counterpart |
 
-HCP Terraform and Spacelift policies read other paths and deny nothing as written.
+HCP Terraform, Spacelift and Scalr policies read other paths and deny nothing as written.
 
 ### Cost
 

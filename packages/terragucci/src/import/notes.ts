@@ -47,6 +47,10 @@ export class Notes {
   terrateam(kind: Exclude<NoteKind, "left-out">, key: string, row: TerrateamRow, detail?: string): void {
     this.add(kind, key, row, terrateamCell(row), detail);
   }
+  /** A note by a row of another guide's table, with that row's terragucci cell as its text. */
+  cell(kind: NoteKind, key: string, row: string, text: string, detail?: string): void {
+    this.add(kind, key, row, text, detail);
+  }
   /** A note by a row of the Terragrunt Scale table. */
   scale(kind: Exclude<NoteKind, "left-out">, key: string, row: TgScaleRow, detail?: string): void {
     this.add(kind, key, row, tgScaleCell(row), detail);

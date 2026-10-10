@@ -60,7 +60,7 @@ packages/terragucci/src/backend.ts        state-versions migrate-split migrate-b
 packages/terragucci/src/gitlab-state.ts   state-versions unlock-state state-export ephemeral-* tg-ephemeral-pr
 packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr cdf-migrate cdf-adopt migrate-backend-tfe blob-migrate migrate-backend-pg migrate-backend-k8s
 packages/terragucci/src/migrate-estate.ts cdf-migrate cdf-adopt
-packages/terragucci/src/state-source.ts   migrate-backend-tfe
+packages/terragucci/src/state-source.ts   migrate-backend-tfe import-hcp import-scalr
 packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr tg-generate-init
 packages/terragucci/src/config-schema.ts   config-ts role-refused state-roles sealed-migrate atmos-roles atmos-refuse decide-backends import-terrateam
 packages/terragucci/src/terragucci.schema.json config-ts
@@ -95,8 +95,8 @@ packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-appl
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard replan-dispatch
 packages/terragucci/src/import/guide.ts   import-atlantis import-terrateam import-tg-scale comment-*
 packages/terragucci/src/import/terrateam.ts import-terrateam
+packages/terragucci/src/import/           import-atlantis import-terrateam import-hcp import-scalr import-tg-scale
 packages/terragucci/src/import/terragrunt-scale.ts import-tg-scale
-packages/terragucci/src/import/          import-atlantis import-terrateam import-tg-scale
 
 # Reports and what reads them.
 packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics cost-policy review-policy
@@ -169,7 +169,7 @@ stack/fixtures/atmos-reads               atmos-upstream-wait
 stack/fixtures/terramate-stacks          terramate-waves terramate-affected terramate-stale terramate-pr-apply-lock
 stack/fixtures/terramate-sharing         terramate-sharing
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
-stack/fixtures/tfe-api                   migrate-backend-tfe
+stack/fixtures/tfe-api                   migrate-backend-tfe import-hcp import-scalr
 stack/fixtures/linked-states              linked-*
 stack/fixtures/local-states               linked-plan-local
 stack/fixtures/resource-blast             resource-blast
