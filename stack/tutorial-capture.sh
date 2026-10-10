@@ -42,6 +42,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A person starts a capture (stack/human-gate.sh); --list reads the steps only.
+[ "${1:-}" = --list ] || { . "$HERE/human-gate.sh"; human_gate "the tutorial captures on the capture stack, for half an hour or more"; }
 export TG_STACK="${TG_STACK:-capture}"
 # shellcheck source=instance.sh
 . "$HERE/instance.sh"

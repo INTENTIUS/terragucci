@@ -67,6 +67,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
 TERRAGUCCI="$HERE/../node_modules/.bin/terragucci"
 CMD="${1:-}"; shift || true
+# Booting or capturing holds the GitLab lab; a person starts it (stack/human-gate.sh).
+case "$CMD" in up|capture) . "$HERE/human-gate.sh"; human_gate "the GitLab example ($CMD) on the GitLab lab";; esac
 
 log()  { echo "[example-gitlab] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
