@@ -23,49 +23,56 @@ export type Room = {
 
 /** What every room can count on, whatever it runs. Each line links where it is shown. */
 export const ASSUMED: Link[] = [
-	{ label: 'A plan note and a status on every pull request', href: '/getting-started/' },
-	{ label: 'Apply after merge, gated by an approval of the exact plans shown', href: '/guides/approve-a-wave/' },
-	{ label: 'No two applies of one root overlap, and a plan that went stale is refused', href: '/concepts/locking-and-staleness/' },
+	{ label: 'A plan note on every pull request', href: '/getting-started/' },
+	{ label: 'Gated applies of the plans you approved', href: '/guides/approve-a-wave/' },
+	{ label: 'No overlapping or stale applies', href: '/concepts/locking-and-staleness/' },
 	{ label: 'Re-plan from a comment', href: '/guides/re-plan-from-a-comment/' },
 	{ label: 'Scheduled drift checks', href: '/guides/turn-on-drift-checks/' },
-	{ label: 'Short-lived cloud credentials through OIDC, one role for plan and one for apply', href: '/guides/add-to-a-repo/' },
-	{ label: 'Policy checks on every plan', href: '/guides/write-a-policy/' },
-	{ label: 'An audit trail of every approval, apply and override, in your bucket', href: '/guides/read-the-audit-trail/' },
-	{ label: 'Secrets kept out of plan notes and logs', href: '/guides/keep-secrets-out-of-notes/' },
-	{ label: 'Your state backend, as it is', href: '/reference/state-backends/' },
+	{ label: 'OIDC roles, one to plan, one to apply', href: '/guides/add-to-a-repo/' },
+	{ label: 'Policy on every plan', href: '/guides/write-a-policy/' },
+	{ label: 'An audit trail in your bucket', href: '/guides/read-the-audit-trail/' },
+	{ label: 'Secrets kept out of notes and logs', href: '/guides/keep-secrets-out-of-notes/' },
+	{ label: 'Your state backend, as is', href: '/reference/state-backends/' },
 	{ label: 'Your own runners', href: '/guides/add-to-a-repo/' },
-	{ label: 'Sign-in and permissions from your forge', href: '/standards/access-and-identity/' },
+	{ label: 'Your forge\'s sign-in and permissions', href: '/standards/access-and-identity/' },
 ];
 
 /** What the site does not do, each with its reason. Shown on the home page and in the picker. */
 export const LIMITS: { label: string; why: string; href?: string }[] = [
-	{ label: 'Bitbucket and Azure DevOps', why: 'not supported: init writes pipelines for GitHub, GitLab and Forgejo only', href: '/standards/tacos-guru/' },
-	{ label: 'Accounts, sign-in and roles of its own', why: 'none: your forge decides who signs in, merges and approves, and your cloud IAM decides what each job reaches', href: '/standards/access-and-identity/' },
-	{ label: 'A hosted web UI', why: 'none: runs show on your forge\'s run pages, in the report and on the estate page in your bucket', href: '/guides/see-every-project/' },
-	{ label: 'A server or database to run', why: 'none: every job runs in your CI and writes to your git and your bucket', href: '/concepts/how-it-works/#components' },
+	{ label: 'Bitbucket and Azure DevOps', why: 'init writes pipelines for GitHub, GitLab and Forgejo only.', href: '/standards/tacos-guru/' },
+	{ label: 'Accounts, sign-in and roles of its own', why: 'Your forge decides who signs in and approves, and your cloud IAM decides what each job reaches.', href: '/standards/access-and-identity/' },
+	{ label: 'A hosted web UI', why: 'Runs show on your forge\'s run pages and on the estate page in your bucket.', href: '/guides/see-every-project/' },
+	{ label: 'A server or database to run', why: 'Every job runs in your CI and writes to your git and your bucket.', href: '/concepts/how-it-works/#components' },
 ];
 
-export const SHAPES: { id: string; label: string; room: string }[] = [
-	{ id: 'plain', label: 'Terraform or OpenTofu roots', room: 'plain-roots' },
-	{ id: 'terragrunt', label: 'Terragrunt', room: 'terragrunt' },
-	{ id: 'atmos', label: 'Atmos', room: 'atmos' },
-	{ id: 'terramate', label: 'Terramate', room: 'terramate' },
-	{ id: 'cdktn', label: 'CDK Terrain', room: 'cdk-terrain' },
+/** The repo shapes, each a tile on the picker with a short line under its name. */
+export const SHAPES: { id: string; label: string; blurb: string; room: string }[] = [
+	{ id: 'plain', label: 'Plain roots', blurb: 'Directories of .tf files', room: 'plain-roots' },
+	{ id: 'terragrunt', label: 'Terragrunt', blurb: 'Units, stacks, Scale', room: 'terragrunt' },
+	{ id: 'atmos', label: 'Atmos', blurb: 'Component instances', room: 'atmos' },
+	{ id: 'terramate', label: 'Terramate', blurb: 'Stacks with order', room: 'terramate' },
+	{ id: 'cdktn', label: 'CDK Terrain', blurb: 'Synthesized stacks', room: 'cdk-terrain' },
 ];
 
-export const BINARIES: { id: string; label: string; differs: string[]; href: string }[] = [
-	{ id: 'tofu', label: 'OpenTofu', differs: [], href: '/guides/use-a-binary/' },
+/** The binaries: what each adds to the Works card, what differs, and its page. */
+export const BINARIES: { id: string; label: string; adds: string[]; differs: string[]; href: string }[] = [
+	{ id: 'tofu', label: 'OpenTofu', adds: [], differs: [], href: '/guides/use-a-binary/' },
 	{
 		id: 'terraform',
 		label: 'Terraform',
+		adds: [],
 		differs: ['Two overlapping pushes to one root can fail the newer apply with "Saved plan is stale"; run it again and it plans again.'],
 		href: '/guides/use-a-binary/',
 	},
 	{
 		id: 'choudoufu',
 		label: 'choudoufu',
-		differs: ['Applies to different resources of one estate run at the same time, and a killed apply leaves no lock to release.'],
-		href: '/rooms/choudoufu/',
+		adds: [
+			'Applies to different resources of one estate run at the same time',
+			'One record per resource in a bucket you own, with no lock table',
+		],
+		differs: ['terragucci does not read a root\'s required_version as a choudoufu release.'],
+		href: '/for/choudoufu/',
 	},
 ];
 
@@ -75,25 +82,66 @@ export const FORGES: { id: string; label: string; differs: string[]; href: strin
 		id: 'gitlab',
 		label: 'GitLab',
 		differs: [
-			'Comment commands run from the comments schedule, since a merge request note starts no pipeline.',
-			'No locks from the first plan: no merge request event runs a job from the default branch that could hold them. A merge request locks its roots on /terragucci apply or /terragucci lock.',
-			'The coding agent comment and drift fixes run on GitHub and Forgejo only.',
+			'Comment commands answer on a schedule, since a merge request note starts no pipeline.',
+			'Roots lock on /terragucci apply or /terragucci lock, not at the first plan.',
+			'The agent comment and drift fixes are GitHub and Forgejo only.',
 		],
 		href: '/guides/add-to-a-repo/#per-forge',
 	},
 	{ id: 'forgejo', label: 'Forgejo', differs: [], href: '/guides/add-to-a-repo/#per-forge' },
 ];
 
-export const FROM: { id: string; label: string; first: Link }[] = [
-	{ id: 'none', label: 'Nothing yet, or a CI script', first: { label: 'Get your first plan note', href: '/getting-started/' } },
-	{ id: 'atlantis', label: 'Atlantis', first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' } },
-	{ id: 'digger', label: 'OpenTaco or Digger', first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' } },
-	{ id: 'terrateam', label: 'Terrateam', first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' } },
-	{ id: 'hcp', label: 'HCP Terraform or Terraform Enterprise', first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' } },
-	{ id: 'scalr', label: 'Scalr or OTF', first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' } },
-	{ id: 'spacelift', label: 'Spacelift', first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' } },
-	{ id: 'env0', label: 'env zero', first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' } },
-	{ id: 'tgscale', label: 'Terragrunt Scale (Gruntwork Pipelines)', first: { label: 'Use Terragrunt: Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' } },
+/** What you are leaving: its first page, and what carries over, shown in the picker's Works card. */
+export const FROM: { id: string; label: string; first: Link; carries: string[] }[] = [
+	{ id: 'none', label: 'Nothing yet, or a CI script', first: { label: 'Get your first plan note', href: '/getting-started/' }, carries: [] },
+	{
+		id: 'atlantis',
+		label: 'Atlantis',
+		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import atlantis writes terragucci.yml from atlantis.yaml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of atlantis plan and atlantis apply'],
+	},
+	{
+		id: 'digger',
+		label: 'OpenTaco or Digger',
+		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import digger writes terragucci.yml from digger.yml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of digger plan and digger apply'],
+	},
+	{
+		id: 'terrateam',
+		label: 'Terrateam',
+		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import terrateam writes terragucci.yml from .terrateam/config.yml', 'A terrateam apply before merge becomes /terragucci apply, with the same required checks'],
+	},
+	{
+		id: 'hcp',
+		label: 'HCP Terraform or Terraform Enterprise',
+		first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
+		carries: ['terragucci import hcp reads your workspaces over the API, and each becomes a root', 'An OPA policy set runs as it is; a Sentinel policy is rewritten in Rego', 'Workspace state moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'scalr',
+		label: 'Scalr or OTF',
+		first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
+		carries: ['terragucci import scalr or import otf reads your workspaces, and each becomes a root', 'A Scalr OPA policy group runs with its input paths changed', 'Workspace state moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'spacelift',
+		label: 'Spacelift',
+		first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
+		carries: ['terragucci import spacelift reads .spacelift/config.yml and the spacelift_* resources, and each stack becomes a root', 'Hooks become steps, and the drift schedule carries over', 'Managed state moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'env0',
+		label: 'env zero',
+		first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
+		carries: ['terragucci import env0 reads env0-discovery.yml and the env0_* resources, and each environment becomes a root', 'An environment with a TTL becomes an ephemeral environment per pull request', 'State in env zero\'s backend moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'tgscale',
+		label: 'Terragrunt Scale (Gruntwork Pipelines)',
+		first: { label: 'Use Terragrunt: Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' },
+		carries: ['terragucci import terragrunt-scale writes each environment\'s roles from .gruntwork/*.hcl'],
+	},
 ];
 
 /** The doors for a role rather than a stack. */
@@ -108,7 +156,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'plain-roots',
 		title: 'Terraform or OpenTofu roots',
-		lede: 'Directories of .tf files, each with its own state, on Terraform or OpenTofu.',
+		lede: 'Directories of .tf files with their own state.',
 		column: 'OpenTofu',
 		works: [
 			'init finds every root and writes the pipeline for your forge',
@@ -134,7 +182,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'terragrunt',
 		title: 'Terragrunt',
-		lede: 'A Terragrunt repo, with units, explicit stacks or Terragrunt Scale.',
+		lede: 'A Terragrunt repo of units or explicit stacks, or one on Terragrunt Scale.',
 		column: 'Terragrunt',
 		works: [
 			'Each unit is a root, and dependency order decides the waves',
@@ -142,15 +190,15 @@ export const ROOMS: Room[] = [
 			'terragucci import terragrunt-scale reads Gruntwork Pipelines\' environments and roles',
 		],
 		differs: [
-			'roots is refused: leave units out with terragrunt.exclude.',
+			'roots is refused; terragrunt.exclude leaves units out.',
 			'A step after init is refused, since Terragrunt inits each unit inside the plan.',
 			'CDK Terrain in a Terragrunt repo is not supported.',
 		],
 		first: { label: 'Use Terragrunt', href: '/guides/use-terragrunt/' },
 		howto: [
 			{ label: 'Use Terragrunt', href: '/guides/use-terragrunt/' },
-			{ label: 'Coming from Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' },
-			{ label: 'Run steps around a stage', href: '/guides/run-steps/' },
+			{ label: 'From Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' },
+			{ label: 'Steps around a stage', href: '/guides/run-steps/' },
 		],
 		explain: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
 		reference: [{ label: 'terragucci.yml keys', href: '/reference/config/' }],
@@ -167,7 +215,7 @@ export const ROOMS: Room[] = [
 		],
 		differs: [
 			'Settings that would edit an instance\'s copied directory are refused, each by name.',
-			'A change to a stack manifest, a catalog or atmos.yaml locks every instance.',
+			'A change outside a component directory, such as to a stack manifest, locks every instance.',
 		],
 		first: { label: 'Use Atmos', href: '/guides/use-atmos/' },
 		howto: [{ label: 'Use Atmos', href: '/guides/use-atmos/' }],
@@ -177,15 +225,15 @@ export const ROOMS: Room[] = [
 	{
 		id: 'terramate',
 		title: 'Terramate',
-		lede: 'A Terramate repo, where each stack is a root and its after and before decide the waves.',
+		lede: 'A Terramate repo, where each stack is one root.',
 		column: 'Terramate',
 		works: [
-			'Each stack is a root, in the order its after and before give',
-			'A pull request plans the stacks it changes and the ones ordered after them',
+			'Stacks apply in waves ordered by their after and before',
+			'Only the stacks a change reaches, and those ordered after them, are planned',
 			'Stale generated code fails the check',
 		],
 		differs: [
-			'Terramate\'s watch files, scripts, wants and wanted_by, and Terramate Cloud are not read.',
+			'Terramate Cloud and Terramate scripts are not read, and neither are watch files or wants and wanted_by.',
 			'A drift pull request, rollouts and generate are refused, since their edits would land in code terramate generate owns.',
 		],
 		first: { label: 'Use Terramate', href: '/guides/use-terramate/' },
@@ -204,8 +252,8 @@ export const ROOMS: Room[] = [
 			'A stack that reads another\'s state plans on that stack\'s planned outputs',
 		],
 		differs: [
-			'The stacks are the app\'s output, so a drift pull request, rollouts and generate are config errors; drift is reported in the issue instead.',
-			'Not supported in a Terragrunt repo.',
+			'The stacks are the app\'s output, so terragucci never edits them: drift goes to the issue, and rollouts and generate are config errors.',
+			'A Terragrunt repo takes no synth, so the two do not mix.',
 		],
 		first: { label: 'Plan CDK Terrain stacks', href: '/guides/plan-cdk-terrain-stacks/' },
 		howto: [{ label: 'Plan CDK Terrain stacks', href: '/guides/plan-cdk-terrain-stacks/' }],
@@ -220,11 +268,11 @@ export const ROOMS: Room[] = [
 		works: [
 			'One record per resource in an S3 bucket you own, each write conditional, with no lock table',
 			'Applies to different resources of one estate run at the same time; a killed apply leaves nothing to release',
-			'A live check on every push, slow provider calls in the report, and each record\'s past versions',
+			'A live check on every push, and the slowest provider calls in the report',
 		],
 		differs: [
 			'terragucci does not read a root\'s required_version as a choudoufu release.',
-			'Record history needs s3:ListBucketVersions on the record store bucket; a local or kubernetes record store keeps none.',
+			'Record history needs the ListBucketVersions permission on the record store bucket; a local or kubernetes record store keeps none.',
 		],
 		first: { label: 'Choose your binary: choudoufu', href: '/guides/use-a-binary/#choudoufu' },
 		howto: [
@@ -237,26 +285,26 @@ export const ROOMS: Room[] = [
 	{
 		id: 'security',
 		title: 'Security review',
-		lede: 'What each job can reach, who can approve, and the record every change leaves.',
+		lede: 'What each job can reach and who can approve, with the record every change leaves.',
 		works: [
 			'Plan and apply use separate roles, and the plan job never gets the apply role',
 			'A gated wave whose plans moved after the approval applies nothing and names both digests',
-			'Every approval, apply, override and refused wave is recorded in your bucket',
+			'The audit trail in your bucket records every approval, apply and override',
 		],
 		differs: [
-			'terragucci has no accounts: sign-in and permissions are your forge\'s, and what a job reaches is your cloud IAM.',
+			'terragucci has no accounts; access and identity maps each action to the forge or IAM setting that decides it.',
 		],
 		first: { label: 'The threat model', href: '/reference/threat-model/' },
 		howto: [
 			{ label: 'Write a policy', href: '/guides/write-a-policy/' },
 			{ label: 'Read the audit trail', href: '/guides/read-the-audit-trail/' },
-			{ label: 'Lock roots to a pull request', href: '/guides/lock-roots/' },
-			{ label: 'Keep secrets out of plan notes and logs', href: '/guides/keep-secrets-out-of-notes/' },
-			{ label: 'Keep each environment\'s roles to its own state', href: '/guides/scope-state-access/' },
+			{ label: 'Lock roots', href: '/guides/lock-roots/' },
+			{ label: 'Secrets out of notes', href: '/guides/keep-secrets-out-of-notes/' },
+			{ label: 'Scope state access', href: '/guides/scope-state-access/' },
 			{ label: 'Approvals runbook', href: '/guides/approvals-runbook/' },
 		],
 		explain: [
-			{ label: 'Approvals as records in your repo', href: '/concepts/approvals-as-records/' },
+			{ label: 'Approvals as records', href: '/concepts/approvals-as-records/' },
 			{ label: 'Access and identity', href: '/standards/access-and-identity/' },
 		],
 		reference: [
@@ -269,7 +317,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'evaluate',
 		title: 'Evaluating terragucci',
-		lede: 'What it does, what it proves, and what it leaves to your forge and your cloud.',
+		lede: 'What terragucci does and proves, and what it leaves to your forge and your cloud.',
 		works: [
 			'Apache-2.0, with nothing to buy and no server to host',
 			'Every pipeline feature that runs on Forgejo is proven by a recorded check, listed by tool and forge',
@@ -290,19 +338,19 @@ export const ROOMS: Room[] = [
 	{
 		id: 'many-repos',
 		title: 'Many repos',
-		lede: 'One place for the settings, policy and module versions of every repo.',
+		lede: 'One place that keeps every repo\'s settings and policy alike.',
 		works: [
 			'A control repo holds the shared settings and opens a pull request in each repo that changes',
-			'One estate page lists every project, its roots and its last applies',
+			'One estate page lists every project with its roots and last applies',
 			'A new module version rolls out to every repo that pins it, a wave of pull requests at a time',
 		],
 		differs: [],
-		first: { label: 'Govern many repos from one place', href: '/guides/govern-many-repos/' },
+		first: { label: 'Govern many repos', href: '/guides/govern-many-repos/' },
 		howto: [
-			{ label: 'Govern many repos from one place', href: '/guides/govern-many-repos/' },
-			{ label: 'Manage the control repo with Terraform', href: '/guides/manage-the-control-repo-with-terraform/' },
-			{ label: 'See every project in one page', href: '/guides/see-every-project/' },
-			{ label: 'Roll out a new module version', href: '/guides/roll-out-a-module-version/' },
+			{ label: 'Govern many repos', href: '/guides/govern-many-repos/' },
+			{ label: 'Control repo in Terraform', href: '/guides/manage-the-control-repo-with-terraform/' },
+			{ label: 'Every project, one page', href: '/guides/see-every-project/' },
+			{ label: 'Roll out a module', href: '/guides/roll-out-a-module-version/' },
 		],
 		explain: [{ label: 'Control repo', href: '/concepts/control-repo/' }],
 		reference: [{ label: 'terragucci.yml keys', href: '/reference/config/' }],
@@ -316,14 +364,14 @@ export const ROOMS: Room[] = [
 			'A read-only MCP server over the estate, the audit trail and the delivery metrics, running no model',
 			'Four opt-in features run a model, each off until you set it up with a model API key',
 		],
-		differs: ['The agent comment and drift fixes run on GitHub and Forgejo only; on GitLab the review runs through the comments schedule.'],
+		differs: ['On GitLab the agent comment and drift fixes are refused, and the review runs through the comments schedule.'],
 		first: { label: 'Set up with a coding agent', href: '/getting-started/agents/' },
 		howto: [
-			{ label: 'Have an agent change a pull request', href: '/guides/agent-change-a-pull-request/' },
-			{ label: 'Have an agent fix drift', href: '/guides/agent-fix-drift/' },
-			{ label: 'Have a model review a pull request', href: '/guides/agent-review-a-pull-request/' },
-			{ label: 'Have an agent summarize a refused wave', href: '/guides/agent-refused-wave/' },
-			{ label: 'Read the estate over MCP', href: '/guides/agent-read-over-mcp/' },
+			{ label: 'Agent changes to a pull request', href: '/guides/agent-change-a-pull-request/' },
+			{ label: 'Agent drift fixes', href: '/guides/agent-fix-drift/' },
+			{ label: 'Model review of a pull request', href: '/guides/agent-review-a-pull-request/' },
+			{ label: 'Refused wave summaries', href: '/guides/agent-refused-wave/' },
+			{ label: 'The estate over MCP', href: '/guides/agent-read-over-mcp/' },
 		],
 		explain: [{ label: 'Architecture', href: '/concepts/how-it-works/' }],
 		reference: [{ label: 'CLI commands', href: '/reference/cli/' }],

@@ -1,10 +1,9 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the taco, the wordmark, the
-// tagline, the one-sentence position, the proof line, the door picker and the eight highlights, in the order the site leads with;
+// one-line claim, the door picker and the eight highlights, in the order the site leads with;
 // index.mdx follows it with the plan note. `part="agent"` is the prompt to hand
 // a coding agent, last on the page: the setup prompt from src/prompts.ts, which
-// the agents page and the README carry too. The tagline is the one the README
-// and the site description use.
+// the agents page and the README carry too.
 import AgentPrompt from './AgentPrompt.astro';
 import DoorPicker from './DoorPicker.astro';
 import Taco from './Taco.astro';
@@ -15,89 +14,38 @@ interface Props {
 }
 const { part = 'top' } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// The eight highlights: each card is one link, its title the whole label.
 const pillars = [
-	{
-		title: 'No server to host',
-		text: 'Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket.',
-		links: [{ label: 'Components', href: '/concepts/how-it-works/#components' }],
-	},
-	{
-		title: 'GitHub, GitLab or Forgejo',
-		text: 'terragucci init writes the pipeline in your forge\'s own format: a GitHub or Forgejo workflow, or a .gitlab-ci.yml.',
-		links: [{ label: 'Per forge', href: '/guides/add-to-a-repo/#per-forge' }],
-	},
-	{
-		title: 'Object storage on AWS, GCP or Azure',
-		text: 'Your state backend and the reports bucket in S3, GCS or Azure Blob, reached through OIDC with no stored keys.',
-		links: [
-			{ label: 'Credentials', href: '/reference/pipeline/#credentials' },
-			{ label: 'Reports bucket', href: '/guides/keep-reports-in-a-bucket/' },
-		],
-	},
-	{
-		title: 'Tracing and metrics',
-		text: 'One OpenTelemetry trace per stage run, a span per root, and metrics with Grafana dashboards.',
-		links: [{ label: 'Send traces and metrics', href: '/guides/send-traces-and-metrics/' }],
-	},
-	{
-		title: 'Rich lifecycles',
-		text: 'Check, plan, apply in waves, drift, tips and module releases, each a job in the pipeline init writes.',
-		links: [{ label: 'The lifecycle', href: '/concepts/how-it-works/' }],
-	},
-	{
-		title: 'Gated waves',
-		text: 'Canary roots apply first, then the rest in waves. An approval covers exactly the plans it was shown, and a plan that changed after it is refused.',
-		links: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
-	},
-	{
-		title: 'Aggregated plan output',
-		text: 'One grouped note for 200 plans: roots taking the same change share one diff, and every destroy is named.',
-		links: [{ label: 'Grouped plans', href: '/concepts/why-plans-are-grouped/' }],
-	},
-	{
-		title: 'Module publishing and pinned rollouts',
-		text: 'Publish changed modules after apply, then move every repo that pins one to a new version, a wave of pull requests at a time.',
-		links: [
-			{ label: 'Publish modules', href: '/guides/publish-modules/' },
-			{ label: 'Roll out a version', href: '/guides/roll-out-a-module-version/' },
-		],
-	},
+	{ title: 'No server to host', href: '/concepts/how-it-works/#components' },
+	{ title: 'GitHub, GitLab or Forgejo', href: '/guides/add-to-a-repo/#per-forge' },
+	{ title: 'Object storage on AWS, GCP or Azure', href: '/guides/keep-reports-in-a-bucket/' },
+	{ title: 'Tracing and metrics', href: '/guides/send-traces-and-metrics/' },
+	{ title: 'Rich lifecycles', href: '/concepts/how-it-works/' },
+	{ title: 'Gated waves', href: '/concepts/waves-and-approvals/' },
+	{ title: 'Aggregated plan output', href: '/concepts/why-plans-are-grouped/' },
+	{ title: 'Module publishing and pinned rollouts', href: '/guides/publish-modules/' },
 ];
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
-		<Taco scale={4} class="hero-taco" />
-		<p class="wordmark">TERRAGUCCI</p>
-
-		<h1 class="claim">One workflow, one audit trail and one place to enforce policy for every Terraform and OpenTofu repo, Terragrunt, Atmos, Terramate and CDK Terrain included, run in your own CI.</h1>
-
-		<p class="lede">
-			CI does this: plan, approve and apply hundreds of roots from pull requests, with a trace of every run. Each job runs in
-			your GitHub, GitLab or Forgejo CI and lands in your git and your bucket, with no account to create or platform to sign
-			in to. With policy on, OPA checks every plan in every repo against one pinned policy source, and <a href={`${base}/reference/audit-trail/`}>one audit trail</a> in your bucket records every approval, apply, override and refused wave.
-		</p>
-
-		<p class="proof">
-			Every pipeline feature that runs on Forgejo is proven on a local Forgejo by a recorded claim, and the
-			per-forge claims list what is proven on GitHub and GitLab (<a href={`${base}/reference/validation/`}>validation</a>). Apache-2.0, nothing to buy.
-		</p>
+		<a class="hero-link" href={`${base}/getting-started/`} aria-label="The docs"><Taco scale={2} class="hero-taco" /></a>
+		<h1 class="wordmark">TERRAGUCCI</h1>
+		<p class="claim">Sophisticated automation for Terraform</p>
 	</section>
 	<DoorPicker />
 	<ul class="tg-pillars not-content">
 		{pillars.map((p) => (
 			<li>
-				<Taco />
-				<h2>{p.title}</h2>
-				<p>{p.text}</p>
-				<span class="links">
-					{p.links.map((l) => <a href={`${base}${l.href}`}>{l.label}</a>)}
-				</span>
+				<a href={`${base}${p.href}`}>
+					<Taco />
+					<span>{p.title}</span>
+				</a>
 			</li>
 		))}
 	</ul>
 ) : (
 	<section class="tg-landing tg-agent not-content">
-		<AgentPrompt text={setupPrompt} label="Optional: hand the setup to your coding agent" note="Or set up by hand: install terragucci and run init, as the getting started page shows." />
+		<AgentPrompt text={setupPrompt} label="Hand the setup to your coding agent" note="Or set up by hand: install terragucci and run init, as the getting started page shows." />
 	</section>
 )}
 
@@ -105,39 +53,60 @@ const pillars = [
 	.tg-landing {
 		display: grid;
 		justify-items: center;
-		gap: 2rem;
-		padding-block: clamp(3rem, 10vw, 6rem) clamp(1rem, 3vw, 2rem);
+		gap: 0.9rem;
+		padding-block: clamp(1.5rem, 4vw, 2.5rem) 1rem;
 		text-align: center;
 	}
-	.tg-landing :global(.hero-taco) {
-		margin-bottom: -1rem;
+	.hero-link {
+		line-height: 0;
+		transition: transform 0.2s;
 	}
-	@media (min-width: 50rem) {
-		.tg-landing :global(.hero-taco img) {
-			width: 306px;
-		}
+	.hero-link:hover {
+		transform: translateY(-2px);
 	}
-	.wordmark {
+	.tg-landing :global(.hero-taco img) {
+		width: 96px;
+	}
+	.tg-landing .wordmark {
 		margin: 0;
 		font-family: var(--tg-display);
-		font-weight: 600;
-		font-size: clamp(2.6rem, 9vw, 5.5rem);
-		letter-spacing: 0.14em;
+		font-weight: 500;
+		font-size: clamp(1.25rem, 3.5vw, 1.6rem);
+		letter-spacing: 0.32em;
 		line-height: 1;
 		color: var(--sl-color-white);
 		/* Optical centre: the tracking adds space after the last letter. */
-		padding-left: 0.14em;
+		padding-left: 0.32em;
 	}
 	.claim {
+		display: grid;
+		justify-items: center;
+		gap: 0.9rem;
 		margin: 0;
-		max-width: 46rem;
 		font-family: var(--tg-display);
-		font-weight: 500;
-		font-size: clamp(1.25rem, 3vw, 1.7rem);
+		font-weight: 400;
+		font-size: 0.78rem;
 		line-height: 1.3;
-		letter-spacing: -0.015em;
-		color: var(--sl-color-gray-2);
-		text-wrap: balance;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	/* A gold hairline between the wordmark and the line under it. */
+	@media (max-width: 30rem) {
+		.claim {
+			letter-spacing: 0.14em;
+		}
+	}
+	/* The taco's diamond between two gold hairlines, under the wordmark. */
+	.claim::before {
+		content: '';
+		width: 7rem;
+		height: 13px;
+		background:
+			url('/terragucci/brand/diamond.svg') center / 17px 13px no-repeat,
+			linear-gradient(var(--tg-gold), var(--tg-gold)) left center / 2.4rem 1px no-repeat,
+			linear-gradient(var(--tg-gold), var(--tg-gold)) right center / 2.4rem 1px no-repeat;
+		image-rendering: pixelated;
 	}
 	.tg-agent {
 		padding-block: 0;
@@ -166,42 +135,43 @@ const pillars = [
 		margin: 1rem 0 0;
 		padding: 0;
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
-		gap: 1rem;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.75rem;
 	}
 	.tg-pillars li {
 		margin: 0;
-		padding: 1.5rem;
-		display: grid;
-		gap: 0.75rem;
-		align-content: start;
-		border: 1px solid var(--tg-rule);
-		border-top: 3px solid var(--tg-accent);
-		border-radius: 0.5rem;
-		background: var(--tg-panel);
 		min-width: 0;
 	}
-	.tg-pillars h2 {
-		margin: 0;
-		font-family: var(--tg-display);
-		font-size: clamp(1.3rem, 2.5vw, 1.6rem);
-		font-weight: 600;
-		line-height: 1.2;
-		color: var(--sl-color-white);
-	}
-	.tg-pillars p {
-		margin: 0;
-		color: var(--sl-color-gray-2);
-		line-height: 1.55;
-	}
-	.tg-pillars .links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem 1rem;
-		font-size: 0.9rem;
-	}
 	.tg-pillars a {
-		color: var(--sl-color-accent-high);
-		font-weight: 500;
+		display: grid;
+		gap: 0.6rem;
+		justify-items: start;
+		height: 100%;
+		padding: 1.1rem 1.15rem;
+		font-family: var(--tg-display);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		line-height: 1.3;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		border: 1px solid var(--tg-rule);
+		border-top: 1px solid var(--tg-gold);
+		border-radius: 0.5rem;
+		background: var(--tg-panel);
+		transition: border-color 0.15s;
+	}
+	.tg-pillars a:hover,
+	.tg-pillars a:focus-visible {
+		border-color: var(--tg-gold);
+	}
+	@media (max-width: 50rem) {
+		.tg-pillars {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 0.5rem;
+		}
+		.tg-pillars a {
+			padding: 0.85rem;
+			font-size: var(--sl-text-xs);
+		}
 	}
 </style>
