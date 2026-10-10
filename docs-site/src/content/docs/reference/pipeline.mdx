@@ -50,7 +50,7 @@ On GitHub and Forgejo, `/terragucci apply` on a merged pull request runs `apply-
 
 The comment approves nothing; a gated wave still needs its approval record, sealed under `approval: sealed`. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) has the steps.
 
-<Shot step="statuses" view="reply" alt="A merged pull request's conversation in Forgejo: the reply that wave 1 waits for an approval of its set digest with the chant approve --sign command, the refusal of a commenter with no write access, and, once the wave is sealed, the reply linking the run that applied it" optional />
+<Shot step="statuses" view="reply" alt="A merged pull request\'s replies in Forgejo: wave 1 waits for an approval of its set digest, with the chant approve --sign command; a commenter with no write access is refused; and, once wave 1 is sealed, wave 1 applies and the reply says wave 2 now waits, linking the run" optional />
 
 ## Ignored comments
 
@@ -167,7 +167,7 @@ With `approval: pr-review` (GitHub and Forgejo) the pipeline also posts `terragu
 | a wave waits, and a writer other than the author approved the head with nobody asking for changes | success, naming the reviewers |
 | a wave waits, with no such approval of the head | pending |
 
-<Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" optional />
+<Shot step="statuses" view="checks" alt="A pull request's checks in Forgejo, all successful: the plan job, terragucci/plan with its counts of roots, groups and destroys, the plan-note job and the check" optional />
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
 

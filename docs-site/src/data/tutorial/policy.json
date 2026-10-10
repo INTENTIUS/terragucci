@@ -3,9 +3,9 @@
   "source_hash": "c6909fe377b97186",
   "commands": [],
   "shots": {
-    "pull-light": "01ed7efaeffd8570",
-    "pull-dark": "ab9689dad6bdc8dc",
-    "log-light": "5a7495edecc6a347",
-    "log-dark": "5c540dbd453e066a"
+    "note-light": "00ec3354582677c3",
+    "note-dark": "42c6b7d935527790",
+    "log-light": "71c4cc9e031f02f6",
+    "log-dark": "87b7642e841d9eb4"
   }
 }

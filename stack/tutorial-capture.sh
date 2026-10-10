@@ -55,7 +55,7 @@ approved|chain|sealed comment-apply wave-report|record reply log|just example ap
 pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
 report|booted|report highlight|top root plan index|four tf-plan runs of the example with reports.bucket on floci; the report.html of the module bump with a destroy beside it, from its destroys through its groups, one root'"'"'s row, that root'"'"'s plan.txt, and the project'"'"'s report index
 drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
-see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves runs changes estate slos|just see-runs; the panels of six of the dashboards
+see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|waves estate slos|just see-runs; the panels of three of the dashboards the example'"'"'s runs fill
 trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, sent to the observability profile; that run'"'"'s trace in Grafana'"'"'s Explore, found by the trace id in its report
 responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
 tips|booted|tips respond-tips|note report fix|just example change float, a tf-plan of it with reports.bucket on floci, and the respond-tips claim; the plan note'"'"'s tip line, the report'"'"'s Tips section, and the files of the pull request one tip opens (the pull request is closed afterwards)
@@ -164,7 +164,8 @@ normalize() {
   sed -E \
     -e 's/ready in [0-9]+s/ready in 90s/' \
     -e 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
-    -e 's/\x1b\[[0-9;]*m//g'
+    -e 's/\x1b\[[0-9;]*m//g' \
+    -e '/wiping floci and the example repo/d'
 }
 
 # A replayed step runs its commands to put the example where the next step
@@ -435,11 +436,12 @@ reply_shot() { # step, view, pull request page, regex
 # ── the steps ──────────────────────────────────────────────────────────────
 
 step_boot() {
-  # A reader's first boot starts from nothing, so the capture does too.
-  "$HERE/down.sh" >/dev/null 2>&1 || true
-  # forge() exported the old stack's token and URLs; the new stack makes its own.
-  unset TERRAGUCCI_FORGEJO_URL TERRAGUCCI_FORGEJO_TOKEN TERRAGUCCI_FORGEJO_USER TERRAGUCCI_FORGEJO_REPO TERRAGUCCI_FLOCI_URL
-  run_cmd boot "just example up" "$HERE/example.sh" up
+  # A reader's first boot starts from nothing, so the example does too: its
+  # repo is made afresh and floci wiped, as the smoke claims' settle does. The
+  # stack itself stays up: other worktrees drive the same Forgejo with tokens
+  # of their own, so tearing it down (stack/down.sh) would break every one of
+  # them after this capture lets go of the stack lock.
+  run_cmd boot "just example up" "$HERE/example.sh" up --fresh
   forge
   shot boot repo "$FORGEJO"
   # Forgejo redirects a run to its first job at its in-network address, so
@@ -691,8 +693,9 @@ step_see_runs() {
   # uid:view:first panel-last panel (grid item ids; the picture runs from one to the other)
   # uid:view:first panel-last panel (grid item ids; the picture runs from one
   # to the other):blank share allowed (a table of one row in a tall panel)
-  for d in terragucci-pipeline-health:pipeline:2-6:0.7 terragucci-rollouts-waves:waves:2-3:0.8 \
-    terragucci-runs:runs:8-10:0.7 terragucci-change-review:changes:2-9:0.7 terragucci-estate:estate:2-3:0.8 slo-terragucci-plan-time:slos:2-5:0.7; do
+  # Only panels the example's few runs fill: its time series hold a point
+  # or two over these minutes, so a chart of them draws nothing.
+  for d in terragucci-rollouts-waves:waves:2-3:0.8 terragucci-estate:estate:2-3:0.8 slo-terragucci-plan-time:slos:2-5:0.7; do
     IFS=: read -r uid view panels blank <<<"$d"
     sel=""
     for p in ${panels%-*} ${panels#*-}; do sel="${sel:+$sel, }[data-griditem-key=\"grid-item-$p\"]"; done
