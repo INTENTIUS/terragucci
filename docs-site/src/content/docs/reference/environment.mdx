@@ -212,6 +212,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 |---|---|---|
 | `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
+| `TERRAGUCCI_ATMOS` | | the `atmos` executable `init`, `terragucci atmos write` and, with `oidc.roles`, `terragucci config check` run; `atmos` on the path by default |
 | `TOFU_INSTALL_DIR` |  | where `terragucci install` and the stages put the binary, one directory per tool and version, so a runner that keeps it reuses each version; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
 | `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |
 | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
@@ -232,7 +233,7 @@ A local run needs none of these.
 
 | Forge | Variables |
 |---|---|
-| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
+| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
@@ -247,6 +248,7 @@ Internal; a value set in `env:` is overwritten.
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
 | `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
+| `TERRAGUCCI_EPHEMERAL_SUFFIX` | Terragrunt repos, the `ephemeral` job, while it prepares a unit: `-pr-<n>`, which a unit's `remote_state` key reads; empty in every other job |
 | `TG_ACTION` | the `ephemeral` job on GitHub and Forgejo: the pull request event's action; `closed` destroys the pull request's [ephemeral environment](/terragucci/guides/ephemeral-environments/) |
 | `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
 | `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |

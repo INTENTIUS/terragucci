@@ -123,7 +123,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
     if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
   }
 }
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, EPHEMERAL_NOT_SYNTH, EPHEMERAL_NOT_TERRAGRUNT } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -190,6 +190,8 @@ export interface PipelineInput {
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
+  /** An Atmos repo: every job installs this Atmos release, which its synth (`terragucci atmos write`) runs. */
+  atmos?: { version: string };
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
   notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
@@ -298,9 +300,10 @@ export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
  * The job runs the default branch's workflow (pull_request_target) on its
  * checkout, and `terragucci ephemeral` checks the head out apart.
  */
-export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined): string {
+export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
   return [
     ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
+    ...(prelude ? [prelude] : []),
     'if [ "${TG_ACTION:-}" = closed ]; then',
     '  terragucci ephemeral down --pr "$TG_PR" --reason closed',
     "else",
@@ -315,18 +318,19 @@ export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined
  * first. GitLab starts no pipeline when a merge request closes, so the sweep
  * destroys a closed merge request's copy.
  */
-export function gitlabEphemeralScript(oidc: OidcSettings | undefined): string {
+export function gitlabEphemeralScript(oidc: OidcSettings | undefined, prelude?: string): string {
   return [
     gitlabPushRemote,
     'git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"',
     ...cloudScripts("gitlab", oidc, "apply", "terragucci-ephemeral"),
+    ...(prelude ? [prelude] : []),
     'terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/${CI_DEFAULT_BRANCH}"',
   ].join("\n");
 }
 
 /** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
-export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined): string {
-  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), "terragucci ephemeral sweep"].join("\n");
+export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
+  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), "terragucci ephemeral sweep"].join("\n");
 }
 
 /** The cron for `apply.resume`'s minutes. */
@@ -459,7 +463,7 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
   const loop = rootPins
     ? [
@@ -474,6 +478,8 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
       ];
   return [
     "set -eu",
+    // An Atmos repo: its stack manifests must pass Atmos's own validation before the instances are written from them.
+    ...(atmos ? ['ATMOS_TELEMETRY_ENABLED=false atmos validate stacks || { echo "terragucci: atmos validate stacks failed" >&2; exit 1; }'] : []),
     ...(synth
       ? [
           synthScript(synth),
@@ -1577,6 +1583,16 @@ export function gitlabTokenCheck(tokenEnv = "GITLAB_TOKEN"): string {
   return `if [ -n "\${${tokenEnv}:-}" ]; then echo "terragucci: ${tokenEnv} reaches this merge request's pipeline, so its code can use the token; gitlab.token is protected, so mark the variable Protected" >&2; exit 1; fi`;
 }
 
+/** The plan workflow's workflow_dispatch inputs: a pull request to re-plan, and optionally one root of it. */
+export const REPLAN_INPUTS = {
+  pr: { description: "The number of a pull request to re-plan", required: false, type: "string" },
+  root: { description: "One root of it to re-plan, a path from the repository root", required: false, type: "string" },
+};
+/** A dispatch that names a pull request: the replan job's, never the drift job's. */
+export const REPLAN_DISPATCH = "(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')";
+/** Forgejo's concurrency group for such a dispatch: the pull request's comment group, not the default branch's, whose runs apply. */
+const DISPATCH_GROUP = `${REPLAN_DISPATCH} && format('comment-{0}', github.event.inputs.pr)`;
+
 /** Reads the decision file `terragucci comment` wrote. */
 const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")';
 
@@ -1757,8 +1773,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (applyBranches && input.applyWhen === "pull-request") throw new RenderError(`apply.branches: ${BRANCHES_NOT_PR_APPLY}`);
   const branchNames = applyBranches ? Object.keys(applyBranches) : [];
   const ephemeral = input.ephemeral;
-  if (ephemeral && tg) throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_TERRAGRUNT}`);
-  if (ephemeral && input.synth) throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_SYNTH}`);
+  // ephemeral in a Terragrunt repo: the jobs prepare units through Terragrunt, with the caches and the apply roles every apply job has.
+  const ephemeralPrelude = ephemeral && tg ? [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") : undefined;
   if (ephemeral && forge === "gitlab" && input.gitlabToken === "protected") throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_PROTECTED}`);
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
@@ -1789,11 +1805,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const decideEnv = responds(input.respond, "description") ? decideSecret : {};
   const driftDecideEnv = responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
   const bumpOn = responds(input.respond, "version-bump");
-  const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
+  const installs = [
+    ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : []),
+    ...(input.atmos ? [{ tool: "atmos" as Tool, version: input.atmos.version }] : []),
+  ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
@@ -2126,7 +2145,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
         resource_group: "terragucci-ephemeral-$CI_MERGE_REQUEST_IID",
         ...idTokens,
-        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc))),
+        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, ephemeralPrelude))),
       } as never) as never);
       jobs.set("ephemeral-sweep", new GitLabJob({
         stage: "apply",
@@ -2135,7 +2154,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "ephemeral"` })],
         resource_group: "terragucci-ephemeral-sweep",
         ...idTokens,
-        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc))),
+        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, ephemeralPrelude))),
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
@@ -2162,7 +2181,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // locks: plan: the pr-lock job, from the default branch's workflow, locks a pull request's roots and releases them when it closes.
       // ephemeral: the same events apply a pull request's copy of the ephemeral roots and destroy it on close.
       ...(locksPlan || ephemeral ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
-      ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
+      ...(drift ? { schedule: [{ cron: drift }] } : {}),
+      // A dispatch with pr re-plans that pull request as `/terragucci plan [root]` does (comment.ts); with drift set, one without pr runs the drift job.
+      workflow_dispatch: { inputs: REPLAN_INPUTS },
     },
     env: jobEnv,
     permissions: { contents: "read" },
@@ -2172,8 +2193,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // A pull_request_target run's ref is the default branch's, so with locks: plan it gets a group of its own pull request's.
     ...(forge === "forgejo"
       ? { concurrency: { group: locksPlan || ephemeral
-        ? "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}"
-        : "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } }
+        ? `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}`
+        : `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.ref }}`, "cancel-in-progress": false } }
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
@@ -2292,10 +2313,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
+    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
-    concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
+    concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
     ...(Object.keys(replanEnv).length ? { env: replanEnv } : {}),
     outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", sha: "${{ steps.decide.outputs.sha }}", root: "${{ steps.decide.outputs.root }}" },
     steps: [
@@ -2433,7 +2454,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...openid(needsToken),
       concurrency: { group: "terragucci-ephemeral-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": false },
       env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
-      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc) }), false, true),
+      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, ephemeralPrelude) }), false, true),
     } as never) as never);
   }
   // apply.branches: a push to a named branch runs the waves too, for that branch's roots.
@@ -2563,7 +2584,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     entities.set("drift", new Job({
       "runs-on": "ubuntu-latest",
       container: { image },
-      if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+      if: "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')",
       permissions: { contents: driftPr ? "write" : "read", issues: "write", ...(driftPr ? { "pull-requests": "write" } : {}), ...(oidc ? { "id-token": "write" } : {}) },
       ...openid(Boolean(oidc)),
       ...(input.agentDrift ? { outputs: { agent: "${{ steps.drift.outputs.agent }}", issue: "${{ steps.drift.outputs.issue }}" } } : {}),

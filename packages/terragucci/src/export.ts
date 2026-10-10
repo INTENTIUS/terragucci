@@ -117,8 +117,8 @@ export function requestDigest(r: ExportRequest): string {
   return sha(JSON.stringify({ op: EXPORT_OP, root: r.root, location: r.location, version_id: r.version_id, by: r.by, at: r.at }));
 }
 
-function git(repo: string, args: string[]): string {
-  const r = spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
+function git(repo: string, args: string[], env: NodeJS.ProcessEnv): string {
+  const r = spawnSync("git", args, { cwd: repo, encoding: "utf-8", env });
   return r.status === 0 ? r.stdout.trim() : "";
 }
 
@@ -162,7 +162,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const why = refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
   const unit = existsSync(join(repo, root, "terragrunt.hcl"));
-  const by = options.actor || git(repo, ["config", "user.name"]) || git(repo, ["config", "user.email"]);
+  const by = options.actor || git(repo, ["config", "user.name"], env) || git(repo, ["config", "user.email"], env);
   if (!by) throw new ConfigError("state export names who asks: set git's user.name, or pass --actor <name>");
   const configPath = options.config ?? findConfig(repo);
   const settings = configPath ? resolveRepo(await loadConfig(configPath)) : undefined;

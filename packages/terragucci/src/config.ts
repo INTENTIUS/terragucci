@@ -221,6 +221,12 @@ export interface TerragruntSettings {
   credentials?: Record<string, RolePair>;
 }
 
+/** Atmos settings. Atmos mode is detected (`atmos.yaml` at the repo root); this block only tunes it. */
+export interface AtmosSettings {
+  /** The Atmos release every job installs. Default: the one this terragucci release pins. */
+  version?: string;
+}
+
 /**
  * Pipeline events and the responses each takes. The first mode is the
  * default and needs no model. `drift: attribute` also names who changed each drifted attribute (a known-writes
@@ -453,6 +459,8 @@ export interface ProjectSettings {
   parallelism?: number;
   /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
   terragrunt?: TerragruntSettings;
+  /** Atmos settings, for a repo with an `atmos.yaml` at its root. */
+  atmos?: AtmosSettings;
   /** Opt-in policy checks over each plan; see PolicySettings. */
   policy?: PolicySettings;
   /**
@@ -492,7 +500,9 @@ export interface ProjectSettings {
  * roots `roots` matches, applied from its head under the state key with
  * `-pr-<n>` added (ephemeral.ts). Closing the pull request, or `ttl` passing
  * since its last apply, destroys the copy through a planned destroy that the
- * audit trail lists. Plain roots only, without synth.
+ * audit trail lists. A Terragrunt unit's copy takes the suffix through its
+ * remote_state key, which reads TERRAGUCCI_EPHEMERAL_SUFFIX; with synth the
+ * command writes the roots in the copy's checkout first.
  */
 export interface EphemeralSettings {
   /** Root globs. */
@@ -515,10 +525,6 @@ export function ttlMs(ttl: string): number | undefined {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 }
 
-/** Why ephemeral environments are refused in a Terragrunt repo. */
-export const EPHEMERAL_NOT_TERRAGRUNT = "a Terragrunt unit's state key comes from its remote_state block, which terragucci does not rewrite, and its units apply with one run --all; ephemeral copies plain roots, so leave ephemeral unset";
-/** Why ephemeral environments are refused with synth. */
-export const EPHEMERAL_NOT_SYNTH = "with synth the roots are written by the command in each job, and git holds no root a pull request's copy could be made from; leave ephemeral unset";
 /** Why ephemeral environments are refused on GitLab with gitlab.token: protected. */
 export const EPHEMERAL_NOT_PROTECTED = "a merge request pipeline applies the copy and records it on chant/lifecycle with the project token, and with gitlab.token: protected no merge request pipeline holds it; leave ephemeral unset or the token unprotected";
 
@@ -622,7 +628,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -807,6 +813,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
   if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
+  if (s.atmos !== undefined) checkAtmos(s.atmos, `${where}.atmos`, problems);
+  if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
   if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems);
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
@@ -1013,6 +1021,8 @@ export interface RegistrySettings {
 export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and Forgejo; GitLab runs one apply job at a time in its resource group, so leave waves.jobs unset there";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
 /** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
+/** Why `roots` is refused in an Atmos repo. */
+export const ROOTS_NOT_ATMOS = "an Atmos repo's roots are the instances atmos describe stacks lists, so remove roots and leave an instance out with metadata.enabled: false";
 export const ROOTS_NOT_TERRAGRUNT = "a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
 
@@ -1026,10 +1036,18 @@ export const SYNTH_DRIFT_PR_SHORT = "synth writes the roots, so a live value bel
 export const SYNTH_DRIFT_PR = "the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them, so the value belongs in the app that writes them, which terragucci does not edit; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
 export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there";
 
-/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, and a rollouts schedule. */
+/**
+ * Why `generate` is refused with `synth`: the roots are the synth command's
+ * output, so a file generate wrote into one is gone at the next synth, and the
+ * app already says what generate would, through its constructs.
+ */
+export const SYNTH_GENERATE = "with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct (S3Backend, GcsBackend, AzurermBackend, LocalBackend, HttpBackend, PgBackend, ConsulBackend, CosBackend, OssBackend, SwiftBackend, or CloudBackend and RemoteBackend for HCP Terraform), each provider with its provider construct, and required_version with the stack's addOverride(\"terraform.required_version\", ...); a file generate wrote into a synthesized root is gone at the next synth and would declare a second backend beside the app's, so set these in the app and leave generate unset";
+
+/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, a rollouts schedule, and generate. */
 export function synthProblems(s: ProjectSettings, where: string): string[] {
   if (!s.synth) return [];
   const out: string[] = [];
+  if (s.generate !== undefined) out.push(`${where}.generate: ${SYNTH_GENERATE}`);
   if (s.drift && responseTo(s, "drift") === "pull-request") out.push(`${where}.respond.drift: ${SYNTH_DRIFT_PR}`);
   if (s.rollouts && responseTo(s, "rollout") !== "off") out.push(`${where}.rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
   return out;
@@ -1131,8 +1149,6 @@ function checkEphemeral(e: unknown, where: string, problems: string[], s: Record
   }
   if (e.ttl !== undefined && !(typeof e.ttl === "string" && ttlMs(e.ttl) !== undefined)) problems.push(`${where}.ttl must be a duration in minutes, hours or days, such as 30m, 24h or 3d`);
   if (e.sweep !== undefined && !(Number.isInteger(e.sweep) && (e.sweep as number) >= 5 && (e.sweep as number) <= 60)) problems.push(`${where}.sweep must be a whole number of minutes from 5 to 60`);
-  if (s.terragrunt !== undefined) problems.push(`${where}: ${EPHEMERAL_NOT_TERRAGRUNT}`);
-  if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(`${where}: ${EPHEMERAL_NOT_SYNTH}`);
   if (s.forge === "gitlab" && isObject(s.gitlab) && s.gitlab.token === "protected") problems.push(`${where}: ${EPHEMERAL_NOT_PROTECTED}`);
 }
 
@@ -1325,6 +1341,23 @@ function checkDashboards(d: unknown, where: string, problems: string[]): void {
     else if ((DASHBOARD_DURATION_KEYS as readonly string[]).includes(k) && !DURATION.test(v)) problems.push(`${where}.${k} is ${JSON.stringify(v)}; use a duration such as 4h or 1d`);
   }
   if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);
+}
+
+const ATMOS_KEYS = ["version"];
+/** Why a config with both an atmos and a terragrunt block is refused. */
+export const ATMOS_NOT_TERRAGRUNT = "terragucci runs an Atmos repo or a Terragrunt repo, not both; keep the block of the one this repo is";
+
+function checkAtmos(a: unknown, where: string, problems: string[]): void {
+  if (!isObject(a)) {
+    problems.push(`${where} must be a map (settings: ${ATMOS_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(a)) {
+    if (!ATMOS_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${ATMOS_KEYS.join(", ")})`);
+  }
+  if (a.version !== undefined && (typeof a.version !== "string" || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(a.version))) {
+    problems.push(`${where}.version must be a release version such as 1.230.1`);
+  }
 }
 
 function checkTerragrunt(t: unknown, where: string, problems: string[]): void {

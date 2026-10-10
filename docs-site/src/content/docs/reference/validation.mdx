@@ -33,7 +33,14 @@ The github.com claims run the newest published release against real GitHub pull 
 
 ## The example's checks
 
-Each check runs against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo; a passing check also failed when broken on purpose. The GitLab column lists the checks that also run on a local GitLab CE and its runner, each in a small repo with the pipeline `terragucci init` writes for GitLab.
+Each check runs against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo with OpenTofu; a passing check also failed when broken on purpose. The GitLab column lists the checks that also run on a local GitLab CE and its runner, each in a small repo with the pipeline `terragucci init` writes for GitLab.
+
+The Terraform and choudoufu columns list the core checks run again on that binary, in its CI image, with `binary:` set in each repo's `terragucci.yml`. Each runs on a copy of its repo written for the binary, with names of its own:
+
+| Binary | What the copy changes |
+|---|---|
+| Terraform | each root's `required_version`, which pins OpenTofu's release line, takes that release or later, and its `.terraform.lock.hcl` is the one Terraform writes, for Terraform's registry |
+| choudoufu | each root's backend becomes a `live` block: an estate per root, its records in an S3 record store; a service reads the platform's logs bucket through `terraform_estate_outputs` instead of `terraform_remote_state`, and its registration in that bucket is a `terraform_data`, since choudoufu admits no `aws_s3_object`; `drift` is left out, since it is a config error there, which the drift row shows |
 
 <SmokeClaims />
 

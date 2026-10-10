@@ -1,7 +1,9 @@
 /**
  * Linked states for plain roots: a root that reads another root's state through
  * `terraform_remote_state` plans, in a pull request, on the outputs that
- * root's plan in the same run makes, not on the ones it last applied.
+ * root's plan in the same run makes, not on the ones it last applied. A root
+ * in Terraform's JSON syntax (`cdk.tf.json`, as CDK Terrain synthesizes it)
+ * links the same way: its references are `${...}` templates in strings.
  *
  * The upstream's planned outputs come from ./planned-outputs.ts. For the
  * downstream's plan, every reference to
@@ -69,11 +71,16 @@ export function outputsRead(texts: readonly string[], name: string): Set<string>
   return read;
 }
 
-/** The root's own configuration files that hold references. JSON syntax is left alone. */
+/**
+ * The root's own configuration files that hold references: HCL, and
+ * Terraform's JSON syntax, whose references sit in `${...}` templates, so the
+ * same rewrite applies to its text. The linked file is HCL beside them, which
+ * the binary reads with the JSON files.
+ */
 function configFiles(dir: string): string[] {
   try {
     return readdirSync(dir)
-      .filter((n) => n.endsWith(".tf") || n.endsWith(".tofu"))
+      .filter((n) => n.endsWith(".tf") || n.endsWith(".tofu") || n.endsWith(".tf.json") || n.endsWith(".tofu.json"))
       .map((n) => join(dir, n))
       .filter((p) => statSync(p).isFile());
   } catch {

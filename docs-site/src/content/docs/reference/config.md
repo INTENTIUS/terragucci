@@ -20,7 +20,7 @@ terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root;
 | Binary | `.opentofu-version` gives `tofu`, `.terraform-version` gives `terraform`, then `.tofu` files, then the path, then `tofu` |
 | Version | the repo's `.opentofu-version` or `.terraform-version`, then the one `required_version` pins exactly, or terragucci's default for the binary; a root that pins its own runs that one ([A version per root](#a-version-per-root)) |
 | Forge | from a workflow directory already in the repo, or the host of its `origin` remote |
-| Order | a root that reads another's state through `terraform_remote_state` applies after it |
+| Order | a root that reads another's state through `terraform_remote_state`, or with `binary: choudoufu` another estate's outputs through `terraform_estate_outputs`, applies after it |
 | Gate | `on-destroy`, so a wave waits for an approval only when it destroys or replaces something |
 | Drift | off |
 | Runtime | your forge's CI |
@@ -97,6 +97,8 @@ oidc:
 parallelism: 8
 terragrunt:                   # read in a Terragrunt repo only
   version: 1.1.6
+atmos:                        # read in an Atmos repo only
+  version: 1.230.1
 policy:
   engine: conftest
   path: policy
@@ -126,7 +128,7 @@ dashboards: true
 | Key | Default | Meaning |
 |---|---|---|
 | `roots` | detected | globs of root directories. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude` |
-| `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts` and a `drift` schedule under `respond.drift: pull-request` are config errors, since both edit the files the command writes; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts`, `generate`, and a `drift` schedule under `respond.drift: pull-request` are config errors, since each edits the files the command writes, and the app sets backends, providers and `required_version` through its own constructs; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
 | `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. In a Terragrunt repo each moment runs once around the wave's `run --all`, in each unit the `roots` globs match, and `after: init` is refused; see [Run steps around a stage](/terragucci/guides/run-steps/) |
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
@@ -138,7 +140,7 @@ dashboards: true
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (GitHub and Forgejo, not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
 | `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay`: the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
 | `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
-| `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
+| `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift). With `binary: choudoufu`, a config error when a root keeps its resources under live resource markers, which refuse the refresh-only plan a drift check runs |
 | `rollouts` | `false` (off) | a cron schedule for the rollout job, which opens the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) for its token and the GitLab schedule |
 | `comments` | `false` (off) | GitLab only: the cron of the comments schedule, whose pipelines answer `/terragucci` merge request notes; see [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
 | `gitlab.token` | `unprotected` | GitLab only: `protected` keeps `GITLAB_TOKEN` (or the `token_env` variable, marked Protected and Masked) out of every merge request and branch pipeline; the comments job then posts the plan notes, and there is no fmt job. Needs `comments`; see [the threat model](/terragucci/reference/threat-model/) |
@@ -153,6 +155,7 @@ dashboards: true
 | `oidc` | none | plan and apply identities per cloud, and with `oidc.roles` AWS roles by root glob; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
 | `parallelism` | 3 for GitLab-managed state, else 4 | roots planned at once, and applied at once in a wave; Terragrunt uses `terragrunt.parallelism`. Each root running starts its own providers: with the AWS provider, about 800 MB each, so 4 fit a 7 GB runner and 16 need about 13 GB |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
+| `atmos` | detected | Atmos settings: `version`, the Atmos release every job installs (default: the one this terragucci release pins). Set only in a repo with `atmos.yaml` at its root, and never beside `terragrunt`; see [Use Atmos](/terragucci/guides/use-atmos/) |
 | `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`), [`override`](/terragucci/reference/policy/#overriding-a-denial) (who may let one denied plan through, read at base; unset, nobody); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
@@ -305,7 +308,7 @@ Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant
 
 A state key suffix, rather than a workspace: terragucci runs no CLI workspaces, and a suffixed key is a state of its own that the backend block, its lock file and a bucket listing all name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
 
-`config check` refuses `ephemeral` in a Terragrunt repo, where a unit's state key comes from its `remote_state` block, with `synth`, where git holds no roots to copy, and on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The settings are read from the default branch, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
+In a Terragrunt repo `roots` names units, and each unit's `remote_state` key must read `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`, which the job sets to `-pr-<n>`; a unit whose prepared backend does not carry the suffix fails the job with a config error before anything plans. The `terragucci.hcl` that `generate` writes reads it already. With `synth`, the job runs the command in the pull request's checkout before it finds the roots, and again on the applied commit before a destroy. `config check` refuses `ephemeral` on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The settings are read from the default branch, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
 
 ## Jobs of your own
 

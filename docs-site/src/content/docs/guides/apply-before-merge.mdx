@@ -93,7 +93,7 @@ An open change that applies from its head in the same waves and gates as a merge
    </TabItem>
    <TabItem label="GitLab">
 
-   <Shot step="gitlab" view="apply" alt="terragucci's replies on a GitLab merge request under merge: auto: mr-apply applied waves 1, 2, 3 and 4 of the merge request at its head and pr-merge merges it next; the merge request is merged; then pr-merge's reply that it merged the merge request at that head and released its locks on envs/dev/orders" />
+   <Shot step="gitlab" view="apply" alt="terragucci's reply on a GitLab merge request under merge: auto: it applied waves 1, 2, 3 and 4 of the merge request at its head, pr-merge merges it next, and the reply links the job" />
 
    </TabItem>
    <TabItem label="Forgejo">
@@ -138,7 +138,7 @@ An unreadable default-branch config fails the wave before anything applies.
 
 ## Locks
 
-These locks are on roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), two applies that change different resources of one estate also run at once, settled per resource at the backend ([Locking per resource](/terragucci/concepts/locking-per-resource/)).
+These locks are on roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), a killed apply leaves no state lock behind ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 | Event | Lock |
 |---|---|

@@ -21,7 +21,7 @@ When a runner kills a job mid-apply (a timeout or a cancelled run), the binary n
 | an approval of its ID | a release only the person typing agreed to, or one of a newer hold taken since |
 | a record on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) | a release nobody can find later; the [audit trail](/terragucci/reference/audit-trail/) lists it as `unlock` |
 
-It works on the lock file an `s3` backend takes with `use_lockfile = true`. A comment never runs it.
+It works on the lock file an `s3` backend takes with `use_lockfile = true`. A comment never runs it. With [`binary: choudoufu`](/terragucci/concepts/glossary/#choudoufu) and a record store, a killed job holds no lock, so there is none to release ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 ## Free the state
 

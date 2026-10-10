@@ -255,7 +255,7 @@ terraform {
       expect(plan.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([["terragucci.hcl", "created"]]);
       const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
       expect(hcl.startsWith(GENERATED_MARKER)).toBe(true);
-      expect(hcl).toContain('    "live/dev/app" = {\n      backend   = "s3"\n      config    = { bucket = "state", key = "gen/live/dev/app.tfstate", region = "us-east-1" }\n      providers = <<-EOT\n        provider "aws" {\n          region = "us-east-1"\n        }\n      EOT\n      versions  = <<-EOT\n        terraform {\n          required_providers {');
+      expect(hcl).toContain('    "live/dev/app" = {\n      backend   = "s3"\n      config    = { bucket = "state", key = "gen/live/dev/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate", region = "us-east-1" }\n      providers = <<-EOT\n        provider "aws" {\n          region = "us-east-1"\n        }\n      EOT\n      versions  = <<-EOT\n        terraform {\n          required_providers {');
       // The prod unit takes its glob's region; web alone takes its own required_version.
       expect(hcl).toMatch(/"live\/prod\/app" = \{[\s\S]*?region = "eu-west-1"/);
       expect(hcl.match(/required_version = ">= 1\.6"/g)).toHaveLength(1);
@@ -265,6 +265,20 @@ terraform {
       // Once written, --check passes and a second run changes nothing.
       expect(checkGenerated(dir, settingsOf(dir))).toMatchObject({ ok: true, log: ["generated files match terragucci.yml: 1 file for 3 units"] });
       expect(generate(dir).files.map((f) => f.status)).toEqual(["unchanged"]);
+    });
+
+    it("gives each unit's key the ephemeral suffix, empty but in a copy's run, and a gcs prefix and a local path too", () => {
+      const dir = tgRepo('generate:\n  backend:\n    gcs: { bucket: b, prefix: "p/{root}/" }\n  dirs:\n    "live/prod/*":\n      backend: { local: { path: "/s/{root}.tfstate" } }\n');
+      generate(dir);
+      const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
+      expect(hcl).toContain('config  = { bucket = "b", prefix = "p/live/dev/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}" }');
+      expect(hcl).toContain('config  = { path = "/s/live/prod/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate" }');
+    });
+
+    it("is refused with synth, naming the CDK Terrain constructs that set what it would write", () => {
+      const dir = tgRepo();
+      expect(() => planGenerate(dir, { ...settingsOf(dir), synth: "npx cdktn synth" })).toThrow(/^generate: with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct \(S3Backend, GcsBackend, AzurermBackend, LocalBackend/);
+      expect(() => validateConfig({ synth: "npx cdktn synth", generate: { required_version: ">= 1.6" } }, "t")).toThrow(/config\.generate: with synth .*leave generate unset/);
     });
 
     it("takes an include of terragucci.hcl however its path is built", () => {

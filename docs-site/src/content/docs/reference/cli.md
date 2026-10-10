@@ -42,8 +42,9 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
+| `atmos write` | internal: writes each Atmos instance to `<stack>/<component>` from `atmos describe stacks`; every job of the generated [Atmos](/terragucci/guides/use-atmos/) pipeline runs it first |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
-| `install` | fetches a release of OpenTofu, Terraform, Terragrunt, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Infracost, verified against its checksums |
+| `install` | fetches a release of OpenTofu, Terraform, Terragrunt, Atmos, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Infracost, verified against its checksums |
 
 ## init
 
@@ -647,10 +648,10 @@ terragucci check-policy [--config <file>] [--base <ref>]
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>
+terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos <version>
 ```
 
-Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds. With `modules.attest`, the publish job installs cosign this way before it publishes.
+Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds. With `modules.attest`, the publish job installs cosign this way before it publishes, and in an Atmos repo every job installs Atmos.
 
 ## --json
 
@@ -688,7 +689,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
-| `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt repo, `synth` | the copy waits for an approval | an approval stands for other plans of the copy |
+| `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |

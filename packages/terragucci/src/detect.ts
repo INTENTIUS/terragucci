@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { forgeFromHost, type Binary, type ForgeName } from "./config";
+import { atmosStateReads } from "./atmos";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
 
@@ -248,11 +249,57 @@ function attr(body: string, name: string): string | undefined {
   return body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
 }
 
-/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code. */
+const objectOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+/** A block in Terraform's JSON syntax: an object, or a list of objects whose first is taken. */
+const firstOf = (v: unknown): Record<string, unknown> | undefined => objectOf(Array.isArray(v) ? v[0] : v);
+const stringOf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+/**
+ * The backend and the `terraform_remote_state` blocks of a file in Terraform's
+ * JSON syntax, as CDK Terrain writes them: `terraform.backend.<type>` and
+ * `data.terraform_remote_state.<name>.config`, each a block or a list of them.
+ */
+function jsonState(raw: string): { own?: StateRef; reads: RemoteRead[] } {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return { reads: [] };
+  }
+  let own: StateRef | undefined;
+  const reads: RemoteRead[] = [];
+  const top = objectOf(doc);
+  for (const t of Array.isArray(top?.terraform) ? top.terraform : [top?.terraform]) {
+    const backends = objectOf(objectOf(t)?.backend) ?? {};
+    for (const type of Object.keys(backends)) {
+      const b = firstOf(backends[type]);
+      const key = stringOf(b?.key) ?? stringOf(b?.prefix) ?? stringOf(b?.path);
+      if (key) own = { bucket: stringOf(b?.bucket), key };
+    }
+  }
+  for (const d of Array.isArray(top?.data) ? top.data : [top?.data]) {
+    const blocks = objectOf(objectOf(d)?.terraform_remote_state) ?? {};
+    for (const [name, v] of Object.entries(blocks)) {
+      const b = firstOf(v);
+      const config = objectOf(b?.config);
+      const key = stringOf(config?.key) ?? stringOf(config?.prefix) ?? stringOf(config?.path);
+      if (key) reads.push({ name, bucket: stringOf(config?.bucket), key, repeated: b?.count !== undefined || b?.for_each !== undefined });
+    }
+  }
+  return { ...(own ? { own } : {}), reads };
+}
+
+/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code (HCL, or Terraform's JSON syntax). */
 export function stateOf(repo: string, root: string): { own?: StateRef; reads: RemoteRead[] } {
   let own: StateRef | undefined;
   const reads: RemoteRead[] = [];
   for (const f of tfFiles(join(repo, root))) {
+    if (isJson(f)) {
+      const j = jsonState(readFileSync(f, "utf-8"));
+      if (j.own) own = j.own;
+      reads.push(...j.reads);
+      continue;
+    }
     const text = stripComments(readFileSync(f, "utf-8"));
     for (const m of text.matchAll(/\bbackend\s+"[^"]+"\s*\{/g)) {
       const body = blockBody(text, m.index!);
@@ -357,10 +404,80 @@ export function backendBlock(dir: string): { type: string; attrs: Record<string,
 /** Two addresses name one state: the same key, and the same bucket where both name one. */
 export const sameState = (a: StateAddress, b: StateAddress): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
 
-/** For each root, the roots whose state it reads through `terraform_remote_state`. */
-export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
+/**
+ * A choudoufu root's estate, from the `live` block in its `terraform` block
+ * or the `estate` of its `estate.chdf.hcl`, and the estates whose recorded
+ * outputs it reads through `data "terraform_estate_outputs"`.
+ */
+export function estateOf(dir: string): { estate?: string; reads: string[] } {
+  let estate: string | undefined;
+  const reads: string[] = [];
+  const sidecar = join(dir, "estate.chdf.hcl");
+  if (existsSync(sidecar)) estate = attr(stripComments(readFileSync(sidecar, "utf-8")), "estate");
+  for (const f of tfFiles(dir)) {
+    if (isJson(f)) continue;
+    const text = stripComments(readFileSync(f, "utf-8"));
+    for (const t of text.matchAll(/^\s*terraform\s*\{/gm)) {
+      const body = blockBody(text, t.index!);
+      const live = body.match(/\blive\s*\{/);
+      if (live && !estate) estate = attr(blockBody(body, live.index!), "estate");
+    }
+    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"[^"]+"\s*\{/g)) {
+      const e = attr(blockBody(text, m.index!), "estate");
+      if (e) reads.push(e);
+    }
+  }
+  return { estate, reads };
+}
+
+/** The roots that keep their resources under choudoufu's live resource markers: a `live` block in a `terraform` block, or an `estate.chdf.hcl`. */
+export function liveRoots(repo: string, roots: string[]): string[] {
+  return roots.filter((r) => {
+    const dir = join(repo, r);
+    if (existsSync(join(dir, "estate.chdf.hcl"))) return true;
+    return tfFiles(dir).some((f) => {
+      if (isJson(f)) return false;
+      const text = stripComments(readFileSync(f, "utf-8"));
+      return [...text.matchAll(/^\s*terraform\s*\{/gm)].some((t) => /\blive\s*\{/.test(blockBody(text, t.index!)));
+    });
+  });
+}
+
+/**
+ * Why tf-drift cannot read these roots, or undefined when it can: a drift
+ * check is a refresh-only plan, which choudoufu refuses under live resource
+ * markers, since a live root keeps no state to compare the live system with.
+ */
+export function driftRefusal(binary: string, live: string[]): string | undefined {
+  if (binary !== "choudoufu" || live.length === 0) return undefined;
+  live = [...live].sort();
+  const named = live.length > 3 ? `${live.slice(0, 3).join(", ")} and ${live.length - 3} more` : live.join(", ");
+  return `drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and ${named} ${live.length === 1 ? "keeps its" : "keep their"} resources under them: a live root keeps no state to compare the live system with, and each of its plans reads the live system, so remove drift`;
+}
+
+/**
+ * For each root, the roots whose state it reads: through
+ * `terraform_remote_state`, for an Atmos instance through the
+ * `!terraform.state` reads its stacks set (./atmos.ts), and under choudoufu
+ * the roots whose estate's outputs it reads through `terraform_estate_outputs`
+ * (unless `estates` is false, for a caller that reasons about state files alone).
+ */
+export function rootDependencies(repo: string, roots: string[], { estates: withEstates = true }: { estates?: boolean } = {}): Map<string, Set<string>> {
   const reads = remoteStateReads(repo, roots);
-  return new Map(roots.map((r) => [r, new Set(reads.get(r)!.map((x) => x.upstream))]));
+  const atmos = atmosStateReads(repo, roots);
+  const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, r)) : { reads: [] as string[] }]));
+  const owner = new Map<string, string>();
+  for (const [r, e] of estates) if ("estate" in e && e.estate) owner.set(e.estate, r);
+  return new Map(
+    roots.map((r) => {
+      const deps = new Set([...reads.get(r)!.map((x) => x.upstream), ...(atmos.get(r) ?? [])]);
+      for (const e of estates.get(r)!.reads) {
+        const up = owner.get(e);
+        if (up && up !== r) deps.add(up);
+      }
+      return [r, deps];
+    }),
+  );
 }
 
 /**

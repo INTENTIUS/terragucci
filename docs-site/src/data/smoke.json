@@ -12,6 +12,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "boot",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "boot",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "check",
       "says": "tf-check fails an unformatted root and names the file",
       "needs": null,
@@ -44,6 +62,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "report",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "report",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "highlight",
       "says": "destroys and outliers are open, identical groups are folded",
       "needs": null,
@@ -58,6 +94,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "waves",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "waves",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "refuse",
@@ -82,6 +136,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift",
+      "says": "drift is reported by root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "drift",
+      "says": "with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "rollout",
@@ -206,6 +278,23 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "reconcile-mixed",
+      "says": "a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bf5dd40e"
+    },
+    {
+      "claim": "reconcile-mixed",
+      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
     },
     {
       "claim": "traces",
@@ -472,6 +561,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "policy-wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "policy-wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "check-diagnostics",
       "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
       "needs": null,
@@ -617,6 +724,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "pr-apply",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "pr-apply",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "pr-apply-lock",
       "says": "a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
@@ -671,6 +796,70 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "atmos-waves",
+      "says": "init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-workspace",
+      "says": "each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-affected",
+      "says": "a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-from-plan",
+      "says": "an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-upstream-wait",
+      "says": "an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-check",
+      "says": "the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-version",
+      "says": "atmos.version in terragucci.yml is the Atmos release every job installs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-roles",
+      "says": "oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
     },
     {
       "claim": "policy-source",
@@ -833,6 +1022,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "approve-plan",
+      "says": "terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "approve-plan",
+      "says": "terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "approve-command",
       "says": "the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied",
       "needs": null,
@@ -862,7 +1069,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1468a6e6"
+      "commit": "bf5dd40e"
     },
     {
       "claim": "plan-lock-release",
@@ -1335,7 +1542,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "bf5dd40e"
     },
     {
       "claim": "note-footer",
@@ -1345,6 +1552,14 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "e8d2cfb"
+    },
+    {
+      "claim": "replan-dispatch",
+      "says": "a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bf5dd40e"
     },
     {
       "claim": "cdf-shared-bucket",
@@ -1523,6 +1738,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "notify-webhook",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "notify-webhook",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "cost-estimate",
       "says": "with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret",
       "needs": null,
@@ -1537,6 +1770,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "cost-gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "cost-gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "cost-policy",
@@ -1649,6 +1900,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "steps-gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "steps-gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "tg-cost-gate",
@@ -1907,6 +2176,62 @@
       "commit": "7c2ff19c"
     },
     {
+      "claim": "image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "tg-ephemeral-pr",
+      "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "cdktn-ephemeral",
+      "says": "with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "cdktn-generate",
+      "says": "with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "cdktn-linked",
+      "says": "a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,
@@ -1954,15 +2279,6 @@
     {
       "claim": "explain-refusal",
       "says": "after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "02e7f08"
-    },
-    {
-      "claim": "reconcile-mixed",
-      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
