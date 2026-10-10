@@ -141,18 +141,23 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 
 <style>
 	.tg-doors {
+		overflow-wrap: anywhere;
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 1.25rem;
+		width: 100%;
+		min-width: 0;
 		max-width: 64rem;
 		margin: 0 auto 3rem;
 		font-size: var(--sl-text-sm);
 	}
 	.tiles {
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
+		grid-template-columns: repeat(5, minmax(0, 1fr));
 		gap: 0.5rem;
 	}
 	.tile {
+		min-width: 0;
 		display: grid;
 		gap: 0.35rem;
 		align-content: start;
@@ -225,8 +230,10 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	.fancy {
 		position: relative;
 		display: inline-block;
+		max-width: 100%;
 	}
 	.fancy select {
+		max-width: 100%;
 		appearance: none;
 		padding: 0.45rem 2rem 0.45rem 0.8rem;
 		font: inherit;
@@ -249,7 +256,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	}
 	.cards {
 		display: grid;
-		grid-template-columns: 2fr 1fr;
+		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
 		gap: 0.75rem;
 	}
 	.card {
@@ -385,10 +392,10 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	}
 	@media (max-width: 52rem) {
 		.tiles {
-			grid-template-columns: repeat(2, 1fr);
+			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 		.cards {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 </style>

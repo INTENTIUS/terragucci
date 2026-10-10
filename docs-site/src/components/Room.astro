@@ -25,12 +25,17 @@ const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.len
 		<section>
 			<h2>Differs</h2>
 			{r.differs.length ? <ul>{r.differs.map((d) => <li>{d}</li>)}</ul> : <p>Nothing beyond what the other pages describe.</p>}
-			{elsewhere.map((x) => (
-				<>
-					<h3>On {x.label}</h3>
-					<ul>{x.differs.map((d) => <li>{d}</li>)}</ul>
-				</>
-			))}
+			{elsewhere.length > 0 && (
+				<details class="elsewhere">
+					<summary>On {elsewhere.map((x) => x.label).join(', ')}</summary>
+					{elsewhere.map((x) => (
+						<>
+							<h3>On {x.label}</h3>
+							<ul>{x.differs.map((d) => <li>{d}</li>)}</ul>
+						</>
+					))}
+				</details>
+			)}
 		</section>
 		<section class="first">
 			<h2>First step</h2>
@@ -124,6 +129,14 @@ const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.len
 	}
 	p {
 		margin: 0;
+	}
+	.elsewhere {
+		margin-top: 0.9rem;
+	}
+	.elsewhere summary {
+		font-size: var(--sl-text-xs);
+		color: var(--tg-accent);
+		cursor: pointer;
 	}
 	a {
 		color: var(--tg-accent);

@@ -164,8 +164,9 @@ const tipId = () => `tg-cov-${uid}-${n++}`;
 				grids.map((g) => (
 					<div class="grid-wrap">
 						<p class="title">{g.title}</p>
+						{g.key === 'tool' && <p class="swipe">Swipe for more columns</p>}
 						<div class="scroll">
-							<table>
+							<table class={g.key}>
 								<thead>
 									{g.key === 'tool' && (
 										<tr class="groups">
@@ -288,6 +289,31 @@ const tipId = () => `tg-cov-${uid}-${n++}`;
 	}
 	.scroll {
 		overflow-x: auto;
+	}
+	.swipe {
+		display: none;
+	}
+	/* On a phone the by-forge grid fits; the by-tool grid scrolls, and says so. */
+	@media (max-width: 40rem) {
+		.swipe {
+			display: block;
+			margin: 0 0 0.4rem;
+			font-size: 0.72rem;
+			color: var(--sl-color-gray-3);
+		}
+		.swipe::after {
+			content: ' →';
+		}
+		table.forge {
+			min-width: 0;
+		}
+		tbody th {
+			min-width: 6.5rem;
+			font-size: 0.75rem;
+		}
+		.cell {
+			min-width: 2.9rem;
+		}
 	}
 	table {
 		border-collapse: collapse;

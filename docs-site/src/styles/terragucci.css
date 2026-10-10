@@ -95,19 +95,19 @@ h1#_top {
 	line-height: 1.7;
 	color: var(--sl-color-gray-2);
 }
-.sl-markdown-content :is(strong, b):not(.not-content *) {
+.sl-markdown-content :is(strong, b):not(.not-content, .not-content *) {
 	color: var(--sl-color-white);
 	font-weight: 600;
 }
-.sl-markdown-content :is(h2, h3, h4):not(.not-content *) {
+.sl-markdown-content :is(h2, h3, h4):not(.not-content, .not-content *) {
 	color: var(--sl-color-white);
 }
-.sl-markdown-content h2:not(.not-content *) {
+.sl-markdown-content h2:not(.not-content, .not-content *) {
 	font-size: 1.3rem;
 	margin-top: 2.75rem;
 }
 /* A short gold hairline over each section heading. */
-.sl-markdown-content h2:not(.not-content *)::before {
+.sl-markdown-content h2:not(.not-content, .not-content *)::before {
 	content: '';
 	display: block;
 	width: 2rem;
@@ -115,33 +115,33 @@ h1#_top {
 	margin-bottom: 0.9rem;
 	background: var(--tg-gold);
 }
-.sl-markdown-content h3:not(.not-content *) {
+.sl-markdown-content h3:not(.not-content, .not-content *) {
 	font-size: 1.05rem;
 	margin-top: 2rem;
 }
 
 /* Links: the accent, a fine underline that turns gold on hover. */
-.sl-markdown-content a:not(.not-content *, :is(h1, h2, h3, h4) a) {
+.sl-markdown-content a:not(.not-content, .not-content *, :is(h1, h2, h3, h4) a) {
 	color: var(--tg-accent);
 	text-decoration-line: underline;
 	text-decoration-thickness: 1px;
 	text-underline-offset: 0.2em;
 	text-decoration-color: color-mix(in srgb, var(--tg-accent) 35%, transparent);
 }
-.sl-markdown-content a:not(.not-content *):hover {
+.sl-markdown-content a:not(.not-content, .not-content *):hover {
 	text-decoration-color: var(--tg-gold);
 }
 
 /* Bullets are tacos. Nested lists and ordered lists keep their markers. */
-.sl-markdown-content ul:not(.not-content *, :is(ul, ol) ul) {
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) {
 	padding-left: 0;
 	list-style: none;
 }
-.sl-markdown-content ul:not(.not-content *, :is(ul, ol) ul) > li {
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li {
 	position: relative;
 	padding-left: 1.85rem;
 }
-.sl-markdown-content ul:not(.not-content *, :is(ul, ol) ul) > li::before {
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li::before {
 	content: '';
 	position: absolute;
 	left: 0;
@@ -153,18 +153,18 @@ h1#_top {
 }
 
 /* Tables: smaller type, a tracked caps header over a gold hairline, hairline rows. */
-.sl-markdown-content table:not(.not-content *) {
+.sl-markdown-content table:not(.not-content, .not-content *) {
 	border-collapse: collapse;
 	font-size: 0.85rem;
 	line-height: 1.55;
 }
-.sl-markdown-content :is(th, td):not(.not-content *) {
+.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
 	border: none;
 	border-bottom: 1px solid var(--tg-rule);
 	padding: 0.6rem 0.9rem 0.6rem 0;
 	vertical-align: top;
 }
-.sl-markdown-content th:not(.not-content *) {
+.sl-markdown-content th:not(.not-content, .not-content *) {
 	font-size: 0.68rem;
 	font-weight: 600;
 	letter-spacing: 0.1em;
@@ -173,15 +173,15 @@ h1#_top {
 	background: none;
 	border-bottom: 1px solid var(--tg-gold);
 }
-.sl-markdown-content td:first-child:not(.not-content *) {
+.sl-markdown-content td:first-child:not(.not-content, .not-content *) {
 	color: var(--sl-color-white);
 }
-.sl-markdown-content tbody tr:hover td:not(.not-content *) {
+.sl-markdown-content tbody tr:hover td:not(.not-content, .not-content *) {
 	background: color-mix(in srgb, var(--tg-gold) 5%, transparent);
 }
 
 /* Inline code: a quiet grey chip. */
-.sl-markdown-content :not(pre):not(.not-content *) > code {
+.sl-markdown-content :not(pre):not(.not-content, .not-content *) > code {
 	background: var(--sl-color-gray-6);
 	color: var(--sl-color-gray-1);
 	border: 1px solid var(--tg-rule);

@@ -14,45 +14,16 @@ interface Props {
 }
 const { part = 'top' } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// The eight highlights: each card is one link, its title the whole label.
 const pillars = [
-	{
-		title: 'No server to host',
-		links: [{ label: 'Components', href: '/concepts/how-it-works/#components' }],
-	},
-	{
-		title: 'GitHub, GitLab or Forgejo',
-		links: [{ label: 'Per forge', href: '/guides/add-to-a-repo/#per-forge' }],
-	},
-	{
-		title: 'Object storage on AWS, GCP or Azure',
-		links: [
-			{ label: 'Credentials', href: '/reference/pipeline/#credentials' },
-			{ label: 'Reports bucket', href: '/guides/keep-reports-in-a-bucket/' },
-		],
-	},
-	{
-		title: 'Tracing and metrics',
-		links: [{ label: 'Send traces and metrics', href: '/guides/send-traces-and-metrics/' }],
-	},
-	{
-		title: 'Rich lifecycles',
-		links: [{ label: 'The lifecycle', href: '/concepts/how-it-works/' }],
-	},
-	{
-		title: 'Gated waves',
-		links: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
-	},
-	{
-		title: 'Aggregated plan output',
-		links: [{ label: 'Grouped plans', href: '/concepts/why-plans-are-grouped/' }],
-	},
-	{
-		title: 'Module publishing and pinned rollouts',
-		links: [
-			{ label: 'Publish modules', href: '/guides/publish-modules/' },
-			{ label: 'Roll out a version', href: '/guides/roll-out-a-module-version/' },
-		],
-	},
+	{ title: 'No server to host', href: '/concepts/how-it-works/#components' },
+	{ title: 'GitHub, GitLab or Forgejo', href: '/guides/add-to-a-repo/#per-forge' },
+	{ title: 'Object storage on AWS, GCP or Azure', href: '/guides/keep-reports-in-a-bucket/' },
+	{ title: 'Tracing and metrics', href: '/guides/send-traces-and-metrics/' },
+	{ title: 'Rich lifecycles', href: '/concepts/how-it-works/' },
+	{ title: 'Gated waves', href: '/concepts/waves-and-approvals/' },
+	{ title: 'Aggregated plan output', href: '/concepts/why-plans-are-grouped/' },
+	{ title: 'Module publishing and pinned rollouts', href: '/guides/publish-modules/' },
 ];
 ---
 {part === 'top' ? (
@@ -65,11 +36,10 @@ const pillars = [
 	<ul class="tg-pillars not-content">
 		{pillars.map((p) => (
 			<li>
-				<Taco />
-				<h2>{p.title}</h2>
-				<span class="links">
-					{p.links.map((l) => <a href={`${base}${l.href}`}>{l.label}</a>)}
-				</span>
+				<a href={`${base}${p.href}`}>
+					<Taco />
+					<span>{p.title}</span>
+				</a>
 			</li>
 		))}
 	</ul>
@@ -115,6 +85,11 @@ const pillars = [
 		color: var(--sl-color-gray-3);
 	}
 	/* A gold hairline between the wordmark and the line under it. */
+	@media (max-width: 30rem) {
+		.claim {
+			letter-spacing: 0.14em;
+		}
+	}
 	.claim::before {
 		content: '';
 		width: 2.5rem;
@@ -148,42 +123,43 @@ const pillars = [
 		margin: 1rem 0 0;
 		padding: 0;
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
-		gap: 1rem;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.75rem;
 	}
 	.tg-pillars li {
 		margin: 0;
-		padding: 1.5rem;
+		min-width: 0;
+	}
+	.tg-pillars a {
 		display: grid;
-		gap: 0.75rem;
-		align-content: start;
+		gap: 0.6rem;
+		justify-items: start;
+		height: 100%;
+		padding: 1.1rem 1.15rem;
+		font-family: var(--tg-display);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		line-height: 1.3;
+		color: var(--sl-color-white);
+		text-decoration: none;
 		border: 1px solid var(--tg-rule);
 		border-top: 1px solid var(--tg-gold);
 		border-radius: 0.5rem;
 		background: var(--tg-panel);
-		min-width: 0;
+		transition: border-color 0.15s;
 	}
-	.tg-pillars h2 {
-		margin: 0;
-		font-family: var(--tg-display);
-		font-size: var(--sl-text-lg);
-		font-weight: 600;
-		line-height: 1.2;
-		color: var(--sl-color-white);
+	.tg-pillars a:hover,
+	.tg-pillars a:focus-visible {
+		border-color: var(--tg-gold);
 	}
-	.tg-pillars p {
-		margin: 0;
-		color: var(--sl-color-gray-2);
-		line-height: 1.55;
-	}
-	.tg-pillars .links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem 1rem;
-		font-size: 0.9rem;
-	}
-	.tg-pillars a {
-		color: var(--sl-color-accent-high);
-		font-weight: 500;
+	@media (max-width: 50rem) {
+		.tg-pillars {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 0.5rem;
+		}
+		.tg-pillars a {
+			padding: 0.85rem;
+			font-size: var(--sl-text-xs);
+		}
 	}
 </style>

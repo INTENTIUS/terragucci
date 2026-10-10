@@ -1,0 +1,29 @@
+---
+// The site title, then, on a phone, a Docs link beside it: Starlight hides the
+// header's right side (where SocialIcons.astro puts Docs) below its md width.
+import Default from '@astrojs/starlight/components/SiteTitle.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Default />
+<a class="tg-docs-phone" href={`${base}/getting-started/`}>Docs</a>
+
+<style>
+	.tg-docs-phone {
+		align-self: center;
+		margin-left: 0.75rem;
+		padding: 0.2rem 0.65rem;
+		font-size: var(--sl-text-xs);
+		font-weight: 600;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		border: 1px solid var(--tg-rule);
+		border-radius: 999px;
+		white-space: nowrap;
+	}
+	@media (min-width: 50rem) {
+		.tg-docs-phone {
+			display: none;
+		}
+	}
+</style>
