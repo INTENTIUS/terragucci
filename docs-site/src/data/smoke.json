@@ -390,7 +390,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-waves",
@@ -430,7 +430,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-mock-trap",
@@ -883,7 +883,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0c494d98"
+      "commit": "8b686e63"
     },
     {
       "claim": "atmos-affected",
@@ -915,7 +915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0c494d98"
+      "commit": "8b686e63"
     },
     {
       "claim": "atmos-version",
@@ -932,6 +932,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-refuse",
+      "says": "config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
     },
     {
       "claim": "policy-source",
@@ -1538,11 +1546,11 @@
     },
     {
       "claim": "tg-dependents",
-      "says": "by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out",
+      "says": "terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "04983e3b"
+      "commit": "c64d95fa"
     },
     {
       "claim": "tg-preview",
@@ -1907,7 +1915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-migrate",
@@ -1915,7 +1923,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-refused",
@@ -1923,7 +1931,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "apply-branches",
@@ -2029,7 +2037,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-state-versions",
@@ -2045,7 +2053,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-drift-attribute",
@@ -2093,7 +2101,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "79c43672"
+      "commit": "8b686e63"
     },
     {
       "claim": "tg-apply-branches",
@@ -2261,7 +2269,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "e67a400c"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-ephemeral",
@@ -2269,7 +2277,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "e67a400c"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-generate",
@@ -2277,7 +2285,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "e67a400c"
+      "commit": "8b686e63"
     },
     {
       "claim": "cdktn-linked",

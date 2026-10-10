@@ -33,7 +33,7 @@ import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
-import { detectBinary } from "./detect";
+import { detectShape } from "./shape";
 import { call, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
 import { lockKey } from "./migrate";
 import type { S3Fetch, S3Target } from "./report/s3";
@@ -216,11 +216,13 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const config = configPath ? await loadConfig(resolve(configPath)) : {};
   if (config.projects) throw new ConfigError("unlock-state runs in a project's own checkout, not a control repo");
   const settings: ResolvedSettings = resolveRepo(config);
-  const binary = options.binary ?? settings.binary ?? detectBinary(repo, [rel]).value;
+  const shape = detectShape(repo, settings);
+  const binary = options.binary ?? settings.binary ?? shape.binary([rel]).value;
 
-  const init = exec(binary, ["init", "-input=false", "-no-color"], dir, env);
+  // A root that names its workspace (an Atmos instance) inits in default and keeps its state, and its lock, under its own.
+  const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
   if (init.status !== 0) throw new ConfigError(`${rel}: ${binary} init failed:\n${tail(init.out)}`);
-  const object = lockedObject(rel, stateObject(dir, env));
+  const object = lockedObject(rel, stateObject(dir, shape.rootEnv(rel, env)));
   const location = `s3://${object.bucket}/${lockKey(object.key)}`;
   const client = stateClient(object, options.s3Fetch);
   const text = await client.get(lockKey(object.key));

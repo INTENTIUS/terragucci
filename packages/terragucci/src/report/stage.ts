@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { rootRoleEnv } from "../roles";
 import { workspaceEnv, workspaceInit } from "../backend";
-import { atmosDependencies, effectiveSynth, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
+import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
@@ -35,7 +35,8 @@ import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoot
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
-import { detectTerragrunt, discoverUnits, generateStacks, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { discoverUnits, generateStacks, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { detectShape } from "../shape";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { findIssue, ForgeError, type Fetch } from "../forge";
@@ -905,7 +906,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const configPath = options.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
-  if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) return runTerragruntStage(repo, settings, options, env, log, drift, configPath);
+  const shape = detectShape(repo, settings);
+  if (options.terragrunt ?? shape.engine === "terragrunt") return runTerragruntStage(repo, settings, options, env, log, drift, configPath);
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
   const full = options.layers ?? applyLayers(repo, all);
   const layers = full
@@ -914,7 +916,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
   // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
   // An Atmos repo's instances are written by terragucci atmos write, its synth when terragucci.yml names none.
-  const synth = effectiveSynth(repo, settings.synth);
+  const synth = shape.prepare;
   if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
     throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${synth ? `; the synth command (${synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
   }
