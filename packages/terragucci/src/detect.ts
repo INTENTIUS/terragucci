@@ -425,14 +425,41 @@ export interface StateAddress {
   key: string;
 }
 
+/** Where choudoufu keeps an estate's records in its record store: the state of a root whose `live` block owns it. */
+export const estateRecords = (estate: string): string => `tofu-records/${estate}`;
+
 /**
- * Each root's own state, as its backend block names it, and its
+ * A root's state as stateOf reads it, and under choudoufu its estate: the
+ * records of the estate its `live` block owns as its own state (over the
+ * `terraform.tfstate` a root with no backend block would keep), and each
+ * `terraform_estate_outputs` read as a read of that estate's records.
+ */
+function withEstate(repo: string, root: string, s: { own?: StateRef; reads: RemoteRead[] }): { own?: StateRef; reads: RemoteRead[] } {
+  const dir = join(repo, root);
+  const { estate } = estateOf(dir);
+  const reads = [...s.reads];
+  for (const f of tfFiles(dir)) {
+    if (isJson(f)) continue;
+    const text = stripComments(readFileSync(f, "utf-8"));
+    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"([^"]+)"\s*\{/g)) {
+      const e = attr(blockBody(text, m.index!), "estate");
+      if (e) reads.push({ name: m[1]!, key: estateRecords(e), repeated: false });
+    }
+  }
+  const implicit = addressed("local", () => undefined, root).ref;
+  const own = estate && (!s.own || (implicit && sameState(s.own, implicit))) ? { key: estateRecords(estate) } : s.own;
+  return { own, reads };
+}
+
+/**
+ * Each root's own state, as its backend block names it (under choudoufu, the
+ * records of the estate it owns), and its
  * `terraform_remote_state` reads of a state no root among `roots` holds: a
  * state another project's root may hold, which the estate page matches
  * across projects.
  */
 export function rootStates(repo: string, roots: string[]): Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }> {
-  const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
+  const states = new Map(roots.map((r) => [r, withEstate(repo, r, stateOf(repo, r))]));
   const held = [...states.values()].flatMap((s) => (s.own ? [s.own] : []));
   const out = new Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }>();
   for (const [root, { own, reads }] of states) {
@@ -586,18 +613,6 @@ export function liveRoots(repo: string, roots: string[]): string[] {
       return [...text.matchAll(/^\s*terraform\s*\{/gm)].some((t) => /\blive\s*\{/.test(blockBody(text, t.index!)));
     });
   });
-}
-
-/**
- * Why tf-drift cannot read these roots, or undefined when it can: a drift
- * check is a refresh-only plan, which choudoufu refuses under live resource
- * markers, since a live root keeps no state to compare the live system with.
- */
-export function driftRefusal(binary: string, live: string[]): string | undefined {
-  if (binary !== "choudoufu" || live.length === 0) return undefined;
-  live = [...live].sort();
-  const named = live.length > 3 ? `${live.slice(0, 3).join(", ")} and ${live.length - 3} more` : live.join(", ");
-  return `drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and ${named} ${live.length === 1 ? "keeps its" : "keep their"} resources under them: a live root keeps no state to compare the live system with, and each of its plans reads the live system, so remove drift`;
 }
 
 /**

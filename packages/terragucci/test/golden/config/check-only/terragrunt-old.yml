@@ -1,0 +1,3 @@
+# Terragrunt 1.0 is older than terragucci needs.
+terragrunt:
+  version: 1.0.0

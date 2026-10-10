@@ -1,0 +1,125 @@
+binary: tofu
+version:
+  "envs/legacy/*": 1.8.5
+gate: always
+approval: sealed
+waves:
+  canary: [envs/dev/core]
+  jobs: 3
+  after:
+    envs/prod/app: [envs/prod/network]
+drift: "17 4 * * *"
+locks: plan
+apply:
+  resume: 10
+  branches:
+    release: ["envs/prod/*"]
+steps:
+  - name: lint
+    run: tflint
+    before: plan
+    on_failure: approve
+  - run: ./smoke.sh
+    after: apply
+    roots: ["envs/*/app"]
+notify:
+  slack: SLACK_WEBHOOK_URL
+  webhook: WEBHOOK_URL
+  webhook_key: WEBHOOK_KEY
+  relay: terragucci
+cost:
+  key_secret: INFRACOST_API_KEY
+  approve_above: 100
+reports:
+  bucket: s3://acme-reports
+  prefix: infra
+  url: https://reports.example.com
+  role: arn:aws:iam::123456789012:role/terragucci-reports
+env:
+  TF_LOG: info
+runner:
+  default: ubuntu-latest
+  apply: [self-hosted, prod]
+  drift:
+    group: infra
+    labels: [linux]
+pass:
+  secrets: [TF_VAR_db_password]
+  vars: [TF_VAR_region]
+telemetry:
+  headers_secret: OTLP_HEADERS
+  trace_url: https://grafana.example/explore?trace={trace_id}
+oidc:
+  plan_role: arn:aws:iam::123456789012:role/plan
+  apply_role: arn:aws:iam::123456789012:role/apply
+  roles:
+    "envs/prod/**": { plan: arn:aws:iam::123456789012:role/prod-plan, apply: arn:aws:iam::123456789012:role/prod-apply }
+  gcp:
+    workload_identity_provider: projects/123/locations/global/workloadIdentityPools/ci/providers/github
+    plan_service_account: plan@acme.iam.gserviceaccount.com
+    apply_service_account: apply@acme.iam.gserviceaccount.com
+  azure:
+    tenant_id: t
+    subscription_id: s
+    plan_client_id: p
+    apply_client_id: a
+parallelism: 4
+policy:
+  engine: opa
+  source: git+https://github.com/acme/policy.git@v1
+  namespace: terraform.plan
+  input: hcp
+  override: ["github:alice"]
+respond:
+  drift: attribute
+  apply-failed: off
+  description: check
+review:
+  agent: true
+  timeout: 5
+decide:
+  backend: laya
+  url: http://localhost:8790
+  thresholds: { noul: 0.8 }
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  comment: { max_turns: 10 }
+  drift: true
+dashboards:
+  folder: infra
+  drift_age: 2d
+audit_region: us-east-1
+own_jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps: [{ run: npm test }]
+ephemeral:
+  roots: ["envs/preview/*"]
+  ttl: 12h
+  sweep: 15
+modules:
+  path: modules/*
+  publish: [git-tags, oci://ghcr.io/acme/modules]
+  attest: { key: cosign.pub }
+  require: attested
+  test: true
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    namespaces: { platform/: platform }
+    download: git-tags
+generate:
+  backend: { s3: { bucket: acme-state, region: us-east-1, encrypt: true } }
+  providers:
+    aws: { source: hashicorp/aws, version: "~> 5.0", region: us-east-1, default_tags: { tags: { team: infra } } }
+    aws.west: { region: us-west-2 }
+  required_version: ">= 1.6"
+  dirs:
+    "envs/prod/*": { backend: { s3: { bucket: acme-prod-state } } }
+  roots:
+    envs/dev/core: { required_version: null }
+tips: false
+atlantis_comments: true
+image: registry.example.com/infra/terragucci-tofu:1.2.3

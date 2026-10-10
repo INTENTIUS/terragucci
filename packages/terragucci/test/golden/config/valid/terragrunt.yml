@@ -1,0 +1,7 @@
+terragrunt:
+  version: 1.1.6
+  exclude: ["sandbox/**"]
+  parallelism: 2
+  dependents: follow
+  credentials:
+    "live/prod/**": { plan: arn:aws:iam::1:role/p, apply: arn:aws:iam::1:role/a }
