@@ -91,7 +91,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describeChangedWave, waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
+import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import {
@@ -2099,7 +2099,8 @@ async function gateWave(
       if (decision.status === "refused") {
         const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === name && p.members && samePlanDigest(p.planDigest, decision.approved));
         const moved = approvedFact ? movedMembers(approvedFact.members!, members) : roots.slice().sort();
-        console.log(describeChangedWave({ wave, op: APPLY_OP, gate: name, digest, approved: decision.approved }));
+        // chant's describeChangedWave words the same refusal with a chant approve hint; the reader runs terragucci approve.
+        console.log(`wave ${wave} changed after it was approved, so nothing in it was applied. approved: ${decision.approved ?? "(none)"}; planned now: ${digest}. Read the new plan, then approve it: ${approveLine(wave, digest, mode)}`);
         console.log(`${label}: approved by ${decision.by}, but these roots planned differently since: ${moved.join(", ")}`);
         // What respond wave-refused compares: the plans approved, as the run that waited for them kept them, and the plans made now.
         const was = approvedFact?.planDigest ?? decision.approved;
