@@ -301,6 +301,7 @@ export interface ReportRoot {
   /**
    * A Terragrunt unit's `dependency` and `dependencies` blocks (minor 23): the
    * units whose outputs it reads, as plain paths in its `terragrunt.hcl`.
+   * For a plain root, the roots `waves.after` puts before it.
    * Absent when it names none.
    */
   dependencies?: string[];
