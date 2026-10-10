@@ -1,73 +1,109 @@
 ---
-title: Changes in 0.4.4
-description: "terragucci 0.4.4, released 2026-10-09."
+title: Changes in 0.4.5
+description: "terragucci 0.4.5, released 2026-10-10."
 ---
 
-Release `0.4.4` is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.4) lists every change.
+Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.5) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.4 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.5 init`, then merge the pipeline it writes |
+| A Terragrunt repo that uses `generate` | `terragucci generate` again, so each unit's state key reads the ephemeral suffix ([In a Terragrunt repo](/terragucci/guides/generate-root-files/#in-a-terragrunt-repo)) |
 
-## Since 0.4.4
+- Changed default: a pull request that changes a Terragrunt unit also previews the units that depend on it, provisional and outside every digest. Set `terragrunt.dependents: follow` to keep the old behavior ([The terragrunt block](/terragucci/reference/config/#the-terragrunt-block)).
+- Applies now run per root. With stock binaries, two overlapping pushes to one root can fail the newer apply with "Saved plan is stale"; run it again and it plans again ([Two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate)).
+
+## Applies and locking
 
 | What | Where |
 |---|---|
-| Changed default: a pull request that changes a Terragrunt unit also previews the units that depend on it, provisional and outside every digest. Set `terragrunt.dependents: follow` to keep the old behavior | [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block) |
-| `runner` picks the runner each job runs on, by label, list or GitHub runner group, per stage: `runs-on` on GitHub and Forgejo, `tags` on GitLab | [Self-hosted runners](/terragucci/guides/add-to-a-repo/#self-hosted-runners) |
-| `pass` hands named CI secrets and variables, such as `TF_VAR_db_password`, to the jobs that plan, apply and check drift on GitHub and Forgejo | [Secrets and variables](/terragucci/reference/config/#secrets-and-variables) |
-| The [choudoufu](/terragucci/concepts/glossary/#choudoufu) image runs choudoufu 0.24.0, which writes a resource's record when its apply returns: a killed apply leaves records for what it finished (`cdf-killed-records`) | [Locking and staleness](/terragucci/concepts/locking-and-staleness/#stock-and-choudoufu) |
-| `generate.disable_init: false` writes `disable_init = false` in `terragucci.hcl`, and the apply job has Terragrunt create the state bucket | [Generate backend and provider files](/terragucci/guides/generate-root-files/#bucket-bootstrap) |
-| `terragucci import terrateam` writes `terragucci.yml` from a `.terrateam/config.yml`, with `depends_on` as waves | [Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam) |
+| Pushes that change different roots apply at the same time; a root's own applies take turns at its state lock, and a superseded push stands down | [Applies side by side](/terragucci/reference/pipeline/#applies-side-by-side) |
+| With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave waits only for a run changing one of its own resources | [Two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate) |
+| The choudoufu image runs choudoufu 0.24.0: a killed apply leaves records for the resources it finished | [Stock and choudoufu](/terragucci/concepts/locking-and-staleness/#stock-and-choudoufu) |
+| One page for every lock layer, from the backend's state lock to choudoufu, with the claims behind each by repo shape and forge | [Locking and staleness](/terragucci/concepts/locking-and-staleness/) |
+
+## Plans and waves
+
+| What | Where |
+|---|---|
+| `waves.after` orders plain roots that no `terraform_remote_state` read links | [Root order](/terragucci/reference/config/#root-order) |
 | The plan note's blast radius lists each changed resource and the resources that depend on it, in its root and in roots that read an output it reaches | [Resources in the radius](/terragucci/concepts/waves-and-approvals/#resources-in-the-radius) |
-
-## Security
-
-| What | Where |
-|---|---|
-| A sensitive value's old value no longer reaches plan.json, the report or the bucket: OpenTofu repeats some sensitive inputs unmarked, and terragucci now redacts those copies too | [Report](/terragucci/reference/report/) |
-| The policy reads an AI review's verdict from the review job's own artifact for that head, never from a comment | [Review a pull request with an agent](/terragucci/guides/agent-review-a-pull-request/) |
-
-## Plans across roots
-
-| What | Where |
-|---|---|
-| A root that reads another's state plans on that root's planned outputs, with unknown values named, and its wave plans again once the upstream applies | [Waves and approvals](/terragucci/concepts/waves-and-approvals/) |
-| Each apply writes a run page to your bucket: the waves, what each reads, and where each stands | [Reports bucket](/terragucci/reference/reports-bucket/) |
-| The estate page draws each project's dependency graph, and the plan note and run page show a change's blast radius and a timeline of each wave | [See every project](/terragucci/guides/see-every-project/) |
-| `waves.jobs` spreads a wide wave's roots across jobs under one gate | [Waves and approvals](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) |
+| Every backend type gets a state address (local, pg, http, consul, kubernetes, remote), and `config check` names a read it cannot resolve | [State addresses](/terragucci/guides/track-cross-state-edges/#state-addresses) |
+| `ephemeral` gives each open pull request its own copy of the roots you name, behind a gate, destroyed after a TTL; Terragrunt units and synthesized roots too | [Ephemeral environments](/terragucci/guides/ephemeral-environments/) |
+| `apply.branches` maps a branch to root or unit globs, and a push there applies those alone behind the gate; drift plans them from their branch | [Apply from other branches](/terragucci/reference/config/#apply-from-other-branches) |
+| A re-plan started by `workflow_dispatch`, with a pull request and an optional root | [Re-plans by dispatch](/terragucci/guides/re-plan-from-a-comment/#re-plans-by-dispatch) |
 
 ## State
 
 | What | Where |
 |---|---|
-| Each apply records its state version, listed on the estate page | [See every project](/terragucci/guides/see-every-project/) |
-| `terragucci unlock-state` releases a lock a killed job left, only after an approval and with a record of who did it | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
+| `oidc.roles` gives each environment's roots their own plan and apply roles, and `config check` warns when one role serves two | [Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/) |
+| `terragucci state export` downloads a state version locally, after a second person approves, with an audit entry | [Export a state version](/terragucci/guides/export-a-state-version/) |
+| The estate page marks each cross-state read `stale`, `current` or `unknown` against the producer's last apply | [Cross-state edges](/terragucci/guides/see-every-project/#cross-state-edges) |
 | GitLab-managed state: each apply records its serial, and `state export`, `unlock-state` and ephemeral copies work on it | [GitLab-managed state](/terragucci/reference/pipeline/#gitlab-managed-state) |
-| Migration files move resources between roots or to a new backend, planned with zero changes, approved by digest, with a gated revert | [Move resources between roots](/terragucci/guides/move-resources-between-roots/) |
+| gcs and azurerm roots get state versions, `state export`, `unlock-state` and migrations, and `oidc.gcp.roles` and `oidc.azure.roles` give each environment its own identity | [GCP and Azure](/terragucci/guides/scope-state-access/#gcp-and-azure) |
+| A backend move reads an HCP Terraform, Scalr or OTF workspace over the TFE API, or an exported state file | [Workspaces](/terragucci/reference/migration-files/#workspaces) |
+| With choudoufu, which keeps per-resource state with no database to run, migration files retag resources between roots and adopt a root from a state file | [Estates](/terragucci/guides/move-resources-between-roots/#estates) |
 
-## Approvals and review
+## Repo shapes
 
 | What | Where |
 |---|---|
-| Approve and Decline buttons in Slack, and an approving reply in Teams, through `terragucci relay`, which you run | [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) |
-| An AI review of a pull request's description against its plan, on your own model, from instructions on the default branch; it never approves | [Review a pull request with an agent](/terragucci/guides/agent-review-a-pull-request/) |
-| `cost.approve_above` holds a wave whose monthly cost change is over the amount, and cost is in the policy input | [Estimate the cost of a change](/terragucci/guides/estimate-cost/) |
+| Terragrunt units get cost, steps, `waves.jobs`, drift pull requests and attribution, migrations, per-unit version pins, `generate` and state export | [Differences](/terragucci/guides/use-terragrunt/#differences) |
+| A Terragrunt pull request plans each later layer on the earlier layers' planned outputs, never on `mock_outputs` | [Later layers](/terragucci/guides/use-terragrunt/#later-layers) |
+| Units a `terragrunt.stack.hcl` generates go through every stage | [Explicit stacks](/terragucci/guides/use-terragrunt/#explicit-stacks) |
+| `generate.disable_init: false`, and the apply job has Terragrunt create the state bucket | [Bucket bootstrap](/terragucci/guides/generate-root-files/#bucket-bootstrap) |
+| Atmos instances as roots, in waves from `dependencies.components`, with roles by stack | [Use Atmos](/terragucci/guides/use-atmos/) |
+| Terramate stacks as roots, in waves from `after` and `before`, with outputs sharing; stale generated code fails the job | [Use Terramate](/terragucci/guides/use-terramate/) |
+
+## Binaries
+
+| What | Where |
+|---|---|
+| Terraform and choudoufu pass the core claims OpenTofu passes | [Validation](/terragucci/reference/validation/) |
+| Drift on a choudoufu root under live resource markers, from a normal plan | [Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots) |
+
+## Agents and review
+
+| What | Where |
+|---|---|
+| `terragucci mcp`, a read-only MCP server over what the runs wrote | [Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/) |
+| `agent.drift` opens a pull request that fixes drift | [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) |
+| The AI review runs from the default branch's workflow, so a pull request cannot change the review it gets | [The review](/terragucci/reference/threat-model/#the-review) |
+| GitLab gets the agent comment, the AI review and `waves.jobs` | [The agent comment](/terragucci/reference/pipeline/#the-agent-comment) |
 
 ## Your setup
 
 | What | Where |
 |---|---|
-| `steps` run your commands before and after each stage; a failed `approve` step holds the wave | [Run your own steps](/terragucci/guides/run-steps/) |
-| Each root pins its own OpenTofu or Terraform version | [Choose your binary](/terragucci/guides/use-a-binary/) |
-| `terragucci generate` writes each root's backend, provider and version files from `terragucci.yml` | [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
-| `terragucci import atlantis` and `import digger` write `terragucci.yml` from your existing config | [Coming from Atlantis, OpenTaco or Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/) |
-| A tip opens a pull request that writes the `moved` block for a rename, so it plans as a move | [Tips](/terragucci/reference/tips/) |
-| DORA metrics on the estate page and as OTLP gauges | [Delivery metrics](/terragucci/reference/delivery-metrics/) |
+| `runner` picks each stage's runner: `runs-on` on GitHub and Forgejo, `tags` on GitLab | [Self-hosted runners](/terragucci/guides/add-to-a-repo/#self-hosted-runners) |
+| `pass` hands named CI secrets and variables to the jobs that plan, apply and check drift | [Secrets and variables](/terragucci/reference/config/#secrets-and-variables) |
+| A JSON Schema for `terragucci.yml`, for `config check` and your editor | [Schema](/terragucci/reference/config/#schema) |
+| `own_jobs` keeps your own jobs in the pipeline across `init` runs | [Jobs of your own](/terragucci/reference/config/#jobs-of-your-own) |
+| A Terraform and OpenTofu provider manages the [control repo](/terragucci/concepts/control-repo/)'s projects and defaults | [Manage the control repo with Terraform](/terragucci/guides/manage-the-control-repo-with-terraform/) |
+| `modules.registry` serves module releases over the registry protocol from a bucket or Pages site | [Serve a module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) |
 
-## Terragrunt and CDK Terrain
+## Estate and reports
 
 | What | Where |
 |---|---|
-| `modules.require: attested` is enforced for each Terragrunt unit | [Publish modules](/terragucci/guides/publish-modules/) |
-| CDK Terrain stacks apply through gated waves, and the tips job synthesizes first | [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `terragucci query` runs SQL over the reports bucket, in process | [Query the estate with SQL](/terragucci/guides/query-with-sql/) |
+| An optional resource graph beside the estate page, with drift marked | [A resource graph beside the page](/terragucci/guides/see-every-project/#a-resource-graph-beside-the-page) |
+
+## Moving to terragucci
+
+| What | Where |
+|---|---|
+| `terragucci import terrateam` writes `terragucci.yml` from a `.terrateam/config.yml` | [Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam) |
+| Guides for HCP Terraform, Scalr and OTF, and for Spacelift and env zero | [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/), [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/) |
+| A Standards section: the open standards terragucci uses, and its tacos.guru answers | [Standards](/terragucci/standards/) |
+
+## Fixes
+
+| What | Where |
+|---|---|
+| `unlock-state` on a choudoufu root under live markers says there is nothing to release | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
+| An Atmos pull request that changes a stack manifest locks the instances it reaches | [Pull requests](/terragucci/guides/use-atmos/#pull-requests) |
+| On Forgejo, a pipeline with more than five levels of job dependencies plans | [Pipeline](/terragucci/reference/pipeline/) |
+| A pull request whose format fix was pushed gets its lock answer | [Plan locks](/terragucci/reference/pipeline/#plan-locks) |
+| A `live` block inside `terraform` makes a root | [Choose a binary](/terragucci/guides/use-a-binary/) |
