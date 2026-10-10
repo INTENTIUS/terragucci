@@ -658,7 +658,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "comment-apply",
@@ -1297,7 +1297,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "note-diff",
@@ -1690,7 +1690,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "blob-azure-key",
@@ -1915,7 +1915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "state-roles",
@@ -1923,7 +1923,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "state-export",
@@ -1931,7 +1931,55 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "gcs-state",
+      "says": "a root whose state is in a bucket on fake-gcs-server with object versioning applies twice, each wave naming the generation it left, and terragucci state export writes the first generation once someone else approved the request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "azurerm-state",
+      "says": "a root whose azurerm backend on Azurite takes snapshots applies twice, each wave naming the snapshot it took of the state blob, and terragucci state export writes the first snapshot once someone else approved the request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "gcs-unlock",
+      "says": "terragucci unlock-state reads the lock a killed apply left on a gcs backend, by the generation of the lock object, and releases it only after an approval of that lock, recording who released it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "azurerm-unlock",
+      "says": "terragucci unlock-state reads the lease a killed apply left on an azurerm state blob, with the lock info in its metadata, and releases it only after an approval of that lock, recording who released it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "blob-migrate",
+      "says": "a migration moves a resource from a root whose state is on GCS to one whose state is on Azure Blob Storage: approved by digest, written under the lock object and the blob lease, and each version before and after recorded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "cloud-roles",
+      "says": "with oidc.gcp.roles and oidc.azure.roles, the roots of each environment plan and apply with the service account and the client of their glob, from the exports of the pipeline, and never the identity of the job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "state-edges",
@@ -1955,7 +2003,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "migrate-backend-tfe",
@@ -1963,7 +2011,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bbf48896"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "migrate-revert",
@@ -1971,7 +2019,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "migrate-resume-never",
@@ -1987,7 +2035,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "dora",
@@ -2289,7 +2337,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "tg-apply-branches",
@@ -2433,7 +2481,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "9d9e7a0b"
     },
     {
       "claim": "unlock-state",
