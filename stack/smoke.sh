@@ -361,6 +361,7 @@ audit-control|terragucci audit in a control repo fetches each project ledger fro
 inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
 estate-graph|the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave|
 resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
+query-sql|terragucci query, run on the reports bucket with no server, answers the SQS queues changed in the last 7 days with their approvers with the rows the audit trail holds|
 state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
 state-roles|with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state|
 state-export|terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket|
@@ -17553,6 +17554,82 @@ claim_resource_history() {
   return $rc
 }
 
+claim_query_sql() {
+  # A repo with one root, app, holding an SQS queue in floci and a
+  # terraform_data, reports in the bucket, gate always. Change 1 creates both
+  # and approver-one approves wave 1; change 2 moves the queue's timeout and
+  # the data's input, and approver-two approves. After terragucci audit,
+  # terragucci query, run on this machine against the bucket, answers
+  # "the aws_sqs_queue resources changed in the last 7 days, with their
+  # approvers": the queue's create by approver-one and its update by
+  # approver-two, oldest first, no terraform_data, and each row's approver
+  # is the one the audit trail's apply entry for that set digest names.
+  # BREAK: the CLI is built with the history table left empty, so the query
+  # returns no rows.
+  log() { echo "[smoke query-sql] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="query-$STAMP" queue="query-$STAMP" n who timeout bundle out got want
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" query.ts '  data.history = historyRows(buildHistory(changed, audit, now));' '  data.history = [];' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  query_root() { # timeout, input -> app/main.tf
+    printf 'terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "6.67.0"\n    }\n  }\n\n  backend "local" {}\n}\n\nprovider "aws" {\n  region = "us-east-1"\n}\n\nresource "aws_sqs_queue" "jobs" {\n  name                       = "%s"\n  visibility_timeout_seconds = %s\n  tags                       = { owner = "smoke" }\n}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$queue" "$1" "$2" > "$work/wave/app/main.tf"
+  }
+  mkdir -p "$work/wave/app"
+  query_root 30 first
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/wave/app/"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  for n in 1 2; do
+    [ $rc = 0 ] || break
+    case $n in 1) who=approver-one ;; 2) who=approver-two ;; esac
+    if [ $n = 2 ]; then
+      query_root 45 second
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "the queue's timeout moves"
+    fi
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 3 ] || { log "change $n: the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; break; }
+    audit_approve "$work/origin.git" "$work/ledger" "$who" wave-1 || { log "change $n: could not approve wave 1"; rc=1; break; }
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 0 ] || { log "change $n: the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_record "$prefix" "$work/audit.jsonl" || { log "no audit.jsonl at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    out="$(AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 node "$bundle" query --json \
+      "SELECT address, actions, approver, set_digest FROM history WHERE type = 'aws_sqs_queue' AND julianday(finished) >= julianday('now', '-7 days') ORDER BY finished" \
+      --bucket "s3://$REPORT_BUCKET" --bucket-endpoint "$FLOCI" --bucket-prefix "$prefix")" || { log "terragucci query failed: $out"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.results.rows[]' <<<"$out" >&2
+    got="$(jq -r '[.results.rows[] | "\(.address) \(.actions) \(.approver)"] | join(",")' <<<"$out")"
+    [ "$got" = "aws_sqs_queue.jobs create approver-one,aws_sqs_queue.jobs update approver-two" ] \
+      || { log "the query returned [$got], not the queue's create by approver-one and update by approver-two"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # Each row's approver is the one the audit trail's apply entry for its set digest names.
+    want="$(jq -rs '[.[] | select(.kind == "apply" and .who != null) | "\(.digest) \(.who)"] | sort | join(",")' "$work/audit.jsonl")"
+    got="$(jq -r '[.results.rows[] | "\(.set_digest) \(.approver)"] | sort | join(",")' <<<"$out")"
+    [ -n "$want" ] && [ "$got" = "$want" ] || { log "the rows name [$got], the audit trail's applies [$want]"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the query returned the queue's create by approver-one and update by approver-two, as the audit trail holds them"
+  return $rc
+}
+
 claim_dora() {
   # A repo with one root, app, holding an SQS queue in floci with a timeout
   # of 30, reports in the bucket. Change 1 is planned, waits at wave 1's gate
@@ -19746,6 +19823,7 @@ audit-control        weight=150
 inventory            weight=150
 estate-graph         weight=200
 resource-history     weight=200
+query-sql            weight=200
 state-versions       weight=150
 state-roles          weight=150
 state-export         weight=200
