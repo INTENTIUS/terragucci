@@ -187,7 +187,7 @@ describe("unlockState", () => {
     const first = await run(w, f, { now: T(30) });
     expect(first.code).toBe(3);
     const digest = lockDigest("app", LOCATION, "lock-1");
-    expect(first.command).toBe(`chant approve tf-unlock app --plan ${digest}`);
+    expect(first.command).toBe(`terragucci approve unlock app --plan ${digest}`);
     expect(w.bucket.objects.has(KEY)).toBe(true);
     const pending = JSON.parse(lifecycle(w.origin, UNLOCK_LEDGER).trim());
     expect(pending).toMatchObject({ kind: "pending", op: "tf-unlock", gate: "app", planDigest: digest, neverOverMcp: true });

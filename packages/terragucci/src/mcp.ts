@@ -92,7 +92,7 @@ export function assertReadOnly(tools: readonly Tool[]): void {
 export function refusal(name: string): string {
   const w = writeWord(name);
   const what = w ? `${name} would ${w}, and ` : `there is no tool ${name}; `;
-  return `terragucci mcp is read-only: ${what}it serves only what terragucci wrote to the reports bucket and the repo. Approvals, applies and overrides belong to a person at a shell (terragucci approve, terragucci override), and chant refuses a gate approval made over MCP.`;
+  return `terragucci mcp is read-only: ${what}it serves only what terragucci wrote to the reports bucket and the repo. Approvals, applies and overrides belong to a person at a shell (terragucci approve, terragucci override), and a gate approval made over MCP is refused.`;
 }
 
 /** Arguments named like a credential: refused by name, since credentials come from the environment. */

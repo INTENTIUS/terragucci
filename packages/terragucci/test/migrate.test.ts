@@ -223,7 +223,7 @@ describe("running a migration from wave 1", () => {
     expect(first.code).toBe(3);
     const digest = first.records[0].digest;
     expect(first.command).toBe(migrateApproveCommand("split-b", digest));
-    expect(lines).toContain(`  chant approve tf-migrate split-b --plan ${digest}`);
+    expect(lines).toContain(`  terragucci approve split-b --plan ${digest}`);
     expect(names(work, "one")).toEqual(["a", "b"]);
     const pending = ledger(origin).pending;
     expect(pending).toHaveLength(1);

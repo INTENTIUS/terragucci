@@ -394,7 +394,7 @@ save_job_log() { # job id, name
 # The lines a stopped wave leaves for the reader: the approve command, or why
 # it was refused.
 held_lines() { # log file
-  grep -E 'chant approve tf-apply wave-|changed after it was approved|planned differently since' "$1" | sort -u || true
+  grep -E 'terragucci approve wave-|changed after it was approved|planned differently since' "$1" | sort -u || true
 }
 
 pr_for() { # scenario, state -> prints the pull request number
@@ -494,7 +494,7 @@ github.com|pr-lock|with locks: plan a pull request locks the root it plans, and 
 github.com|pr-lock-fmt|with locks: plan a pull request whose check job formats it, with a push that starts no workflow, still has its lock answered on the formatted head
 github.com|policy|a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial
 github.com|oidc|the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS
-github.com|gate-wait|a merged destroy stops its wave with the approve command, and after a sealed chant approve the re-run applies it
+github.com|gate-wait|a merged destroy stops its wave with the approve command, and after a sealed terragucci approve the re-run applies it
 github.com|note-footer|the plan note ends with the terragucci footer, and its taco image answers 200 with a PNG
 github.com|tips|the plan note counts the tips the run report holds, and each tip in the report names its rule and its page
 github.com|comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed
@@ -1245,14 +1245,14 @@ prove_merge() {
   gw_waited=""
   if step change destroy && step merge destroy && [ -f "$DIR/waiting" ]; then
     IFS=$'\t' read -r run wave _ < "$DIR/waiting"
-    waited="$(grep -m1 'chant approve tf-apply' "$DIR/logs/waiting.log" | sed 's/^[[:space:]]*//' || true)"
+    waited="$(grep -m1 'terragucci approve wave-' "$DIR/logs/waiting.log" | sed 's/^[[:space:]]*//' || true)"
     # comment-apply, third part: while wave 4 waits, the comment on the
     # merged destroy applies nothing and gives the approve command.
     dp="$(gh pr list -R "$REPO" --head change/destroy --state merged --json number -q '.[0].number // empty' || true)"
     if [ -n "$dp" ]; then
       r="$( (say "$dp" "/terragucci apply") || true)"
       if grep -Eq "wave 4 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$r" \
-        && grep -Eq 'chant approve tf-apply wave-4 --plan (jcs1-)?sha256:[0-9a-f]+ --sign' <<<"$r"; then
+        && grep -Eq 'terragucci approve wave-4 --plan (jcs1-)?sha256:[0-9a-f]+ --sign' <<<"$r"; then
         ca_wait="merged pull request $dp while wave 4 waits: ${r#terragucci: }"
       fi
       ca_seen="$ca_seen; merged pull request $dp while wave 4 waits: reply ${r:-none}"
@@ -2177,7 +2177,7 @@ case "$CMD" in
       record_view "$view-run" "$RUN_URL" "" "" 640
       # The run, and the wave and plan digest its approve command names.
       printf '%s\t%s\t%s\n' "$RUN_ID" \
-        "$(grep -o 'chant approve tf-apply wave-[0-9]*' <<<"$lines" | head -1 | sed 's/.* //')" \
+        "$(grep -o 'terragucci approve wave-[0-9]*' <<<"$lines" | head -1 | sed 's/.* //')" \
         "$(grep -o -- '--plan [^ ]*' <<<"$lines" | head -1 | sed 's/^--plan //')" > "$DIR/waiting"
       printf '  Stopped   %s\n' "$job_name"
       while read -r l; do printf '  %s\n' "$l"; done <<<"$lines"

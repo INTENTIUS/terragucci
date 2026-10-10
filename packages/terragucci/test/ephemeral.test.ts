@@ -197,7 +197,7 @@ describe("a pull request's copy", () => {
     const pending = parseLedger(git(s.origin, "show", `chant/lifecycle:${EPHEMERAL_LEDGER}`)).pending;
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ op: "tf-ephemeral", gate: "pr-7", members: [{ member: "preview/app" }] });
-    expect(s.out.join("\n")).toContain(`chant approve tf-ephemeral pr-7 --plan ${pending[0].planDigest}`);
+    expect(s.out.join("\n")).toContain(`terragucci approve ephemeral 7 --plan ${pending[0].planDigest}`);
     // The approval, as chant writes it.
     const clone = join(tmp("tg-eph-approve-"), "l");
     git(tmp(), "clone", "-q", "-b", "chant/lifecycle", s.origin, clone);

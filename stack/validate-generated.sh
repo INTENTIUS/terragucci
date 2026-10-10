@@ -33,7 +33,7 @@
 #              carries the estate marker choudoufu writes.
 #   gate-wait  gitlab only: with the gate at always, a push to main waits at
 #              wave 1. The pipeline ends (failed), the wave's job ends with
-#              exit code 3 and prints chant approve, no status call is
+#              exit code 3 and prints terragucci approve, no status call is
 #              refused, terragucci/apply is failed with the wave's command,
 #              and the bucket does not exist.
 #   own-jobs   gitlab only: a repo with its own .gitlab-ci.yml (one job, no
@@ -44,7 +44,7 @@
 #              push to main waits at wave 1. A pull request that adds a
 #              resource to the root is approved on its head by a second user
 #              with write access and merged: the merge's wave 1 applies with no
-#              chant approve, and the bucket exists.
+#              terragucci approve, and the bucket exists.
 #              gitlab: the same root, with merge request approvals, which
 #              name no commit. A merge request approved and then pushed to
 #              again merges, and wave 1 still waits: the approval came before
@@ -326,7 +326,7 @@ run_gate_wait() {
   forge_run "$repo" main "$sha"
   grep -q "no finished pipeline" "$RUN_LOG" && { forge_logs; fail "the pipeline did not end: a running terragucci/apply status holds it open"; }
   [ "$RUN_STATUS" = failure ] || { forge_logs; fail "the pipeline ended '$RUN_STATUS'; a waiting wave fails it"; }
-  grep -q "chant approve tf-apply wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not print its approval command"; }
+  grep -q "terragucci approve wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not print its approval command"; }
   grep -q "answered 400" "$RUN_LOG" && { forge_logs; fail "GitLab refused a status call"; }
   grep -q "Job failed: exit code 3" "$RUN_LOG" || { forge_logs; fail "the waiting wave's job did not end with exit code 3"; }
   st="$(glapi "$URL/api/v4/projects/$(pid "$repo")/repository/commits/$sha/statuses?name=terragucci%2Fapply" | jq -c '.[0] // {}')"
@@ -480,7 +480,7 @@ run_approve() {
   sed 's/--gate on-destroy/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
   sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
   forge_run "$repo" main "$sha"
-  grep -q "chant approve tf-apply wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not wait"; }
+  grep -q "terragucci approve wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not wait"; }
   [ "$(bucket_code "$BUCKET")" = 404 ] || fail "wave 1 applied with no approval"
   git clone -q "$(forge_remote "$repo")" "$WORK/approver" || fail "could not clone $repo"
   git -C "$WORK/approver" config user.name validate-approver
@@ -661,7 +661,7 @@ run_comment_apply() {
   forge_merge_pr "$repo" "$iid"
   merge="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r '.merge_commit_sha // .squash_commit_sha // .sha')"
   forge_run "$repo" main "$merge"
-  grep -q "chant approve tf-apply wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 of the merge commit did not wait"; }
+  grep -q "terragucci approve wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 of the merge commit did not wait"; }
   pipe="$(glapi "$URL/api/v4/projects/$(pid "$repo")/pipelines?sha=$merge&source=push" | jq -r '.[0].id')"
   log "!$iid merged at ${merge:0:8}; wave 1 waits in pipeline $pipe"
   if [ -n "$BREAK" ]; then

@@ -967,7 +967,7 @@ gitlab_claim_explain_refusal() {
     echo 2 > "$work/tree/b/rev.txt"
     run_main "explain-refusal: replace b" || rc=1
     job="$(gl_job apply-wave-2)"
-    gl_trace "$project" "$job" | grep -q 'chant approve tf-apply wave-2' || { log "wave 2 did not wait for an approval"; rc=1; }
+    gl_trace "$project" "$job" | grep -q 'terragucci approve wave-2' || { log "wave 2 did not wait for an approval"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     clone="$work/approver"
@@ -1705,7 +1705,7 @@ gitlab_claim_gl_wave_jobs() {
     applied="$(gl_applied)"
     log "after wave 1's approval: state for ${applied:-nothing}; shares $(jq -r '[.[] | select(.name | startswith("apply-wave-2-share")) | .status] | join(", ")' <<<"$PIPE_JOBS")"
     [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
-    share_log apply-wave-2 | grep -q "chant approve tf-apply wave-2" || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
+    share_log apply-wave-2 | grep -q "terragucci approve wave-2" || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
   fi
   [ $rc = 1 ] || approve 2 || rc=1
   if [ $rc = 0 ]; then
@@ -2105,14 +2105,14 @@ gitlab_claim_gl_state_export() {
     cat "$WORK/ask.log" >&2
     [ "$code" = 3 ] || { log "the request exited $code, not 3"; rc=1; }
     grep -qF "asks for app's state, $GS_API/app version $v1" "$WORK/ask.log" || { log "the request does not name $GS_API/app version $v1"; rc=1; }
-    digest="$(grep -o 'chant approve tf-state-export app --plan sha256:[0-9a-f]*' "$WORK/ask.log" | head -1 | awk '{print $NF}')"
-    [ -n "$digest" ] || { log "the request printed no chant approve command"; rc=1; }
+    digest="$(grep -o 'terragucci approve export app --plan sha256:[0-9a-f]*' "$WORK/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "the request printed no terragucci approve command"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     clone="$WORK/approver"
     git clone -q "$WORK/origin.git" "$clone"
     (cd "$clone" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost \
-      "$HERE/../node_modules/.bin/chant" approve tf-state-export app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the request"; rc=1; }
+      "$TERRAGUCCI" approve export app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the request"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     code=0
@@ -2174,15 +2174,15 @@ gitlab_claim_gl_unlock_state() {
     cat "$WORK/ask.log" >&2
     [ "$code" = 3 ] || { log "the first unlock-state exited $code, not 3"; rc=1; }
     grep -qF "$GS_API/app/lock holds lock $id" "$WORK/ask.log" || { log "unlock-state does not name lock $id on $GS_API/app/lock"; rc=1; }
-    digest="$(grep -o 'chant approve tf-unlock app --plan [^ ]*' "$WORK/ask.log" | head -1 | awk '{print $NF}')"
-    [ -n "$digest" ] || { log "unlock-state printed no chant approve command"; rc=1; }
+    digest="$(grep -o 'terragucci approve unlock app --plan [^ ]*' "$WORK/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "unlock-state printed no terragucci approve command"; rc=1; }
     [ "$(gl_locked)" != free ] || { log "GitLab holds no lock on app before any approval"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     clone="$WORK/approver"
     git clone -q "$WORK/origin.git" "$clone"
     (cd "$clone" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost \
-      "$HERE/../node_modules/.bin/chant" approve tf-unlock app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the release"; rc=1; }
+      "$TERRAGUCCI" approve unlock app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the release"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     code=0

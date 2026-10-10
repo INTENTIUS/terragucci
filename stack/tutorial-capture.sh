@@ -527,7 +527,7 @@ step_wave_waiting() {
   run_cmd wave-waiting "just example merge destroy" "$HERE/example.sh" merge destroy
   # The run on main's new head: wave 4's job stopped with exit 3.
   page="$(job_page "$(run_on main)" '.status == "failure"')"
-  if [ -n "$page" ]; then job_shot wave-waiting log "$page" "Apply wave" "waits for an approval of digest" "chant approve tf-apply"; else log "wave-waiting: no stopped job on main's head"; fi
+  if [ -n "$page" ]; then job_shot wave-waiting log "$page" "Apply wave" "waits for an approval of digest" "terragucci approve wave-"; else log "wave-waiting: no stopped job on main's head"; fi
 }
 
 # Approve that wave, then merge a change that moves its plans: it refuses.
@@ -1064,7 +1064,7 @@ step_tg() {
   if claim_run tg tg-gate-wait; then
     run="$(api "$URL/api/v1/repos/$USER/tg-gate-wait/actions/runs?event=push&limit=50" | jq -c '.workflow_runs[0] // empty')"
     page="$(REPO="$USER/tg-gate-wait"; FORGEJO="$URL/$USER/tg-gate-wait"; job_page "$run" '.status == "failure"')"
-    if [ -n "$page" ]; then job_shot tg waiting "$page" "Apply wave" "waits for an approval of digest" "chant approve tf-apply"; else log "tg: no stopped job on tg-gate-wait"; fi
+    if [ -n "$page" ]; then job_shot tg waiting "$page" "Apply wave" "waits for an approval of digest" "terragucci approve wave-"; else log "tg: no stopped job on tg-gate-wait"; fi
   fi
 }
 

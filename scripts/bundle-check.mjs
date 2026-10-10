@@ -1,5 +1,5 @@
-// Holds @intentius/terragucci to its shape (terragucci#18, #87, #163): no runtime
-// dependencies, no imports but Node's own modules and the two optional packages,
+// Holds @intentius/terragucci to its shape (terragucci#18, #87, #163): one runtime
+// dependency, @intentius/chant at the pinned version, no imports but Node's own modules and the two optional packages,
 // no input from a path that would drag lint rules, codegen, the TypeScript
 // compiler or the dashboards' renderers into the bundle, and a 1.5 MB accident
 // ceiling on its size. The ceiling was 1 MB until `terragucci mcp` brought the
@@ -43,9 +43,18 @@ const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
 const bundle = join(pkgDir, "dist/terragucci.mjs");
 const problems = [];
 
-if (pkg.dependencies && Object.keys(pkg.dependencies).length) {
-  problems.push(`package.json has runtime dependencies: ${Object.keys(pkg.dependencies).join(", ")}`);
-}
+// One runtime dependency: @intentius/chant, whose bin `terragucci approve`
+// runs to record an approval, so installing terragucci is enough. It is pinned
+// to the exact version the root installs, which is the chant the bundle is
+// built with. The bundle carries the chant code it uses and imports no package.
+const rootPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
+const chantPin = rootPkg.dependencies?.["@intentius/chant"] ?? rootPkg.devDependencies?.["@intentius/chant"];
+const extra = Object.keys(pkg.dependencies ?? {}).filter((d) => d !== "@intentius/chant");
+if (extra.length) problems.push(`package.json has runtime dependencies besides @intentius/chant: ${extra.join(", ")}`);
+const chantDep = pkg.dependencies?.["@intentius/chant"];
+if (chantDep === undefined) problems.push("package.json does not depend on @intentius/chant, which terragucci approve runs");
+else if (chantDep !== chantPin) problems.push(`package.json pins @intentius/chant ${chantDep}, not ${chantPin}, the version the root installs and the bundle is built with`);
+if (pkg.devDependencies?.["@intentius/chant"]) problems.push("package.json names @intentius/chant in devDependencies too; it belongs in dependencies alone");
 const size = statSync(bundle).size;
 if (size > CEILING_BYTES) problems.push(`the bundle is ${Math.round(size / 1024)} KB, over the ${CEILING_BYTES / 1024} KB accident ceiling`);
 
@@ -81,4 +90,4 @@ if (problems.length) {
   for (const p of problems) console.log(`FAIL  ${p}`);
   process.exit(1);
 }
-console.log(`  ✓ bundle ${Math.round(size / 1024)} KB (ceiling ${CEILING_BYTES / 1024} KB), no dependencies, no denied inputs among ${inputs.length}, imports only ${[...specifiers].length} Node modules and the optional TypeScript folder and HCL parser`);
+console.log(`  ✓ bundle ${Math.round(size / 1024)} KB (ceiling ${CEILING_BYTES / 1024} KB), one dependency (@intentius/chant ${chantDep}), no denied inputs among ${inputs.length}, imports only ${[...specifiers].length} Node modules and the optional TypeScript folder and HCL parser`);

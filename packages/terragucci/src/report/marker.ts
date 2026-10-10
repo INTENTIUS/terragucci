@@ -3,7 +3,7 @@ import type { NotePreview } from "../tg-preview";
 
 /** The command that approves wave `wave`'s plans of `digest`, with `--sign` under `approval: sealed`. */
 export function approveCommand(wave: number, digest: string, sealed = false): string {
-  return `chant approve tf-apply wave-${wave} --plan ${digest}${sealed ? " --sign" : ""}`;
+  return `terragucci approve wave-${wave} --plan ${digest}${sealed ? " --sign" : ""}`;
 }
 
 /** The marker the plan note carries the waves in. */

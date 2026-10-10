@@ -392,9 +392,9 @@ describe("a wave behind its gate", () => {
     const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
     expect(read()).toEqual({
       schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 1, roots: ["a"],
-      line: `wave 1 waits: chant approve tf-apply wave-1 --plan ${digest}`,
+      line: `wave 1 waits: terragucci approve wave-1 --plan ${digest}`,
       set_digest: digest, gate: { name: "wave-1", branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" },
-      approval: "waiting", approval_mode: "ledger", approve_command: `chant approve tf-apply wave-1 --plan ${digest}`, waiting_since: T(1),
+      approval: "waiting", approval_mode: "ledger", approve_command: `terragucci approve wave-1 --plan ${digest}`, waiting_since: T(1),
     });
     approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
     const plans = join(work, "..", "plans", "a.json");
@@ -403,7 +403,7 @@ describe("a wave behind its gate", () => {
     expect(await applyWave(work, { ...opts, now: T(3) })).toBe(4);
     const refused = read();
     expect(refused).toMatchObject({ status: "refused", exit: 4, line: "wave 1 changed after approval: a", refused: { reason: "approval", approved: digest, by: "alice", roots: ["a"] } });
-    expect(refused.approve_command).toMatch(/^chant approve tf-apply wave-1 --plan \S+$/);
+    expect(refused.approve_command).toMatch(/^terragucci approve wave-1 --plan \S+$/);
     expect(refused.set_digest).not.toBe(digest);
     writeFileSync(plans, before);
     approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(4), planDigest: digest });
@@ -696,7 +696,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
       const digest = digestOf(origin);
       expect(lines.join("\n")).toContain("approval ledger (the default)");
-      expect(lines).toContain(`  chant approve tf-apply wave-1 --plan ${digest}`);
+      expect(lines).toContain(`  terragucci approve wave-1 --plan ${digest}`);
       approve(origin, approval(digest, 2));
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
       expect(existsSync(log)).toBe(true);
@@ -708,7 +708,7 @@ describe("a wave behind its gate", () => {
       const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: sealed\n", ".chant/allowed_signers": `${signerLine("alice", alice)}\n` });
       expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
       const digest = digestOf(origin);
-      expect(lines).toContain(`  chant approve tf-apply wave-1 --plan ${digest} --sign`);
+      expect(lines).toContain(`  terragucci approve wave-1 --plan ${digest} --sign`);
       approve(origin, approval(digest, 2));
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(3);
       expect(lines.join("\n")).toMatch(/not signed/);
@@ -811,7 +811,7 @@ describe("a wave behind its gate", () => {
         expect(second).not.toBe(first);
         expect(lines.join("\n")).toContain(`the approval of ${first} by alice was used by the apply of those plans`);
         expect(lines.join("\n")).not.toContain("planned differently since");
-        expect(lines).toContain(`  chant approve tf-apply wave-1 --plan ${second}${mode === "sealed" ? " --sign" : ""}`);
+        expect(lines).toContain(`  terragucci approve wave-1 --plan ${second}${mode === "sealed" ? " --sign" : ""}`);
         // The approval of the new plans applies them, and is recorded as used in turn.
         approve(origin, approveAs(second, 5));
         expect(await applyWave(work, { ...opts(bin), now: T(6) })).toBe(0);

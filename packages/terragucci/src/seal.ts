@@ -153,7 +153,7 @@ export function verifySshSignature(armored: string, message: Buffer, namespace: 
 export function sealRefusal(signers: Signer[] | null, signersPath: string, a: SealedApproval): string | null {
   if (!signers) return `there is no signers file (${signersPath}) at base to check a seal against`;
   const seal = a.seal;
-  if (!seal || typeof seal.signature !== "string") return `the approval by ${a.resolvedBy} is not signed (chant approve --sign)`;
+  if (!seal || typeof seal.signature !== "string") return `the approval by ${a.resolvedBy} is not signed (terragucci approve --sign)`;
   if (typeof seal.signer !== "string" || norm(seal.signer) !== norm(a.resolvedBy)) return `the seal is by ${String(seal.signer)}, and the approver is ${a.resolvedBy}`;
   const keys = signers
     .filter((s) => s.principals.includes(norm(a.resolvedBy)) && (!s.namespaces || s.namespaces.some((n) => n === GATE_SEAL_NAMESPACE || n === "*")))

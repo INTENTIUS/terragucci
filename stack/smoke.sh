@@ -276,8 +276,8 @@ sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose 
 estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
 behold-view|the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue|
 drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
-pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review|
-pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest|
+pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no terragucci approve, recorded on the ledger as via pr-review|
+pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest|
 pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-concurrency-time|with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it|
@@ -295,7 +295,7 @@ cdf-rows-takeover|with binary: choudoufu a wave killed after its change landed, 
 resume-approve|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
 resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
 approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
-approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
+approve-command|the plan note of a pull request gives the terragucci approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
 tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
 tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
 plan-lock|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
@@ -878,8 +878,8 @@ claim_waves() {
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
   if [ $rc = 0 ]; then
-    run_logs "$repo" "$RUN_ID" | grep "chant approve tf-apply wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -E "chant approve tf-apply wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep "terragucci approve wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E "terragucci approve wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     gated_approve waves 1 || rc=1
@@ -926,7 +926,7 @@ claim_apply_branches() {
     log "main, first push: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "a root applied before wave 1 was approved"; rc=1; }
     logs="$(run_logs "$repo" "$RUN_ID")"
-    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+    grep -q "terragucci approve wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve apply-branches 1 || rc=1; }
   if [ $rc = 0 ]; then
@@ -944,7 +944,7 @@ claim_apply_branches() {
     [ "$applied" = "fleet/five fleet/four fleet/three fleet/two " ] || { log "canary/one applied from release before its wave was approved"; rc=1; }
     logs="$(run_logs "$repo" "$RUN_ID")"
     grep -q "apply.branches: release applies canary/one" <<<"$logs" || { log "release's wave did not say it applies canary/one alone"; rc=1; }
-    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
+    grep -q "terragucci approve wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve apply-branches 1 || rc=1; }
   if [ $rc = 0 ]; then
@@ -989,7 +989,7 @@ claim_tg_apply_branches() {
     log "main, first push: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "a unit applied before wave 1 was approved"; rc=1; }
     logs="$(run_logs "$repo" "$RUN_ID")"
-    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+    grep -q "terragucci approve wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
     grep -q "apply.branches: live/canary/one applies from release, not here" <<<"$logs" || { log "main's wave did not say live/canary/one applies from release"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve tg-apply-branches 1 || rc=1; }
@@ -1008,7 +1008,7 @@ claim_tg_apply_branches() {
     [ "$applied" = "live/fleet/three live/fleet/two " ] || { log "live/canary/one applied from release before its wave was approved"; rc=1; }
     logs="$(run_logs "$repo" "$RUN_ID")"
     grep -q "apply.branches: release applies live/canary/one" <<<"$logs" || { log "release's wave did not say it applies live/canary/one alone"; rc=1; }
-    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
+    grep -q "terragucci approve wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve tg-apply-branches 1 || rc=1; }
   if [ $rc = 0 ]; then
@@ -1623,7 +1623,7 @@ claim_wave_jobs() {
     applied="$(gated_applied wave-jobs)"
     log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}; share jobs $(job_status "$RUN_ID" apply-wave-2-share-1), $(job_status "$RUN_ID" apply-wave-2-share-2)"
     [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
-    job_log "$RUN_ID" apply-wave-2 | grep "chant approve tf-apply wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
+    job_log "$RUN_ID" apply-wave-2 | grep "terragucci approve wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve wave-jobs 2 || rc=1; }
   if [ $rc = 0 ]; then
@@ -2017,7 +2017,7 @@ claim_linked_states() {
   if [ $rc = 0 ]; then
     logs="$(run_logs "$repo" "$RUN_ID")"
     log "after the merge: run $RUN_STATUS; app at: $(linked_state "$name" app | tr '\n' ' ')"
-    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+    grep -q "terragucci approve wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
     # Wave 2 plans only once wave 1 applied: nothing of it runs while wave 1 waits.
     if grep -q "wave 2 of 2: planning app" <<<"$logs"; then
       log "wave 2 planned while wave 1 waited: $(grep -m1 'app: \(Plan\|No changes\)' <<<"$logs")"; rc=1
@@ -2030,7 +2030,7 @@ claim_linked_states() {
     logs="$(run_logs "$repo" "$RUN_ID")"
     log "after wave 1's approval: run $RUN_STATUS; net at: $(linked_state "$name" net | tr '\n' ' ')"
     grep -q "app plans on the state net (wave 1) applied" <<<"$logs" || { log "wave 2 did not say it plans on the state wave 1 applied"; rc=1; }
-    grep -q "chant approve tf-apply wave-2" <<<"$logs" || { log "wave 2 did not wait for an approval of its plan"; rc=1; }
+    grep -q "terragucci approve wave-2" <<<"$logs" || { log "wave 2 did not wait for an approval of its plan"; rc=1; }
     key="$(linked_key "$prefix" "$sha" || true)"
     view="$([ -z "$key" ] || curl -fsS "$FLOCI/$REPORT_BUCKET/$key")"
     [ -n "$view" ] || { log "no run view for $sha in $REPORT_BUCKET/$prefix"; rc=1; }
@@ -6573,7 +6573,7 @@ claim_comment_apply() {
   # the merge commit's apply waits at wave 1 for its new digest. An agent then
   # writes an unsealed approval of that plan to chant/lifecycle. As the repo's
   # admin, `/terragucci apply` on the merged pull request must be answered that
-  # wave 1 waits, with its set digest and the `chant approve ... --sign`
+  # wave 1 waits, with its set digest and the `terragucci approve ... --sign`
   # command, and apply nothing. `/terragucci apply` on an open pull request,
   # and from a user with no write access, must each be refused with a reply,
   # and apply nothing. The approver approves wave 1 with a sealed record, and
@@ -6625,7 +6625,7 @@ claim_comment_apply() {
     [ -z "$applied" ] || { log "the comment applied a wave with no sealed approval"; rc=1; }
     if [ $rc = 0 ]; then
       grep -Eq "wave 1 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
-      grep -Eq 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+ --sign' <<<"$reply" || { log "the reply does not give the chant approve --sign command"; rc=1; }
+      grep -Eq 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+ --sign' <<<"$reply" || { log "the reply does not give the terragucci approve --sign command"; rc=1; }
     fi
   fi
 
@@ -7985,7 +7985,7 @@ claim_tg_gate_wait() {
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
   if [ $rc = 0 ]; then
-    grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
+    grep -q "terragucci approve wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
     grep -q -- "-auto-approve" <<<"$logs" && { log "a job ran an apply with -auto-approve"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve tg-gate-wait 1 || rc=1; }
@@ -8130,7 +8130,7 @@ claim_tg_layers() {
     esac
     [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
     if [ "$k" -lt 3 ]; then
-      grep -q "chant approve tf-apply wave-$((k + 1)) --plan" <<<"$logs" || { log "wave $((k + 1)) did not wait at its own gate"; rc=1; }
+      grep -q "terragucci approve wave-$((k + 1)) --plan" <<<"$logs" || { log "wave $((k + 1)) did not wait at its own gate"; rc=1; }
     else
       [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once every wave was approved"; rc=1; }
     fi
@@ -8222,7 +8222,7 @@ claim_atmos_waves() {
   logs="$(print_logs "$repo" "$RUN_ID")"
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "an instance applied before any wave was approved"; rc=1; }
-  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  grep -q "terragucci approve wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
   for k in 1 2; do
     [ $rc = 0 ] || break
     gated_approve atmos-waves "$k" || { rc=1; break; }
@@ -8237,7 +8237,7 @@ claim_atmos_waves() {
     esac
     [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
     if [ "$k" = 1 ]; then
-      grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+      grep -q "terragucci approve wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
     else
       [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once both waves were approved"; rc=1; }
     fi
@@ -8713,7 +8713,7 @@ claim_terramate_waves() {
   logs="$(print_logs "$repo" "$RUN_ID")"
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a stack applied before any wave was approved"; rc=1; }
-  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  grep -q "terragucci approve wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
   for k in 1 2; do
     [ $rc = 0 ] || break
     gated_approve terramate-waves "$k" || { rc=1; break; }
@@ -8728,7 +8728,7 @@ claim_terramate_waves() {
     esac
     [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
     if [ "$k" = 1 ]; then
-      grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+      grep -q "terragucci approve wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
     else
       [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once both waves were approved"; rc=1; }
     fi
@@ -8929,7 +8929,7 @@ claim_tg_comment_apply() {
   # apply waits at wave 1 for its new digest. An agent writes an unsealed
   # approval of that plan to chant/lifecycle. `/terragucci apply` on the merged
   # pull request must be answered that wave 1 waits, with its set digest and
-  # the chant approve command, and apply no unit. The same comment on an open
+  # the terragucci approve command, and apply no unit. The same comment on an open
   # pull request is refused. The approver approves wave 1 with a sealed record,
   # and `/terragucci apply` again must apply live/canary/one through the
   # Terragrunt path (wave 2 waits at its own gate) and reply with a link to the
@@ -8980,7 +8980,7 @@ claim_tg_comment_apply() {
   fi
   if [ $rc = 0 ]; then
     grep -Eq "wave 1 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
-    grep -Eq 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$reply" || { log "the reply does not give the chant approve command"; rc=1; }
+    grep -Eq 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$reply" || { log "the reply does not give the terragucci approve command"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     echo open > "$work/tree/live/fleet/two/rev.txt"
@@ -9560,8 +9560,8 @@ claim_ledger_default() {
   logs="$(print_logs "$repo" "$RUN_ID")"
   if [ $rc = 0 ]; then
     grep -q "wave 1 of 2: approval ledger (the default)" <<<"$logs" || { log "wave 1 did not say approval ledger (the default)"; rc=1; }
-    grep -Eq "chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
-    grep -E "chant approve tf-apply wave-1 --plan" <<<"$logs" | grep -q -- "--sign" && { log "the approval command asks for --sign under ledger"; rc=1; }
+    grep -Eq "terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
+    grep -E "terragucci approve wave-1 --plan" <<<"$logs" | grep -q -- "--sign" && { log "the approval command asks for --sign under ledger"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve ledger-default 1 || rc=1; }
   if [ $rc = 0 ]; then
@@ -9930,7 +9930,7 @@ claim_pr_review() {
   # The reviewer approves the pull request on its head and it merges. Wave 1
   # plans the merge commit, finds the digest the plan note recorded for that
   # head, records the approval on chant/lifecycle with via pr-review, and
-  # canary/one applies with no chant approve. Wave 2 (fleet/*), which the pull
+  # canary/one applies with no terragucci approve. Wave 2 (fleet/*), which the pull
   # request did not reach, waits at its own gate.
   # BREAK: a second push to the pull request lands after the review, so the
   # review names an older head and counts for nothing.
@@ -9953,7 +9953,7 @@ claim_pr_review() {
     log "after the merge: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply on the review"; rc=1; }
     grep -q "pull request $REVIEW_PR was approved on its head ${REVIEW_HEAD:0:8} by reviewer-pr-review" <<<"$logs" || { log "wave 1 did not say the review approved it"; rc=1; }
-    grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+    grep -q "terragucci approve wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     ledger="$(git clone -q -b chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/ledger" && cat "$work/ledger/_gates/tf-apply.jsonl")"
@@ -9970,7 +9970,7 @@ claim_pr_review_moved() {
   # The reviewer approves the head. Before the merge, a commit on main adds a
   # resource to canary/one, so the merge commit plans a change the review
   # never saw: wave 1 applies nothing, exits 4, says the plans changed since
-  # the review and prints the chant approve command for its new digest.
+  # the review and prints the terragucci approve command for its new digest.
   # BREAK: nothing lands on main in between, so the merge plans what the
   # review saw and canary/one applies.
   log() { echo "[smoke pr-review-moved] $*" >&2; }
@@ -9993,7 +9993,7 @@ claim_pr_review_moved() {
     log "after the merge: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "a root applied on a review of other plans"; rc=1; }
     grep -q "but the plans changed since that review, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not say its plans changed since the review"; rc=1; }
-    grep -Eq "chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+" <<<"$logs" || { log "wave 1 printed no chant approve command for its new digest"; rc=1; }
+    grep -Eq "terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+" <<<"$logs" || { log "wave 1 printed no terragucci approve command for its new digest"; rc=1; }
   fi
   api -o /dev/null -X DELETE "$URL/api/v1/admin/users/reviewer-pr-review-moved?purge=true" 2>/dev/null || true
   drop_work "$work"
@@ -11586,7 +11586,7 @@ claim_cdf_rows_takeover() {
 
 claim_approve_command() {
   # The gated fixture, approval ledger (the default). A pull request changes
-  # canary/one; its plan note gives wave 1 the command chant approve tf-apply
+  # canary/one; its plan note gives wave 1 the command terragucci approve
   # wave-1 --plan <digest>. Merged, wave 1 waits for that same digest. In a
   # clone, terragucci approve finds the waiting wave and approves its digest;
   # the next push applies canary/one.
@@ -11606,9 +11606,9 @@ claim_approve_command() {
   [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
   if [ $rc = 0 ]; then
     note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | contains("terragucci:waves"))] | last | .body // empty')"
-    noted="$(grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$note" | head -1)"
+    noted="$(grep -Eo 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$note" | head -1)"
     log "the note gives: ${noted:-no command}"
-    [ -n "$noted" ] || { log "the plan note gives no chant approve command for wave 1"; rc=1; }
+    [ -n "$noted" ] || { log "the plan note gives no terragucci approve command for wave 1"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || rc=1
@@ -11617,7 +11617,7 @@ claim_approve_command() {
     [ $rc = 0 ] && { wait_run "$repo" "$merge" push || rc=1; }
   fi
   if [ $rc = 0 ]; then
-    waited="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1)"
+    waited="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1)"
     log "the merge waits for: ${waited:-nothing}"
     [ "$waited" = "$noted" ] || { log "the merge's wave 1 asks for another digest than the note gave"; rc=1; }
   fi
@@ -11627,7 +11627,7 @@ claim_approve_command() {
     git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
     out="$(cd "$work/approver-clone" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --actor smoke-approver ${BREAK:+--dry-run} 2>&1)" || { log "terragucci approve failed: $out"; rc=1; }
     log "terragucci approve: $(tr '\n' ' ' <<<"$out")"
-    grep -qF -- "${noted#chant }" <<<"$out" || { log "terragucci approve did not approve the digest the note gave"; rc=1; }
+    grep -qF -- "approve tf-apply wave-1 --plan ${noted##* --plan }" <<<"$out" || { log "terragucci approve did not approve the digest the note gave"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "approve-command: after terragucci approve")"
@@ -11656,14 +11656,14 @@ claim_approve_plan() {
   gated_repo approve-plan || { drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "approve-plan: first")"
   wait_run "$repo" "$sha" || rc=1
-  [ $rc = 0 ] && d0="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+  [ $rc = 0 ] && d0="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
   [ -n "${d0:-}" ] || { log "wave 1 of the first push did not wait"; rc=1; }
   if [ $rc = 0 ]; then
     echo 2 > "$work/tree/canary/one/rev.txt"
     sha="$(push_tree "$work/tree" "$repo" main "approve-plan: canary/one moves")"
     wait_run "$repo" "$sha" || rc=1
   fi
-  [ $rc = 0 ] && d1="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+  [ $rc = 0 ] && d1="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
   [ -n "${d1:-}" ] && [ "${d1:-}" != "${d0:-}" ] || { [ $rc = 0 ] && log "wave 1 of the second push does not wait for a new digest (${d0:-none}, then ${d1:-none})"; rc=1; }
   if [ $rc = 0 ]; then
     pinned="$d0"
@@ -11712,7 +11712,7 @@ claim_resume_approve() {
     merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
     [ -n "$merge" ] || { log "pull request $pr has no merge commit"; rc=1; }
     [ $rc = 0 ] && { wait_run "$repo" "$merge" push || rc=1; }
-    [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-apply wave-1 --plan' || { log "wave 1 of the merge commit did not wait"; rc=1; }; }
+    [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'terragucci approve wave-1 --plan' || { log "wave 1 of the merge commit did not wait"; rc=1; }; }
   fi
   if [ $rc = 0 ]; then
     before="$(pr_replies "$repo" "$pr")"
@@ -11759,7 +11759,7 @@ claim_resume_schedule() {
   [ -f "$work/tree/.forgejo/workflows/terragucci-resume.yml" ] || { log "init wrote no resume workflow"; drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "resume-schedule: first")"
   wait_run "$repo" "$sha" || rc=1
-  [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-apply wave-1 --plan' || { log "wave 1 did not wait"; rc=1; }; }
+  [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'terragucci approve wave-1 --plan' || { log "wave 1 did not wait"; rc=1; }; }
   if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
     git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
     git -C "$work/approver-clone" config user.name smoke-approver
@@ -12421,10 +12421,10 @@ blob_state_export() { # work, version
   blob_state_in "$work" terragucci state export app --version "$v" --actor alice > "$work/ask.log" 2>&1 || code=$?
   cat "$work/ask.log" >&2
   [ "$code" = 3 ] || { echo "the request exited $code, not 3" >&2; return 1; }
-  digest="$(grep -o 'chant approve tf-state-export app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
-  [ -n "$digest" ] || { echo "the request printed no chant approve command" >&2; return 1; }
+  digest="$(grep -o 'terragucci approve export app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
+  [ -n "$digest" ] || { echo "the request printed no terragucci approve command" >&2; return 1; }
   git clone -q "$work/origin.git" "$work/bob"
-  (cd "$work/bob" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost "$CHANT" approve tf-state-export app --plan "$digest" --actor bob) >&2 || { echo "bob could not approve the request" >&2; return 1; }
+  (cd "$work/bob" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost "$TERRAGUCCI" approve export app --plan "$digest" --actor bob) >&2 || { echo "bob could not approve the request" >&2; return 1; }
   code=0
   # shellcheck disable=SC2016 # expanded by the container's shell
   blob_state_in "$work" sh -c 'terragucci state export app --version "$0" --actor alice --out /out/app.tfstate && stat -c "mode %a" /out/app.tfstate' "$v" > "$work/get.log" 2>&1 || code=$?
@@ -12564,7 +12564,7 @@ blob_unlock() { # gcs|azurerm
     blob_state_in "$work" terragucci unlock-state app --actor smoke-operator > "$work/ask.log" 2>&1 || code=$?
     cat "$work/ask.log" >&2
     clean_mounted "$work/wave" "$image"
-    digest="$(sed -n 's/.*chant approve tf-unlock app --plan \([^ ]*\).*/\1/p' "$work/ask.log" | head -1)"
+    digest="$(sed -n 's/.*terragucci approve unlock app --plan \([^ ]*\).*/\1/p' "$work/ask.log" | head -1)"
     [ "$code" = 3 ] && [ -n "$digest" ] || { log "unlock-state exited $code and printed no approval to wait for"; rc=1; }
     id="$(sed -n "s#.*app: $location holds lock \\([^,]*\\),.*#\\1#p" "$work/ask.log" | head -1)"
     [ "$kind" != gcs ] || [ "$id" = "$(held)" ] || { log "the lock ID unlock-state names, $id, is not the lock object's generation, $(held)"; rc=1; }
@@ -14848,7 +14848,7 @@ claim_approval_revoke() {
     applied="$(gated_applied approval-revoke)"
     log "after the revoke: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "the revoked approval let $applied apply"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for an approval again"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -q "terragucci approve wave-1" || { log "wave 1 did not wait for an approval again"; rc=1; }
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "with its approval line removed, wave 1 waited again and nothing applied"
@@ -15575,7 +15575,7 @@ claim_tg_preview_gate() {
     grep -qF "wave 2 of 3:   live/app: terraform_data.this (update): input differs from the preview" <<<"$logs" || { log "wave 2 did not name the input that moved"; rc=1; }
     # Before anyone approves: the difference comes before the approve command.
     at="$(grep -n 'input differs from the preview' <<<"$logs" | head -1 | cut -d: -f1)"
-    wait="$(grep -n 'chant approve tf-apply wave-2' <<<"$logs" | head -1 | cut -d: -f1)"
+    wait="$(grep -n 'terragucci approve wave-2' <<<"$logs" | head -1 | cut -d: -f1)"
     { [ -n "$at" ] && [ -n "$wait" ] && [ "$at" -lt "$wait" ]; } || { log "wave 2 did not show the difference before its approve command"; rc=1; }
   fi
   tg_preview_unstate "$name"
@@ -15614,7 +15614,7 @@ claim_tf_terraform() {
   log "the first push ran: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
   [ "$(jq -r '.[] | select(.name == "check") | .status' <<<"$jobs")" = success ] || { log "check did not pass with terraform"; rc=1; }
   [ -z "$(gated_applied tf-terraform)" ] || { log "a root applied before wave 1 was approved"; rc=1; }
-  run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for its approval"; rc=1; }
+  run_logs "$repo" "$RUN_ID" | grep -q "terragucci approve wave-1" || { log "wave 1 did not wait for its approval"; rc=1; }
   if [ $rc = 0 ]; then
     echo 2 > "$work/tree/fleet/two/rev.txt"
     head="$(push_tree "$work/tree" "$repo" change "tf-terraform: change fleet/two")" || rc=1
@@ -16529,7 +16529,7 @@ claim_cdktn_apply() {
   applied="$(gated_applied cdktn-apply)"
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a stack applied before wave 1 was approved"; rc=1; }
-  run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait at its gate with its approve command"; rc=1; }
+  run_logs "$repo" "$RUN_ID" | grep -q "terragucci approve wave-1" || { log "wave 1 did not wait at its gate with its approve command"; rc=1; }
   [ $rc = 0 ] && { gated_approve cdktn-apply 1 || rc=1; }
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "cdktn-apply: after wave 1 was approved")"
@@ -16537,7 +16537,7 @@ claim_cdktn_apply() {
     applied="$(gated_applied cdktn-apply)"
     log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "dev " ] || { log "dev did not apply alone"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-2" || { log "wave 2 did not wait at its own gate"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -q "terragucci approve wave-2" || { log "wave 2 did not wait at its own gate"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve cdktn-apply 2 || rc=1; }
   if [ $rc = 0 ]; then
@@ -16708,7 +16708,7 @@ claim_apply_outcome() {
   # A repo with one root, app, run by stage tf-apply in the CI image with
   # TG_OUTCOME_JSON naming a file. Wave 1 waits (gate always): the file says
   # terragucci.outcome/v1, waiting, exit 3, the set digest, the gate, mode
-  # ledger and the chant approve command for that digest. smoke-approver
+  # ledger and the terragucci approve command for that digest. smoke-approver
   # approves it and app moves in a new commit: the file says refused, exit 4,
   # reason approval, the digest approved, by whom, app as the root that moved
   # and the command for the new digest. app is then broken HCL: the file says
@@ -16743,7 +16743,7 @@ claim_apply_outcome() {
   [ "$code" = 3 ] || { log "the first run exited $code, not 3: wave 1 did not wait"; rc=1; }
   if [ $rc = 0 ]; then
     digest="$(jq -r '.set_digest // empty' "$out" 2>/dev/null)"
-    jq -e --arg d "$digest" '.schema == "terragucci.outcome/v1" and .status == "waiting" and .exit == 3 and .wave == 1 and .roots == ["app"] and .gate.name == "wave-1" and .gate.branch == "chant/lifecycle" and .approval == "waiting" and .approval_mode == "ledger" and .approve_command == ("chant approve tf-apply wave-1 --plan " + $d) and (.waiting_since | length > 0)' "$out" >/dev/null 2>&1 \
+    jq -e --arg d "$digest" '.schema == "terragucci.outcome/v1" and .status == "waiting" and .exit == 3 and .wave == 1 and .roots == ["app"] and .gate.name == "wave-1" and .gate.branch == "chant/lifecycle" and .approval == "waiting" and .approval_mode == "ledger" and .approve_command == ("terragucci approve wave-1 --plan " + $d) and (.waiting_since | length > 0)' "$out" >/dev/null 2>&1 \
       || { log "the waiting outcome is not as expected"; rc=1; }
   fi
   if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
@@ -16753,7 +16753,7 @@ claim_apply_outcome() {
     git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app moves after its approval"
     outcome_wave
     [ "$code" = 4 ] || { log "the run after the approval exited $code, not 4"; rc=1; }
-    jq -e --arg a "$approved" '.status == "refused" and .exit == 4 and .refused.reason == "approval" and .refused.approved == $a and .refused.by == "smoke-approver" and .refused.roots == ["app"] and .set_digest != $a and .approve_command == ("chant approve tf-apply wave-1 --plan " + .set_digest) and (.line | startswith("wave 1 changed after approval"))' "$out" >/dev/null 2>&1 \
+    jq -e --arg a "$approved" '.status == "refused" and .exit == 4 and .refused.reason == "approval" and .refused.approved == $a and .refused.by == "smoke-approver" and .refused.roots == ["app"] and .set_digest != $a and .approve_command == ("terragucci approve wave-1 --plan " + .set_digest) and (.line | startswith("wave 1 changed after approval"))' "$out" >/dev/null 2>&1 \
       || { log "the refused outcome is not as expected"; rc=1; }
   fi
   if [ $rc = 0 ]; then
@@ -18079,7 +18079,7 @@ claim_tg_stack_gate() {
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
   grep -q "every unit is formatted and its inputs match its module" <<<"$logs" || { log "the check job did not validate the generated units"; rc=1; }
-  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
+  grep -q "terragucci approve wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
   [ $rc = 0 ] && { gated_approve tg-stack-gate 1 || rc=1; }
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: after wave 1 was approved")"
@@ -18088,7 +18088,7 @@ claim_tg_stack_gate() {
     logs="$(run_logs "$repo" "$RUN_ID")"
     log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "live/stk/.terragrunt-stack/base " ] || { log "expected the generated base alone to apply, top waiting at its own gate"; rc=1; }
-    grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+    grep -q "terragucci approve wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the generated base applied only once wave 1 was approved, and top waited at wave 2's gate"
@@ -18252,7 +18252,7 @@ claim_state_export() {
   # state_versions_repo's root applies twice into a versioned floci bucket.
   # In the CI image, as a person at a shell would: terragucci state export
   # app --version <the first> --actor alice records a request on
-  # chant/lifecycle and exits 3 with the chant approve command. bob runs that
+  # chant/lifecycle and exits 3 with the terragucci approve command. bob runs that
   # command in a clone. The same export then writes the version to /out,
   # mode 0600, byte for byte the version floci holds, and done.jsonl names
   # alice, app, the version and bob. terragucci audit lists a state-export
@@ -18299,15 +18299,15 @@ claim_state_export() {
     state_in "$work" terragucci state export app --version "$v1" --actor alice > "$work/ask.log" 2>&1 || code=$?
     cat "$work/ask.log" >&2
     [ "$code" = 3 ] || { log "the request exited $code, not 3"; rc=1; }
-    digest="$(grep -o 'chant approve tf-state-export app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
-    [ -n "$digest" ] || { log "the request printed no chant approve command"; rc=1; }
+    digest="$(grep -o 'terragucci approve export app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "the request printed no terragucci approve command"; rc=1; }
     [ -z "$(ls -A "$work/out")" ] || { log "the request wrote a file before any approval"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     clone="$work/approver"
     git clone -q "$work/origin.git" "$clone"
     (cd "$clone" && GIT_AUTHOR_NAME="$approver" GIT_AUTHOR_EMAIL="$approver@localhost" GIT_COMMITTER_NAME="$approver" GIT_COMMITTER_EMAIL="$approver@localhost" \
-      "$HERE/../node_modules/.bin/chant" approve tf-state-export app --plan "$digest" --actor "$approver") >&2 || { log "$approver could not approve the request"; rc=1; }
+      "$TERRAGUCCI" approve export app --plan "$digest" --actor "$approver") >&2 || { log "$approver could not approve the request"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     code=0
@@ -18407,14 +18407,14 @@ claim_tg_state_export() {
     cat "$work/ask.log" >&2
     [ "$code" = 3 ] || { log "the request exited $code, not 3"; rc=1; }
     grep -q "state export: alice asks for live/app's state, s3://$bucket/$key version $v1" "$work/ask.log" || { log "the request does not name live/app's state as its remote_state block puts it"; rc=1; }
-    digest="$(grep -o 'chant approve tf-state-export live/app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
-    [ -n "$digest" ] || { log "the request printed no chant approve command"; rc=1; }
+    digest="$(grep -o 'terragucci approve export live/app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "the request printed no terragucci approve command"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     clone="$work/approver"
     git clone -q "$work/origin.git" "$clone"
     (cd "$clone" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost \
-      "$HERE/../node_modules/.bin/chant" approve tf-state-export live/app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the request"; rc=1; }
+      "$TERRAGUCCI" approve export live/app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the request"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     code=0
@@ -18874,7 +18874,7 @@ claim_migrate_resume() {
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "migrate-resume: split moved out of mono")"
     wait_run "$repo" "$sha" push || rc=1
-    [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-migrate split-moved --plan' || { log "wave 1 did not wait for the migration"; rc=1; }; }
+    [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'terragucci approve split-moved --plan' || { log "wave 1 did not wait for the migration"; rc=1; }; }
   fi
   if [ $rc != 0 ] && [ -n "${BREAK:-}" ]; then log "the setup failed before the approval, so BREAK proves nothing"; drop_work "$work"; return 0; fi
   # Approved in every run but migrate-resume's BREAK, which is that nobody approves.
@@ -19568,7 +19568,7 @@ claim_migrate_split() {
     [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the migration"; rc=1; }
     digest="$(sed -n 's/^migration split-moved waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
     [ -n "$digest" ] && [ "$digest" = "$planned" ] || { log "wave 1 waits for [$digest], and the plan proved [$planned]"; rc=1; }
-    grep -q "chant approve tf-migrate split-moved --plan $digest" "$work/waits.log" || { log "wave 1 does not print the approve command for the digest"; rc=1; }
+    grep -q "terragucci approve split-moved --plan $digest" "$work/waits.log" || { log "wave 1 does not print the approve command for the digest"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     migrate_approve "$work/origin.git" "$work/ledger" smoke-approver split-moved "$digest" || { log "could not approve the migration"; rc=1; }
@@ -19886,7 +19886,7 @@ claim_notify_chat() {
   # path for Slack, one for Teams. A pull request changes canary/one and
   # merges with no review, so wave 1 of the merge commit waits, and its job
   # posts once to each: the Slack text and the Teams card both name the wave,
-  # its root canary/one, the plan digest, the chant approve command for it,
+  # its root canary/one, the plan digest, the terragucci approve command for it,
   # the run, and a "Review and approve" link to the pull request's Files
   # changed page. A reviewer with write access then approves the merged pull
   # request's head on that page's API, `/terragucci apply` on the pull request
@@ -19922,14 +19922,14 @@ claim_notify_chat() {
   [ $rc = 0 ] && { wait_run "$repo" "$REVIEW_HEAD" pull_request || rc=1; }
   [ $rc = 0 ] && { review_merge notify-chat || rc=1; }
   if [ $rc = 0 ]; then
-    run_logs "$repo" "$RUN_ID" | grep -E 'chant approve tf-apply wave-1|terragucci notify|approving review' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E 'terragucci approve wave-1|terragucci notify|approving review' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
     reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
     slack="$(jq -r '[.[] | select(.method == "POST" and .path == "/slack")] | last | .body.text // empty' <<<"$reqs")"
     teams="$(jq -c '[.[] | select(.method == "POST" and .path == "/teams")] | last | .body // empty' <<<"$reqs")"
     log "Slack got: ${slack:-nothing}"
     log "Teams got: ${teams:-nothing}"
     link="/pulls/$REVIEW_PR/files"
-    for want in "wave 1 of" "canary/one" "Digest" "chant approve tf-apply wave-1 --plan" "/actions/runs/" "Review and approve" "$link"; do
+    for want in "wave 1 of" "canary/one" "Digest" "terragucci approve wave-1 --plan" "/actions/runs/" "Review and approve" "$link"; do
       grep -qF -- "$want" <<<"$slack" || { log "the Slack message does not say $want"; rc=1; }
       grep -qF -- "$want" <<<"$teams" || { log "the Teams card does not say $want"; rc=1; }
     done
@@ -19958,7 +19958,7 @@ claim_notify_webhook() {
   # its job posts one event: X-Terragucci-Event waiting, a signature that
   # verifies over the raw body with the key, and a terragucci.notify/v1 body
   # naming the project, forgejo, the commit pushed, wave 1, canary/one and an
-  # id, whose outcome says waiting with the digest the job's chant approve
+  # id, whose outcome says waiting with the digest the job's terragucci approve
   # command names, the gate, mode ledger and that command.
   # BREAK: HOOK_KEY holds another key than the receiver's, so the signature
   # does not verify.
@@ -19983,7 +19983,7 @@ claim_notify_webhook() {
   sha="$(push_tree "$work/tree" "$repo" main "notify-webhook: two waves")" || rc=1
   [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
   if [ $rc = 0 ]; then
-    digest="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+    digest="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
     [ -n "$digest" ] || { log "wave 1 did not wait for its approval"; rc=1; }
     run_logs "$repo" "$RUN_ID" | grep 'terragucci notify:' >&2 || true
     reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
@@ -19995,7 +19995,7 @@ claim_notify_webhook() {
   if [ $rc = 0 ]; then
     [ "$(jq -r '.verified' <<<"$hook")" = true ] || { log "the signature does not verify over the raw body with the receiver's key"; rc=1; }
     [ "$(jq -r '.headers["x-terragucci-event"]' <<<"$hook")" = waiting ] || { log "X-Terragucci-Event is not waiting"; rc=1; }
-    jq -e --arg sha "$sha" --arg d "$digest" '.body | .schema == "terragucci.notify/v1" and .event == "waiting" and (.id | test("^[0-9a-f]{64}$")) and (.project | endswith("notify-webhook")) and .forge == "forgejo" and .sha == $sha and .wave == 1 and .roots == ["canary/one"] and (.run_url | contains("/actions/runs/")) and .outcome.schema == "terragucci.outcome/v1" and .outcome.status == "waiting" and .outcome.set_digest == $d and .outcome.gate.name == "wave-1" and .outcome.approval_mode == "ledger" and .outcome.approve_command == ("chant approve tf-apply wave-1 --plan " + $d)' <<<"$hook" >/dev/null \
+    jq -e --arg sha "$sha" --arg d "$digest" '.body | .schema == "terragucci.notify/v1" and .event == "waiting" and (.id | test("^[0-9a-f]{64}$")) and (.project | endswith("notify-webhook")) and .forge == "forgejo" and .sha == $sha and .wave == 1 and .roots == ["canary/one"] and (.run_url | contains("/actions/runs/")) and .outcome.schema == "terragucci.outcome/v1" and .outcome.status == "waiting" and .outcome.set_digest == $d and .outcome.gate.name == "wave-1" and .outcome.approval_mode == "ledger" and .outcome.approve_command == ("terragucci approve wave-1 --plan " + $d)' <<<"$hook" >/dev/null \
       || { log "the event body is not as expected"; rc=1; }
   fi
   stand_in_down
@@ -20124,7 +20124,7 @@ chat_approve() { # slack|teams, [lambda]
   sha="$(push_tree "$work/tree" "$repo" main "$claim: two waves")" || rc=1
   [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
   if [ $rc = 0 ]; then
-    digest="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+    digest="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
     [ -n "$digest" ] || { log "wave 1 did not wait for its approval"; rc=1; }
     reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
     msg="$(jq -c --arg p "/$app" '[.[] | select(.method == "POST" and .path == $p)] | last | .body // empty' <<<"$reqs")"
@@ -20403,7 +20403,7 @@ claim_cost_gate() {
     grep -E 'cost|waits|approve' <<<"$logs" | grep -v '^\s*$' | tail -12 >&2 || true
     grep -qE "the monthly cost changes by \+20\.00 USD, over cost\.approve_above 15\.00 USD in the config at [0-9a-f]{40}, so it waits for an approval although gate is never" <<<"$logs" \
       || { log "wave 1 did not wait for its cost, naming +20.00 USD and the amount 15.00 USD"; rc=1; }
-    grep -qE 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 gave no approve command"; rc=1; }
+    grep -qE 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 gave no approve command"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     printf '\nresource "terraform_data" "more" {\n  input = 2\n}\n' >> "$tree/app/main.tf"
@@ -20485,7 +20485,7 @@ claim_approval_used() {
   gated_repo approval-used || { drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "approval-used: first")"
   wait_run "$repo" "$sha"
-  first="$(run_logs "$repo" "$RUN_ID" | grep -o 'chant approve tf-apply wave-1 --plan [^ ]*' | head -1 | sed 's/.* //' || true)"
+  first="$(run_logs "$repo" "$RUN_ID" | grep -o 'terragucci approve wave-1 --plan [^ ]*' | head -1 | sed 's/.* //' || true)"
   [ -n "$first" ] || { log "wave 1 did not wait with its approve command"; rc=1; }
   if [ $rc = 0 ]; then
     gated_approve approval-used 1 || rc=1
@@ -20515,7 +20515,7 @@ claim_approval_used() {
     sha="$(push_tree "$work/tree" "$repo" main "approval-used: change canary/one after its approved wave applied")"
     wait_run "$repo" "$sha"
     logs="$(run_logs "$repo" "$RUN_ID")"
-    second="$(grep -o 'chant approve tf-apply wave-1 --plan [^ ]*' <<<"$logs" | head -1 | sed 's/.* //' || true)"
+    second="$(grep -o 'terragucci approve wave-1 --plan [^ ]*' <<<"$logs" | head -1 | sed 's/.* //' || true)"
     log "after the change: run $RUN_STATUS, approve command for ${second:-nothing}"
     grep -qE 'changed after it was approved|planned differently since' <<<"$logs" && { log "wave 1 was refused on the approval it already applied under"; rc=1; }
   fi
@@ -20624,7 +20624,7 @@ claim_steps_gate() {
   # The gated-waves fixture with gate: never and a step after plan on canary/*
   # that exits 1 with on_failure: approve. The push to main stops at wave 1:
   # the step asks for an approval, so the wave waits at its gate and prints
-  # the chant approve command, and no root has state. Approving wave 1 on the
+  # the terragucci approve command, and no root has state. Approving wave 1 on the
   # ledger and pushing again applies every root: canary/one under the
   # approval, wave 2 with no gate.
   # BREAK: terragucci.yml has no steps, so the first push applies every root.
@@ -20647,7 +20647,7 @@ YAML
     applied="$(gated_applied steps-gate)"
     log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "a root applied before the wave held by the step was approved"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -E 'step verify asks for an approval|chant approve tf-apply wave-1' >&2 || { log "wave 1 did not wait for an approval"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E 'step verify asks for an approval|terragucci approve wave-1' >&2 || { log "wave 1 did not wait for an approval"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve steps-gate 1 || rc=1; }
   if [ $rc = 0 ]; then
@@ -21003,7 +21003,7 @@ YAML
     [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, within the amount, and wave 2 to wait"; rc=1; }
     grep -qE "wave 2 of 2: the monthly cost changes by \+20\.00 USD, over cost\.approve_above 15\.00 USD in the config at [0-9a-f]{40}, so it waits for an approval although gate is never" <<<"$logs" \
       || { log "wave 2 did not wait for its cost, naming +20.00 USD and the amount 15.00 USD"; rc=1; }
-    grep -qE 'chant approve tf-apply wave-2 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 2 gave no approve command"; rc=1; }
+    grep -qE 'terragucci approve wave-2 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 2 gave no approve command"; rc=1; }
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 1 applied within the amount; wave 2 waited under gate: never for its +20.00 USD over 15.00 USD"
@@ -21015,7 +21015,7 @@ claim_tg_steps_gate() {
   # on live/canary/* that checks the unit's saved plan is there and exits 1,
   # with on_failure: approve. The push to main stops at wave 1: the step runs
   # in live/canary/one after the wave's run --all plan and asks for an
-  # approval, so the wave waits at its gate and prints the chant approve
+  # approval, so the wave waits at its gate and prints the terragucci approve
   # command, and no unit has state. Approving wave 1 and pushing again applies
   # every unit: live/canary/one under the approval, wave 2 with no gate.
   # BREAK: terragucci.yml has no steps, so the first push applies every unit.
@@ -21040,10 +21040,10 @@ YAML
     logs="$(run_logs "$repo" "$RUN_ID")"
     log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "a unit applied before the wave held by the step was approved"; rc=1; }
-    grep -E 'after-plan|step verify|chant approve tf-apply wave-1' <<<"$logs" | head -6 >&2 || true
+    grep -E 'after-plan|step verify|terragucci approve wave-1' <<<"$logs" | head -6 >&2 || true
     grep -q "live/canary/one: after-plan verify: no signature for this unit" <<<"$logs" || { log "the step did not run in live/canary/one after its plan"; rc=1; }
     grep -q "live/canary/one: step verify asks for an approval, so the gate holds this wave" <<<"$logs" || { log "wave 1 was not held by the step"; rc=1; }
-    grep -qE 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 did not wait with its approve command"; rc=1; }
+    grep -qE 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 did not wait with its approve command"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve tg-steps-gate 1 || rc=1; }
   if [ $rc = 0 ]; then
@@ -21097,7 +21097,7 @@ claim_tg_wave_jobs() {
     applied="$(tg_gated_applied tg-wave-jobs)"
     log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
-    job_log "$RUN_ID" apply-wave-2 | grep "chant approve tf-apply wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
+    job_log "$RUN_ID" apply-wave-2 | grep "terragucci approve wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
   fi
   [ $rc = 0 ] && { gated_approve tg-wave-jobs 2 || rc=1; }
   if [ $rc = 0 ]; then
@@ -21259,7 +21259,7 @@ HCL
   printf '%s\n' "$out" | sed 's/^/  /' >&2
   [ "$code" = 0 ] || { log "unlock-state exited $code, not 0"; rc=1; }
   grep -q "no state file and no state lock; nothing to release" <<<"$out" || { log "unlock-state does not say there is no state lock to release"; rc=1; }
-  ! grep -q "chant approve tf-unlock" <<<"$out" || { log "unlock-state asked for an approval"; rc=1; }
+  ! grep -q "terragucci approve unlock" <<<"$out" || { log "unlock-state asked for an approval"; rc=1; }
   if [ $rc = 0 ]; then
     if ! cdf_run "$work/a" "$work/plan.log" "$CDF_ALIAS-plan" choudoufu "" tf-plan --binary choudoufu; then
       log "tf-plan after the kill failed"; tail -20 "$work/plan.log" >&2; rc=1
@@ -21340,7 +21340,7 @@ claim_unlock_state() {
   printf '%s\n' "$out" >&2
   clean_mounted "$work/clone"
   if [ -n "${BREAK:-}" ]; then
-    digest="$(sed -n 's/.*chant approve tf-unlock slow --plan \([^ ]*\).*/\1/p' <<<"$out" | head -1)"
+    digest="$(sed -n 's/.*terragucci approve unlock slow --plan \([^ ]*\).*/\1/p' <<<"$out" | head -1)"
     if [ "$code" != 3 ] || [ -z "$digest" ]; then log "unlock-state exited $code without an approval to wait for, so BREAK proves nothing"; kill_apply; drop_work "$work"; return 0; fi
     git clone -q "$host" "$work/approver-clone" && git -C "$work/approver-clone" config user.name smoke-approver && git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
     (cd "$work/approver-clone" && "$CHANT" approve tf-unlock slow --plan "$digest" --approver smoke-approver) >&2 || { log "chant approve failed, so BREAK proves nothing"; kill_apply; drop_work "$work"; return 0; }
@@ -21368,7 +21368,7 @@ claim_unlock_state() {
     code=0; out="$(unlock_in "$work/clone" "$bundle" terragucci unlock-state slow --actor smoke-operator 2>&1)" || code=$?
     printf '%s\n' "$out" >&2
     clean_mounted "$work/clone"
-    digest="$(sed -n 's/.*chant approve tf-unlock slow --plan \([^ ]*\).*/\1/p' <<<"$out" | head -1)"
+    digest="$(sed -n 's/.*terragucci approve unlock slow --plan \([^ ]*\).*/\1/p' <<<"$out" | head -1)"
     [ "$code" = 3 ] && [ -n "$digest" ] || { log "unlock-state exited $code and printed no approval to wait for"; rc=1; }
     [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 200 ] || { log "the lock was freed before any approval"; rc=1; }
   fi

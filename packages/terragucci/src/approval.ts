@@ -54,7 +54,7 @@ export function effectiveApproval(key: Approval | undefined, gates: number, flag
       mode: key,
       source: `approval: ${key} in the config ${where}`,
       ...(key !== "sealed" && gates > 0
-        ? { note: `chant.workspace.json ${where} still lists gates under identity.gates, and chant approve refuses an unsigned approval of a gate it lists; run terragucci init to drop them` }
+        ? { note: `chant.workspace.json ${where} still lists gates under identity.gates, and terragucci approve refuses an unsigned approval of a gate it lists; run terragucci init to drop them` }
         : {}),
     };
   }

@@ -108,7 +108,8 @@ export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: s
 function approveText(event: NotifyEvent, wave: number, result?: WaveOutcome): string {
   // The pinned form: terragucci approve refuses when the plans moved past the digest the message names.
   const pinned = result?.set_digest ? `npx terragucci approve wave-${wave} --plan ${result.set_digest}` : `npx terragucci approve wave-${wave}`;
-  if (event === "waiting") return result?.approve_command ? `${result.approve_command} (or ${pinned})` : pinned;
+  // The stage's command is terragucci approve; an outcome from an older stage, which printed another command, gets the pinned form.
+  if (event === "waiting") return result?.approve_command?.startsWith("terragucci approve ") ? `npx ${result.approve_command}` : pinned;
   if (event === "refused" && result?.refused?.reason === "override") return "nothing to approve: the plans changed after the policy override; read the job log";
   if (event === "refused") return `read the plans that moved, then ${pinned}, or revert`;
   if (result?.policy_denied?.length) return "nothing to approve: the policy denied it; an override command is in the job log";

@@ -85,7 +85,7 @@ export function parseLockInfo(text: string): LockInfo | undefined {
 export const lockDigest = (root: string, location: string, id: string): string => computePlanDigest("terragucci-state-lock", { root, location, id });
 
 /** The command that approves releasing a lock. */
-export const unlockApproveCommand = (root: string, digest: string, sealed = false): string => `chant approve ${UNLOCK_OP} ${root} --plan ${digest}${sealed ? " --sign" : ""}`;
+export const unlockApproveCommand = (root: string, digest: string, sealed = false): string => `terragucci approve unlock ${root} --plan ${digest}${sealed ? " --sign" : ""}`;
 
 /** A run or pipeline of the repository that has not finished. */
 export interface LiveRun {

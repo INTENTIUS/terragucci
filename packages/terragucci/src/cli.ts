@@ -30,13 +30,15 @@
  *   terragucci config check [--config <file>]
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
- *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
+ *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's or migration's digest on chant/lifecycle, then start its apply again with your token)
+ *   terragucci approve export|unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a state export request, or the release of a state lock)
+ *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for, or an approved apply that was killed; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
  *   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]   (ask for one version of a root's state, and once someone else approved it, download it to this machine)
- *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
+ *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls, and with --plan-notes post the plan notes first; run by the comments schedule's job)
@@ -78,7 +80,7 @@ import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
-import { approve, overrideDenial } from "./approve";
+import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
@@ -164,7 +166,11 @@ const USAGE = `usage:
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, run in this process
   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   a read-only MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures; credentials from the environment
-  terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
+  terragucci approve export <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a state export request
+  terragucci approve unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve releasing a state lock
+  terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a pull request's ephemeral copy
+    (export, unlock and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
@@ -682,6 +688,11 @@ export async function main(argv: string[]): Promise<number> {
       case "approve": {
         const sign = flags.sign === true ? true : str(flags, "sign");
         const plan = flags.plan === true ? "" : str(flags, "plan");
+        if (isGateKeyword(args)) {
+          if (args.length > 2) throw new ConfigError(`approve ${args[0]} takes one ${args[0] === "ephemeral" ? "pull request" : "root"}, not ${args.slice(1).join(" ")}`);
+          const done = await approveGate(cwd, { kind: args[0], target: args[1], ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
+          return done.code;
+        }
         const done = await approve(cwd, { ...(flags["no-resume"] === true ? { resume: false } : {}), ...(args[0] ? { wave: args[0] } : {}), ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }

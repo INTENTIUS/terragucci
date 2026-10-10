@@ -148,7 +148,7 @@ held_lines() { # run id
   for job in $(api "$URL/api/v1/repos/$REPO/actions/runs/$1/jobs" | jq -r '.[] | select(.status == "failure") | .id'); do
     api "$URL/api/v1/repos/$REPO/actions/jobs/$job/logs" 2>/dev/null \
       | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
-      | grep -E 'chant approve tf-apply wave-|changed after it was approved|planned differently since' || true
+      | grep -E 'terragucci approve wave-|changed after it was approved|planned differently since' || true
   done
 }
 
@@ -157,7 +157,7 @@ waiting_wave() {
   local run
   run="$(api "$URL/api/v1/repos/$REPO/actions/runs" | jq -r '[.workflow_runs[] | select(.status == "failure")][0].id // empty')"
   [ -n "$run" ] || return 0
-  held_lines "$run" | grep -o 'chant approve tf-apply wave-[0-9]*' | head -1 | sed 's/.*tf-apply //' || true
+  held_lines "$run" | grep -o 'terragucci approve wave-[0-9]*' | head -1 | sed 's/.*approve //' || true
 }
 
 case "$CMD" in
