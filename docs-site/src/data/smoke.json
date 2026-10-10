@@ -2032,6 +2032,38 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "tg-stack-check",
+      "says": "the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-affected",
+      "says": "a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-gate",
+      "says": "the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-drift",
+      "says": "tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
       "claim": "chat-approve",
       "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
       "needs": null,
@@ -2176,30 +2208,6 @@
       "commit": "7c2ff19c"
     },
     {
-      "claim": "image",
-      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "env",
-      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "local-plan",
-      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
       "claim": "tg-ephemeral-pr",
       "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
       "needs": null,
@@ -2230,6 +2238,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "e67a400c"
+    },
+    {
+      "claim": "image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
     },
     {
       "claim": "mr-widget",

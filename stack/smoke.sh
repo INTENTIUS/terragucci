@@ -386,7 +386,7 @@ tg-estate-graph|in a Terragrunt repo the plan note gives the blast radius of a c
 tg-state-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
 tg-apply-branches|with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved|
 tg-stacks|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
-tg-stack-check|the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a value the stack file feeds a unit whose module does not declare it, and naming that unit|
+tg-stack-check|the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit|
 tg-stack-affected|a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file|
 tg-stack-gate|the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate|
 tg-stack-drift|tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from|
@@ -14662,10 +14662,10 @@ tg_stack_rev() { # dir, unit, rev -> the stack file feeds that unit the rev
 }
 
 claim_tg_stack_check() {
-  # The fixture's top template passes owner = values.owner, and the stack
-  # file feeds top owner = "shop", but modules/rev declares no owner. Pushed
-  # to a branch, the check job generates the stack and terragrunt hcl
-  # validate --inputs fails on the generated top unit, naming it and owner.
+  # The stack file stops feeding top the rev its template reads
+  # (values.rev). Pushed to a branch, the check job generates the stack and
+  # terragrunt hcl validate fails on the generated top unit, naming it and
+  # the rev it lacks.
   # BREAK: the pushed pipeline's check job does not generate the stack, so
   # validate never sees the stack's units.
   log() { echo "[smoke tg-stack-check] $*" >&2; }
@@ -14677,17 +14677,16 @@ claim_tg_stack_check() {
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
   grep -q "terragrunt stack generate" "$wf" || { log "init wrote no stack generate into the check job"; rc=1; }
   [ -n "${BREAK:-}" ] && perl -ni -e 'print unless /terragrunt stack generate/' "$wf"
-  perl -0pi -e 's/(inputs = \{\n)/${1}  owner = values.owner\n/' "$work/tree/catalog/units/top/terragrunt.hcl"
-  perl -0pi -e 's/(unit "top" \{.*?values = \{\n)/${1}    owner = "shop"\n/s' "$work/tree/live/stk/terragrunt.stack.hcl"
-  sha="$(push_tree "$work/tree" "$repo" smoke/check "tg-stack-check: a value the module does not declare")"
+  perl -0pi -e 's/(unit "top" \{.*?values = \{\n)    rev = "1"\n/${1}    note = "no rev"\n/s' "$work/tree/live/stk/terragrunt.stack.hcl"
+  sha="$(push_tree "$work/tree" "$repo" smoke/check "tg-stack-check: the stack file feeds top no rev")"
   wait_run "$repo" "$sha"
-  logs="$(print_logs "$repo" "$RUN_ID")"
+  logs="$(run_logs "$repo" "$RUN_ID")"
   log "the push ended '$RUN_STATUS'"
   [ "$RUN_STATUS" = failure ] || { log "the check did not fail"; rc=1; }
   grep -q "\.terragrunt-stack/top" <<<"$logs" || { log "the log does not name the generated top unit"; rc=1; }
-  grep -q "owner" <<<"$logs" || { log "the log does not name the owner input"; rc=1; }
+  grep -q 'attribute named "rev"' <<<"$logs" || { log "the log does not name the rev top lacks"; rc=1; }
   drop_work "$work"
-  [ $rc = 0 ] && log "the check job generated the stack and failed on live/stk/.terragrunt-stack/top's undeclared owner input"
+  [ $rc = 0 ] && log "the check job generated the stack and failed on live/stk/.terragrunt-stack/top, which the stack file feeds no rev"
   return $rc
 }
 
@@ -14744,12 +14743,12 @@ claim_tg_stack_gate() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   GATED_INIT_TG=1 gated_repo tg-stack-gate tg-stack || { drop_work "$work"; return 1; }
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  grep -q "tf-apply --wave 1 --layers 'live/stk/.terragrunt-stack/base'" "$wf" || { log "wave 1 is not the generated base unit"; rc=1; }
+  grep -q "tf-apply --wave 1 --layers 'live/stk/.terragrunt-stack/base;live/stk/.terragrunt-stack/top'" "$wf" || { log "the waves are not the generated base, then top"; rc=1; }
   [ -n "${BREAK:-}" ] && perl -pi -e 's#--gate always#--gate never#g' "$wf"
   sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: first")"
   wait_run "$repo" "$sha"
   applied="$(tg_gated_applied tg-stack-gate)"
-  logs="$(print_logs "$repo" "$RUN_ID")"
+  logs="$(run_logs "$repo" "$RUN_ID")"
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
   grep -q "every unit is formatted and its inputs match its module" <<<"$logs" || { log "the check job did not validate the generated units"; rc=1; }
@@ -14759,7 +14758,7 @@ claim_tg_stack_gate() {
     sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: after wave 1 was approved")"
     wait_run "$repo" "$sha"
     applied="$(tg_gated_applied tg-stack-gate)"
-    logs="$(print_logs "$repo" "$RUN_ID")"
+    logs="$(run_logs "$repo" "$RUN_ID")"
     log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "live/stk/.terragrunt-stack/base " ] || { log "expected the generated base alone to apply, top waiting at its own gate"; rc=1; }
     grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
