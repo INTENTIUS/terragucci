@@ -1,0 +1,33 @@
+---
+// Starlight's head, then PostHog page analytics when the build has a project
+// key. CI passes PUBLIC_POSTHOG_KEY from the repository variable of that name;
+// a build without it (a fork, a local preview) loads no analytics at all.
+//
+// posthog-js is bundled from npm and served from this site, in its
+// no-external build, so a visitor's browser fetches no third-party script.
+// It keeps nothing in the browser (persistence: 'memory': no cookies, no
+// localStorage), records no sessions, and is never loaded when the browser
+// sends Do Not Track or Global Privacy Control.
+import Default from '@astrojs/starlight/components/Head.astro';
+---
+<Default />
+
+<script>
+	const key = import.meta.env.PUBLIC_POSTHOG_KEY;
+	const nav = navigator as Navigator & { globalPrivacyControl?: boolean; msDoNotTrack?: string };
+	const optedOut = [nav.doNotTrack, nav.msDoNotTrack, (window as { doNotTrack?: string }).doNotTrack].some((v) => v === '1' || v === 'yes') || nav.globalPrivacyControl === true;
+	if (key && !optedOut) {
+		import('posthog-js/dist/module.no-external').then(({ default: posthog }) => {
+			posthog.init(key, {
+				api_host: 'https://us.i.posthog.com',
+				defaults: '2026-05-30',
+				persistence: 'memory',
+				respect_dnt: true,
+				person_profiles: 'identified_only',
+				disable_session_recording: true,
+				disable_surveys: true,
+				disable_external_dependency_loading: true,
+			});
+		});
+	}
+</script>

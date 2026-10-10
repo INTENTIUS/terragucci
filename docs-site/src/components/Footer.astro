@@ -12,6 +12,8 @@ const flat = (es: Entry[]): Extract<Entry, { type: 'link' }>[] => es.flatMap((e)
 const steps = group ? flat(group.entries) : [];
 const step = steps.findIndex((e) => e.isCurrent) + 1;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// Said only on a build that loads analytics (see Head.astro).
+const analytics = Boolean(import.meta.env.PUBLIC_POSTHOG_KEY);
 ---
 {step > 0 && (
 	<p class="tg-step not-content">
@@ -23,6 +25,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 <p class="tg-foot not-content">
 	<a href={`${base}/`}><Taco /><span>terragucci</span></a>
 </p>
+{analytics && (
+	<p class="tg-privacy not-content">
+		These docs count page views and clicks with PostHog. They set no cookies, store nothing in your browser, and send nothing when your browser asks not to be tracked.
+	</p>
+)}
 
 <style>
 	.tg-step {
@@ -47,6 +54,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 		font-weight: 600;
 		color: var(--sl-color-gray-3);
 		text-decoration: none;
+	}
+	.tg-privacy {
+		margin: 0 auto 1rem;
+		max-width: 40rem;
+		text-align: center;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
 	}
 	.tg-foot a:hover {
 		color: var(--sl-color-white);
