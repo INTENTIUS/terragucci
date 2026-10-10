@@ -192,14 +192,26 @@ describe("GCP service accounts and Azure clients by root glob", () => {
     expect(() => rootRoleEnv({ [ROOT_GCP_ENV]: env[ROOT_GCP_ENV] }, "envs/prod/app")).toThrow(/GOOGLE_APPLICATION_CREDENTIALS is not set/);
   });
 
+  /** envs/<env>/gcs on gcs state and envs/<env>/az on azurerm state; with `reads`, prod's gcs root reads dev's gcs state. */
+  const cloudRepo = (reads = false): string =>
+    write(tmp(), {
+      "envs/dev/gcs/main.tf": 'terraform {\n  backend "gcs" {\n    bucket = "state"\n    prefix = "dev"\n  }\n}\n',
+      "envs/prod/gcs/main.tf": 'terraform {\n  backend "gcs" {\n    bucket = "state"\n    prefix = "prod"\n  }\n}\n' + (reads ? 'data "terraform_remote_state" "up" {\n  backend = "gcs"\n  config = {\n    bucket = "state"\n    prefix = "dev"\n  }\n}\n' : ""),
+      "envs/dev/az/main.tf": 'terraform {\n  backend "azurerm" {\n    storage_account_name = "acme"\n    container_name = "tfstate"\n    key = "dev.tfstate"\n  }\n}\n',
+      "envs/prod/az/main.tf": 'terraform {\n  backend "azurerm" {\n    storage_account_name = "acme"\n    container_name = "tfstate"\n    key = "prod.tfstate"\n  }\n}\n',
+    });
+  const ROOTS = ["envs/dev/az", "envs/dev/gcs", "envs/prod/az", "envs/prod/gcs"];
+
   it("config check lists the state each service account and client reaches, and warns when one reads another environment's state", () => {
-    const repo = envRepo(true);
-    const gcp = stateAccess(repo, ["envs/dev/app", "envs/prod/app"], { gcp: { ...GCP, roles: GCP_ROLES } }, undefined, "gcp");
-    expect(gcp.roles.find((r) => r.role === SA("prod-apply"))).toEqual({ role: SA("prod-apply"), stage: "apply", environment: "envs/prod/**", cloud: "gcp", roots: ["envs/prod/app"], states: ["gs://state/prod/app.tfstate"], reads: ["gs://state/dev/app.tfstate"] });
+    const repo = cloudRepo(true);
+    const gcp = stateAccess(repo, ROOTS, { gcp: { ...GCP, roles: GCP_ROLES } }, undefined, "gcp");
+    // A service account reaches the gcs states of its roots, not their azurerm ones.
+    expect(gcp.roles.find((r) => r.role === SA("prod-apply"))).toEqual({ role: SA("prod-apply"), stage: "apply", environment: "envs/prod/**", cloud: "gcp", roots: ["envs/prod/az", "envs/prod/gcs"], states: ["gs://state/prod"], reads: ["gs://state/dev"] });
     expect(gcp.roles.find((r) => r.role === SA("apply"))?.environment).toBe("plan_service_account/apply_service_account");
-    expect(gcp.warnings).toEqual([`oidc.gcp: envs/prod/app (envs/prod/**) reads the state of envs/dev/app (plan_service_account/apply_service_account) through terraform_remote_state, so ${SA("prod-plan")} and ${SA("prod-apply")} reach gs://state/dev/app.tfstate, another environment's state`]);
-    const shared = stateAccess(envRepo(), ["envs/dev/app", "envs/prod/app"], { azure: { ...AZURE, roles: { "envs/prod/**": { plan: "p", apply: "client-apply" } } } }, undefined, "azure");
-    expect(shared.warnings).toEqual(["oidc.azure: client-apply is the client of plan_client_id/apply_client_id and envs/prod/**, so it reaches the state of each: dev/app.tfstate, prod/app.tfstate; give each environment clients of its own"]);
-    expect(stateAccess(repo, ["envs/dev/app"], { gcp: GCP }, undefined, "gcp")).toEqual({ roles: [], warnings: [] });
+    expect(gcp.warnings).toEqual([`oidc.gcp: envs/prod/gcs (envs/prod/**) reads the state of envs/dev/gcs (plan_service_account/apply_service_account) through terraform_remote_state, so ${SA("prod-plan")} and ${SA("prod-apply")} reach gs://state/dev, another environment's state`]);
+    const shared = stateAccess(cloudRepo(), ROOTS, { azure: { ...AZURE, roles: { "envs/prod/**": { plan: "p", apply: "client-apply" } } } }, undefined, "azure");
+    expect(shared.roles.find((r) => r.role === "p")?.states).toEqual(["prod.tfstate"]);
+    expect(shared.warnings).toEqual(["oidc.azure: client-apply is the client of plan_client_id/apply_client_id and envs/prod/**, so it reaches the state of each: dev.tfstate, prod.tfstate; give each environment clients of its own"]);
+    expect(stateAccess(repo, ROOTS, { gcp: GCP }, undefined, "gcp")).toEqual({ roles: [], warnings: [] });
   });
 });

@@ -380,9 +380,9 @@ export interface ReportStep {
 export interface ReportStateVersion {
   /** The backend the root initialised: `s3`, `local`, `gcs` and so on. */
   backend: string;
-  /** Where the state is: `s3://<bucket>/<key>`, or the local file's path in the root. */
+  /** Where the state is: `s3://<bucket>/<key>`, `gs://<bucket>/<key>`, `az://<account>/<container>/<key>`, or the local file's path in the root. */
   location?: string;
-  /** The backend's id for this version of the state: an S3 version id. Absent when the backend keeps no versions or none could be read. */
+  /** The backend's id for this version of the state: an S3 version id, a GCS generation, an Azure blob version id or snapshot time. Absent when the backend keeps no versions or none could be read. */
   version_id?: string;
   /** `on`: the backend keeps each version; `off`: it keeps only the latest; `unknown`: terragucci could not tell. */
   versioning: "on" | "off" | "unknown";

@@ -1,10 +1,10 @@
 ---
 title: Export a state version
 description: Download one version of a root's state to your machine, once someone else approved the request, with the export recorded on chant/lifecycle and in the audit trail.
-claims: [state-export, tg-state-export]
+claims: [state-export, tg-state-export, gcs-state, azurerm-state]
 prompt: |
   Read https://intentius.io/terragucci/guides/export-a-state-version/.
-  Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3 backend, bucket versioning), from the roots' backend blocks.
+  Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3, gcs or azurerm backend that keeps versions), from the roots' backend blocks.
   Read only: do not run `terragucci state export`, and do not read or download any state.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -21,18 +21,18 @@ The state goes only to the person who runs the command; no job writes it to the 
 
 | You need | Why |
 |---|---|
-| A root with an `s3` backend in a bucket with versioning on | the export reads a version by its id; [Find the state version an apply left](/terragucci/guides/find-a-state-version/) turns versioning on and lists the ids |
+| A root whose backend keeps versions: `s3` or `gcs` with versioning on, `azurerm` with blob versioning or `snapshot = true` | the export reads a version by its id; [Find the state version an apply left](/terragucci/guides/find-a-state-version/) turns versioning on and lists the ids |
 | Your own cloud identity that can read the state object | the command runs on your machine with your credentials |
 | A checkout whose `origin` you can push to | the request and the record go to `chant/lifecycle` |
 | Someone else to approve | an approval by the person who asked does not count |
 
-A Terragrunt unit exports the same way: name the unit, such as `terragucci state export live/app`. Terragrunt prepares it as a [migration](/terragucci/guides/move-resources-between-roots/) does (`init` in the unit through its `remote_state` block), so the export reads the state Terragrunt reads and needs Terragrunt on the path. The command refuses roots with a `cloud` block. A `local` backend, or a bucket that keeps no versions, has no version id to export.
+A Terragrunt unit exports the same way: name the unit, such as `terragucci state export live/app`. Terragrunt prepares it as a [migration](/terragucci/guides/move-resources-between-roots/) does (`init` in the unit through its `remote_state` block), so the export reads the state Terragrunt reads and needs Terragrunt on the path. The command refuses roots with a `cloud` block. A `local` backend, or a store that keeps no versions, has no version id to export. Without `--version`, an `azurerm` backend that keeps snapshots and no blob versions gets a snapshot of the blob, whose time is the id.
 
 ## Steps
 
 <Steps>
 
-1. Ask for the version. Take its id from the estate page's State versions section, or leave `--version` out for the bucket's current version:
+1. Ask for the version. Take its id from the estate page's State versions section, or leave `--version` out for the current one:
 
    ```bash
    terragucci state export envs/dev/app --version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY

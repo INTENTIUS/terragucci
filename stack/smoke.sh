@@ -364,6 +364,12 @@ query-sql|terragucci query, run on the reports bucket with no server, answers th
 state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
 state-roles|with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state|
 state-export|terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket|
+gcs-state|a root whose state is in a bucket on fake-gcs-server with object versioning applies twice, each wave naming the generation it left, and terragucci state export writes the first generation once someone else approved the request|
+azurerm-state|a root whose azurerm backend on Azurite takes snapshots applies twice, each wave naming the snapshot it took of the state blob, and terragucci state export writes the first snapshot once someone else approved the request|
+gcs-unlock|terragucci unlock-state reads the lock a killed apply left on a gcs backend, by the generation of the lock object, and releases it only after an approval of that lock, recording who released it|
+azurerm-unlock|terragucci unlock-state reads the lease a killed apply left on an azurerm state blob, with the lock info in its metadata, and releases it only after an approval of that lock, recording who released it|
+blob-migrate|a migration moves a resource from a root whose state is on GCS to one whose state is on Azure Blob Storage: approved by digest, written under the lock object and the blob lease, and each version before and after recorded|
+cloud-roles|with oidc.gcp.roles and oidc.azure.roles, the roots of each environment plan and apply with the service account and the client of their glob, from the exports of the pipeline, and never the identity of the job|
 state-edges|the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again|
 migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
 migrate-backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
@@ -11207,6 +11213,588 @@ JS
   return $rc
 }
 
+# ── state on GCS and Azure Blob Storage ───────────────────────────────────
+# Roots whose state is on fake-gcs-server (a gcs backend) or on Azurite (an
+# azurerm backend), run in the CI image as a job or a person runs them, with
+# reports on floci. A gcs backend names the emulator as its
+# storage_custom_endpoint, and the job's GOOGLE_OAUTH_ACCESS_TOKEN is a token
+# the emulator takes. An azurerm backend names metadata_host 127.0.0.1:
+# blobstate.mjs, in the job container, answers the cloud's metadata with the
+# storage suffix azurite:10000, stands in for Entra ID at
+# login.microsoftonline.com, and forwards devstoreaccount1.blob.azurite:10000
+# to Azurite over TLS. Both names point at 127.0.0.1 inside the container,
+# so no request leaves it but the hop to the emulator.
+
+# Azurite's documented key for devstoreaccount1.
+AZURITE_KEY='Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=='
+BLOB_STATE_TENANT=7d2c0b4e-0000-4000-8000-00000000a2e1
+
+# The emulator, up: started when it is not running, never recreated. For
+# azurite, $work/stub holds blobstate.mjs and a certificate for the names it
+# answers.
+blob_state_up() { # work, gcs|azurite
+  local work="$1" i certs="$HERE/.state/azurite-certs" name="${TG_PROJECT:-terragucci}-$2"
+  mkdir -p "$work/stub"
+  if [ -z "$(docker ps -q --filter "name=^${name}\$")" ]; then
+    with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name "${TG_PROJECT:-terragucci}" --profile blob up -d "$2" >&2 || return 1
+  fi
+  if [ "$2" = gcs ]; then
+    for i in $(seq 1 30); do curl -sf -o /dev/null -H 'Host: gcs:4443' "http://localhost:${TERRAGUCCI_GCS_PORT:-4453}/_internal/healthcheck" && return 0; sleep 1; done
+    echo "fake-gcs-server is not answering" >&2; return 1
+  fi
+  for i in $(seq 1 30); do [ "$(az_curl -o /dev/null -w '%{http_code}' "?comp=list" 2>/dev/null)" = 200 ] && break; sleep 1; done
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=blobstate" \
+    -addext "subjectAltName=DNS:devstoreaccount1.blob.azurite,DNS:login.microsoftonline.com,IP:127.0.0.1" \
+    -keyout "$work/stub/blobstate.key" -out "$work/stub/blobstate.crt" >/dev/null 2>&1 || { echo "openssl could not make a certificate" >&2; return 1; }
+  cat > "$work/stub/blobstate.mjs" <<'JS'
+// The Azure cloud's metadata and Entra ID on 443, Google STS and IAM Credentials on 8181, and a TLS hop to Azurite on 10000.
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer as http } from "node:http";
+import { createServer as https } from "node:https";
+import tls from "node:tls";
+const key = readFileSync("/stub/blobstate.key"), cert = readFileSync("/stub/blobstate.crt");
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const jwt = (claims) => `${b64({ alg: "RS256", typ: "JWT" })}.${b64(claims)}.c21va2U`;
+const send = (res, status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+const read = (req, fn) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => fn(b)); };
+https({ key, cert }, (req, res) => read(req, (body) => {
+  console.log(`azure ${req.method} ${req.url.split("?")[0]}`);
+  if (req.url.startsWith("/metadata/endpoints")) return send(res, 200, { name: "AzureCloud", authentication: { loginEndpoint: "https://login.microsoftonline.com/", audiences: ["https://management.core.windows.net/"], tenant: "common", identityProvider: "AAD" }, resourceManager: "https://management.azure.com/", microsoftGraphResourceId: "https://graph.microsoft.com/", suffixes: { storage: "azurite:10000" } });
+  const oc = /^\/([^/]+)\/v2\.0\/\.well-known\/openid-configuration/.exec(req.url);
+  if (oc) { const b = `https://login.microsoftonline.com/${oc[1]}`; return send(res, 200, { token_endpoint: `${b}/oauth2/v2.0/token`, authorization_endpoint: `${b}/oauth2/v2.0/authorize`, issuer: `${b}/v2.0`, jwks_uri: `${b}/discovery/v2.0/keys` }); }
+  const t = /^\/([^/]+)\/oauth2\/v2\.0\/token$/.exec(req.url);
+  if (t) {
+    const f = new URLSearchParams(body);
+    if (f.get("client_assertion") !== readFileSync("/stub/forge-token", "utf-8").trim()) return send(res, 400, { error: "invalid_client", error_description: "AADSTS700213: No matching federated identity record found." });
+    appendFileSync("/stub/azure-clients.log", `${f.get("client_id")}\n`);
+    const now = Math.floor(Date.now() / 1000);
+    return send(res, 200, { token_type: "Bearer", expires_in: 3599, access_token: jwt({ aud: "https://storage.azure.com", iss: `https://sts.windows.net/${t[1]}/`, iat: now - 60, nbf: now - 60, exp: now + 3600, oid: f.get("client_id"), tid: t[1], appid: f.get("client_id") }) });
+  }
+  send(res, 404, { error: "not_found" });
+})).listen(443, "127.0.0.1");
+http((req, res) => read(req, (body) => {
+  const path = decodeURIComponent(req.url.split("?")[0]);
+  if (path === "/v1/token") return send(res, 200, { access_token: "federated", token_type: "Bearer", expires_in: 3600 });
+  const sa = /\/serviceAccounts\/([^:]+):generateAccessToken$/.exec(path)?.[1];
+  if (sa && req.headers.authorization === "Bearer federated") {
+    appendFileSync("/stub/gcp-accounts.log", `${sa}\n`);
+    return send(res, 200, { accessToken: `token-${sa}`, expireTime: new Date(Date.now() + 3600_000).toISOString() });
+  }
+  send(res, 403, { error: { code: 403, message: `refused ${req.method} ${path}` } });
+})).listen(8181, "127.0.0.1");
+tls.createServer({ key, cert }, (sock) => {
+  // An emulator hop: Azurite's own certificate is not what the job trusts.
+  const up = tls.connect({ host: "azurite", port: 10000, servername: "azurite", rejectUnauthorized: false }, () => { sock.pipe(up); up.pipe(sock); });
+  up.on("error", () => sock.destroy());
+  sock.on("error", () => up.destroy());
+}).listen(10000, "127.0.0.1", () => writeFileSync("/stub/ready", "1"));
+JS
+  printf 'forge-oidc-token-%s' "$(date +%s)" > "$work/stub/forge-token"
+}
+
+# A request to Azurite from the host, as devstoreaccount1 with a bearer token
+# Azurite's basic OAuth takes. The path is under the account.
+az_curl() { # [curl options...] path
+  local now path="${*: -1}" jwt
+  now="$(date +%s)"
+  jwt="$(blob_jwt "{\"aud\":\"https://storage.azure.com\",\"iss\":\"https://sts.windows.net/$BLOB_STATE_TENANT/\",\"iat\":$((now - 60)),\"nbf\":$((now - 60)),\"exp\":$((now + 3600)),\"oid\":\"smoke\",\"tid\":\"$BLOB_STATE_TENANT\"}")"
+  curl -sSk -H "Authorization: Bearer $jwt" -H 'x-ms-version: 2021-08-06' "${@:1:$#-1}" "https://localhost:${TERRAGUCCI_AZURITE_PORT:-10010}/devstoreaccount1/${path#/}"
+}
+
+# A request to fake-gcs-server's JSON API from the host.
+gcs_curl() { # [curl options...] path
+  curl -sS -H 'Host: gcs:4443' "${@:1:$#-1}" "http://localhost:${TERRAGUCCI_GCS_PORT:-4453}/${*: -1}"
+}
+
+# Run a command in the CI image in /repo, with the stand-in listening when
+# $work/stub/blobstate.mjs is there, and the variables both backends read;
+# BLOB_STATE_ENV adds docker arguments.
+blob_state_in() { # work, command...
+  local work="$1" rc=0; shift
+  STATE_IN_EXTRA=(-v "$work/stub:/stub" -e GOOGLE_OAUTH_ACCESS_TOKEN=smoke-gcs-token)
+  if [ -f "$work/stub/blobstate.mjs" ]; then
+    : > "$work/stub/ready"
+    STATE_IN_EXTRA+=(--add-host devstoreaccount1.blob.azurite:127.0.0.1 --add-host login.microsoftonline.com:127.0.0.1 -e SSL_CERT_FILE=/stub/blobstate.crt -e NODE_EXTRA_CA_CERTS=/stub/blobstate.crt -e "ARM_ACCESS_KEY=$AZURITE_KEY")
+  fi
+  # Last, so a claim's own variables win.
+  STATE_IN_EXTRA+=(${BLOB_STATE_ENV[@]+"${BLOB_STATE_ENV[@]}"})
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  state_in "$work" sh -c 'if [ -f /stub/blobstate.mjs ]; then node /stub/blobstate.mjs >>/stub/stub.log 2>&1 & i=0; until [ -s /stub/ready ] || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; fi; "$@"' sh "$@" || rc=$?
+  STATE_IN_EXTRA=()
+  return $rc
+}
+
+# A gcs backend block on the emulator.
+gcs_backend() { # bucket, prefix
+  printf 'terraform {\n  backend "gcs" {\n    bucket                  = "%s"\n    prefix                  = "%s"\n    storage_custom_endpoint = "http://gcs:4443/storage/v1/"\n  }\n}\n' "$1" "$2"
+}
+
+# An azurerm backend block on Azurite, through the stand-in's metadata; the rest are extra lines in the block.
+az_backend() { # container, key, [lines...]
+  local c="$1" k="$2" l; shift 2
+  printf 'terraform {\n  backend "azurerm" {\n    storage_account_name = "devstoreaccount1"\n    container_name       = "%s"\n    key                  = "%s"\n    metadata_host        = "127.0.0.1"\n' "$c" "$k"
+  for l in "$@"; do printf '    %s\n' "$l"; done
+  printf '  }\n}\n'
+}
+
+# A bucket on fake-gcs-server, with object versioning on or off.
+gcs_bucket() { # bucket, true|false
+  gcs_curl -f -o /dev/null -X POST -H 'content-type: application/json' -d "{\"name\":\"$1\",\"versioning\":{\"enabled\":$2}}" "storage/v1/b?project=smoke-project"
+}
+
+# A container on Azurite.
+az_container() { # container
+  [ "$(az_curl -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Length: 0' "$1?restype=container")" = 201 ]
+}
+
+# Each generation fake-gcs-server holds of an object, oldest first.
+gcs_generations() { # bucket, key
+  gcs_curl "storage/v1/b/$1/o?versions=true&prefix=$(jq -rn --arg k "$2" '$k | @uri')" | jq -r --arg k "$2" '[.items[]? | select(.name == $k) | .generation] | sort_by(tonumber) | .[]'
+}
+
+# Each snapshot Azurite holds of a blob.
+az_snapshots() { # container, blob
+  az_curl "$1?restype=container&comp=list&include=snapshots&prefix=$2" | grep -o '<Snapshot>[^<]*</Snapshot>' | sed 's/<[^>]*>//g'
+}
+
+# The repo: root app on `backend`, its reports on floci under a prefix of the claim's own.
+blob_state_repo() { # work, prefix, backend block, input
+  mkdir -p "$1/wave/app"
+  printf '%s\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$3" "$4" > "$1/wave/app/main.tf"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$2" > "$1/wave/terragucci.yml"
+  audit_origin "$1"
+}
+
+# Apply the repo's app twice, a new input the second time; BLOB_VERSIONS gets the version each wave's log names.
+blob_state_applies() { # work, location the log names, image
+  local work="$1" location="$2" n v
+  BLOB_VERSIONS=()
+  for n in 1 2; do
+    if [ $n = 2 ]; then
+      perl -pi -e "s/input = \"[^\"]*\"/input = \"bs-$STAMP-2\"/" "$work/wave/app/main.tf"
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input 2"
+    fi
+    blob_state_in "$work" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never > "$work/run-$n.log" 2>&1 || { cat "$work/run-$n.log" >&2; echo "apply $n failed" >&2; return 1; }
+    clean_mounted "$work/wave" "$3"
+    grep "^app: state" "$work/run-$n.log" >&2
+    v="$(sed -n "s#^app: state $location version \\(.*\\)\$#\\1#p" "$work/run-$n.log")"
+    [ -n "$v" ] || { echo "apply $n named no version of $location" >&2; return 1; }
+    BLOB_VERSIONS+=("$v")
+  done
+}
+
+# state export of app at version V1 asks (exit 3), bob approves it in a clone, and the export writes it to $work/out/app.tfstate; BLOB_EXPORT_LOG gets the logs.
+blob_state_export() { # work, version
+  local work="$1" v="$2" code=0 digest
+  mkdir -p "$work/out"
+  local -a BLOB_STATE_ENV=(-v "$work/out:/out" ${BLOB_STATE_ENV[@]+"${BLOB_STATE_ENV[@]}"})
+  blob_state_in "$work" terragucci state export app --version "$v" --actor alice > "$work/ask.log" 2>&1 || code=$?
+  cat "$work/ask.log" >&2
+  [ "$code" = 3 ] || { echo "the request exited $code, not 3" >&2; return 1; }
+  digest="$(grep -o 'chant approve tf-state-export app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
+  [ -n "$digest" ] || { echo "the request printed no chant approve command" >&2; return 1; }
+  git clone -q "$work/origin.git" "$work/bob"
+  (cd "$work/bob" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost "$CHANT" approve tf-state-export app --plan "$digest" --actor bob) >&2 || { echo "bob could not approve the request" >&2; return 1; }
+  code=0
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  blob_state_in "$work" sh -c 'terragucci state export app --version "$0" --actor alice --out /out/app.tfstate && stat -c "mode %a" /out/app.tfstate' "$v" > "$work/get.log" 2>&1 || code=$?
+  cat "$work/get.log" >&2
+  [ "$code" = 0 ] || { echo "the export after bob's approval exited $code, not 0" >&2; return 1; }
+  grep -q '^mode 600$' "$work/get.log" || { echo "the file is not mode 600" >&2; return 1; }
+  git -C "$work/bob" fetch -q origin "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"
+  BLOB_DONE="$(git -C "$work/bob" show "refs/remotes/origin/chant/lifecycle:_gates/tf-state-export/done.jsonl" 2>/dev/null)"
+  jq -se --arg v "$v" 'map(select(.kind == "state-export" and .root == "app" and .version_id == $v and .exportedBy == "alice" and .approvedBy == "bob")) | length == 1' <<<"$BLOB_DONE" >/dev/null \
+    || { echo "done.jsonl does not record alice exporting app version $v, approved by bob: $BLOB_DONE" >&2; return 1; }
+}
+
+claim_gcs_state() {
+  # A root, app, whose state is app/default.tfstate in a bucket on
+  # fake-gcs-server with object versioning on, applies in tf-apply wave 1
+  # twice, a new input the second time. Each wave's log names the state's
+  # generation, each one the bucket holds for the object, the second its
+  # live one. terragucci state export app --version <the first> --actor
+  # alice then records a request and exits 3; bob approves it, and the
+  # export writes that generation to /out, mode 0600, byte for byte as the
+  # bucket holds it, and done.jsonl names alice, bob and the generation.
+  # BREAK: the bucket keeps no versions, so a wave's log names none.
+  log() { echo "[smoke gcs-state] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 bucket="tg-gcs-state-$STAMP" held live v
+  local -a BLOB_STATE_ENV=() BLOB_VERSIONS=()
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  blob_state_up "$work" gcs || { drop_work "$work"; return 1; }
+  gcs_bucket "$bucket" "$([ -n "${BREAK:-}" ] && echo false || echo true)" || { log "fake-gcs-server did not make bucket $bucket"; drop_work "$work"; return 1; }
+  blob_state_repo "$work" "gcs-state-$STAMP" "$(gcs_backend "$bucket" app)" "bs-$STAMP-1"
+  blob_state_applies "$work" "gs://$bucket/app/default.tfstate" "$image" || rc=1
+  if [ $rc = 0 ]; then
+    held="$(gcs_generations "$bucket" app/default.tfstate | tr '\n' ' ')"
+    live="$(gcs_curl "storage/v1/b/$bucket/o/app%2Fdefault.tfstate" | jq -r '.generation')"
+    log "the waves named ${BLOB_VERSIONS[*]}; the bucket holds $held, live $live"
+    for v in "${BLOB_VERSIONS[@]}"; do case " $held " in *" $v "*) ;; *) log "generation $v is not one the bucket holds"; rc=1 ;; esac; done
+    [ "${BLOB_VERSIONS[1]}" = "$live" ] || { log "the second wave named ${BLOB_VERSIONS[1]}, and the live generation is $live"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    blob_state_export "$work" "${BLOB_VERSIONS[0]}" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    cmp -s "$work/out/app.tfstate" <(gcs_curl "storage/v1/b/$bucket/o/app%2Fdefault.tfstate?alt=media&generation=${BLOB_VERSIONS[0]}") || { log "the file is not generation ${BLOB_VERSIONS[0]} as the bucket holds it"; rc=1; }
+    grep -q "bs-$STAMP-1" "$work/out/app.tfstate" || { log "the file is not the state the first wave wrote"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "each wave named the generation it left, and alice exported the first once bob approved it"
+  return $rc
+}
+
+claim_azurerm_state() {
+  # A root, app, whose state is the blob app.tfstate in a container on
+  # Azurite, its azurerm backend set to take snapshots (snapshot = true),
+  # applies in tf-apply wave 1 twice, a new input the second time. Azurite
+  # keeps no blob versions, so each wave takes a snapshot of the blob it left
+  # and its log names that snapshot, each one Azurite holds. terragucci state
+  # export app --version <the first> --actor alice then records a request
+  # and exits 3; bob approves it, and the export writes that snapshot to
+  # /out, byte for byte as Azurite holds it, and done.jsonl names alice, bob
+  # and the snapshot.
+  # BREAK: the backend takes no snapshots, so a wave's log names no version.
+  log() { echo "[smoke azurerm-state] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 container="tg-az-state-$STAMP" held v
+  local -a BLOB_STATE_ENV=() BLOB_VERSIONS=() lines=()
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  blob_state_up "$work" azurite || { drop_work "$work"; return 1; }
+  az_container "$container" || { log "Azurite did not make container $container"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] || lines=("snapshot             = true")
+  blob_state_repo "$work" "az-state-$STAMP" "$(az_backend "$container" app.tfstate ${lines[@]+"${lines[@]}"})" "bs-$STAMP-1"
+  blob_state_applies "$work" "az://devstoreaccount1/$container/app.tfstate" "$image" || rc=1
+  if [ $rc = 0 ]; then
+    held="$(az_snapshots "$container" app.tfstate | tr '\n' ' ')"
+    log "the waves named ${BLOB_VERSIONS[*]}; Azurite holds the snapshots $held"
+    for v in "${BLOB_VERSIONS[@]}"; do case " $held " in *" $v "*) ;; *) log "snapshot $v is not one Azurite holds"; rc=1 ;; esac; done
+    cmp -s <(az_curl "$container/app.tfstate?snapshot=${BLOB_VERSIONS[1]}") <(az_curl "$container/app.tfstate") || { log "the second wave's snapshot is not the blob it left"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    blob_state_export "$work" "${BLOB_VERSIONS[0]}" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    cmp -s "$work/out/app.tfstate" <(az_curl "$container/app.tfstate?snapshot=${BLOB_VERSIONS[0]}") || { log "the file is not snapshot ${BLOB_VERSIONS[0]} as Azurite holds it"; rc=1; }
+    grep -q "bs-$STAMP-1" "$work/out/app.tfstate" || { log "the file is not the state the first wave wrote"; rc=1; }
+  fi
+  [ $rc = 0 ] || sed 's/^/[blobstate] /' "$work/stub/stub.log" >&2 2>/dev/null || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "each wave named the snapshot it took, and alice exported the first once bob approved it"
+  return $rc
+}
+
+# The unlock claims: app's terraform_data.slow sleeps var.hold seconds in a
+# local-exec; an apply killed while it sleeps leaves the backend's lock.
+blob_unlock() { # gcs|azurerm
+  local kind="$1" work image rc=0 name="unlock-$1-$STAMP" bucket="tg-unlock-$STAMP" container="tg-unlock-$STAMP" code=0 out digest id="" done location held
+  local -a BLOB_STATE_ENV=()
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  if [ "$kind" = gcs ]; then
+    blob_state_up "$work" gcs && gcs_bucket "$bucket" true || { log "fake-gcs-server did not make bucket $bucket"; drop_work "$work"; return 1; }
+    location="gs://$bucket/app/default.tflock"
+    held() { gcs_curl "storage/v1/b/$bucket/o/app%2Fdefault.tflock" | jq -r '.generation // empty'; }
+  else
+    blob_state_up "$work" azurite && az_container "$container" || { log "Azurite did not make container $container"; drop_work "$work"; return 1; }
+    location="az://devstoreaccount1/$container/app.tfstate"
+    held() { az_curl -o /dev/null -D - -I "$container/app.tfstate" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-ms-lease-state" && $2 == "leased" { print "leased" }'; }
+  fi
+  # A repo of its own on Forgejo, with no run: unlock-state asks it which runs are alive.
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$name" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":false}" "$URL/api/v1/user/repos" \
+    && api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$USER/$name" || { log "could not make $USER/$name on Forgejo"; drop_work "$work"; return 1; }
+  mkdir -p "$work/wave/app"
+  { if [ "$kind" = gcs ]; then gcs_backend "$bucket" app; else az_backend "$container" app.tfstate; fi
+    printf '\nvariable "hold" {\n  type    = number\n  default = 300\n}\n\nresource "terraform_data" "slow" {\n  input = "ul-%s"\n  provisioner "local-exec" {\n    command = "sleep ${var.hold}"\n  }\n}\n' "$STAMP"; } > "$work/wave/app/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nurl: http://forgejo:3000/%s/%s\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$USER" "$name" "$REPORT_BUCKET" "$name" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  # The apply, killed while its provisioner sleeps: a runner that kills a job leaves the lock this way.
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  blob_state_in "$work" sh -c 'tofu -chdir=app init -input=false -no-color >/dev/null && { tofu -chdir=app apply -auto-approve -no-color >/tmp/apply.log 2>&1 & p=$!; sleep 20; kill -9 $p; grep -q "Still creating\|Provisioning with" /tmp/apply.log && echo killed; }' > "$work/kill.log" 2>&1 || true
+  cat "$work/kill.log" >&2
+  clean_mounted "$work/wave" "$image"
+  [ -n "$(held)" ] || { log "the killed apply left no lock on $location"; rc=1; }
+  if [ $rc = 0 ]; then
+    BLOB_STATE_ENV=(-e "FORGEJO_TOKEN=$TOKEN")
+    blob_state_in "$work" terragucci unlock-state app --actor smoke-operator > "$work/ask.log" 2>&1 || code=$?
+    cat "$work/ask.log" >&2
+    clean_mounted "$work/wave" "$image"
+    digest="$(sed -n 's/.*chant approve tf-unlock app --plan \([^ ]*\).*/\1/p' "$work/ask.log" | head -1)"
+    [ "$code" = 3 ] && [ -n "$digest" ] || { log "unlock-state exited $code and printed no approval to wait for"; rc=1; }
+    id="$(sed -n "s#.*app: $location holds lock \\([^,]*\\),.*#\\1#p" "$work/ask.log" | head -1)"
+    [ "$kind" != gcs ] || [ "$id" = "$(held)" ] || { log "the lock ID unlock-state names, $id, is not the lock object's generation, $(held)"; rc=1; }
+    [ -n "$(held)" ] || { log "the lock was released before any approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # BREAK: the approval names another lock's digest.
+    [ -n "${BREAK:-}" ] && digest="jcs1-sha256:$(printf '0%.0s' $(seq 1 64))"
+    git clone -q "$work/origin.git" "$work/approver"
+    (cd "$work/approver" && GIT_AUTHOR_NAME=smoke-approver GIT_AUTHOR_EMAIL=smoke-approver@localhost GIT_COMMITTER_NAME=smoke-approver GIT_COMMITTER_EMAIL=smoke-approver@localhost \
+      "$CHANT" approve tf-unlock app --plan "$digest" --approver smoke-approver) >&2 || { log "chant approve tf-unlock failed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    blob_state_in "$work" terragucci unlock-state app --actor smoke-operator > "$work/release.log" 2>&1 || code=$?
+    cat "$work/release.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$code" = 0 ] || { log "unlock-state exited $code after the approval"; rc=1; }
+    [ -z "$(held)" ] || { log "$location is still locked after the approved release"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    git -C "$work/approver" fetch -q origin "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"
+    done="$(git -C "$work/approver" show "refs/remotes/origin/chant/lifecycle:_gates/tf-unlock/done.jsonl" 2>/dev/null)"
+    [ "$(jq -r 'select(.gate == "app") | [.location, .lock.ID, .approvedBy, .releasedBy] | join(" ")' <<<"$done" 2>/dev/null)" = "$location $id smoke-approver smoke-operator" ] \
+      || { log "done.jsonl does not record lock $id on $location released by smoke-operator under smoke-approver's approval: $done"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    BLOB_STATE_ENV=(-e TF_VAR_hold=0)
+    code=0
+    blob_state_in "$work" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never > "$work/after.log" 2>&1 || code=$?
+    clean_mounted "$work/wave" "$image"
+    [ "$code" = 0 ] || { cat "$work/after.log" >&2; log "the apply after the release exited $code"; rc=1; }
+  fi
+  [ $rc = 0 ] || sed 's/^/[blobstate] /' "$work/stub/stub.log" >&2 2>/dev/null || true
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$name" 2>/dev/null || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the killed apply's lock $id on $location was released once approved, recorded, and the next apply ran"
+  return $rc
+}
+
+claim_gcs_unlock() {
+  # app's apply on a gcs backend on fake-gcs-server is killed while its
+  # provisioner sleeps, so app/default.tflock stays. terragucci unlock-state
+  # app reads the lock, names as its ID the lock object's generation (the ID
+  # the binary's force-unlock takes), finds no live run on the repo's
+  # Forgejo, records a request and exits 3, the lock still there.
+  # smoke-approver approves the digest it printed, and unlock-state releases
+  # the lock: the object is gone, done.jsonl names the location, the ID, the
+  # approver and who released it, and an apply then runs.
+  # BREAK: the approval names another lock's digest, so the lock stays.
+  log() { echo "[smoke gcs-unlock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  blob_unlock gcs
+}
+
+claim_azurerm_unlock() {
+  # app's apply on an azurerm backend on Azurite is killed while its
+  # provisioner sleeps, so the lease on app.tfstate stays, with the lock info
+  # in the blob's metadata. terragucci unlock-state app reads the lock from
+  # the lease and the metadata, finds no live run on the repo's Forgejo,
+  # records a request and exits 3, the blob still leased. smoke-approver
+  # approves the digest it printed, and unlock-state releases the lock: the
+  # lease is gone, done.jsonl names the location, the ID, the approver and
+  # who released it, and an apply then runs.
+  # BREAK: the approval names another lock's digest, so the lease stays.
+  log() { echo "[smoke azurerm-unlock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  blob_unlock azurerm
+}
+
+claim_blob_migrate() {
+  # Root one keeps its state on fake-gcs-server (gcs backend, object
+  # versioning on) and holds terraform_data.keep and terraform_data.moved;
+  # root two keeps its state on Azurite (azurerm, snapshot = true). A commit
+  # moves the moved block to two and adds migrations/move-moved.yml. Wave 1
+  # proves the migration and waits for its digest; once smoke-approver
+  # approves it, wave 1 takes one's lock object and a lease on two's blob,
+  # writes one's state with the binary and two's under its lease, plans both
+  # with no change, and applies nothing. one's state then holds keep and
+  # two's moved, no lock object or lease is left, and the record names one's
+  # generation before and after (the live one) and two's snapshots before and
+  # after, each one Azurite holds.
+  # BREAK: after the approval, one's lock object is taken (as a run holding
+  # it would), so the wave writes nothing.
+  log() { echo "[smoke blob-migrate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 bucket="tg-mig-$STAMP" container="tg-mig-$STAMP" code digest record one two snaps v n
+  local -a BLOB_STATE_ENV=()
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  { blob_state_up "$work" gcs && gcs_bucket "$bucket" true && blob_state_up "$work" azurite && az_container "$container"; } || { log "could not make the bucket and the container"; drop_work "$work"; return 1; }
+  mkdir -p "$work/wave/one" "$work/wave/two"
+  blob_migrate_root() { # root, names...
+    local root="$1"; shift
+    { if [ "$root" = one ]; then gcs_backend "$bucket" one; else az_backend "$container" two.tfstate "snapshot             = true"; fi
+      for n in "$@"; do printf '\nresource "terraform_data" "%s" {\n  input = "bm-%s-%s"\n}\n' "$n" "$STAMP" "$n"; done; } > "$work/wave/$root/main.tf"
+  }
+  blob_migrate_root one keep moved
+  blob_migrate_root two
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: blob-migrate-%s\n' "$REPORT_BUCKET" "$STAMP" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  blob_wave() { # log name -> AUDIT_CODE
+    AUDIT_CODE=0
+    blob_state_in "$work" terragucci stage tf-apply --wave 1 --layers one,two --binary tofu --gate never > "$work/$1.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/$1.log" >&2
+    clean_mounted "$work/wave" "$image"
+  }
+  blob_wave first
+  [ "$AUDIT_CODE" = 0 ] || { log "the first apply exited $AUDIT_CODE, not 0"; rc=1; }
+  if [ $rc = 0 ]; then
+    blob_migrate_root one keep
+    blob_migrate_root two moved
+    mkdir -p "$work/wave/migrations"
+    printf 'moves:\n  - from: one\n    to: two\n    addresses: [terraform_data.moved]\n' > "$work/wave/migrations/move-moved.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "moved from one to two"
+    blob_wave waits
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the migration"; rc=1; }
+    digest="$(sed -n 's/^migration move-moved waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_approve "$work/origin.git" "$work/ledger" smoke-approver move-moved "$digest" || { log "could not approve the migration"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    gcs_curl -f -o /dev/null -X POST -H 'content-type: application/json' --data-binary "{\"ID\":\"held-$STAMP\",\"Operation\":\"OperationTypeApply\",\"Who\":\"another-run\",\"Created\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+      "upload/storage/v1/b/$bucket/o?uploadType=media&name=one%2Fdefault.tflock&ifGenerationMatch=0" || { log "could not take one's lock object"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    blob_wave applies
+    [ "$AUDIT_CODE" != 0 ] && grep -q "its state is locked (gs://$bucket/one/default.tflock" "$work/applies.log" && log "wave 1 refused: one's lock object is held"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "^migration move-moved applied$" "$work/applies.log" || { log "the log does not say the migration applied"; rc=1; }
+    one="$(gcs_curl "storage/v1/b/$bucket/o/one%2Fdefault.tfstate?alt=media" | jq -r '[.resources[].name] | join(",")')"
+    two="$(az_curl "$container/two.tfstate" | jq -r '[.resources[].name] | join(",")')"
+    [ "$one" = keep ] && [ "$two" = moved ] || { log "one holds [$one] and two [$two], not keep and moved"; rc=1; }
+    [ -z "$(gcs_curl "storage/v1/b/$bucket/o/one%2Fdefault.tflock" | jq -r '.generation // empty')" ] || { log "one's lock object is left"; rc=1; }
+    az_curl -o /dev/null -D - -I "$container/two.tfstate" | tr -d '\r' | grep -qi '^x-ms-lease-state: available' || { log "two's blob is still leased"; rc=1; }
+    record="$(cat "$work/wave/terragucci-report/migrations/move-moved.json" 2>/dev/null)" || { log "no migration record in terragucci-report/"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '{status, roots: [.roots[] | {root, location, before: .before.version_id, after: .after.version_id}]}' <<<"$record" >&2
+    [ "$(jq -r .status <<<"$record")" = applied ] || { log "the record says $(jq -r .status <<<"$record"), not applied"; rc=1; }
+    v="$(jq -r '.roots[] | select(.root == "one") | .after.version_id' <<<"$record")"
+    [ "$v" = "$(gcs_curl "storage/v1/b/$bucket/o/one%2Fdefault.tfstate" | jq -r .generation)" ] || { log "one's version after, $v, is not its live generation"; rc=1; }
+    [ -n "$(jq -r '.roots[] | select(.root == "one") | .before.version_id // empty' <<<"$record")" ] || { log "the record names no version of one before"; rc=1; }
+    snaps=" $(az_snapshots "$container" two.tfstate | tr '\n' ' ') "
+    for v in $(jq -r '.roots[] | select(.root == "two") | .before.version_id, .after.version_id' <<<"$record"); do
+      case "$snaps" in *" $v "*) ;; *) log "two's version $v is not a snapshot Azurite holds ($snaps)"; rc=1 ;; esac
+    done
+    cmp -s <(az_curl "$container/two.tfstate?snapshot=$(jq -r '.roots[] | select(.root == "two") | .after.version_id' <<<"$record")") <(az_curl "$container/two.tfstate") || { log "two's version after is not the blob the migration left"; rc=1; }
+  fi
+  [ $rc = 0 ] || sed 's/^/[blobstate] /' "$work/stub/stub.log" >&2 2>/dev/null || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "moved went from a gcs state to an azurerm state under both locks, approved by digest, with each version before and after recorded"
+  return $rc
+}
+
+claim_cloud_roles() {
+  # A repo with four roots, envs/dev/gcs and envs/prod/gcs on gcs backends on
+  # fake-gcs-server and envs/dev/az and envs/prod/az on azurerm backends on
+  # Azurite over Entra ID (use_oidc, use_azuread_auth), and terragucci.yml
+  # giving oidc.gcp.roles and oidc.azure.roles a service account and a
+  # client for envs/dev/** and for envs/prod/**. config check lists what
+  # each reaches. init writes the pipeline, and the apply job's
+  # TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS and TERRAGUCCI_ROOT_AZURE_CLIENTS
+  # exports run before tf-apply of the dev roots, then of the prod roots, in
+  # the CI image with the job's own identity (the apply service account and
+  # client). The stand-ins for Google's STS and IAM and for Entra ID record
+  # which service account each token impersonates and which client each
+  # token is for: the dev wave's are the dev ones alone, the prod wave's the
+  # prod ones, and never the job's.
+  # BREAK: the exports are left out, so every root takes the job's identity.
+  log() { echo "[smoke cloud-roles] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 bucket="tg-roles-$STAMP" container="tg-roles-$STAMP" env got exports out code
+  local -a BLOB_STATE_ENV=()
+  local job_sa="tg-apply@smoke-project.iam.gserviceaccount.com"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  { blob_state_up "$work" gcs && gcs_bucket "$bucket" true && blob_state_up "$work" azurite && az_container "$container"; } || { log "could not make the bucket and the container"; drop_work "$work"; return 1; }
+  for env in dev prod; do
+    mkdir -p "$work/wave/envs/$env/gcs" "$work/wave/envs/$env/az"
+    { gcs_backend "$bucket" "$env"; printf '\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$env"; } > "$work/wave/envs/$env/gcs/main.tf"
+    { az_backend "$container" "$env.tfstate" "use_oidc             = true" "use_azuread_auth     = true"; printf '\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$env"; } > "$work/wave/envs/$env/az/main.tf"
+  done
+  cat > "$work/wave/terragucci.yml" <<YML
+binary: tofu
+forge: forgejo
+reports:
+  bucket: s3://$REPORT_BUCKET
+  endpoint: http://floci:4566
+  prefix: cloud-roles-$STAMP
+oidc:
+  gcp:
+    workload_identity_provider: projects/1/locations/global/workloadIdentityPools/smoke/providers/forge
+    plan_service_account: tg-plan@smoke-project.iam.gserviceaccount.com
+    apply_service_account: $job_sa
+    roles:
+      "envs/dev/**": { plan: dev-plan@smoke-project.iam.gserviceaccount.com, apply: dev-apply@smoke-project.iam.gserviceaccount.com }
+      "envs/prod/**": { plan: prod-plan@smoke-project.iam.gserviceaccount.com, apply: prod-apply@smoke-project.iam.gserviceaccount.com }
+  azure:
+    tenant_id: $BLOB_STATE_TENANT
+    subscription_id: 00000000-0000-4000-8000-000000000001
+    plan_client_id: client-plan
+    apply_client_id: client-apply
+    roles:
+      "envs/dev/**": { plan: client-dev-plan, apply: client-dev-apply }
+      "envs/prod/**": { plan: client-prod-plan, apply: client-prod-apply }
+YML
+  audit_origin "$work"
+  out="$(cd "$work/wave" && "$TERRAGUCCI" config check 2>&1)" || { printf '%s\n' "$out" >&2; log "config check failed"; rc=1; }
+  printf '%s\n' "$out" >&2
+  [ $rc = 0 ] && { grep -qF "prod-apply@smoke-project.iam.gserviceaccount.com (gcp, apply, envs/prod/**): gs://$bucket/prod" <<<"$out" && grep -qF "client-dev-apply (azure, apply, envs/dev/**): dev.tfstate" <<<"$out" || { log "config check does not list what each service account and client reaches"; rc=1; }; }
+  if [ $rc = 0 ]; then
+    (cd "$work/wave" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; rc=1; }
+    exports="$(grep -ho "export TERRAGUCCI_ROOT_\(GCP_SERVICE_ACCOUNTS\|AZURE_CLIENTS\)='[^']*'" "$work/wave/.forgejo/workflows/terragucci.yml" | grep -- '-apply' | sort -u)"
+    printf '%s\n' "$exports" >&2
+    [ "$(wc -l <<<"$exports" | tr -d ' ')" = 2 ] || { log "the pipeline does not export the apply stage's service accounts and clients by root glob"; rc=1; }
+    [ -z "${BREAK:-}" ] || exports=""
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "pipeline" || true
+  fi
+  if [ $rc = 0 ]; then
+    # The job's own identity, as oidc.gcp and oidc.azure set it for the apply stage, with STS, IAM and Entra ID at the stand-in.
+    printf '{"type":"external_account","audience":"//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/smoke/providers/forge","subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":"http://127.0.0.1:8181/v1/token","service_account_impersonation_url":"http://127.0.0.1:8181/v1/projects/-/serviceAccounts/%s:generateAccessToken","credential_source":{"file":"/stub/forge-token"}}\n' "$job_sa" > "$work/stub/gcp-creds.json"
+    printf '%s\n' "$exports" > "$work/stub/exports.sh"
+    BLOB_STATE_ENV=(-e GOOGLE_OAUTH_ACCESS_TOKEN= -e GOOGLE_APPLICATION_CREDENTIALS=/stub/gcp-creds.json -e ARM_USE_OIDC=true -e "ARM_TENANT_ID=$BLOB_STATE_TENANT" -e ARM_CLIENT_ID=client-apply -e ARM_OIDC_TOKEN_FILE_PATH=/stub/forge-token -e ARM_ACCESS_KEY=)
+    for env in dev prod; do
+      : > "$work/stub/gcp-accounts.log"; : > "$work/stub/azure-clients.log"
+      code=0
+      # shellcheck disable=SC2016 # expanded by the container's shell
+      blob_state_in "$work" sh -c '. /stub/exports.sh; terragucci stage tf-apply --wave 1 --layers "envs/$0/gcs,envs/$0/az" --binary tofu --gate never' "$env" > "$work/$env.log" 2>&1 || code=$?
+      clean_mounted "$work/wave" "$image"
+      [ "$code" = 0 ] || { cat "$work/$env.log" >&2; log "the $env wave exited $code"; rc=1; break; }
+      grep "^envs/$env/.*: state" "$work/$env.log" >&2
+      got="$(sort -u "$work/stub/gcp-accounts.log" | tr '\n' ' ')"
+      log "the $env wave impersonated: $got"
+      [ "$got" = "$env-apply@smoke-project.iam.gserviceaccount.com " ] || { log "the $env roots did not impersonate $env-apply alone"; rc=1; }
+      got="$(sort -u "$work/stub/azure-clients.log" | tr '\n' ' ')"
+      log "the $env wave's Entra ID tokens were for: $got"
+      [ "$got" = "client-$env-apply " ] || { log "the $env roots did not take client-$env-apply alone"; rc=1; }
+    done
+  fi
+  [ $rc = 0 ] || sed 's/^/[blobstate] /' "$work/stub/stub.log" >&2 2>/dev/null || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "each environment's roots took its own service account and client, from the pipeline's exports, and never the job's"
+  return $rc
+}
+
 # ── the plan note's diff ──────────────────────────────────────────────────
 
 claim_note_diff() {
@@ -19789,6 +20377,12 @@ query-sql            weight=200
 state-versions       weight=150
 state-roles          weight=150
 state-export         weight=200
+gcs-state            gcs! weight=150
+azurerm-state        azurite! weight=150
+gcs-unlock           gcs! weight=150
+azurerm-unlock       azurite! weight=150
+blob-migrate         gcs! azurite! weight=200
+cloud-roles          gcs! azurite! weight=200
 state-edges          weight=250
 migrate-split        weight=200
 cdktn-migrate        weight=200

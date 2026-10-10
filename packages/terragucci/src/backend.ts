@@ -286,7 +286,7 @@ function gcsObject(c: Record<string, unknown>, ws: string, env: NodeJS.ProcessEn
 }
 
 /** Each Azure cloud's storage suffix and Entra ID, by the azurerm backend's `environment`. */
-const AZURE_CLOUDS: Record<string, { storage: string; authority: string }> = {
+const CLOUD_ENDPOINTS: Record<string, { storage: string; authority: string }> = {
   public: { storage: "core.windows.net", authority: AZURE_AUTHORITY },
   china: { storage: "core.chinacloudapi.cn", authority: "https://login.chinacloudapi.cn" },
   usgovernment: { storage: "core.usgovcloudapi.net", authority: "https://login.microsoftonline.us" },
@@ -305,7 +305,7 @@ function azureObject(c: Record<string, unknown>, ws: string, env: NodeJS.Process
   const base = str(c.key);
   if (!account || !container || !base) return { backend: "azurerm", unsupported: "the azurerm backend's storage_account_name, container_name or key is not in the configuration init recorded" };
   const key = ws === "default" ? base : `${base}env:${ws}`;
-  const cloud = AZURE_CLOUDS[str(c.environment) ?? env.ARM_ENVIRONMENT ?? "public"];
+  const cloud = CLOUD_ENDPOINTS[str(c.environment) ?? env.ARM_ENVIRONMENT ?? "public"];
   const metadataHost = str(c.metadata_host) ?? env.ARM_METADATA_HOSTNAME ?? env.ARM_METADATA_HOST;
   if (!cloud && !metadataHost) return { backend: "azurerm", unsupported: `the azurerm backend's environment ${str(c.environment) ?? env.ARM_ENVIRONMENT} is not public, china or usgovernment, and it names no metadata_host` };
   const accessKey = str(c.access_key) ?? env.ARM_ACCESS_KEY;
@@ -468,7 +468,7 @@ function gcsStore(o: GcsState, fetchFn?: StoreFetch): StateStore {
 }
 
 /** The metadata an azurerm backend keeps a lock's info in, base64 JSON, on the leased blob. */
-export const AZURE_LOCK_META = "terraformlockid";
+export const LOCK_METADATA = "terraformlockid";
 
 /**
  * The account's blob endpoint: the configuration's, or `https://<account>.blob.<suffix>`
@@ -526,7 +526,7 @@ async function azureStore(o: AzureState, fetchFn: StoreFetch = fetch as unknown 
     heldLock: async () => {
       const head = await client.head(o.key);
       if (!head.exists || head.leaseState !== "leased") return undefined;
-      const meta = head.metadata[AZURE_LOCK_META];
+      const meta = head.metadata[LOCK_METADATA];
       const info = meta ? Buffer.from(meta, "base64").toString("utf-8") : "";
       return { id: lockId(info), info };
     },
@@ -536,7 +536,7 @@ async function azureStore(o: AzureState, fetchFn: StoreFetch = fetch as unknown 
       if (!(await client.head(o.key)).exists) await client.putBlob(o.key, "", "application/json", { ifNoneMatch: true });
       if (!(await client.lease(o.key, "acquire", id))) return false;
       leaseId = id;
-      await client.setMetadata(o.key, { [AZURE_LOCK_META]: Buffer.from(info).toString("base64") }, id);
+      await client.setMetadata(o.key, { [LOCK_METADATA]: Buffer.from(info).toString("base64") }, id);
       return true;
     },
     unlock: async () => {

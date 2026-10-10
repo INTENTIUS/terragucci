@@ -1,10 +1,10 @@
 ---
 title: Release a state lock a killed job left
 description: When a job is killed mid-apply, free the backend's state lock it left with terragucci unlock-state, which checks the job is gone, waits for an approval of that lock, and records the release.
-claims: [unlock-state]
+claims: [unlock-state, gcs-unlock, azurerm-unlock]
 prompt: |
   Read https://intentius.io/terragucci/guides/release-a-state-lock/.
-  A plan or apply in this repo fails because the state of a root I name is locked. Read the lock file for that root and tell me its ID, who took it and when, and which of the forge's runs that began before then are still running.
+  A plan or apply in this repo fails because the state of a root I name is locked. Read the lock for that root (a lock file, a gcs lock object, or an azurerm blob lease) and tell me its ID, who took it and when, and which of the forge's runs that began before then are still running.
   Do not run `terragucci unlock-state`, `force-unlock` or any state command, and do not delete the lock file.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -21,7 +21,15 @@ When a runner kills a job mid-apply (a timeout or a cancelled run), the binary n
 | an approval of its ID | a release only the person typing agreed to, or one of a newer hold taken since |
 | a record on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) | a release nobody can find later; the [audit trail](/terragucci/reference/audit-trail/) lists it as `unlock` |
 
-It works on the lock file an `s3` backend takes with `use_lockfile = true`. A comment never runs it. With [`binary: choudoufu`](/terragucci/concepts/glossary/#choudoufu) and a record store, a killed job holds no lock, so there is none to release ([locking with choudoufu](/terragucci/concepts/locking-and-staleness/#with-choudoufu)).
+It reads the lock where the backend keeps it:
+
+| Backend | Lock | ID |
+|---|---|---|
+| `s3` with `use_lockfile = true` | the lock file `<key>.tflock` | the ID in the file |
+| `gcs` | the lock object `<prefix>/<workspace>.tflock` | the object's generation, as the binary prints it |
+| `azurerm` | a lease on the state blob, with the lock info in its metadata | the lease's ID |
+
+A comment never runs it. With [`binary: choudoufu`](/terragucci/concepts/glossary/#choudoufu) and a record store, a killed job holds no lock, so there is none to release ([locking with choudoufu](/terragucci/concepts/locking-and-staleness/#with-choudoufu)).
 
 ## Free the state
 
