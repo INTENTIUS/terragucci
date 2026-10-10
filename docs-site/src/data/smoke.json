@@ -1932,6 +1932,38 @@
       "commit": "7c2ff19c"
     },
     {
+      "claim": "tg-ephemeral-pr",
+      "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "cdktn-ephemeral",
+      "says": "with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "cdktn-generate",
+      "says": "with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "cdktn-linked",
+      "says": "a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,

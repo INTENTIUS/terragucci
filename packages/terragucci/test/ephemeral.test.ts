@@ -88,6 +88,20 @@ esac
 exit 0
 `;
 
+// Terragrunt: --version fails (discovery walks the files); `run --working-dir <unit> -- init` records the
+// backend the unit's key gives, as root.hcl reads the suffix (TG_NO_SUFFIX: it does not), then runs the binary.
+const FAKE_TG = `#!/usr/bin/env bash
+[ "$1" = run ] || exit 1
+while [ "$1" != --working-dir ]; do shift; done; unit="$2"
+while [ "$1" != -- ]; do shift; done; shift
+cd "$unit" || exit 1
+suffix="\${TERRAGUCCI_EPHEMERAL_SUFFIX:-}"; [ -n "\${TG_NO_SUFFIX:-}" ] && suffix=""
+echo "$unit \${TERRAGUCCI_EPHEMERAL_SUFFIX:-}" >> "$(dirname "$LOG")/tg.log"
+mkdir -p .terraform
+printf '{"backend":{"type":"s3","config":{"bucket":"state","key":"x/%s/terraform%s.tfstate"}}}' "$unit" "$suffix" > .terraform/terraform.tfstate
+exec "$TG_TF_PATH" -chdir="$PWD" "$@"
+`;
+
 const change = (action: "create" | "delete") =>
   JSON.stringify({ resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: [action], before: action === "delete" ? { input: "1" } : null, after: action === "create" ? { input: "1" } : null, after_unknown: {} } }] });
 
@@ -133,7 +147,13 @@ describe("a pull request's copy", () => {
     const out: string[] = [];
     return { work, origin, bin, log: join(dir, "apply.log"), args: join(dir, "args.log"), head, out };
   }
-  const lines = (f: string): string[] => (existsSync(f) ? readFileSync(f, "utf-8").trim().split("\n") : []);
+  const lines = (f: string): string[] => (existsSync(f) ? readFileSync(f, "utf-8").trim().split("\n").filter(Boolean) : []);
+  const fakeTerragrunt = (s: ReturnType<typeof setup>): string => {
+    const f = join(s.log, "..", "terragrunt");
+    writeFileSync(f, FAKE_TG);
+    chmodSync(f, 0o755);
+    return f;
+  };
   const done = (origin: string): EphemeralRecord[] => parseEphemeral(git(origin, "show", `chant/lifecycle:${EPHEMERAL_DONE}`));
   const opts = (s: ReturnType<typeof setup>, extra: Record<string, unknown> = {}) => ({ binary: s.bin, env: { ...process.env, GITHUB_ACTOR: "dev" }, log: (l: string) => s.out.push(l), ...extra });
 
@@ -219,14 +239,73 @@ describe("a pull request's copy", () => {
     expect(readLive(s.work).get(7)).toMatchObject({ destroyFailed: true });
   });
 
-  it("is a config error where no copy can be made: no ephemeral roots, a Terragrunt repo, synth", async () => {
+  it("is a config error where no copy can be made: no ephemeral roots", async () => {
     const none = setup("gate: never\n");
     await expect(ephemeralUp(none.work, { ...opts(none), pr: 7, head: none.head })).rejects.toThrow(/names no ephemeral roots/);
-    const tg = setup('gate: never\nephemeral:\n  roots: ["preview/*"]\n');
-    write(tg.work, { "root.hcl": "" });
-    await expect(ephemeralUp(tg.work, { ...opts(tg), pr: 7, head: tg.head })).rejects.toThrow(/a Terragrunt unit's state key comes from its remote_state block/);
-    const synth = setup('gate: never\nsynth: npx cdktn synth\nephemeral:\n  roots: ["preview/*"]\n');
-    await expect(ephemeralUp(synth.work, { ...opts(synth), pr: 7, head: synth.head })).rejects.toThrow(/with synth the roots are written by the command/);
+  });
+
+  it("with synth, runs the command in the head's checkout before it finds the roots, and again in the applied commit's before a destroy", async () => {
+    // The command writes out/stacks/app/cdk.tf.json from app.txt; git holds neither out/ nor a root.
+    const synth = "mkdir -p out/stacks/app && echo synth >> \"$SYNTH_LOG\" && printf '{\"terraform\":{\"backend\":{\"s3\":{\"bucket\":\"state\",\"key\":\"x/app.tfstate\"}}}}' > out/stacks/app/cdk.tf.json";
+    const s = setup(`gate: never\nsynth: ${JSON.stringify(synth)}\nephemeral:\n  roots: ["out/stacks/*"]\n`);
+    const synthLog = join(s.log, "..", "synth.log");
+    vi.stubEnv("SYNTH_LOG", synthLog);
+    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
+    expect(lines(synthLog)).toEqual(["synth"]);
+    expect(lines(s.args).find((l) => l.includes(" init "))).toContain("-backend-config=key=x/app-pr-7.tfstate");
+    expect(done(s.origin)[0].roots).toEqual([{ root: "out/stacks/app", location: "s3://state/x/app-pr-7.tfstate", result: "applied" }]);
+    expect(await ephemeralDown(s.work, { ...opts(s), pr: 7, reason: "closed", now: T(1) })).toBe(0);
+    expect(lines(synthLog)).toEqual(["synth", "synth"]);
+    expect(done(s.origin)[1]).toMatchObject({ result: "destroyed" });
+    // A synth that fails copies nothing, and says so.
+    const broken = setup('gate: never\nsynth: "exit 3"\nephemeral:\n  roots: ["out/stacks/*"]\n');
+    expect(await ephemeralUp(broken.work, { ...opts(broken), pr: 7, head: broken.head, now: T(0) })).toBe(1);
+    expect(broken.out.join("\n")).toContain("the synth command failed, so there are no roots to copy");
+    expect(lines(broken.args)).toEqual([]);
+  });
+
+  it("in a Terragrunt repo, prepares each unit through Terragrunt with the suffix set, and refuses a unit whose key does not take it", async () => {
+    const s = setup('gate: never\nterragrunt: {}\nephemeral:\n  roots: ["live/preview/*"]\n');
+    const tgBin = fakeTerragrunt(s);
+    git(s.work, "checkout", "-q", "-b", "units");
+    write(s.work, {
+      "root.hcl": `remote_state {\n  backend = "s3"\n  config = {\n    bucket = "state"\n    key    = "x/\${path_relative_to_include()}/terraform\${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate"\n  }\n}\n`,
+      "live/preview/net/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n',
+      "live/preview/app/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\ndependency "net" {\n  config_path = "../net"\n}\n',
+      "live/prod/app/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n',
+    });
+    git(s.work, "add", "-A");
+    git(s.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "units");
+    const head = git(s.work, "rev-parse", "HEAD").trim();
+    git(s.work, "push", "-q", "-f", "origin", "HEAD:refs/pull/7/head");
+    git(s.work, "push", "-q", "-f", "origin", "HEAD:main");
+    const env = { ...process.env, GITHUB_ACTOR: "dev", TERRAGUCCI_TERRAGRUNT: tgBin };
+    expect(await ephemeralUp(s.work, { ...opts(s), env, pr: 7, head, now: T(0) })).toBe(0);
+    // net before app, which reads it; never live/prod/app; each prepared with the suffix, and never given a -backend-config.
+    const prepared = lines(join(s.log, "..", "tg.log"));
+    expect(prepared).toEqual(["live/preview/net -pr-7", "live/preview/app -pr-7"]);
+    expect(lines(s.args).some((l) => l.includes("-backend-config"))).toBe(false);
+    expect(lines(s.log)).toEqual(["net-create", "app-create"]);
+    expect(done(s.origin)[0].roots.map((r) => r.location)).toEqual(["s3://state/x/live/preview/net/terraform-pr-7.tfstate", "s3://state/x/live/preview/app/terraform-pr-7.tfstate"]);
+    expect(await ephemeralDown(s.work, { ...opts(s), env, pr: 7, reason: "closed", now: T(1) })).toBe(0);
+    expect(lines(s.log).slice(2)).toEqual(["app-destroy", "net-destroy"]);
+
+    // A key that does not read the suffix: refused before anything plans, as a config error naming the file.
+    write(s.work, { "root.hcl": 'remote_state {\n  backend = "s3"\n  config = {\n    bucket = "state"\n    key    = "x/${path_relative_to_include()}/terraform.tfstate"\n  }\n}\n' });
+    git(s.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "no suffix");
+    const bare = git(s.work, "rev-parse", "HEAD").trim();
+    git(s.work, "push", "-q", "-f", "origin", "HEAD:refs/pull/8/head");
+    const before = lines(s.args).length;
+    await expect(ephemeralUp(s.work, { ...opts(s), env, pr: 8, head: bare, now: T(2) })).rejects.toThrow(/ephemeral: the remote_state block in root.hcl does not read TERRAGUCCI_EPHEMERAL_SUFFIX, so a copy would plan at the unit's own key; make the remote_state block's key read the suffix/);
+    expect(lines(s.args).length).toBe(before);
+    // A key the file names but Terragrunt does not give the binary (the variable read elsewhere): refused once prepared.
+    write(s.work, { "root.hcl": '# TERRAGUCCI_EPHEMERAL_SUFFIX is read nowhere\nremote_state {\n  backend = "s3"\n  config = {\n    bucket = "state"\n    key    = "x/${path_relative_to_include()}/terraform.tfstate"\n  }\n}\n' });
+    git(s.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "suffix in a comment");
+    const comment = git(s.work, "rev-parse", "HEAD").trim();
+    git(s.work, "push", "-q", "-f", "origin", "HEAD:refs/pull/9/head");
+    const planned = lines(s.args).filter((l) => / (plan|apply) /.test(l)).length;
+    await expect(ephemeralUp(s.work, { ...opts(s), env: { ...env, TG_NO_SUFFIX: "1" }, pr: 9, head: comment, now: T(3) })).rejects.toThrow(/live\/preview\/net: its s3 backend's key is x\/live\/preview\/net\/terraform\.tfstate with TERRAGUCCI_EPHEMERAL_SUFFIX set, which is the unit's own state, so its copy is refused/);
+    expect(lines(s.args).filter((l) => / (plan|apply) /.test(l)).length).toBe(planned);
   });
 
   it("reads its settings from the base, never the pull request's own terragucci.yml", async () => {
@@ -247,8 +326,9 @@ describe("ephemeral in terragucci.yml", () => {
     expect(() => validateConfig({ ephemeral: { roots: ["a"], ttl: "2w" } }, "t")).toThrow("config.ephemeral.ttl must be a duration");
     expect(() => validateConfig({ ephemeral: { roots: ["a"], sweep: 2 } }, "t")).toThrow("config.ephemeral.sweep must be a whole number of minutes from 5 to 60");
     expect(() => validateConfig({ ephemeral: { roots: ["a"], workspace: "x" } }, "t")).toThrow("config.ephemeral.workspace is not a setting");
-    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, ephemeral: { roots: ["a"] } }, "t")).toThrow("config.ephemeral: a Terragrunt unit's state key");
-    expect(() => validateConfig({ synth: "npx cdktn synth", ephemeral: { roots: ["a"] } }, "t")).toThrow("config.ephemeral: with synth");
+    // Every binary and repo shape takes it: a Terragrunt repo and synth alike.
+    expect(validateConfig({ terragrunt: { version: "1.1.0" }, ephemeral: { roots: ["a"] } }, "t")).toMatchObject({ ephemeral: { roots: ["a"] } });
+    expect(validateConfig({ synth: "npx cdktn synth", ephemeral: { roots: ["a"] } }, "t")).toMatchObject({ synth: "npx cdktn synth" });
     expect(() => validateConfig({ forge: "gitlab", gitlab: { token: "protected" }, comments: "*/5 * * * *", ephemeral: { roots: ["a"] } }, "t")).toThrow("config.ephemeral: a merge request pipeline applies the copy");
   });
 });
@@ -295,14 +375,25 @@ describe("the ephemeral jobs", () => {
     expect(doc.drift.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "ephemeral"');
   });
 
-  it("renders as before without it, and is refused in a Terragrunt repo, with synth and on GitLab with a protected token", () => {
+  it("renders as before without it, renders in a Terragrunt repo and with synth, and is refused on GitLab with a protected token", () => {
     for (const forge of ["github", "forgejo", "gitlab"] as const) {
       const plain = pipeline(forge, { ephemeral: undefined });
       expect(plain.content).not.toContain("ephemeral");
       expect((plain.extra ?? []).some((f) => f.path.includes("ephemeral"))).toBe(false);
     }
-    expect(() => pipeline("forgejo", { terragrunt: { installs: [] } })).toThrow(/ephemeral: a Terragrunt unit's state key/);
-    expect(() => pipeline("github", { synth: "npx cdktn synth" })).toThrow(/ephemeral: with synth/);
+    // Terragrunt: the job points Terragrunt's caches where every Terragrunt job does, and maps each unit to its apply role.
+    const tg = { installs: [], version: "0.99.1", parallelism: 4, exclude: [], credentials: { "live/**": { plan: "arn:aws:iam::1:role/tp", apply: "arn:aws:iam::1:role/ta" } } };
+    for (const forge of ["github", "forgejo"] as const) {
+      const doc = body(pipeline(forge, { terragrunt: tg }).content);
+      const run = doc.jobs.ephemeral.steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+      expect(run).toMatch(/export TG_DOWNLOAD_DIR=[\s\S]*TERRAGUCCI_PHASE=apply[\s\S]*terragucci ephemeral up/);
+      expect(run).toContain("arn:aws:iam::1:role/ta");
+      expect(run).not.toContain("arn:aws:iam::1:role/tp");
+    }
+    const gl = JSON.stringify(body(pipeline("gitlab", { terragrunt: tg }).content).ephemeral.script);
+    expect(gl).toMatch(/TG_DOWNLOAD_DIR.*terragucci ephemeral up/);
+    // synth: the job runs terragucci ephemeral, which runs the command in the head's checkout.
+    expect(body(pipeline("github", { synth: "npx cdktn synth" }).content).jobs.ephemeral).toBeDefined();
     expect(() => pipeline("gitlab", { gitlabToken: "protected", comments: "*/5 * * * *" })).toThrow(/ephemeral: a merge request pipeline/);
   });
 });

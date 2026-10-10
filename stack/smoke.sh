@@ -379,7 +379,11 @@ tg-pr-plan|a pull request on the Terragrunt example, five waves and the tips job
 github-drift-issue|on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another|
 runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|
 ephemeral-pr|with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed|
-ephemeral-ttl|with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired|'
+ephemeral-ttl|with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired|
+tg-ephemeral-pr|in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record|
+cdktn-ephemeral|with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record|
+cdktn-generate|with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend|
+cdktn-linked|a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1012,10 +1016,15 @@ ephemeral_wait() { # repo, run id -> waits for the run to finish; sets RUN_STATU
 }
 
 ephemeral_open() { # name, repo -> sets EPH_PR and EPH_HEAD once the pull request's copy applied
-  local i run=""
   echo "eph $RANDOM" > "$work/tree/canary/one/rev.txt"
-  EPH_HEAD="$(push_tree "$work/tree" "$2" change "$1: change canary/one")" || return 1
-  EPH_PR="$(pr_open "$2" change "$1: change canary/one")" || return 1
+  ephemeral_pr "$1" "$2" "$1: change canary/one"
+}
+
+ephemeral_pr() { # name, repo, title -> pushes $work/tree as the change branch, opens a pull request; sets EPH_PR and EPH_HEAD once its copy applied
+  local i run=""
+  EPH_HEAD="$(push_tree "$work/tree" "$2" change "$3")" || return 1
+  git -C "$work/tree" checkout -q main
+  EPH_PR="$(pr_open "$2" change "$3")" || return 1
   for i in $(seq 1 60); do
     run="$(ephemeral_runs "$2" "$EPH_HEAD" | head -1)"
     [ -n "$run" ] && break
@@ -1129,6 +1138,258 @@ claim_ephemeral_ttl() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the copy of open pull request $EPH_PR was destroyed by the sweep once its TTL passed, on the record"
+  return $rc
+}
+
+ephemeral_close() { # repo -> closes pull request $EPH_PR and waits for the run its closed event starts
+  local before after i run=""
+  before="$(ephemeral_runs "$1" "$EPH_HEAD" | wc -l | tr -d ' ')"
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$1/pulls/$EPH_PR" || { log "pull request $EPH_PR did not close"; return 1; }
+  for i in $(seq 1 20); do
+    after="$(ephemeral_runs "$1" "$EPH_HEAD" | wc -l | tr -d ' ')"
+    [ "$after" -gt "$before" ] && { run="$(ephemeral_runs "$1" "$EPH_HEAD" | head -1)"; break; }
+    sleep 3
+  done
+  if [ -n "$run" ]; then ephemeral_wait "$1" "$run"; else log "no run started when pull request $EPH_PR closed"; fi
+}
+
+ephemeral_destroyed() { # repo -> 0 when done.jsonl records the destroy of $EPH_PR's copy for the close
+  local done_lines
+  done_lines="$(ephemeral_done "$1")"
+  jq -c '{kind, pr, result, reason, roots: [.roots[].location]}' <<<"$done_lines" >&2 || true
+  jq -e --argjson pr "$EPH_PR" 'select(.kind == "ephemeral-destroy" and .pr == $pr and .reason == "closed" and .result == "destroyed" and (.planDigest | test("sha256:")))' <<<"$done_lines" >/dev/null
+}
+
+state_count() { # key -> how many resource instances the state at key in floci holds; empty when there is no state
+  curl -fsS "$FLOCI/shop-terraform-state/$1" 2>/dev/null | jq -r '[.resources[]?.instances[]?] | length' 2>/dev/null || true
+}
+
+claim_tg_ephemeral_pr() {
+  # The Terragrunt gated-waves fixture under gate: never, its root.hcl key
+  # reading TERRAGUCCI_EPHEMERAL_SUFFIX, and ephemeral naming live/canary/*.
+  # The push to main applies every unit at its own key. A pull request that
+  # changes live/canary/one: the default branch's ephemeral job prepares the
+  # unit through Terragrunt with the suffix set and applies its copy at
+  # live/canary/one/terraform-pr-<n>.tfstate, and the unit's own state keeps
+  # rev 1. Closing the pull request destroys the copy through a planned
+  # destroy recorded on chant/lifecycle with the reason closed.
+  # BREAK: root.hcl's key does not read the suffix, so the ephemeral job
+  # refuses the copy as a config error and the pull request gets none.
+  log() { echo "[smoke tg-ephemeral-pr] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-ephemeral-pr" name=tg-ephemeral-pr sha n logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo "$name" tg-gated-waves || { drop_work "$work"; return 1; }
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && mv "$work/tree/terragucci.yml.bak" "$work/"
+  if [ -z "${BREAK:-}" ]; then
+    perl -pi -e 's#/terraform\.tfstate"#/terraform\${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate"#' "$work/tree/root.hcl"
+    grep -q 'TERRAGUCCI_EPHEMERAL_SUFFIX' "$work/tree/root.hcl" || { log "root.hcl's key does not read the suffix"; drop_work "$work"; return 1; }
+  fi
+  printf 'ephemeral:\n  roots: ["live/canary/*"]\n  ttl: 24h\n  sweep: 60\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && TERRAGUCCI_TERRAGRUNT=/nonexistent/terragrunt "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  grep -q "terragucci ephemeral up" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no ephemeral job"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "$name: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  [ $rc = 0 ] && [ "$(tg_gated_applied "$name")" != "" ] || { log "the push to main applied no unit"; rc=1; }
+  if [ $rc = 0 ]; then
+    echo "eph $RANDOM" > "$work/tree/live/canary/one/rev.txt"
+    ephemeral_pr "$name" "$repo" "$name: change live/canary/one" || rc=1
+    [ $rc = 0 ] || [ -z "${EPH_PR:-}" ] || { logs="$(run_logs "$repo" "$(ephemeral_runs "$repo" "$EPH_HEAD" | head -1)" 2>/dev/null || true)"; grep -m3 -E 'TERRAGUCCI_EPHEMERAL_SUFFIX|refused' <<<"$logs" >&2 || true; }
+  fi
+  if [ $rc = 0 ]; then
+    n="$(state_count "$name/live/canary/one/terraform-pr-$EPH_PR.tfstate")"
+    log "pull request $EPH_PR open: its copy holds ${n:-no state} resources at $name/live/canary/one/terraform-pr-$EPH_PR.tfstate"
+    [ "${n:-0}" -ge 1 ] || { log "the pull request got no copy of live/canary/one"; rc=1; }
+    [ "$(curl -fsS "$FLOCI/shop-terraform-state/$name/live/canary/one/terraform.tfstate" | jq -r '[.resources[]?.instances[]?.attributes.input | if type == "object" then .value else . end] | first // empty')" = 1 ] \
+      || { log "the copy's apply touched live/canary/one's own state"; rc=1; }
+    [ -z "$(state_count "$name/live/fleet/two/terraform-pr-$EPH_PR.tfstate")" ] || { log "live/fleet/two, which ephemeral does not name, got a copy"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    ephemeral_close "$repo" || rc=1
+    n="$(state_count "$name/live/canary/one/terraform-pr-$EPH_PR.tfstate")"
+    log "pull request $EPH_PR closed: its copy holds ${n:-no state} resources"
+    [ "$n" = 0 ] || { log "closing pull request $EPH_PR did not destroy its copy"; rc=1; }
+    ephemeral_destroyed "$repo" || { log "chant/lifecycle records no destroy of the copy for the close"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $EPH_PR got its own copy of the Terragrunt unit live/canary/one beside the unit's own state, and closing it destroyed the copy on the record"
+  return $rc
+}
+
+claim_cdktn_ephemeral() {
+  # The CDK Terrain app of cdktn-synth with each stack's state in floci under
+  # cdktn-ephemeral/, gate: never, and ephemeral naming
+  # cdktf.out/stacks/dev. The push to main synthesizes and applies both
+  # stacks. A pull request that changes the size of dev in main.js: the
+  # default branch's ephemeral job runs synth in the head's checkout and
+  # applies its copy of dev at cdktn-ephemeral/dev-pr-<n>.tfstate with the
+  # new size, while dev's own state keeps size 1. Closing the pull request
+  # runs synth on the applied commit again and destroys the copy, recorded
+  # with the reason closed.
+  # BREAK: after init, terragucci.yml's synth becomes true, which writes no
+  # stack, so the ephemeral job finds no root to copy (the pipeline's own
+  # jobs keep the synth init wrote into them).
+  log() { echo "[smoke cdktn-ephemeral] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cdktn-ephemeral" name=cdktn-ephemeral sha n rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo "$name" || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  cdktn_tree "$name" "$(printf 'binary: tofu\nforge: forgejo\ngate: never\nsynth: npm ci --no-audit --no-fund && npx cdktn synth\nephemeral:\n  roots: ["cdktf.out/stacks/dev"]\n  ttl: 24h\n  sweep: 60\n')" || { drop_work "$work"; return 1; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  grep -q "terragucci ephemeral up" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no ephemeral job"; drop_work "$work"; return 1; }
+  [ -z "${BREAK:-}" ] || perl -pi -e 's#^synth: .*#synth: "true"#' "$work/tree/terragucci.yml"
+  sha="$(push_tree "$work/tree" "$repo" main "$name: two stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  [ $rc = 0 ] && { curl -fsS "$FLOCI/shop-terraform-state/$name/dev.tfstate" | jq -e '.outputs.size.value == 1' >/dev/null || { log "the push to main did not apply dev"; rc=1; }; }
+  if [ $rc = 0 ]; then
+    sed -i.bak 's/dev: 1,/dev: 2,/' "$work/tree/main.js" && mv "$work/tree/main.js.bak" "$work/"
+    grep -q 'dev: 2,' "$work/tree/main.js" || { log "main.js does not set dev's size to 2"; rc=1; }
+    [ $rc = 0 ] && { ephemeral_pr "$name" "$repo" "$name: dev holds 2" || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    n="$(state_count "$name/dev-pr-$EPH_PR.tfstate")"
+    log "pull request $EPH_PR open: its copy holds ${n:-no state} resources at $name/dev-pr-$EPH_PR.tfstate"
+    [ "${n:-0}" -ge 1 ] || { log "the pull request got no copy of dev"; rc=1; }
+    curl -fsS "$FLOCI/shop-terraform-state/$name/dev-pr-$EPH_PR.tfstate" | jq -e '.outputs.size.value == 2' >/dev/null || { log "the copy does not hold the size the pull request's app synthesizes"; rc=1; }
+    curl -fsS "$FLOCI/shop-terraform-state/$name/dev.tfstate" | jq -e '.outputs.size.value == 1' >/dev/null || { log "the copy's apply touched dev's own state"; rc=1; }
+    [ -z "$(state_count "$name/prod-pr-$EPH_PR.tfstate")" ] || { log "prod, which ephemeral does not name, got a copy"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    ephemeral_close "$repo" || rc=1
+    n="$(state_count "$name/dev-pr-$EPH_PR.tfstate")"
+    log "pull request $EPH_PR closed: its copy holds ${n:-no state} resources"
+    [ "$n" = 0 ] || { log "closing pull request $EPH_PR did not destroy its copy"; rc=1; }
+    ephemeral_destroyed "$repo" || { log "chant/lifecycle records no destroy of the copy for the close"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $EPH_PR got a copy of the synthesized stack dev at its own key, and closing it destroyed the copy on the record"
+  return $rc
+}
+
+claim_cdktn_generate() {
+  # The CDK Terrain app of cdktn-synth with synth and a generate key that
+  # gives every root an s3 backend. init and terragucci generate each refuse
+  # it as a config error that names the CDK Terrain constructs that set a
+  # backend, and generate writes nothing into the synthesized stacks.
+  # BREAK: synth is left out of terragucci.yml, so init and generate accept
+  # the generate key.
+  log() { echo "[smoke cdktn-generate] $*" >&2; }
+  local work out cfg rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cfg="$(printf 'binary: tofu\nforge: forgejo\nsynth: npm ci --no-audit --no-fund && npx cdktn synth\ngenerate:\n  backend:\n    s3: { bucket: shop-terraform-state, key: "{root}.tfstate", region: us-east-1 }\n')"
+  [ -z "${BREAK:-}" ] || cfg="$(grep -v '^synth:' <<<"$cfg")"
+  cdktn_tree "" "$cfg" || { drop_work "$work"; return 1; }
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" init 2>&1)"; then
+    log "init accepted generate with synth"; rc=1
+  else
+    grep 'generate' <<<"$out" >&2 || true
+    grep -q "config.generate: with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct (S3Backend, GcsBackend, AzurermBackend, LocalBackend" <<<"$out" || { log "init did not refuse generate naming the backend constructs"; rc=1; }
+  fi
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" generate 2>&1)"; then
+    log "generate ran with synth"; rc=1
+  else
+    grep -q "S3Backend" <<<"$out" || { log "generate did not say why: $out"; rc=1; }
+  fi
+  [ -z "$(find "$work/tree/cdktf.out" -name backend.tf)" ] || { log "generate wrote a backend.tf into a synthesized stack"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "init and generate refused generate with synth as a config error naming the CDK Terrain backend constructs"
+  return $rc
+}
+
+claim_cdktn_linked() {
+  # A CDK Terrain app of two stacks with their state in floci under
+  # cdktn-linked/: net, whose output name is known when it plans and stamp
+  # only once it applies, and app, which reads both through a
+  # DataTerraformRemoteStateS3. Both applied at rev 1; net goes to rev 2 and
+  # the app is synthesized again. tf-plan, run in the CI image with net and
+  # app as its layers, plans app on net's planned outputs, read from the
+  # synthesized cdk.tf.json: its name moves to net-2, its stamp is known
+  # after apply, the report says app read net's planned outputs with stamp
+  # unknown, and app's cdk.tf.json is as synth wrote it.
+  # BREAK: tf-plan plans app alone (--root), so net is not planned with it
+  # and app plans on net's applied state: no change.
+  log() { echo "[smoke cdktn-linked] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" name=cdktn-linked net=cdktf.out/stacks/net app=cdktf.out/stacks/app r plan sum code=0 rc=0 stack args=()
+  [ -n "${BREAK:-}" ] && args=(--root "$app")
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cdktn_tree "" "$(printf 'binary: tofu\nforge: forgejo\n')" || { drop_work "$work"; return 1; }
+  cat > "$work/tree/main.js" <<'JS'
+// Two CDK Terrain stacks: net, and app, which reads net's outputs through a
+// remote state data source. Their state is in floci under STATE.
+const { App, S3Backend, TerraformStack, TerraformResource, TerraformOutput, DataTerraformRemoteStateS3 } = require("cdktn");
+
+const STATE = "@PREFIX@";
+const REV = "1";
+const state = (id) => ({ bucket: "shop-terraform-state", key: `${STATE}/${id}.tfstate`, region: "us-east-1", usePathStyle: true });
+
+class Net extends TerraformStack {
+  constructor(scope, id) {
+    super(scope, id);
+    new S3Backend(this, state(id));
+    const rev = new TerraformResource(this, "this", { terraformResourceType: "terraform_data" });
+    rev.addOverride("input", REV);
+    new TerraformOutput(this, "name", { value: `net-${REV}` });
+    new TerraformOutput(this, "stamp", { value: rev.getStringAttribute("output") });
+  }
+}
+
+class Svc extends TerraformStack {
+  constructor(scope, id) {
+    super(scope, id);
+    new S3Backend(this, state(id));
+    const net = new DataTerraformRemoteStateS3(this, "net", state("net"));
+    new TerraformResource(this, "name", { terraformResourceType: "terraform_data" }).addOverride("input", net.getString("name"));
+    new TerraformResource(this, "stamp", { terraformResourceType: "terraform_data" }).addOverride("input", `stamp-${net.getString("stamp")}`);
+  }
+}
+
+const app = new App();
+new Net(app, "net");
+new Svc(app, "app");
+app.synth();
+JS
+  perl -pi -e "s#\@PREFIX\@#$name#" "$work/tree/main.js"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for stack in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$name/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$stack" || true
+  done
+  (cd "$work/tree" && npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; drop_work "$work"; return 1; }
+  grep -q 'data.terraform_remote_state.net.outputs.name' "$work/tree/$app/cdk.tf.json" || { log "app's cdk.tf.json does not read net's output"; drop_work "$work"; return 1; }
+  for stack in "$net" "$app"; do
+    run_copied --rm --network terragucci -v "$work/tree:/repo" -w "/repo/$stack" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $stack at rev 1"; drop_work "$work" "$image"; return 1; }
+  done
+  clean_mounted "$work/tree" "$image"
+  perl -pi -e 's#^const REV = "1";#const REV = "2";#' "$work/tree/main.js"
+  (cd "$work/tree" && npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host at rev 2"; drop_work "$work"; return 1; }
+  sum="$(shasum "$work/tree/$app/cdk.tf.json" | cut -d' ' -f1)"
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "$name: net at rev 2"
+  run_copied --rm --network terragucci -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers "$net;$app" ${args[@]+"${args[@]}"} >&2 || code=$?
+  clean_mounted "$work/tree" "$image"
+  r="$work/tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "tf-plan exited $code and wrote no report"; drop_work "$work" "$image"; return 1; }
+  plan="$(cat "$work/tree/terragucci-report/roots/$app/plan.txt" 2>/dev/null || true)"
+  grep -E 'input|known after' <<<"$plan" >&2 || true
+  grep -q '"net-1" -> "net-2"' <<<"$plan" || { log "app's plan does not move its name to net-2"; rc=1; }
+  grep -q '"stamp-1" -> (known after apply)' <<<"$plan" || { log "app's plan does not leave its stamp unknown until net applies"; rc=1; }
+  jq -e --arg net "$net" --arg app "$app" '.roots[] | select(.path == $app) | .reads == [{upstream: $net, data: "net", outputs: "planned", unknown: ["stamp"]}]' "$r" >/dev/null \
+    || { log "the report does not say app read net's planned outputs with stamp unknown: $(jq -c --arg app "$app" '.roots[] | select(.path == $app) | .reads' "$r")"; rc=1; }
+  [ "$(shasum "$work/tree/$app/cdk.tf.json" | cut -d' ' -f1)" = "$sum" ] || { log "the plan left app's cdk.tf.json changed"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app planned on net's planned outputs read from its cdk.tf.json: name net-2, stamp unknown"
   return $rc
 }
 
@@ -16576,6 +16837,10 @@ plan-lock-fmt        runner self! weight=200
 tg-pr-plan           tg self! after=tg-waves weight=300
 ephemeral-pr         runner self! weight=250
 ephemeral-ttl        runner self! weight=250
+tg-ephemeral-pr      runner self! weight=300
+cdktn-ephemeral      runner self! weight=300
+cdktn-generate       weight=60
+cdktn-linked         self! weight=90
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

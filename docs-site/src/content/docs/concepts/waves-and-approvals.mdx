@@ -52,14 +52,14 @@ A root that reads another root's state through `terraform_remote_state` goes in 
 
 The plan note lists each root planned this way and the outputs it read before they were known. A wave that read such an output plans again once the waves it reads have applied, then waits for an approval of that plan. The note gives no digest for it, and under `approval: pr-review` the pull request's review does not approve it. A wave that read only known outputs plans the same digest again when its upstream applies as planned, so an approval or review of the note's digest still counts.
 
-For that plan, terragucci points the root's references to the block at a local holding the upstream's planned outputs, adds `terragucci_linked.tf` while the plan runs, then puts the files back. These still plan on the applied state, and the report's `roots[].reads` says why:
+For that plan, terragucci points the root's references to the block at a local holding the upstream's planned outputs, adds `terragucci_linked.tf` while the plan runs, then puts the files back. A root in Terraform's JSON syntax, such as a CDK Terrain stack's `cdk.tf.json`, is linked the same way: its backend and its `terraform_remote_state` blocks order the waves, and its references are rewritten inside their `${...}` templates. These still plan on the applied state, and the report's `roots[].reads` says why:
 
 | Case | It plans on |
 |---|---|
 | an upstream that has never applied | nothing yet: the root waits for it, and the report and note name it as waiting |
 | a block with `count` or `for_each` | the applied state |
 | a plan on the planned outputs that fails, such as a `for_each` over a value known only after apply | the applied state |
-| a root in JSON syntax, or a block in a child module | the applied state; neither orders the waves either |
+| a block in a child module | the applied state; it does not order the waves either |
 | `terragucci plan` on your machine | the applied state |
 
 A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#later-layers).
