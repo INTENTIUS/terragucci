@@ -53,9 +53,10 @@
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
+ *   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, in process)
  *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   (a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo; credentials from the environment)
  *
- * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
+ * `--json` on init, reconcile, plan, stage, rollout, config check and query prints one envelope
  * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
@@ -112,6 +113,7 @@ import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
 import { startRelay } from "./relay";
 import { mcp } from "./mcp";
+import { describeQuery, query } from "./query";
 import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
@@ -153,6 +155,7 @@ const USAGE = `usage:
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
+  terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, run in this process
   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   a read-only MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures; credentials from the environment
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
@@ -167,7 +170,7 @@ const USAGE = `usage:
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
-init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
+init, reconcile, plan, stage, rollout, respond, config check and query take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -744,6 +747,18 @@ export async function main(argv: string[]): Promise<number> {
           return r.fail ? 1 : 0;
         }
         throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
+      }
+      case "query": {
+        const [sql, extra] = args;
+        if (sql === undefined || extra !== undefined) throw new ConfigError('query takes one statement, quoted: terragucci query "SELECT * FROM inventory"');
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const bucket = str(flags, "bucket");
+        const result = await query(path ? await loadConfig(resolve(path)) : {}, sql, {
+          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
+        });
+        if (json) return emit(envelope("query", 0, result));
+        console.log(describeQuery(result));
+        return 0;
       }
       case "mcp": {
         // stdout is the protocol's: nothing else is printed there.
