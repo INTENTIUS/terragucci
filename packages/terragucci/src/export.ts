@@ -42,6 +42,7 @@ import { detectBinary } from "./detect";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { sealRefusal } from "./seal";
+import { ensureGenerated } from "./tg-stacks";
 
 export const EXPORT_OP = "tf-state-export";
 export const EXPORT_LEDGER = `_gates/${EXPORT_OP}.jsonl`;
@@ -159,6 +160,8 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const now = options.now ?? new Date().toISOString();
   const root = options.root.replace(/\/+$/, "");
   if (!root) throw new ConfigError("state export takes the root whose state to export: terragucci state export <root> [--version <id>]");
+  // shape: prepare. A unit an explicit stack generates is generated first, as a wave generates it.
+  await ensureGenerated(repo, [root], { ...(options.terragrunt?.path ? { terragrunt: options.terragrunt.path } : {}), ...(options.terragrunt?.exec ? { exec: options.terragrunt.exec } : {}) });
   const why = refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
   const unit = existsSync(join(repo, root, "terragrunt.hcl"));

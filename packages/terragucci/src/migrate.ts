@@ -62,6 +62,7 @@ import type { S3Fetch, S3Target } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 import { rootRoleEnv } from "./roles";
+import { ensureGenerated } from "./tg-stacks";
 
 export const MIGRATE_OP = "tf-migrate";
 export const MIGRATE_LEDGER = `_gates/${MIGRATE_OP}.jsonl`;
@@ -704,6 +705,8 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   const env = options.env ?? process.env;
   const log = options.log ?? (() => {});
   const roots = [...new Set(m.kind === "backends" ? m.backends.map((b) => b.root) : m.kind === "revert" ? m.restores.map((r) => r.root) : m.moves.flatMap((x) => [x.from, x.to]))].sort();
+  // shape: prepare. A unit an explicit stack generates is generated first, as a wave generates it.
+  await ensureGenerated(repo, roots, { binary: options.binary, ...(options.terragrunt?.path ? { terragrunt: options.terragrunt.path } : {}), ...(options.terragrunt?.exec ? { exec: options.terragrunt.exec } : {}) });
   const problems = roots.map((r) => refusal(repo, r)).filter((x): x is string => x !== undefined);
   if (problems.length > 0) throw new ConfigError(`migration ${m.name} cannot run:\n  ${problems.join("\n  ")}`);
   mkdirSync(options.work, { recursive: true });

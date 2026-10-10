@@ -1,7 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks, tg-estate-graph, tg-state-export, tg-apply-branches, tg-generate]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks, tg-stack-check, tg-stack-affected, tg-stack-gate, tg-stack-drift, tg-estate-graph, tg-state-export, tg-apply-branches, tg-generate]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-terragrunt/.
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
@@ -21,7 +21,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 
 | You need | Why |
 |---|---|
-| A Terragrunt repo with a `root.hcl` or `terragrunt.hcl` | `init` detects Terragrunt from it |
+| A Terragrunt repo with a `root.hcl`, `terragrunt.hcl` or `terragrunt.stack.hcl` | `init` detects Terragrunt from it |
 | Terragrunt 1.1 or later | the oldest version terragucci supports |
 | terragucci installed ([Get your first plan note](/terragucci/getting-started/)) | `init` writes the pipeline |
 
@@ -35,7 +35,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
    npx terragucci init --dry-run
    ```
 
-   Each unit `terragrunt find` lists is a root, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. An explicit stack (`terragrunt.stack.hcl`) goes through `terragrunt stack generate` before discovery so its units get waves like any other. Every job generates it again, so the generated `.terragrunt-stack` directories stay out of the repo. This needs Terragrunt on the path; without it `init` stops with an error naming the stack file.
+   Each unit `terragrunt find` lists is a root, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. The units of an explicit stack are found too ([Explicit stacks](#explicit-stacks)).
 
    Without Terragrunt on the path, `init` reads the units' `dependency` and `dependencies` paths to cut the waves; the apply jobs check them with `terragrunt find`.
 
@@ -94,6 +94,37 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 A wave of units the gate holds waits as a wave of roots does, naming its units, its set digest and the approve command:
 
 <Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the chant approve tf-apply wave-2 command, and exits with code 3" />
+
+## Explicit stacks
+
+The units a `terragrunt.stack.hcl` generates go through every stage as units the repo holds do: in the dependency graph, the waves, the gates, affected planning and drift. Each job runs `terragrunt stack generate` before it reads them, so keep `.terragrunt-stack/` in `.gitignore`.
+
+```hcl
+# live/stk/terragrunt.stack.hcl
+unit "base" {
+  source = "${get_repo_root()}/catalog/units/base"
+  path   = "base"
+  values = { rev = "1" }
+}
+
+unit "top" {
+  source = "${get_repo_root()}/catalog/units/top"   # its dependency block reads ../base
+  path   = "top"
+}
+```
+
+`init` finds `live/stk/.terragrunt-stack/base` in wave 1 and `live/stk/.terragrunt-stack/top` in wave 2.
+
+| Stage | With an explicit stack |
+|---|---|
+| `init` and every job | runs `terragrunt stack generate` first, so Terragrunt 1.1 or later must be on the path; without it `init` stops with an error naming the stack file |
+| Check | generates the units, then `terragrunt hcl validate --inputs` checks them, so a value the stack file feeds a module that does not declare it fails the check, naming the generated unit |
+| Which units a change reaches | a changed value in the stack file plans the unit it feeds; a changed unit template plans the units generated from it; their dependents wait as usual |
+| Plan note and report | the note lists each stack file and the units it generates; `roots[].terragrunt.stack` is the stack's directory and `stack_file` its `terragrunt.stack.hcl` |
+| Drift | generates the units in a fresh checkout and reports drift by generated unit. The drift pull request leaves a generated unit's drift in the issue, naming its stack file, since that unit's `terragrunt.hcl` is not in the repo |
+| [`generate`](/terragucci/guides/generate-root-files/#in-a-terragrunt-repo) | keys `terragucci.hcl` by the paths the stack file's `unit` blocks generate, and requires each unit template in the repo to include it. A `stack` block (a nested stack) stops `generate` with an error, since only Terragrunt can list its units |
+| Ephemeral copies, `state export`, migrations | generate the stack before they prepare a generated unit |
+| Locks before merge | a change to a stack file or a template is outside every unit's directory, so it locks every unit |
 
 ## Layer-by-layer apply
 

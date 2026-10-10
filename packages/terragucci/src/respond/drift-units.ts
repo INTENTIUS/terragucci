@@ -7,7 +7,8 @@
  * written there, so only that unit changes. An attribute the module sets as
  * a literal is left, with why: every unit that calls the module shares it. A
  * unit with no `terraform.source` is its own root, codified as a plain root
- * is.
+ * is. A unit an explicit stack generates is left, naming its stack file: its
+ * `terragrunt.hcl` is written by `terragrunt stack generate`, not kept in git.
  *
  * Each unit is planned again with `-refresh-only` through `terragrunt run`,
  * since the stage's plan files are gone and its report's plan is redacted.
@@ -22,6 +23,7 @@ import { terragruntExec } from "../binary-env";
 import { ConfigError } from "../config";
 import { globMatch } from "../detect";
 import { discoverUnits } from "../terragrunt";
+import { generateStacks, generatingStack, stackFile } from "../tg-stacks";
 import { codify, driftOf, hcl, literal, type Codified, type Drifted, type Left } from "./drift";
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -58,6 +60,8 @@ export async function driftedUnits(repo: string, r: UnitRunner, o: { report?: st
     if (report.run?.stage !== "tf-drift") throw new ConfigError(`${relative(repo, file)} is not a tf-drift report; run terragucci stage tf-drift first, or move it aside to check every unit`);
     units = (report.roots ?? []).filter((x) => (x.changes ?? []).length > 0).map((x) => x.path);
     from = "the drift report";
+    // shape: prepare. A drifted unit an explicit stack generates is planned again where the stack generates it.
+    if (units.some((u) => generatingStack(u) !== undefined)) await generateStacks(repo, { binary: r.binary, terragrunt: r.terragrunt, exec: r.exec });
   } else {
     const found = await discoverUnits(repo, { binary: r.binary, terragrunt: r.terragrunt, exec: r.exec, ...(o.exclude ? { exclude: o.exclude } : {}) });
     units = found.units.map((u) => u.path);
@@ -236,6 +240,11 @@ export function codifyUnit(repo: string, unit: string, moduleDir: string, drifte
  * module is outside the repo.
  */
 export async function codifyUnitDrift(repo: string, unit: string, drifted: Drifted[], r: UnitRunner, files: Map<string, string>): Promise<{ codified: Codified[]; left: Left[] }> {
+  // shape: edit target. A generated unit's terragrunt.hcl is not in the repo: its values are the stack file's to set.
+  const stack = generatingStack(unit);
+  if (stack !== undefined) {
+    return { codified: [], left: drifted.map((d) => ({ root: unit, address: d.address, reason: `${stackFile(stack)} generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template` })) };
+  }
   const source = await unitSource(repo, unit, r);
   if (!source) {
     const local = new Map<string, string>();
