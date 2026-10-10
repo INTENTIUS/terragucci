@@ -167,7 +167,7 @@ describe("apply concurrency", () => {
   });
 
   it("forgejo names a workflow-level group that does not cancel, or a later push cancels a run that is applying", () => {
-    expect(body(render("forgejo")).concurrency).toEqual({ group: "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false });
+    expect(body(render("forgejo")).concurrency).toEqual({ group: "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '') && format('comment-{0}', github.event.inputs.pr) || github.ref }}", "cancel-in-progress": false });
     expect(body(render("github")).concurrency).toBeUndefined();
   });
 
@@ -239,6 +239,22 @@ describe("the comment trigger", () => {
     expect(replanDecideScript(layers, "github")).not.toContain("--forge");
     const job = body(render("forgejo")).jobs.replan;
     expect(JSON.stringify(job.steps)).toContain("refs/pull/${{ steps.decide.outputs.pr }}/head");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: a workflow_dispatch with pr starts the replan job, never drift, check, plan or an apply", (forge) => {
+    const doc = body(render(forge, OIDC));
+    expect(doc.on.workflow_dispatch.inputs.pr).toMatchObject({ required: false, type: "string" });
+    expect(doc.on.workflow_dispatch.inputs.root).toMatchObject({ required: false, type: "string" });
+    expect(doc.jobs.replan.if).toContain("(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')");
+    expect(doc.jobs.replan.concurrency.group).toBe("terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}");
+    // The inputs, like the comment, reach the decision only through the event file, never a script.
+    expect(JSON.stringify(doc.jobs.replan.steps)).not.toContain("inputs.");
+    for (const [name, j] of Object.entries(doc.jobs) as [string, any][]) {
+      if (name === "replan" || name === "replan-note") continue;
+      expect(String(j.if ?? ""), name).not.toMatch(/workflow_dispatch' && github\.event\.inputs\.pr != ''|event_name == 'workflow_dispatch'$/);
+    }
+    // On Forgejo the dispatch waits in its pull request's comment group, not behind the default branch's applying run.
+    if (forge === "forgejo") expect(doc.concurrency.group).toContain("(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '') && format('comment-{0}', github.event.inputs.pr)");
   });
 
   it.each(["github", "forgejo"] as const)("%s: `/terragucci apply` starts the apply-comment job, with the apply role, under the apply lock", (forge) => {
@@ -2112,7 +2128,7 @@ describe("the drift stage", () => {
     const doc = body(withDrift(forge));
     expect(doc.on.schedule).toEqual([{ cron: "0 6 * * *" }]);
     expect(doc.on.workflow_dispatch).toBeDefined();
-    expect(doc.jobs.drift.if).toBe("github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'");
+    expect(doc.jobs.drift.if).toBe("github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')");
     expect(doc.jobs["apply-wave-1"].if).toContain("github.event_name == 'push'");
     expect(doc.jobs.check.if).toContain("github.event_name == 'push'");
     expect(doc.jobs.plan.if).toContain("pull_request");
@@ -2693,7 +2709,7 @@ describe("atlantis_comments", () => {
   it.each(["github", "forgejo"] as const)("%s: atlantis plan starts the replan job and atlantis apply the apply-comment job, and every job reads the aliases", (forge) => {
     const wf = body(withAliases(forge));
     expect(wf.env.TG_ATLANTIS_COMMENTS).toBe("1");
-    expect(wf.jobs.replan.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci') || startsWith(github.event.comment.body, 'atlantis plan')) && !(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))");
+    expect(wf.jobs.replan.if).toBe("(github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci') || startsWith(github.event.comment.body, 'atlantis plan')) && !(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')");
     expect(wf.jobs["apply-comment"].if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))");
   });
 

@@ -74,7 +74,7 @@ packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* dri
 packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent
 packages/terragucci/src/gitlab-ci.ts
 packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard
-packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard
+packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard replan-dispatch
 packages/terragucci/src/import/guide.ts   import-atlantis comment-*
 packages/terragucci/src/import/          import-atlantis
 

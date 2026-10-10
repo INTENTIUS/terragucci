@@ -1,7 +1,7 @@
 ---
 title: Re-plan a pull request from a comment
-description: Ask for a read-only re-plan of a pull request by writing /terragucci plan, and run an approved apply with /terragucci apply, on GitHub, Forgejo and GitLab.
-claims: [comment-plan, comment-apply, comment-not-affected, tg-comment-apply, pr-lock, comment-atlantis]
+description: Ask for a read-only re-plan of a pull request by writing /terragucci plan or dispatching the workflow, and run an approved apply with /terragucci apply, on GitHub, Forgejo and GitLab.
+claims: [comment-plan, comment-apply, comment-not-affected, tg-comment-apply, pr-lock, comment-atlantis, replan-dispatch]
 prompt: |
   Read https://intentius.io/terragucci/guides/re-plan-from-a-comment/.
   Check that the default branch's pipeline has the comment trigger (on GitLab, the `comments` job and a pipeline schedule with TERRAGUCCI_SCHEDULE set to comments); if it does not, run `npx terragucci init` and open a pull request with the result.
@@ -85,6 +85,52 @@ As on GitHub.
    <Shot step="replan" view="replies" alt="Two comments on the pull request and terragucci's replies: envs/prod/payments is not affected by this pull request, so nothing was planned; envs/nope is not a root of this repository, followed by the fifteen roots" />
 
 </Steps>
+
+## Re-plans by dispatch
+
+A chat front end or a script can re-plan without a comment. On GitHub and Forgejo the workflow takes a `workflow_dispatch`:
+
+| Input | Value |
+|---|---|
+| `pr` | the pull request's number; left empty, the dispatch runs the drift job where `drift:` is set |
+| `root` | optional: one root path, read by the comment grammar |
+
+The re-plan matches `/terragucci plan [root]`: same checks, same note, same status.
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+```sh
+gh workflow run terragucci.yml -f pr=42 -f root=envs/dev/orders
+```
+
+The decision step reads the dispatcher's permission through the API; without write access, nothing is planned.
+
+</TabItem>
+<TabItem label="GitLab">
+
+GitLab has no dispatch with inputs. Run a new merge request pipeline instead (Run pipeline on its Pipelines tab), or call the API:
+
+```sh
+curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+  "$CI_API_V4_URL/projects/<id>/merge_requests/<iid>/pipelines"
+```
+
+GitLab allows it from the Developer role up, and plans the whole merge request.
+
+</TabItem>
+<TabItem label="Forgejo">
+
+```sh
+curl -X POST -H "Authorization: token $FORGEJO_TOKEN" -H 'content-type: application/json' \
+  -d '{"ref":"main","inputs":{"pr":"42"}}' \
+  "https://forgejo.example.com/api/v1/repos/acme/infra/actions/workflows/terragucci.yml/dispatches"
+```
+
+Forgejo answers 403 to a dispatcher without write access and starts no run. Its dispatch event carries no permission to read, so that refusal is the check.
+
+</TabItem>
+</Tabs>
 
 ## Comment forms
 
