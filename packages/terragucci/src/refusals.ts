@@ -40,7 +40,7 @@ export const SYNTH_NOT_TERRAGRUNT = "synth is for roots a command writes, such a
  */
 export const SYNTH_DRIFT_PR_SHORT = "synth writes the roots, so a live value belongs in the app that writes them, which terragucci does not edit";
 export const SYNTH_DRIFT_PR = "the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them, so the value belongs in the app that writes them, which terragucci does not edit; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
-export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there";
+export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there, and leave rollouts unset";
 
 /**
  * Why `generate` is refused with `synth`: the roots are the synth command's
@@ -60,7 +60,7 @@ export const OIDC_ROLES_NOT_TERRAGRUNT = "roles by root glob are for plain roots
 /** The shape each feature is refused in, with why. A shape and feature not listed are allowed. */
 const TABLE: Record<ShapeKind, Partial<Record<Feature, string>>> = {
   roots: {},
-  synth: { generate: SYNTH_GENERATE, "drift-pr": SYNTH_DRIFT_PR, rollouts: `${SYNTH_ROLLOUTS}, and leave rollouts unset` },
+  synth: { generate: SYNTH_GENERATE, "drift-pr": SYNTH_DRIFT_PR, rollouts: SYNTH_ROLLOUTS },
   atmos: { roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL },
   terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT },
 };
