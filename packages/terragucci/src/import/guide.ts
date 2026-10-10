@@ -1,7 +1,7 @@
 /**
- * The tables of the guide "Coming from Atlantis or OpenTaco"
+ * The tables of the guide "Coming from Atlantis, OpenTaco or Terrateam"
  * (docs-site/src/content/docs/guides/coming-from-atlantis-or-opentaco.mdx),
- * cell for cell. `terragucci import atlantis` and `import digger` map
+ * cell for cell. `terragucci import atlantis`, `import digger` and `import terrateam` map
  * settings by these rows and print their text, and the `atlantis plan` and
  * `atlantis apply` comment aliases quote them when they refuse a form. A test
  * (test/import.test.ts) holds the page and these tables equal, so the command
@@ -31,7 +31,7 @@ export const SETTINGS_TABLE = [
   ["Policy", "conftest, set in the server's config; a workflow's `policy_check`; a project's `custom_policy_check`", "a conftest step you add", "`policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides"],
   ["Custom steps", "`workflows`", "`workflows`", "none: the jobs are generated; `env` sets variables every job gets, which an import writes from the workflows' `env` steps that set a fixed value"],
   ["Cloud credentials", "the server's environment", "`aws-role-to-assume` in your workflow, or a project's `aws_role_to_assume`, over OIDC", "`oidc`: a plan role and an apply role per cloud, from the forge's identity token"],
-  ["Many repos", "the server's repo config", "", "a control repo's `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/))"],
+  ["Many repos", "the server's repo config", "", "a [control repo](/terragucci/concepts/control-repo/)'s `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/))"],
   ["Terragrunt", "a custom workflow, or terragrunt-atlantis-config", "`generate_projects` with Terragrunt parsing, or a project's `terragrunt`", "detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/))"],
   ["Drift", "drift webhooks", "drift detection", "`drift`, a cron schedule"],
 ] as const satisfies readonly (readonly [string, string, string, string])[];
@@ -69,7 +69,31 @@ export const COMMENT_TABLE = [
   ["Approve", "the forge's review", "the forge's review", "[`terragucci approve`](/terragucci/reference/cli/#approve) (it runs [`chant approve`](/terragucci/concepts/glossary/#chant)) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes)"],
 ] as const satisfies readonly (readonly [string, string, string, string])[];
 
+/** `## Terrateam`: setting, Terrateam (`.terrateam/config.yml`), terragucci (`terragucci.yml`). `terragucci import terrateam` maps by these rows. */
+export const TERRATEAM_TABLE = [
+  ["Which directories", "`dirs`, and every directory with Terraform files that `dirs` leaves out", "detected: every directory with a backend, `cloud` block or provider; a root that `dirs` turns off with empty `file_patterns` needs `roots` globs that leave it out"],
+  ["Workspace", "`dirs.<dir>.workspaces`, `create_and_select_workspace`", "none: each root is a directory with one state"],
+  ["Tags", "`tags`, a `tag_query`", "none: a key that picks roots takes globs of their paths, which an import writes from a query of `dir:` terms joined by `or`"],
+  ["What triggers a plan", "`when_modified`: `file_patterns`, `autoplan`, `autoplan_draft_pr`", "no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state"],
+  ["Order", "`when_modified.depends_on`", "waves from `terraform_remote_state` reads; an order the reads do not give becomes `waves.canary`, which puts the roots it names first"],
+  ["When it applies", "`terrateam apply` before merge; `autoapply` or `apply_after_merge` after", "`apply.when: pull-request` before merge, or the default, `apply.when: merge`, after"],
+  ["Required approval", "`apply_requirements.checks[].approved`", "with `apply.when: pull-request`, `apply.requires: [approved]`: a reviewer other than the author approved the head; how many and who is branch protection's job"],
+  ["Checks green", "`merge_conflicts`, `status_checks`", "with `apply.when: pull-request`, `apply.requires`: `mergeable` for no conflicts, `checks` for no status failed or running"],
+  ["Merge after apply", "`automerge`", "`apply.merge: auto` with `apply.when: pull-request`"],
+  ["Engine", "`engine`, `default_tf_version`, a workflow's `engine` or `terraform_version`", "`binary` and `version` for Terraform and OpenTofu; Terragrunt is detected, with `terragrunt.version`; CDKTF through `synth`; no Pulumi or custom engine"],
+  ["Hooks", "`hooks.all`, `hooks.plan`, `hooks.apply`", "`steps`: a `run` hook becomes a step before or after `init`, `plan` or `apply`, run once per root; an `env` hook that echoes a fixed value becomes `env`"],
+  ["Workflow steps", "`workflows[].plan`, `workflows[].apply`", "`steps`, with `roots` from the workflow's `dir:` query, for its `run` entries; `init`, `plan` and `apply` are the stages themselves"],
+  ["Locks", "`lock_policy`", "a root locks when it applies before merge, or from the first plan with `locks: plan` (GitHub, Forgejo); no key turns locking off"],
+  ["Concurrency", "`parallel_runs`", "`parallelism` within a job"],
+  ["Access control", "`access_control`", "none in `terragucci.yml`: the forge's permissions decide who pushes and comments, and `approval` with `.chant/allowed_signers` decides who approves a wave"],
+  ["Cloud credentials", "an `oidc` hook", "`oidc`: a plan role and an apply role per cloud, from the forge's identity token"],
+  ["Policy", "`conftest`, `opa` and `checkov` workflow steps", "`policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo"],
+  ["Cost", "`cost_estimation`", "`cost: true`: Infracost in the plan job, on your `INFRACOST_API_KEY`"],
+  ["Drift", "`drift`, a `drift_create_issue` hook", "`drift`, a cron schedule over every root, whose job opens the drift issue"],
+] as const satisfies readonly (readonly [string, string, string])[];
+
 export type SettingRow = (typeof SETTINGS_TABLE)[number][0];
+export type TerrateamRow = (typeof TERRATEAM_TABLE)[number][0];
 export type LeftOutRow = (typeof LEFT_OUT_TABLE)[number][0];
 export type CommentRow = (typeof COMMENT_TABLE)[number][0];
 
@@ -88,6 +112,14 @@ export function leftOut(row: LeftOutRow): { rule: string; instead: string } {
   const r = LEFT_OUT_TABLE.find((x) => x[0] === row)!;
   return { rule: plain(r[2]), instead: plain(r[3]) };
 }
+
+/** The terragucci cell of a Terrateam row. */
+export function terrateamCell(row: TerrateamRow): string {
+  return plain(TERRATEAM_TABLE.find((r) => r[0] === row)![2]);
+}
+
+/** The guide's Terrateam section. */
+export const TERRATEAM_URL = `${GUIDE_URL}#terrateam`;
 
 /** The terragucci cell of a comment row. */
 export function commentCell(row: CommentRow): string {

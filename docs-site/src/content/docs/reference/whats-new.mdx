@@ -15,6 +15,7 @@ Release `0.4.4` is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub rele
 |---|---|
 | Changed default: a pull request that changes a Terragrunt unit also previews the units that depend on it, provisional and outside every digest. Set `terragrunt.dependents: follow` to keep the old behavior | [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block) |
 | `generate.disable_init: false` writes `disable_init = false` in `terragucci.hcl`, and the apply job has Terragrunt create the state bucket | [Generate backend and provider files](/terragucci/guides/generate-root-files/#bucket-bootstrap) |
+| `terragucci import terrateam` writes `terragucci.yml` from a `.terrateam/config.yml`, with `depends_on` as waves | [Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam) |
 
 ## Security
 
@@ -55,7 +56,7 @@ Release `0.4.4` is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub rele
 | `steps` run your commands before and after each stage; a failed `approve` step holds the wave | [Run your own steps](/terragucci/guides/run-steps/) |
 | Each root pins its own OpenTofu or Terraform version | [Choose your binary](/terragucci/guides/use-a-binary/) |
 | `terragucci generate` writes each root's backend, provider and version files from `terragucci.yml` | [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
-| `terragucci import atlantis` and `import digger` write `terragucci.yml` from your existing config | [Coming from Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/) |
+| `terragucci import atlantis` and `import digger` write `terragucci.yml` from your existing config | [Coming from Atlantis, OpenTaco or Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/) |
 | A tip opens a pull request that writes the `moved` block for a rename, so it plans as a move | [Tips](/terragucci/reference/tips/) |
 | DORA metrics on the estate page and as OTLP gauges | [Delivery metrics](/terragucci/reference/delivery-metrics/) |
 
