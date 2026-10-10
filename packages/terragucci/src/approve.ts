@@ -213,7 +213,9 @@ export function waitingMigrations(ledger: GateLedger): WaitingMigration[] {
 export function describeMigration(text: string | undefined): string[] {
   if (!text) return ["  (the migration kept no plan record; read its proof in wave 1's log)"];
   try {
-    const r = JSON.parse(text) as { moves?: { from: string; to: string; addresses: string[] }[]; roots?: { root: string; location?: string; before?: { version_id?: string; digest?: string | null } }[] };
+    const r = JSON.parse(text) as { change?: string; moves?: { from: string; to: string; addresses: string[] }[]; retags?: { address: string; from_estate: string; to_estate: string; live_id: string }[]; stamps?: { root: string; estate: string; status: string }[]; roots?: { root: string; location?: string; source?: { location?: string; version_id?: string }; before?: { version_id?: string; digest?: string | null } }[] };
+    if (r.change === "retag") return [...(r.retags ?? []).map((t) => `  retags ${t.address} (${t.live_id}) from estate ${t.from_estate} to estate ${t.to_estate}`), "  every change each root planned is one the retag removes"];
+    if (r.change === "adopt") return [...(r.roots ?? []).map((x) => `  adopts ${x.source?.location ?? "the state"}${x.source?.version_id ? ` at version ${x.source.version_id}` : ""} into ${x.location ?? x.root}, ${(r.stamps ?? []).filter((s) => s.root === x.root).length} resource instances`), "  every resource verified against the live system"];
     const lines = (r.moves ?? []).map((m) => `  moves ${m.addresses.join(", ")} from ${m.from} to ${m.to}`);
     for (const x of r.roots ?? []) lines.push(`  ${x.root}: ${x.location ?? "state"}${x.before?.version_id ? ` at version ${x.before.version_id}` : ""}${x.before?.digest ? "" : ", no state yet"}`);
     lines.push("  every root planned with no change against its new state");
