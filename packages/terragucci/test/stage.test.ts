@@ -179,6 +179,26 @@ describe("a fresh estate", () => {
   });
 });
 
+describe("a read whose state the code does not address", () => {
+  it("is named in the report, the log and the HTML, as an unknown edge", async () => {
+    const dir = tmp();
+    const fake = write(dir, {
+      "fake-tf": '#!/bin/sh\ncase "$*" in\n  *init*) exit 0;;\n  *) echo "no plan here" >&2; exit 1;;\nesac\n',
+      "net/main.tf": 'terraform {\n  backend "pg" {}\n}\n',
+      "app/main.tf": 'terraform {\n  backend "local" {}\n}\n\ndata "terraform_remote_state" "net" {\n  backend = "pg"\n  config = {\n    conn_str = var.conn\n  }\n}\n',
+    });
+    execFileSync("chmod", ["+x", join(fake, "fake-tf")]);
+    const logs: string[] = [];
+    const result = await runStage("tf-plan", fake, { binary: join(fake, "fake-tf"), out: "r" }, (l) => logs.push(l));
+    const root = (p: string) => result.report.roots.find((r) => r.path === p);
+    expect(root("app")?.unknown_reads).toEqual([{ data: "net", why: "its pg conn_str is an expression, not a plain string" }]);
+    expect(root("net")?.unaddressed).toBe("its pg backend names no conn_str in the code (PG_CONN_STR or a -backend-config file supplies it)");
+    expect(result.report.waves).toHaveLength(1);
+    expect(logs.join("\n")).toContain('app: reads state through terraform_remote_state "net" where the code does not say');
+    expect(readFileSync(join(fake, "r/report.html"), "utf-8")).toContain('data-unknown="net"');
+  });
+});
+
 /**
  * A stand-in binary whose plan sleeps for the time in the root's `delay`
  * file, so roots finish out of order, and fails when the root has a `fail`

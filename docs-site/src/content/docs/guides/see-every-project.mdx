@@ -237,7 +237,7 @@ Without the audit trail (step 5) the history lists every apply but names nobody.
 
 ## State versions
 
-A `tf-apply` wave records the version id of each root's state from the bucket's versioning. The page lists them per root, newest first. When the bucket keeps none, it says versions are off. [Find the state version an apply left](/terragucci/guides/find-a-state-version/) sets this up and says how to go back to a version.
+A `tf-apply` wave records the version id of each root's state from the bucket's versioning. The page lists them per root, newest first. When the backend keeps no history (a bucket with versioning off, or a `local`, `pg`, `kubernetes`, `consul` or plain `http` backend), it says versions are off. When the backend may keep versions terragucci does not read, such as `gcs` or GitLab-managed state, it says versions not read, and why. [Find the state version an apply left](/terragucci/guides/find-a-state-version/) sets this up and says how to go back to a version.
 
 ## Cross-state edges
 
