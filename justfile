@@ -255,6 +255,14 @@ scale *args:
 gitlab-lab *args:
     stack/gitlab/gitlab.sh {{args}}
 
+[doc("What the validation page still lacks: grid cells not proven, claims with no recorded row, captures that quote a command terragucci no longer prints, and what fills each. Reads files only.")]
+coverage-gaps *args:
+    npx tsx scripts/coverage-gaps.ts {{args}}
+
+[doc("Fill the validation page's gaps on demand, a source at a time: forgejo, terraform, choudoufu, gitlab, github, validation (--exclusive), or all. With no step it prints the plan.")]
+coverage-fill *steps:
+    scripts/coverage-fill.sh {{steps}}
+
 [doc("Run the named smoke claims on the GitLab lab, plain and under BREAK=1, in parallel, and write their GitLab rows into smoke.json.")]
 gitlab-claims +names:
     SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json

@@ -4,6 +4,7 @@ description: Every pipeline feature is proven on a local Forgejo against an AWS 
 ---
 
 import CoverageGrid from '../../../components/CoverageGrid.astro';
+import CoverageGaps from '../../../components/CoverageGaps.astro';
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
@@ -11,13 +12,20 @@ Each smoke claim runs twice and passes only when both runs hold: as written it m
 
 <CoverageGrid />
 
+<details>
+<summary>What is left</summary>
+
+<CoverageGaps />
+
+</details>
+
 Every check behind the grids is listed in [the per-forge claims](#the-per-forge-claims) and [the example's checks](#the-examples-checks) below.
 
 | Forge | What runs |
 |---|---|
 | Forgejo | a Forgejo server and its runner |
 | GitHub | the generated workflow, run by `act` against a mock GitHub API |
-| github.com | the published release's generated workflow on GitHub-hosted runners, in a public plan-only repo, each night |
+| github.com | the published release's generated workflow on GitHub-hosted runners, in a public plan-only repo |
 | GitLab | GitLab CE and its runner |
 
 ## The per-forge claims
@@ -32,7 +40,7 @@ The github.com claims run the newest published release against real GitHub pull 
 | no bucket | `report-keys`, `report-oidc` and `estate-job` write to [floci](/terragucci/concepts/glossary/#floci), the AWS emulator, run in the job beside a stand-in for STS that checks each token and role as `oidc` does |
 | one GitHub account | the refusals of a commenter with no write access and of a pull request from a fork are proven on Forgejo; the apply-before-merge pull requests are opened by a workflow, so the account that runs the claims may approve them |
 | no model key | the agent comment and the refused-wave job run a stand-in agent that makes one edit or prints the summary input |
-| BREAK for the locking and report claims alone | `pr-lock`, `pr-lock-fmt`, `apply-serial`, `pr-apply-lock`, `pr-apply-stale`, `report-keys`, `report-oidc` and `estate-job` run a second time each night with their property broken (a lock dropped from [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a guard cut from the committed pipeline, `undiverged` left out of `apply.requires`, or the job's keys or token taken away); the other claims have no BREAK run, so they read "passes" |
+| BREAK for the locking and report claims alone | `pr-lock`, `pr-lock-fmt`, `apply-serial`, `pr-apply-lock`, `pr-apply-stale`, `report-keys`, `report-oidc` and `estate-job` run a second time with their property broken (a lock dropped from [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a guard cut from the committed pipeline, `undiverged` left out of `apply.requires`, or the job's keys or token taken away); the other claims have no BREAK run, so they read "passes" |
 
 <details>
 <summary>Every per-forge claim</summary>
