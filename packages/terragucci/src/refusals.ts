@@ -55,6 +55,9 @@ export const ATMOS_DRIFT_PR = "the drift pull request writes each live value int
 export const ATMOS_ROLLOUTS = "a rollout moves a pin wave by wave, and an Atmos instance runs its component's files, which every instance of the component shares across stacks and waves, so no wave can move a pin alone; leave rollouts unset and move the pin in the component";
 export const ATMOS_GENERATE = "Atmos writes each instance's backend and provider override from the stack's backend and providers settings, and a file generate wrote would declare a second backend beside it; set them in the stack YAML and leave generate unset";
 export const ATMOS_EPHEMERAL = "ephemeral gives each copy a state key of its own by rewriting a root's backend key, and an Atmos instance's state is named by its stack's backend and its workspace, which terragucci atmos write sets; leave ephemeral unset";
+/** A unit an explicit stack generates: `terragrunt stack generate` writes its files, so git holds none of them. */
+export const STACK_UNIT_DRIFT_PR = "generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template";
+export const STACK_NESTED_GENERATE = "generate reads the units a stack file names in its unit blocks; only Terragrunt can list a nested stack's units, so give each unit its own unit block, or leave generate unset";
 export const OIDC_ROLES_NOT_TERRAGRUNT = "roles by root glob are for plain roots; in a Terragrunt repo, set terragrunt.credentials";
 
 /** The shape each feature is refused in, with why. A shape and feature not listed are allowed. */

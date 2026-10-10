@@ -322,6 +322,25 @@ terraform {
       expect(includesGenerated('# include "terragucci" { path = "terragucci.hcl" }\ninclude "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n')).toBe(false);
     });
 
+    it("keys an explicit stack's units by the paths their stack file generates, and holds each unit template to the include", () => {
+      const stack = 'unit "api" {\n  source = "${get_repo_root()}/catalog/units/api"\n  path   = "api"\n}\n\nunit "db" {\n  source = "../../catalog/units/db"\n  path   = "db"\n}\n\nunit "ext" {\n  source = "git::https://example.com/units.git//ext?ref=v1"\n  path   = "ext"\n}\n';
+      const dir = tgRepo(CONFIG, {
+        "live/stk/terragrunt.stack.hcl": stack,
+        "catalog/units/api/terragrunt.hcl": unitHcl(),
+        "catalog/units/db/terragrunt.hcl": unitHcl(""),
+      });
+      const plan = planGenerate(dir, settingsOf(dir));
+      expect(plan.roots).toEqual(["live/dev/app", "live/dev/web", "live/prod/app", "live/stk/.terragrunt-stack/api", "live/stk/.terragrunt-stack/db", "live/stk/.terragrunt-stack/ext"]);
+      expect(plan.files[0]!.content).toContain('"live/stk/.terragrunt-stack/api" = {');
+      expect(plan.foreign).toEqual([expect.stringMatching(/^catalog\/units\/db\/terragrunt\.hcl does not include terragucci\.hcl, so generate's settings never reach live\/stk\/\.terragrunt-stack\/db, which live\/stk\/terragrunt\.stack\.hcl generates from it/)]);
+      expect(plan.notes).toEqual(["live/stk/.terragrunt-stack/ext: live/stk/terragrunt.stack.hcl generates it from a template outside the repo, so generate cannot check that it includes terragucci.hcl"]);
+    });
+
+    it("refuses a nested stack block, whose units only Terragrunt can list", () => {
+      const dir = tgRepo(CONFIG, { "live/stk/terragrunt.stack.hcl": 'stack "inner" {\n  source = "../../catalog/stacks/inner"\n  path   = "inner"\n}\n' });
+      expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/live\/stk\/terragrunt\.stack\.hcl: stack "inner" nests a stack/);
+    });
+
     it("keeps an interpolation out of the files Terragrunt writes", () => {
       const dir = tgRepo('generate:\n  providers:\n    aws: { default_tags: { tags: { note: "${var.x}" } } }\n');
       generate(dir);

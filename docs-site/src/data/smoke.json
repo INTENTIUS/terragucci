@@ -390,7 +390,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "tg-waves",
@@ -430,7 +430,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "tg-mock-trap",
@@ -883,7 +883,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "0c494d98"
     },
     {
       "claim": "atmos-affected",
@@ -915,7 +915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "0c494d98"
     },
     {
       "claim": "atmos-version",
@@ -1915,7 +1915,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "cdktn-migrate",
@@ -1923,7 +1923,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "cdktn-refused",
@@ -1931,7 +1931,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "apply-branches",
@@ -2037,7 +2037,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "tg-state-versions",
@@ -2053,7 +2053,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "c64d95fa"
     },
     {
       "claim": "tg-drift-attribute",
@@ -2101,7 +2101,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "79c43672"
     },
     {
       "claim": "tg-apply-branches",
@@ -2118,6 +2118,38 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "tg-stack-check",
+      "says": "the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-affected",
+      "says": "a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-gate",
+      "says": "the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "tg-stack-drift",
+      "says": "tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
     },
     {
       "claim": "chat-approve",
@@ -2269,7 +2301,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "e67a400c"
     },
     {
       "claim": "cdktn-ephemeral",
@@ -2277,7 +2309,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "e67a400c"
     },
     {
       "claim": "cdktn-generate",
@@ -2285,7 +2317,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8b686e63"
+      "commit": "e67a400c"
     },
     {
       "claim": "cdktn-linked",

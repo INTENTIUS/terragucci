@@ -25,6 +25,7 @@ import { applyLayers, detectBinary, findRootsWithReasons, rootDependencies, root
 import { refusal, shapeProblems, type Feature, type ShapeKind } from "./refusals";
 import { terragruntStepsRefusal } from "./steps";
 import { detectTerragrunt, discoverUnits, unitWaves, type TerragruntDetection } from "./terragrunt";
+import { generateStacks, generatingStack, stackFile } from "./tg-stacks";
 
 export type { Feature, ShapeKind } from "./refusals";
 
@@ -82,8 +83,15 @@ export interface Shape {
   refuses(feature: Feature): string | undefined;
   /** Every refusal of what the settings ask for, and a block that names a shape the repo is not, each as `<where>.<key>: <why>`. */
   problems(where?: string): string[];
-  /** Where an edit to a root belongs, from the repo: the root itself, or an Atmos instance's component. */
+  /** Where an edit to a root belongs, from the repo: the root itself, an Atmos instance's component, or the stack file that generates a Terragrunt unit. */
   sourceOf(root: string): string;
+  /**
+   * Write the roots git does not hold, in the checkout, before a command reads
+   * them: an explicit stack's units, through `terragrunt stack generate`. With
+   * `roots`, only when one of them is not on disk yet. The stacks it generated.
+   * (`prepare` is the shell the jobs run; discover() prepares on its own.)
+   */
+  prepareRoots(options?: DiscoverOptions & { roots?: readonly string[] }): Promise<string[]>;
 }
 
 /**
@@ -115,6 +123,10 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
   let instances: AtmosInstance[] | undefined;
 
   const sourceOf = (root: string): string => {
+    if (kind === "terragrunt") {
+      const stack = generatingStack(root);
+      return stack === undefined ? root : stackFile(stack);
+    }
     if (kind !== "atmos") return root;
     return instances?.find((i) => i.path === root)?.componentPath ?? atmosEdges(join(repo, root))?.component ?? root;
   };
@@ -218,6 +230,12 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
       return [...conflicts, ...shapeProblems(kind, settings, where), ...(steps ? [`${where}.${steps}`] : [])];
     },
     sourceOf,
+    prepareRoots: async (options = {}) => {
+      if (kind !== "terragrunt" || !tg?.stacks.length) return [];
+      const run = { ...(options.binary ? { binary: options.binary } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}), ...(options.exec ? { exec: options.exec } : {}) };
+      if (options.roots && options.roots.every((r) => generatingStack(r) === undefined || existsSync(join(repo, r, "terragrunt.hcl")))) return [];
+      return generateStacks(repo, run);
+    },
   };
 }
 

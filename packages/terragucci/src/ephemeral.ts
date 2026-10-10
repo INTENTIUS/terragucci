@@ -788,6 +788,7 @@ async function destroyCopy(repo: string, r: Ready, pr: number, reason: "closed" 
     }
     if (r.terragrunt) {
       try {
+        // shape: the copy's checkout, whose stacks are generated from its own commit.
         await generateStacks(code.dir, { binary: r.binary, terragrunt: r.terragrunt.terragrunt });
       } catch (e) {
         r.log(`${label}: ${(e as Error).message}`);
