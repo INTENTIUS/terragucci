@@ -13,7 +13,7 @@ import type { ProjectSettings } from "./config";
 export type ShapeKind = "roots" | "synth" | "atmos" | "terragrunt" | "terramate";
 
 /** What a setting asks the pipeline to do, which a shape may refuse. */
-export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "steps" | "ephemeral";
+export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "steps" | "ephemeral" | "waves-after";
 
 /** The key each feature is set by, as a problem names it. */
 export const FEATURE_KEY: Record<Feature, string> = {
@@ -25,6 +25,7 @@ export const FEATURE_KEY: Record<Feature, string> = {
   "oidc-roles": "oidc.roles",
   steps: "steps",
   ephemeral: "ephemeral",
+  "waves-after": "waves.after",
 };
 
 export const ROOTS_NOT_ATMOS = "an Atmos repo's roots are the instances atmos describe stacks lists, so remove roots and leave an instance out with metadata.enabled: false";
@@ -64,15 +65,19 @@ export const TERRAMATE_GENERATE = "terramate generate writes each stack's genera
 /** A unit an explicit stack generates: `terragrunt stack generate` writes its files, so git holds none of them. */
 export const STACK_UNIT_DRIFT_PR = "generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template";
 export const STACK_NESTED_GENERATE = "generate reads the units a stack file names in its unit blocks; only Terragrunt can list a nested stack's units, so give each unit its own unit block, or leave generate unset";
+/** `waves.after` orders plain roots; a Terragrunt, Atmos or Terramate repo states its order in its own files. */
+export const WAVES_AFTER_NOT_TERRAGRUNT = "a Terragrunt unit's order is its dependency and dependencies blocks, so remove waves.after and add a dependencies block to the unit's terragrunt.hcl";
+export const WAVES_AFTER_NOT_ATMOS = "an Atmos instance's order is its component's dependencies.components or settings.depends_on in the stack, so remove waves.after and set one of them there";
+export const WAVES_AFTER_NOT_TERRAMATE = "a Terramate stack's order is its stack block's after and before, so remove waves.after and set them in the stack's .tm.hcl";
 export const OIDC_ROLES_NOT_TERRAGRUNT = "roles by root glob are for plain roots; in a Terragrunt repo, set terragrunt.credentials";
 
 /** The shape each feature is refused in, with why. A shape and feature not listed are allowed. */
 const TABLE: Record<ShapeKind, Partial<Record<Feature, string>>> = {
   roots: {},
   synth: { generate: SYNTH_GENERATE, "drift-pr": SYNTH_DRIFT_PR, rollouts: SYNTH_ROLLOUTS },
-  atmos: { roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL },
-  terramate: { roots: ROOTS_NOT_TERRAMATE, synth: SYNTH_NOT_TERRAMATE, generate: TERRAMATE_GENERATE, "drift-pr": TERRAMATE_DRIFT_PR, rollouts: TERRAMATE_ROLLOUTS },
-  terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT },
+  atmos: { roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL, "waves-after": WAVES_AFTER_NOT_ATMOS },
+  terramate: { roots: ROOTS_NOT_TERRAMATE, synth: SYNTH_NOT_TERRAMATE, generate: TERRAMATE_GENERATE, "drift-pr": TERRAMATE_DRIFT_PR, rollouts: TERRAMATE_ROLLOUTS, "waves-after": WAVES_AFTER_NOT_TERRAMATE },
+  terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT, "waves-after": WAVES_AFTER_NOT_TERRAGRUNT },
 };
 
 /** Why `kind` refuses `feature`, or undefined when it does not. */
@@ -99,6 +104,8 @@ export function wants(s: ProjectSettings, feature: Feature): boolean {
       return Array.isArray(s.steps) && s.steps.length > 0;
     case "ephemeral":
       return s.ephemeral !== undefined;
+    case "waves-after":
+      return typeof s.waves === "object" && s.waves !== null && s.waves.after !== undefined && Object.keys(s.waves.after).length > 0;
   }
 }
 
