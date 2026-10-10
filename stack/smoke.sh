@@ -408,6 +408,7 @@ chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run
 chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
 chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
 linked-plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
+linked-plan-local|two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer|
 linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
 plan-no-lock|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
 sensitive-redacted|a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket|
@@ -1791,6 +1792,60 @@ claim_linked_plan() {
   [ -z "$(git -C "$work/tree" status --porcelain -- net app)" ] || { log "the plan left app's or net's files changed: $(git -C "$work/tree" status --porcelain -- net app | tr '\n' ' ')"; rc=1; }
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "app planned on net's planned outputs: name net-2, stamp unknown, and wave 2 plans again once wave 1 applies"
+  return $rc
+}
+
+claim_linked_plan_local() {
+  # The local-states fixture: net and app on the local backend, their state
+  # files under state/, app reading net's through terraform_remote_state by
+  # the same path. Both applied at rev 1, then net goes to rev 2 and tf-plan
+  # runs in the CI image with no --layers, so terragucci finds the order from
+  # the code: net in wave 1, app in wave 2 reading it, and app plans on net's
+  # planned outputs (name net-2, stamp known once net applies).
+  # BREAK: the bundle loses the local backend's address, so neither block
+  # names a state terragucci can match: one wave, and app plans on net's
+  # applied state.
+  log() { echo "[smoke linked-plan-local] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle r plan root code=0 rc=0
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" state-address.ts '    case "local": {' '    case "local-cut": {' || { drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/local-states/." "$work/tree/"
+  for root in net app; do
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w "/repo/$root" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $root"; drop_work "$work" "$image"; return 1; }
+  done
+  [ -s "$work/tree/state/net.tfstate" ] && [ -s "$work/tree/state/app.tfstate" ] || { log "the applies left no state under state/"; drop_work "$work" "$image"; return 1; }
+  echo 2 > "$work/tree/net/rev.txt"
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "linked-plan-local: net at rev 2"
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan >&2 || code=$?
+  clean_mounted "$work/tree" "$image"
+  r="$work/tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "tf-plan exited $code and wrote no report"; drop_work "$work" "$image"; return 1; }
+  log "waves: $(jq -c '[.waves[] | {number, roots, reads}]' "$r")"
+  jq -e '[.waves[] | {roots, reads}] == [{roots: ["net"], reads: null}, {roots: ["app"], reads: [1]}]' "$r" >/dev/null \
+    || { log "net and app are not in waves 1 and 2 with wave 2 reading wave 1"; rc=1; }
+  jq -e '.roots[] | select(.path == "app") | .reads == [{upstream: "net", data: "net", outputs: "planned", unknown: ["stamp"]}]' "$r" >/dev/null \
+    || { log "the report does not say app read net's planned outputs with stamp unknown: $(jq -c '.roots[] | select(.path == "app") | .reads' "$r")"; rc=1; }
+  plan="$(cat "$work/tree/terragucci-report/roots/app/plan.txt" 2>/dev/null || true)"
+  grep -q '"net-1" -> "net-2"' <<<"$plan" || { log "app's plan does not move its name to net-2"; rc=1; }
+  jq -e '[.roots[] | select(.unknown_reads or .unaddressed)] == []' "$r" >/dev/null || { log "the report names a state the code does not address: $(jq -c '[.roots[] | {path, unknown_reads, unaddressed}]' "$r")"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "net and app, on the local backend, ordered into waves 1 and 2 from their code, and app planned on net's planned outputs"
   return $rc
 }
 
@@ -19010,6 +19065,7 @@ fresh-plan      ex after=boot weight=250
 waves           runner self! weight=200
 linked-states   runner self! weight=260
 linked-plan     self! weight=90
+linked-plan-local self! weight=90
 refuse          runner self! weight=200
 sealed          runner self! weight=200
 publish         runner self! registry! weight=200

@@ -252,7 +252,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "65cae39f"
     },
     {
       "claim": "apply-serial",
@@ -2213,7 +2213,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "65cae39f"
+    },
+    {
+      "claim": "linked-plan-local",
+      "says": "two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "65cae39f"
     },
     {
       "claim": "linked-states",

@@ -26,8 +26,32 @@ A consumer goes stale when a change reaches the producer and not the consumer: i
 
 | A root reads another through | terragucci reads |
 |---|---|
-| a `terraform_remote_state` block whose backend's `bucket` and `key` name another root's state | the code of both roots, as it orders the apply waves |
+| a `terraform_remote_state` block whose config names the state another root's backend block names | the code of both roots, as it orders the apply waves |
 | a Terragrunt unit's `dependency` or `dependencies` block | the unit's `terragrunt.hcl` |
+
+## State addresses
+
+A read matches a root when both name the same address:
+
+| Backend | Address |
+|---|---|
+| `s3`, `gcs`, `azurerm` | `bucket` and `key` (`prefix` for gcs) |
+| `local` | `path`, resolved against the root's directory; a root with no backend block keeps `terraform.tfstate` there |
+| `pg` | the host and database in `conn_str`, `schema_name` and `table_name` |
+| `http` | `address` |
+| `consul` | `address` and `path` |
+| `kubernetes` | `namespace` and `secret_suffix` |
+| `remote`, or a `cloud` block | `hostname`, `organization` and the workspace `name` |
+
+Credentials in `conn_str` or `address` are dropped from the address.
+
+An address that is not plain strings in the code can't be matched. This covers an expression such as `var.env`, a value the backend takes from the environment (`PG_CONN_STR`, `TF_HTTP_ADDRESS`, `CONSUL_HTTP_ADDR`, `KUBE_NAMESPACE`, `TF_CLOUD_ORGANIZATION`) or from a `-backend-config` file, and a workspace picked by tags or prefix. Nothing orders that read, so terragucci names it:
+
+- `terragucci config check` warns for each such read, and for each root whose own state has no address when any root reads state.
+- The report lists the read under `roots[].unknown_reads` and the root under `roots[].unaddressed`.
+- The plan log and `report.html` name both.
+
+Write the address in the block to give the read its edge.
 
 A report lists a root's `terraform_remote_state` reads as `roots[].reads` and a unit's dependencies as `roots[].dependencies`. Every upload keeps them in the project's `edges.json` beside each root's newest plan run and newest apply wave that changed it. The reads follow the newest plan or apply of the default branch. A pull request's plan or a drift check moves the consumer's last plan forward but never changes its reads. Nothing reads a state or an output's value.
 
