@@ -123,6 +123,8 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
     if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
   }
 }
+import { ATMOS_WRITE } from "./atmos";
+import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
@@ -302,14 +304,14 @@ export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
  * The job runs the default branch's workflow (pull_request_target) on its
  * checkout, and `terragucci ephemeral` checks the head out apart.
  */
-export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
+export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
   return [
     ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
     'if [ "${TG_ACTION:-}" = closed ]; then',
-    '  terragucci ephemeral down --pr "$TG_PR" --reason closed',
+    `  terragucci ephemeral down --pr "$TG_PR" --reason closed --binary ${binary}`,
     "else",
-    '  terragucci ephemeral up --pr "$TG_PR" --head "$TG_SHA"',
+    `  terragucci ephemeral up --pr "$TG_PR" --head "$TG_SHA" --binary ${binary}`,
     "fi",
   ].join("\n");
 }
@@ -320,19 +322,19 @@ export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined
  * first. GitLab starts no pipeline when a merge request closes, so the sweep
  * destroys a closed merge request's copy.
  */
-export function gitlabEphemeralScript(oidc: OidcSettings | undefined, prelude?: string): string {
+export function gitlabEphemeralScript(oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
   return [
     gitlabPushRemote,
     'git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"',
     ...cloudScripts("gitlab", oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
-    'terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/${CI_DEFAULT_BRANCH}"',
+    `terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "\${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/\${CI_DEFAULT_BRANCH}" --binary ${binary}`,
   ].join("\n");
 }
 
 /** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
-export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
-  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), "terragucci ephemeral sweep"].join("\n");
+export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
+  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), `terragucci ephemeral sweep --binary ${binary}`].join("\n");
 }
 
 /** The cron for `apply.resume`'s minutes. */
@@ -1663,7 +1665,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
     // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
     ...(agent ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : []),
-    ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}"`] : []),
+    ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${report.synth === ATMOS_WRITE ? ATMOS_DRIFT_PR_SHORT : SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
@@ -1810,7 +1812,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installs = [
     ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : []),
     ...(input.atmos ? [{ tool: "atmos" as Tool, version: input.atmos.version }] : []),
-    // shape: the Terramate release, for the prepare step.
+    // A Terramate repo: the release its prepare runs.
     ...(input.terramate ? [{ tool: "terramate" as Tool, version: input.terramate.version }] : []),
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
@@ -1893,8 +1895,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // pull-request (SYNTH_DRIFT_PR); attribute names who changed each attribute in the drift issue, and the job says why no
   // pull request follows.
   const fmtOn = responds(input.respond, "fmt");
-  if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${SYNTH_DRIFT_PR}`);
-  if (input.synth && rollouts) throw new RenderError(`rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
+  // init refuses these first, through the repo's shape (./shape.ts), in that shape's words; this holds for a pipeline input built another way.
+  if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${input.atmos ? ATMOS_DRIFT_PR : SYNTH_DRIFT_PR}`);
+  if (input.synth && rollouts) throw new RenderError(`rollouts: ${input.atmos ? ATMOS_ROLLOUTS : SYNTH_ROLLOUTS}`);
   const driftPr = !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
   if (input.agentDrift && !drift) throw new RenderError("agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule");
   if (input.agentDrift && driftPr) throw new RenderError(`respond.drift: ${AGENT_DRIFT_RESPOND}`);
@@ -2149,7 +2152,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
         resource_group: "terragucci-ephemeral-$CI_MERGE_REQUEST_IID",
         ...idTokens,
-        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, ephemeralPrelude))),
+        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, binary, ephemeralPrelude))),
       } as never) as never);
       jobs.set("ephemeral-sweep", new GitLabJob({
         stage: "apply",
@@ -2158,7 +2161,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "ephemeral"` })],
         resource_group: "terragucci-ephemeral-sweep",
         ...idTokens,
-        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, ephemeralPrelude))),
+        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, binary, ephemeralPrelude))),
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
@@ -2458,7 +2461,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...openid(needsToken),
       concurrency: { group: "terragucci-ephemeral-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": false },
       env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
-      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, ephemeralPrelude) }), false, true),
+      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, binary, ephemeralPrelude) }), false, true),
     } as never) as never);
   }
   // apply.branches: a push to a named branch runs the waves too, for that branch's roots.
@@ -2648,7 +2651,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...openid(needsToken),
         concurrency: { group: "terragucci-ephemeral-sweep-${{ github.repository }}", "cancel-in-progress": false },
         env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
-        steps: steps(new Step({ name: "Destroy the ephemeral copies whose TTL passed or whose pull request closed", shell: "bash", run: ephemeralSweepScript(forge, oidc) }), false, true),
+        steps: steps(new Step({ name: "Destroy the ephemeral copies whose TTL passed or whose pull request closed", shell: "bash", run: ephemeralSweepScript(forge, oidc, binary) }), false, true),
       } as never) as never],
     ]);
     extra.push({ path: EPHEMERAL_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(sweep)) });

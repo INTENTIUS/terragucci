@@ -15,12 +15,13 @@ import {
   TERRAMATE_GENERATE,
   TERRAMATE_VERSION,
   terramateGraph,
-  terramateShape,
   terramateWrite,
 } from "../src/terramate";
 import { atmosDependencies, atmosEdges, fillReads, READS_VARFILE } from "../src/atmos";
 import { rootDependencies } from "../src/detect";
-import { ROOTS_NOT_TERRAMATE, resolveRepo } from "../src/config";
+import { resolveRepo } from "../src/config";
+import { ROOTS_NOT_TERRAMATE, TERRAMATE_DRIFT_PR, TERRAMATE_GENERATE as GENERATE_REFUSED } from "../src/refusals";
+import { detectShape } from "../src/shape";
 import { init } from "../src/init";
 import { release } from "../src/install";
 import { affectedRoots } from "../src/report/stage";
@@ -181,15 +182,16 @@ describe("init in a Terramate repo", () => {
     const tm = stubTerramate(STACKS);
     await expect(init(write(tmp(), { ...FILES, "terragucci.yml": 'forge: forgejo\nroots: ["stacks/*"]\n' }), { terramate: tm, dryRun: true })).rejects.toThrow(ROOTS_NOT_TERRAMATE);
     await expect(init(write(tmp(), { ...FILES, "terragucci.yml": "forge: forgejo\nsynth: make\n" }), { terramate: tm, dryRun: true })).rejects.toThrow(/remove synth/);
-    await expect(init(write(tmp(), { ...FILES, "terragucci.yml": 'forge: forgejo\ndrift: "0 6 * * *"\n' }), { terramate: tm, dryRun: true })).rejects.toThrow(/respond.drift: .*terramate generate owns/);
+    await expect(init(write(tmp(), { ...FILES, "terragucci.yml": 'forge: forgejo\ndrift: "0 6 * * *"\n' }), { terramate: tm, dryRun: true })).rejects.toThrow(TERRAMATE_DRIFT_PR);
     await expect(init(write(tmp(), { ...FILES, "root.hcl": "", "terragucci.yml": "forge: forgejo\n" }), { terramate: tm, dryRun: true })).rejects.toThrow(/one at a time/);
   });
 
-  it("is one shape: per-root, prepared by the generate check, edits in the stack", () => {
-    const shape = terramateShape(write(tmp(), FILES))!;
-    expect([shape.kind, shape.engine, shape.prepare, shape.sourceOf("stacks/app")]).toEqual(["terramate", "per-root", TERRAMATE_GENERATE, "stacks/app"]);
-    expect(shape.refuses("roots", resolveRepo({}))).toBeUndefined();
-    expect(terramateShape(write(tmp(), { "main.tf": "" }))).toBeUndefined();
+  it("is a Shape: per-root, prepared by the generate check, roots in git, edits in the stack", () => {
+    const shape = detectShape(write(tmp(), FILES), resolveRepo({}));
+    expect([shape.kind, shape.engine, shape.prepare, shape.rootsInGit, shape.sourceOf("stacks/app")]).toEqual(["terramate", "per-root", TERRAMATE_GENERATE, true, "stacks/app"]);
+    expect(shape.refuses("generate")).toBe(GENERATE_REFUSED);
+    expect(shape.refuses("ephemeral")).toBeUndefined();
+    expect(detectShape(write(tmp(), { "main.tf": "" }), resolveRepo({})).kind).toBe("roots");
   });
 });
 
