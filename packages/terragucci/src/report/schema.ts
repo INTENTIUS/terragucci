@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 25;
+export const REPORT_MINOR = 29;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -107,8 +107,10 @@ export interface ReportChange {
 
 /** What a Terragrunt run adds about a unit (minor 1). */
 export interface ReportUnit {
-  /** The unit's stack: its parent directory, a label for grouping and filters. */
+  /** The unit's stack, a label for grouping and filters: the directory of the explicit stack that generates it, else its parent directory. */
   stack: string;
+  /** The `terragrunt.stack.hcl` that generates the unit, when an explicit stack does (minor 29). */
+  stack_file?: string;
   /** Why the run selected the unit. */
   selection: string;
   /** A preview planned before its upstream units applied. Its digest never binds an approval. */

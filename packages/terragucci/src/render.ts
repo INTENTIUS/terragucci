@@ -127,16 +127,19 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
     if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
   }
 }
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
+import { ATMOS_WRITE } from "./atmos";
+import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
-import { AGENT_COMMENT_IF, agentCommentJobs, driftAgentJobs } from "./render-agent";
+import { AGENT_COMMENT_IF, agentCommentJobs, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
-import { reviewWorkflow } from "./render-review";
+import { gitlabReviewScript, reviewWorkflow } from "./render-review";
+import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
@@ -196,6 +199,8 @@ export interface PipelineInput {
   synth?: string;
   /** An Atmos repo: every job installs this Atmos release, which its synth (`terragucci atmos write`) runs. */
   atmos?: { version: string };
+  /** A Terramate repo: every job installs this Terramate release, which its synth (`terragucci terramate generate`) runs. */
+  terramate?: { version: string };
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
   notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
@@ -304,14 +309,14 @@ export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
  * The job runs the default branch's workflow (pull_request_target) on its
  * checkout, and `terragucci ephemeral` checks the head out apart.
  */
-export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
+export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
   return [
     ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
     'if [ "${TG_ACTION:-}" = closed ]; then',
-    '  terragucci ephemeral down --pr "$TG_PR" --reason closed',
+    `  terragucci ephemeral down --pr "$TG_PR" --reason closed --binary ${binary}`,
     "else",
-    '  terragucci ephemeral up --pr "$TG_PR" --head "$TG_SHA"',
+    `  terragucci ephemeral up --pr "$TG_PR" --head "$TG_SHA" --binary ${binary}`,
     "fi",
   ].join("\n");
 }
@@ -322,19 +327,19 @@ export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined
  * first. GitLab starts no pipeline when a merge request closes, so the sweep
  * destroys a closed merge request's copy.
  */
-export function gitlabEphemeralScript(oidc: OidcSettings | undefined, prelude?: string): string {
+export function gitlabEphemeralScript(oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
   return [
     gitlabPushRemote,
     'git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"',
     ...cloudScripts("gitlab", oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
-    'terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/${CI_DEFAULT_BRANCH}"',
+    `terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "\${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/\${CI_DEFAULT_BRANCH}" --binary ${binary}`,
   ].join("\n");
 }
 
 /** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
-export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
-  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), "terragucci ephemeral sweep"].join("\n");
+export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
+  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), `terragucci ephemeral sweep --binary ${binary}`].join("\n");
 }
 
 /** The cron for `apply.resume`'s minutes. */
@@ -575,6 +580,10 @@ const FORGE_API_JS = [
 const FORGE_API_JS_GITLAB = FORGE_API_JS.replace(
   `{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });`,
   '{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url, ...(sha === e.CI_COMMIT_SHA && /^[0-9]+$/.test(e.CI_PIPELINE_ID || "") ? { pipeline_id: Number(e.CI_PIPELINE_ID) } : {}) });',
+).replace(
+  // A run is a pipeline on GitLab (`tg alive`, for the shared apply lock of waves.jobs).
+  `call("GET", repo + "/actions/runs/" + a[0]);\n      console.log(["success", "failure", "cancelled", "skipped", "completed"]`,
+  `call("GET", repo + "/pipelines/" + a[0]);\n      console.log(["success", "failed", "canceled", "skipped"]`,
 );
 
 /** Shell that defines `tg`, the forge calls above. */
@@ -755,8 +764,9 @@ export function forgejoLock(standDown = true): string {
 }
 
 /**
- * Under a repo-wide scope, the apply lock of a pipeline that splits a wave across jobs (`waves.jobs`),
- * on GitHub and Forgejo alike: forgejoLock's tag, held by a run rather than a
+ * The apply lock of a pipeline that splits a wave across jobs (`waves.jobs`),
+ * on every forge (on GitLab in place of the apply jobs' resource group, which
+ * runs one job at a time): forgejoLock's tag, held by a run rather than a
  * job, so the share jobs of a wave apply side by side while no other run
  * applies. Each job first pushes a hold tag naming its run and itself, then
  * takes the lock, or joins it when its own run holds it. On exit a job drops
@@ -766,8 +776,9 @@ export function forgejoLock(standDown = true): string {
  * waiter takes it over, as from any run that is gone, and drops that run's
  * holds.
  */
-export function sharedApplyLock(job: string): string {
-  const id = "${GITHUB_RUN_ID:-$$}";
+export function sharedApplyLock(job: string, forge: ForgeName = "github"): string {
+  // On GitLab the run is the pipeline, and `tg alive` asks GitLab whether it still runs.
+  const id = forge === "gitlab" ? "${CI_PIPELINE_ID}" : "${GITHUB_RUN_ID:-$$}";
   return [
     'lock_ref="refs/tags/terragucci-apply-lock"',
     `hold_prefix="refs/tags/terragucci-apply-hold-${id}-"`,
@@ -957,12 +968,14 @@ export function applyScript(
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
-    ...(input.sharedLock ? [sharedApplyLock(input.sharedLock)] : repoWide && forge === "forgejo" ? [forgejoLock()] : forge === "github" || forge === "forgejo" ? [STAND_DOWN] : []),
+    // GitLab's lock tags go up with the project's token, as the ledger's pushes do. A split wave's jobs hold their run's shared lock
+    // whatever the scope; otherwise only a repo-wide scope serializes, and a push's wave stands down for a newer push.
+    ...(input.sharedLock ? [...(forge === "gitlab" ? [gitlabPushRemote] : []), sharedApplyLock(input.sharedLock, forge)] : repoWide && forge === "forgejo" ? [forgejoLock()] : forge === "github" || forge === "forgejo" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
     // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
     // A wave that holds the resources it changes (scope resource) records them there too.
-    ...(forge === "gitlab" && (gate !== "never" || input.policy || input.costGate || scope === "resource") ? [gitlabPushRemote] : []),
+    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.policy || input.costGate || scope === "resource") ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -1635,9 +1648,9 @@ export const MERGE_ENVIRONMENT = "terragucci-merge";
  * jobs' reports. It runs nothing itself: no plan, no apply and no cloud
  * credentials.
  */
-export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false): string {
+export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean; review?: boolean } = {}): string {
   const requires = prApply?.requires && !APPLY_REQUIRES.every((r) => prApply.requires!.includes(r)) ? ` --requires ${prApply.requires.length ? prApply.requires.join(",") : "none"}` : "";
-  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}`;
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
 }
 
 /**
@@ -1686,7 +1699,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
     // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
     ...(agent ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : []),
-    ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}"`] : []),
+    ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${report.synth === ATMOS_WRITE ? ATMOS_DRIFT_PR_SHORT : SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
@@ -1791,7 +1804,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tg = input.terragrunt;
   // waves.jobs: a wave of more roots than one job spreads across share jobs, after a job of its own plans it and decides its gate.
   const waveJobs = input.waveJobs !== undefined && input.waveJobs > 1 ? input.waveJobs : undefined;
-  if (waveJobs && forge === "gitlab") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
   const applyBranches = input.applyBranches && Object.keys(input.applyBranches).length > 0 ? input.applyBranches : undefined;
@@ -1833,6 +1845,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installs = [
     ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : []),
     ...(input.atmos ? [{ tool: "atmos" as Tool, version: input.atmos.version }] : []),
+    // A Terramate repo: the release its prepare runs.
+    ...(input.terramate ? [{ tool: "terramate" as Tool, version: input.terramate.version }] : []),
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
@@ -1872,7 +1886,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // shape: how the binary keeps applies apart (./apply-rows.ts). Only a repo-wide scope serializes the repo's apply jobs.
   const scope = applyScope(binary);
   const repoWide = scope === "repo";
-  const sharedLock = split && repoWide;
+  // A split wave's jobs hold their run's shared lock tag on every forge, whatever the scope, so the shares apply side by side.
+  const sharedLock = split;
   const applyJobs: ApplyJob[] = [];
   let before: string[] = [];
   for (let i = 0; i < waveCount; i++) {
@@ -1907,7 +1922,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
   // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
@@ -1918,8 +1933,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // pull-request (SYNTH_DRIFT_PR); attribute names who changed each attribute in the drift issue, and the job says why no
   // pull request follows.
   const fmtOn = responds(input.respond, "fmt");
-  if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${SYNTH_DRIFT_PR}`);
-  if (input.synth && rollouts) throw new RenderError(`rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
+  // init refuses these first, through the repo's shape (./shape.ts), in that shape's words; this holds for a pipeline input built another way.
+  if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${input.atmos ? ATMOS_DRIFT_PR : SYNTH_DRIFT_PR}`);
+  if (input.synth && rollouts) throw new RenderError(`rollouts: ${input.atmos ? ATMOS_ROLLOUTS : SYNTH_ROLLOUTS}`);
   const driftPr = !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
   if (input.agentDrift && !drift) throw new RenderError("agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule");
   if (input.agentDrift && driftPr) throw new RenderError(`respond.drift: ${AGENT_DRIFT_RESPOND}`);
@@ -1933,9 +1949,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {
-    if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
+    if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
-    if (input.review) throw new RenderError("review.agent runs on GitHub and Forgejo; leave review unset on GitLab");
+    if (input.review && !input.comments) throw new RenderError(`review: ${NEEDS_COMMENTS_ON_GITLAB.review}`);
     // With gitlab.token: protected no merge request pipeline holds the token, and the comments job posts the plan notes.
     const protectedToken = input.gitlabToken === "protected";
     if (protectedToken && !input.comments) throw new RenderError(`gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`);
@@ -1964,7 +1980,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // A scheduled pipeline is drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
     const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
-    const notMrApply = prApply ? ` && $${MR_VAR} == null` : "";
+    // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them.
+    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
+    const notMrApply = startedBy.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
     // apply.branches: a push to a named branch runs the apply jobs too, for that branch's roots.
@@ -2021,18 +2039,33 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     }
     jobs.set("plan", plan as never);
     for (const job of pushApplyJobs) {
+      // The job after the last wave's shares runs no stage and holds no credential: it posts the one success.
+      if (job.done) {
+        jobs.set(job.name, new GitLabJob({
+          stage: "apply",
+          image: jobImage,
+          needs: job.needs.map((n) => ({ job: n, artifacts: false })),
+          variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_SHA: gitlabEnv.TG_SHA },
+          rules: [new Rule({ if: onApply })],
+          script: [bash("APPLY", job.body)],
+        } as never) as never);
+        continue;
+      }
       jobs.set(job.name, new GitLabJob({
         stage: "apply",
         image: jobImage,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: onApply })],
-        ...(repoWide ? { resource_group: "terragucci-apply" } : {}),
+        // Under a repo-wide scope, one apply at a time per project. With waves.jobs a wave's shares apply side by side, so the jobs hold
+        // the run's shared lock tag instead of the resource group, which runs one job at a time (sharedApplyLock).
+        ...(repoWide && !split ? { resource_group: "terragucci-apply" } : {}),
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", job.body))],
         // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
-        artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
+        // A wave split across jobs hands its decision to its shares, which take this job's artifacts through needs.
+        artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(job.decides ? [`${DECIDED_DIR}/`] : []), ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
     if (prApply) {
@@ -2148,7 +2181,52 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: Boolean(input.agentComment), review: Boolean(input.review) }))],
+      } as never) as never);
+    }
+    if (input.agentComment) {
+      // `/terragucci agent <ask>`: the comments job starts a pipeline of the default branch for it. The agent runs in
+      // one job with the model's key alone (its environment cleared), and a fresh job pushes its change with the agent's token.
+      const agent = input.agentComment;
+      const onAgent = `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${AGENT_MR_VAR}`;
+      jobs.set("agent", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_AGENT_MAX_TURNS: String(agent.maxTurns) },
+        rules: [new Rule({ if: onAgent })],
+        timeout: `${agent.timeout} minutes`,
+        script: [bash("AGENT", gitlabAgentRunScript(agent, GL_AGENT_ARTIFACT))],
+        artifacts: { name: GL_AGENT_ARTIFACT, when: "always", paths: [`${GL_AGENT_ARTIFACT}/`] },
+      } as never) as never);
+      jobs.set("agent-push", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        needs: ["agent"],
+        variables: { TG_TOKEN: `$${agent.tokenSecret}` },
+        rules: [new Rule({ if: onAgent })],
+        script: [bash("AGENT_PUSH", gitlabAgentPushScript(agent.policyDir, GL_AGENT_ARTIFACT))],
+      } as never) as never);
+    }
+    if (input.review) {
+      // review.agent: the comments job starts a pipeline of the default branch for each merge request head once its plan
+      // ended. The review command runs with the model's key alone (its environment cleared); a fresh job posts the note.
+      const onReview = `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${REVIEW_MR_VAR}`;
+      jobs.set(REVIEW_JOB, new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_DEFAULT_BRANCH: "$CI_DEFAULT_BRANCH", GIT_DEPTH: "0" },
+        rules: [new Rule({ if: onReview })],
+        timeout: `${input.review.timeout} minutes`,
+        script: [bash("REVIEW", gitlabReviewScript(input.review, GL_REVIEW_ARTIFACT))],
+        artifacts: { name: GL_REVIEW_ARTIFACT, when: "always", paths: [`${GL_REVIEW_ARTIFACT}/`] },
+      } as never) as never);
+      jobs.set("review-note", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        needs: [REVIEW_JOB],
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, GIT_STRATEGY: "none" },
+        rules: [new Rule({ if: onReview, when: "always" } as never)],
+        script: [bash("REVIEW_NOTE", `set -uo pipefail\nterragucci review post --forge gitlab --dir ${GL_REVIEW_ARTIFACT}`)],
       } as never) as never);
     }
     if (input.resume) {
@@ -2174,7 +2252,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
         resource_group: "terragucci-ephemeral-$CI_MERGE_REQUEST_IID",
         ...idTokens,
-        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, ephemeralPrelude))),
+        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, binary, ephemeralPrelude))),
       } as never) as never);
       jobs.set("ephemeral-sweep", new GitLabJob({
         stage: "apply",
@@ -2183,7 +2261,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "ephemeral"` })],
         resource_group: "terragucci-ephemeral-sweep",
         ...idTokens,
-        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, ephemeralPrelude))),
+        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, binary, ephemeralPrelude))),
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
@@ -2484,7 +2562,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...openid(needsToken),
       concurrency: { group: "terragucci-ephemeral-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": false },
       env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
-      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, ephemeralPrelude) }), false, true),
+      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, binary, ephemeralPrelude) }), false, true),
     } as never) as never);
   }
   // apply.branches: a push to a named branch runs the waves too, for that branch's roots.
@@ -2674,7 +2752,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...openid(needsToken),
         concurrency: { group: "terragucci-ephemeral-sweep-${{ github.repository }}", "cancel-in-progress": false },
         env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
-        steps: steps(new Step({ name: "Destroy the ephemeral copies whose TTL passed or whose pull request closed", shell: "bash", run: ephemeralSweepScript(forge, oidc) }), false, true),
+        steps: steps(new Step({ name: "Destroy the ephemeral copies whose TTL passed or whose pull request closed", shell: "bash", run: ephemeralSweepScript(forge, oidc, binary) }), false, true),
       } as never) as never],
     ]);
     extra.push({ path: EPHEMERAL_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(sweep)) });

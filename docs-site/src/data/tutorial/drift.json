@@ -1,6 +1,6 @@
 {
   "step": "drift",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "be9f7c9320e2bc21",
   "commands": [
     {
       "cmd": "just example change drift",
@@ -10,6 +10,6 @@
   ],
   "shots": {
     "issue-light": "c2bd03de5aec8fab",
-    "issue-dark": "ac1275e48d9d3301"
+    "issue-dark": "217c6de88a6a8281"
   }
 }
