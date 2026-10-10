@@ -293,6 +293,7 @@ otlp-headers|telemetry.headers_secret maps the collector key into the jobs, span
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
 generate|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
 tg-generate|in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name|
+tg-generate-init|with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it|
 root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
@@ -321,7 +322,7 @@ policy-hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and i
 policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
 tg-policy|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
 tg-credentials|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
-tg-dependents|terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out|
+tg-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
 tg-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
 tg-preview-gate|a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves|
 tf-terraform|with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform|
@@ -10259,6 +10260,69 @@ YML
   return $rc
 }
 
+claim_tg_generate_init() {
+  # A Terragrunt repo of one unit, live/app, that includes terragucci.hcl,
+  # and a terragucci.yml whose generate key gives the s3 backend in a bucket
+  # nobody created, with disable_init: false. terragucci generate writes
+  # disable_init = false in terragucci.hcl's remote_state; the check step
+  # init writes passes it (hcl fmt, generate --check, hcl validate). Then
+  # tf-apply --terragrunt wave 1, run in the Terragrunt image as the apply job
+  # runs it, has Terragrunt bootstrap the backend: the bucket exists after,
+  # and live/app's state is in it. force_path_style, not use_path_style, is
+  # what Terragrunt's own S3 client reads to reach floci by path.
+  # BREAK: terragucci.yml leaves disable_init out, so terragucci.hcl keeps
+  # disable_init = true, nothing creates the bucket and the wave fails.
+  log() { echo "[smoke tg-generate-init] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bucket="tggeninit-$STAMP" body code=0 rc=0 init_line="  disable_init: false"
+  image="$(image_tag terragrunt)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  [ -n "${BREAK:-}" ] && init_line=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null "$FLOCI/$bucket" 2>/dev/null && { log "the bucket $bucket exists before the run"; drop_work "$work"; return 1; }
+  mkdir -p "$work/wave/modules/app" "$work/wave/live/app"
+  printf 'resource "terraform_data" "app" {\n  input = "app"\n}\n' > "$work/wave/modules/app/main.tf"
+  printf '# The unit takes its backend from terragucci.hcl.\n' > "$work/wave/root.hcl"
+  printf 'include "terragucci" {\n  path = find_in_parent_folders("terragucci.hcl")\n}\n\nterraform {\n  source = "../../modules/app"\n}\n' > "$work/wave/live/app/terragrunt.hcl"
+  cat > "$work/wave/terragucci.yml" <<YML
+forge: forgejo
+binary: tofu
+generate:
+$init_line
+  backend:
+    s3:
+      bucket: $bucket
+      key: "{root}/terraform.tfstate"
+      region: us-east-1
+      use_lockfile: true
+      force_path_style: true
+YML
+  printf '.terragrunt-cache/\nterragucci-report/\n' > "$work/wave/.gitignore"
+  (cd "$work/wave" && "$TERRAGUCCI" generate >&2) || { log "generate failed"; drop_work "$work"; return 1; }
+  if grep -q '^  disable_init = false$' "$work/wave/terragucci.hcl"; then log "terragucci.hcl's remote_state has disable_init = false"
+  else log "terragucci.hcl's remote_state has $(grep -m1 'disable_init' "$work/wave/terragucci.hcl" | sed 's/^ *//'), not disable_init = false"; rc=1; fi
+  (cd "$work/wave" && TERRAGUCCI_TERRAGRUNT=/nonexistent/terragrunt "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  body="$(check_step_body "$work/wave/.forgejo/workflows/terragucci.yml")"
+  audit_origin "$work"
+  AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true sh -c "$body" > "$work/check.log" 2>&1 || code=$?
+  cat "$work/check.log" >&2
+  clean_mounted "$work/wave" "$image"
+  [ "$code" = 0 ] || { log "the check step exited $code"; rc=1; }
+  AUDIT_CODE=0
+  AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-apply --wave 1 --layers "live/app" --binary tofu --gate never --terragrunt > "$work/apply.log" 2>&1 || AUDIT_CODE=$?
+  cat "$work/apply.log" >&2
+  clean_mounted "$work/wave" "$image"
+  [ "$AUDIT_CODE" = 0 ] || { log "the wave exited $AUDIT_CODE, not 0"; rc=1; }
+  grep -q 'Terragrunt bootstraps its backend (TG_BACKEND_BOOTSTRAP)' "$work/apply.log" || { log "the wave did not say it bootstraps the backend"; rc=1; }
+  curl -fsS -o /dev/null "$FLOCI/$bucket" || { log "the bucket $bucket does not exist after the wave"; rc=1; }
+  curl -fsS -o /dev/null "$FLOCI/$bucket/live/app/terraform.tfstate" || { log "no state for live/app at $bucket/live/app/terraform.tfstate"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "generate wrote disable_init = false, the check step passed it, and the apply job had Terragrunt create $bucket and apply live/app into it"
+  return $rc
+}
+
 claim_root_pins() {
   # Two roots in one wave: old pins OpenTofu 1.10.6 in its .opentofu-version,
   # which the tofu image does not carry, and new pins nothing. tf-plan, run in
@@ -12234,23 +12298,29 @@ claim_tg_dependents() {
   # The Terragrunt gated fixture with live/fleet/two depending on
   # live/canary/one, a fourth unit under live/sandbox, and terragrunt.exclude
   # leaving live/sandbox/** out. A change to live/canary/one and to the
-  # sandbox unit is planned twice against the base: with dependents: plan,
-  # live/fleet/two is previewed, provisional and deferred; with
+  # sandbox unit is planned twice against the base: with no dependents key,
+  # the default, live/fleet/two is previewed, provisional and deferred; with
   # dependents: follow it is not planned; both runs have the same set
   # digests, and neither plans the sandbox unit.
-  # BREAK: the first run also has dependents: follow, so nothing is previewed.
+  # BREAK: the first run has dependents: follow, the old default, so nothing
+  # is previewed.
   log() { echo "[smoke tg-dependents] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work prefix="tg-dep-$STAMP" dir mode base r1 r2 rc=0 i
-  local -a dep_modes=(plan follow)
+  # "default" writes no dependents key.
+  local -a dep_modes=(default follow)
   [ -n "${BREAK:-}" ] && dep_modes=(follow follow)
   docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   for i in 1 2; do
     dir="$work/run$i"; mode="${dep_modes[$((i - 1))]}"
-    tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]\n  dependents: %s' "$mode")" || return 1
+    if [ "$mode" = default ]; then
+      tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]')" || return 1
+    else
+      tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]\n  dependents: %s' "$mode")" || return 1
+    fi
     printf '\ndependencies {\n  paths = ["../../canary/one"]\n}\n' >> "$dir/live/fleet/two/terragrunt.hcl"
     mkdir -p "$dir/live/sandbox/four"
     cp "$dir/live/fleet/three/terragrunt.hcl" "$dir/live/sandbox/four/"
@@ -12267,13 +12337,13 @@ claim_tg_dependents() {
   r2="$work/run2/terragucci-report/report.json"
   [ -f "$r1" ] && [ -f "$r2" ] || { log "a run wrote no report"; drop_work "$work"; return 1; }
   jq -e '.roots[] | select(.path == "live/canary/one" and .status == "planned" and (.terragrunt.provisional | not))' "$r1" >/dev/null || { log "live/canary/one is not a real plan"; rc=1; }
-  jq -e '.roots[] | select(.path == "live/fleet/two" and .terragrunt.provisional == true)' "$r1" >/dev/null || { log "dependents: plan did not preview live/fleet/two as provisional"; rc=1; }
+  jq -e '.roots[] | select(.path == "live/fleet/two" and .terragrunt.provisional == true)' "$r1" >/dev/null || { log "by default live/fleet/two was not previewed as provisional"; rc=1; }
   jq -e '.deferred[] | select(.unit == "live/fleet/two" and .previewed == true)' "$r1" >/dev/null || { log "live/fleet/two is not deferred and previewed"; rc=1; }
   jq -e '[.roots[] | select(.path == "live/fleet/two")] | length == 0' "$r2" >/dev/null || { log "dependents: follow planned live/fleet/two"; rc=1; }
   [ "$(jq -c '[.waves[]?.set_digest]' "$r1")" = "$(jq -c '[.waves[]?.set_digest]' "$r2")" ] || { log "the preview changed a set digest"; rc=1; }
   jq -e '[.roots[] | select(.path | startswith("live/sandbox"))] | length == 0' "$r1" >/dev/null || { log "the excluded sandbox unit was planned"; rc=1; }
   drop_work "$work"
-  [ $rc = 0 ] && log "dependents: plan previewed live/fleet/two outside every digest, follow left it for later, and the excluded unit never planned"
+  [ $rc = 0 ] && log "by default live/fleet/two was previewed outside every digest, dependents: follow left it for later, and the excluded unit never planned"
   return $rc
 }
 
@@ -17564,6 +17634,7 @@ pinned-install       weight=60
 root-pins            weight=60
 generate             weight=60
 tg-generate          weight=150
+tg-generate-init     weight=120
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150

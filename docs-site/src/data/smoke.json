@@ -1305,6 +1305,14 @@
       "commit": "b0f19790"
     },
     {
+      "claim": "tg-generate-init",
+      "says": "with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "04983e3b"
+    },
+    {
       "claim": "root-pins",
       "says": "two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root",
       "needs": null,
@@ -1530,11 +1538,11 @@
     },
     {
       "claim": "tg-dependents",
-      "says": "terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out",
+      "says": "by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "04983e3b"
     },
     {
       "claim": "tg-preview",
@@ -2248,30 +2256,6 @@
       "commit": "7c2ff19c"
     },
     {
-      "claim": "image",
-      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "env",
-      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
-      "claim": "local-plan",
-      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "4db5e993"
-    },
-    {
       "claim": "tg-ephemeral-pr",
       "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
       "needs": null,
@@ -2302,6 +2286,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "e67a400c"
+    },
+    {
+      "claim": "image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
     },
     {
       "claim": "mr-widget",

@@ -309,9 +309,8 @@ describe("terragucci stage tf-plan previews a Terragrunt repo's later layers", (
     expect(r.report.deferred?.find((d) => d.unit === "live/app")?.why).toBe("Terragrunt did not ask the binary for the outputs of live/net, so its plan is not on their planned outputs");
   });
 
-  it("with dependents: plan, the dependents of a changed unit are previewed layer by layer, provisional, and the one that reads an unknown is named", async () => {
+  it("by default (dependents: plan), the dependents of a changed unit are previewed layer by layer, provisional, and the one that reads an unknown is named", async () => {
     const repo = previewRepo();
-    write(repo, { "terragucci.yml": "terragrunt:\n  dependents: plan\n" });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: fakeBinary(), terragrunt: true, base: "origin/main", terragruntExec: fakeTerragrunt(UNITS, { selected: ["live/net"] }), env: { PATH: process.env.PATH } }, () => {});
     expect(input(r.report, "live/app")).toBe("1-r2");
     expect(r.report.roots.find((u) => u.path === "live/app")?.terragrunt?.provisional).toBe(true);
@@ -321,6 +320,14 @@ describe("terragucci stage tf-plan previews a Terragrunt repo's later layers", (
       { unit: "live/edge", after: ["live/app", "live/net"], why: "depends on a changed unit; reads `out` of live/app, unknown until wave 2 applies", previewed: false },
     ]);
     expect(parseMarker(readFileSync(join(repo, "out/note.md"), "utf-8"))?.previews?.map((p) => p.unit)).toEqual(["live/app"]);
+  });
+
+  it("with dependents: follow, the dependents of a changed unit are not previewed: each waits for the wave before it", async () => {
+    const repo = previewRepo();
+    write(repo, { "terragucci.yml": "terragrunt:\n  dependents: follow\n" });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: fakeBinary(), terragrunt: true, base: "origin/main", terragruntExec: fakeTerragrunt(UNITS, { selected: ["live/net"] }), env: { PATH: process.env.PATH } }, () => {});
+    expect(r.report.roots.map((u) => u.path)).toEqual(["live/net"]);
+    expect(r.report.deferred?.map((d) => [d.unit, d.previewed])).toEqual([["live/app", false], ["live/edge", false]]);
   });
 
   it("a later unit that reads an unknown is not planned, and its wave plans again once the upstream's wave applies", async () => {
