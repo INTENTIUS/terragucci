@@ -30,10 +30,10 @@
           "root": { "type": "string" },
           "wave": { "type": "integer" },
           "reads": { "type": "array", "items": { "type": "string" } },
-          "state": { "$ref": "#/$defs/state", "description": "The state its backend block names, which a root of another project may read." },
+          "state": { "$ref": "#/$defs/state", "description": "The state its backend block names, which a root of another project may read. Under choudoufu, the records of the estate its live block owns: tofu-records/<estate>, with no bucket." },
           "external": {
             "type": "array",
-            "description": "Its terraform_remote_state reads of a state no root of the project holds: the block's label and the state it names. The estate page matches them to other projects' roots.",
+            "description": "Its terraform_remote_state reads of a state no root of the project holds: the block's label and the state it names. Under choudoufu, its terraform_estate_outputs reads of an estate no root of the project owns, as that estate's records. The estate page matches them to other projects' roots.",
             "items": {
               "type": "object",
               "required": ["data", "key"],

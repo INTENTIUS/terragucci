@@ -59,9 +59,9 @@ export interface RunRoot {
   wave: number;
   /** The roots of the project whose state it reads. */
   reads: string[];
-  /** The state its backend block names, which a root of another project may read. */
+  /** The state its backend block names, which a root of another project may read; under choudoufu its estate's records (estateRecords in ../detect.ts). */
   state?: RunState;
-  /** Its `terraform_remote_state` reads of a state no root of the project holds: another project's, when the estate page finds it. */
+  /** Its `terraform_remote_state` reads (under choudoufu, `terraform_estate_outputs` reads) of a state no root of the project holds: another project's, when the estate page finds it. */
   external?: (RunState & { data: string })[];
 }
 
