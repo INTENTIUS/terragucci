@@ -8867,7 +8867,7 @@ HCL
   git -C "$work/behold-drift" init -q -b main
   git -C "$work/behold-drift" add -A && git -C "$work/behold-drift" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke behold-view"
   in_image() { # the command
-    run_copied --rm --network terragucci -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
