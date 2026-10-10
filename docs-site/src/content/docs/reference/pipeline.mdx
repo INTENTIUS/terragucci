@@ -21,7 +21,7 @@ Up to Forgejo `16.0.5`, a waiting run can stay stuck with the runner idle after 
 | Rule | What happens |
 |---|---|
 | [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | every apply job of the pipeline takes the lock on the remote, held by the run (on GitLab, the pipeline) rather than by one job, so a wave's share jobs apply side by side while another such run's apply waits |
-| Stand-down | a push's wave whose commit is no longer the branch tip stands down: at the start of its job on GitHub and Forgejo, and on every forge again once its gate let it through, before it applies. The newer push applies the whole tree |
+| Stand-down | a push's wave whose commit is no longer the branch tip stands down: at the start of its job on GitHub and Forgejo, and on every forge again once its gate let it through, before it applies. The newer push applies the whole tree (`apply-stand-down`) |
 | Another run's resources | with choudoufu, a push's wave waits for a run applying a resource it changes, then plans again; the apply a comment starts is refused and its reply names that run |
 | Pull request locks | none under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks), from a pull request's first plan; under `apply.when: pull-request`, an applying pull request or one a writer comments `/terragucci lock` on locks the roots it reaches (in a Terragrunt repo, the units) |
 | Parallelism | `tf-plan`, `tf-drift` and `tf-apply` plan and apply a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise, and 16 units for Terragrunt's `run --all` on other backends |
@@ -46,6 +46,12 @@ Neither approves anything; the wave's gate decides again against the plans it ma
 | GitLab | the `resume` job in the pipeline, for a pipeline schedule you create with the variable `TERRAGUCCI_SCHEDULE=resume`, every `apply.resume` minutes |
 
 GitHub and Forgejo schedule it as the cron `*/<apply.resume>`: `60` runs hourly, and a value that does not divide 60 also runs on the hour. Each run costs a short job even when nothing waits.
+
+## Stopped applies
+
+A gated wave whose approved apply was killed or failed plans again when it next runs. Under [choudoufu](/terragucci/concepts/glossary/#choudoufu), every resource whose apply returned already has its record, so the plan holds only the rest. The wave applies it under the same approval when each change is one the approval covered, unchanged, and every other approved change is done in the records. Otherwise it waits for an approval of the plans it makes. choudoufu's apply still re-reads each resource before it writes.
+
+The resume job applies the rest of a killed apply once the run that applied is gone. A failed apply resumes when its job runs again. With stock OpenTofu or Terraform, a plan that differs from the approved one needs its own approval.
 
 ## Apply from a comment
 

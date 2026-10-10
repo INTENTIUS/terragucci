@@ -31,7 +31,7 @@
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
- *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
+ *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for, or an approved apply that was killed; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
@@ -183,12 +183,15 @@ Docs: https://intentius.io/terragucci/`;
 
 /** `--approval`: one of APPROVALS, or undefined when not given. */
 /** The checkout's `waves.after`, for plain roots; undefined when there is none or the config cannot be read (the plan job says why). */
-async function wavesAfterAt(cwd: string): Promise<WavesAfter | undefined> {
+/** What the lock decisions read of the checkout's shape: `waves.after`, and whether a command writes the roots (`synth`). */
+async function lockShapeAt(cwd: string): Promise<{ after?: WavesAfter; synth?: true }> {
   try {
     const path = findConfig(cwd);
-    return path ? detectShape(cwd, resolveRepo(await loadConfig(path))).after : undefined;
+    if (!path) return {};
+    const shape = detectShape(cwd, resolveRepo(await loadConfig(path)));
+    return { ...(shape.after ? { after: shape.after } : {}), ...(shape.kind === "synth" ? { synth: true as const } : {}) };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -622,12 +625,12 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("comment-apply's --forge is github, forgejo or gitlab");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment-apply's --when is merge or pull-request");
         const requires = requiresOf(str(flags, "requires"), "comment-apply");
-        // waves.after: a root it puts after a root the change reaches is locked with it.
-        const after = flags.terragrunt === true ? undefined : await wavesAfterAt(cwd);
+        // waves.after: a root it puts after a root the change reaches is locked with it. synth: a change can reach every root.
+        const { after, synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
         if (forge === "gitlab") {
           // GitLab: the mr-apply job of the pipeline the comments job started; the merge request, the note and the head come from its variables, read again from the API.
           if (when !== "pull-request") throw new ConfigError("comment-apply --forge gitlab is apply before merge's: pass --when pull-request");
-          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
           writeDecision(resolve(cwd, out), decision);
           if (decision.fail) {
             console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -636,7 +639,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
           return 0;
         }
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
+        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
         writeDecision(resolve(cwd, out), decision);
         if (decision.fail) {
           console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -652,7 +655,8 @@ export async function main(argv: string[]): Promise<number> {
         if (!layers) throw new ConfigError("pr-lock needs --layers <a,b;c>");
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("pr-lock's --forge is github or forgejo");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("pr-lock's --when is merge or pull-request");
-        const decision = await decidePlanLock({ layers: parseLayers(layers), forge, when, ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+        const { synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
+        const decision = await decidePlanLock({ layers: parseLayers(layers), forge, when, ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
         if (decision.fail) {
           console.error(`terragucci pr-lock: failed: ${decision.reason}`);
           return 1;
@@ -733,7 +737,7 @@ export async function main(argv: string[]): Promise<number> {
         if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
         if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
         else {
-          for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
+          for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : w.stopped ? `terragucci resume: the apply of wave ${w.wave}, approved by ${w.by} for ${w.digest}, stopped before it finished; the wave applies the rest` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
           console.log(step.kind === "apply" ? `terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides` : `terragucci resume: retried ${step.job} of pipeline ${step.pipeline}${step.url ? ` (${step.url})` : ""}; the waves after it follow`);
         }
         return 0;
