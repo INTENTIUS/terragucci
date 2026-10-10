@@ -673,7 +673,7 @@ export interface ReportBlast {
   /** Nearest first: each root that reads the state of a root in the radius. */
   downstream: ReportBlastRoot[];
   /**
-   * The radius by resource (minor 31), when a root downstream: each resource
+   * The radius by resource (minor 31), when a root is downstream: each resource
    * a plan changes and the resources that depend on it, from the plans'
    * references and the outputs each root reads. Absent in a Terragrunt repo.
    */
