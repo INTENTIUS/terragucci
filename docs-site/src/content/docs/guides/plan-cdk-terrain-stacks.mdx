@@ -124,6 +124,8 @@ A command that fails ends the job; the plan job also sets `terragucci/plan` to f
 | Which stacks a pull request plans | the ones the change affects; see below |
 | Format check | the `.tf`, `.tofu` and `.tfvars` files git tracks, one directory at a time, so the packages `npm ci` installs are left out |
 | Terragrunt | not supported: `init` refuses `synth` in a Terragrunt repo |
+| [Ephemeral environments](/terragucci/guides/ephemeral-environments/#synthesized-roots) | the `ephemeral` job runs the synth command in the pull request's checkout, then copies the stacks `ephemeral.roots` names under keys suffixed `-pr-<n>` |
+| [Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots) | a stack that reads another's state through a remote state data source, such as `DataTerraformRemoteStateS3`, plans on that stack's planned outputs, read from its `cdk.tf.json` |
 | [State migrations](/terragucci/guides/move-resources-between-roots/) | a migration file names stacks by their roots, such as `cdktf.out/stacks/dev`; `tf-plan` proves it against each stack's `cdk.tf.json` after the synth, and wave 1 writes it once approved. Move the construct in the app in the same change, keeping its id, so the address in the other stack is the same |
 
 ## Stack edits
@@ -136,6 +138,7 @@ The stacks' files are the app's output. Git does not hold them and the next synt
 | `respond.drift: pull-request`, the default, with a `drift` schedule | a config error: set `respond.drift` to `attribute` or `off` |
 | `respond.drift: attribute` | `tf-drift` names who changed each attribute in the drift issue; no pull request follows, and the drift job's log says why |
 | `rollouts`, or `terragucci rollout` in the repo | a config error: move the pin in the app |
+| [`generate`](/terragucci/guides/generate-root-files/#with-synth) | a config error naming the backend constructs: set the backend, providers and `required_version` in the app |
 | A control repo's rollout | a project with `synth` is listed as refused, and the other projects roll out |
 
 ## Planned stacks
