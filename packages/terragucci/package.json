@@ -1,6 +1,6 @@
 {
   "name": "@intentius/terragucci",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "The whole Terraform lifecycle, handled: one config file, generated pipelines for GitHub, GitLab and Forgejo.",
   "license": "Apache-2.0",
   "type": "module",
