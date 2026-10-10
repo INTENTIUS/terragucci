@@ -281,5 +281,6 @@ Internal; a value set in `env:` is overwritten.
 | `TG_REVIEW_PROMPT` | the review command's step: the prompt file, which is also its stdin |
 | `TG_DEFAULT_BRANCH` | the review job: the default branch, read from the event, that the instructions come from |
 | `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your job: GitLab state lowers parallelism; the roots of a stage share the cache, or one of the stage's own when it is unset |
+| `TF_HTTP_USERNAME`, `TF_HTTP_PASSWORD`, `TF_HTTP_LOCK_ADDRESS`, `TF_HTTP_UNLOCK_ADDRESS`, `TF_HTTP_LOCK_METHOD`, `TF_HTTP_UNLOCK_METHOD` | read from your job or shell, as the binary reads them, on [GitLab-managed state](/terragucci/reference/pipeline/#gitlab-managed-state): the serial each apply records, `state export`, `unlock-state` and ephemeral copies |
 
 

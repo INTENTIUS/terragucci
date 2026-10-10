@@ -24,7 +24,10 @@
  *
  * The record holds the version id and the digest of what was written, never
  * a state's contents. It reads states in s3 backends that keep versions, and
- * refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
+ * GitLab-managed states (./gitlab-state.ts), whose version id is the serial.
+ * A GitLab request with `--version` checks it with a HEAD; one without reads
+ * the current state for its serial, which GitLab answers no other way, and
+ * keeps nothing else of it. It refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
  * migration prepares one (unitPlace): Terragrunt inits it, and the backend is
  * the one that init recorded in the directory Terragrunt ran the binary in.
  */
@@ -36,10 +39,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { appendLifecycle, appendPending, readLedger, type PendingRecord, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
-import { stateClient, stateObject, type StateObject } from "./backend";
+import { READS_VERSIONS, stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
 import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
+import { currentSerial, hasVersion, readVersion } from "./gitlab-state";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { sealRefusal } from "./seal";
 
@@ -189,19 +193,46 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   } finally {
     rmSync(data, { recursive: true, force: true });
   }
-  if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace("reads state versions from", "exports state from")}`);
-  if (object.backend !== "s3" || !("target" in object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3 state by its id`);
-  const s3 = object as Extract<StateObject, { target: S3Target }>;
-  const location = `s3://${s3.bucket}/${s3.key}`;
-  const client = stateClient(s3, options.fetch);
+  if ("unsupported" in object) throw new ConfigError(`state export: ${root}: ${object.unsupported.replace(READS_VERSIONS, "exports state from s3 backends and GitLab-managed state")}`);
+  let location: string;
   let version = options.version;
-  if (!version) {
-    const head = await client.head(s3.key);
-    if (!head.exists) throw new ConfigError(`state export: ${location} holds no state`);
-    if (!head.versionId) throw new ConfigError(`state export: ${s3.bucket} keeps no versions, so there is no version id to export; turn on bucket versioning`);
-    version = head.versionId;
-  } else if (!(await client.hasVersion(s3.key, version))) {
-    throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
+  let download: (v: string) => Promise<string | undefined>;
+  if ("gitlab" in object) {
+    // GitLab keeps each version by serial: the version id is the serial.
+    const gl = object.gitlab;
+    const fetchFn = options.fetch ?? (globalThis.fetch as unknown as S3Fetch);
+    location = object.location;
+    const gitlab = async <T>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call();
+      } catch (e) {
+        throw new ConfigError(`state export: ${(e as Error).message}`);
+      }
+    };
+    if (!version) {
+      const now = await gitlab(() => currentSerial(gl, fetchFn));
+      if (!now) throw new ConfigError(`state export: ${location} holds no state`);
+      version = String(now.serial);
+    } else if (!/^\d+$/.test(version)) {
+      throw new ConfigError(`state export: ${root}'s state is GitLab-managed, whose versions are serials; --version ${version} is not one`);
+    } else if (!(await gitlab(() => hasVersion(gl, version!, fetchFn)))) {
+      throw new ConfigError(`state export: ${location} has no version ${version}; GitLab keeps no version with that serial`);
+    }
+    download = (v) => gitlab(() => readVersion(gl, v, fetchFn));
+  } else {
+    if (object.backend !== "s3" || !("target" in object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3 state by its id`);
+    const s3 = object as Extract<StateObject, { target: S3Target }>;
+    location = `s3://${s3.bucket}/${s3.key}`;
+    const client = stateClient(s3, options.fetch);
+    if (!version) {
+      const head = await client.head(s3.key);
+      if (!head.exists) throw new ConfigError(`state export: ${location} holds no state`);
+      if (!head.versionId) throw new ConfigError(`state export: ${s3.bucket} keeps no versions, so there is no version id to export; turn on bucket versioning`);
+      version = head.versionId;
+    } else if (!(await client.hasVersion(s3.key, version))) {
+      throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
+    }
+    download = (v) => client.readVersion(s3.key, v);
   }
 
   const ledger = readLedger(repo, EXPORT_LEDGER);
@@ -259,8 +290,8 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   }
 
   const file = outPath(repo, options.out, root, version);
-  const body = await client.readVersion(s3.key, version);
-  if (body === undefined) throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
+  const body = await download(version);
+  if (body === undefined) throw new ConfigError(`state export: ${location} has no version ${version}; it was deleted since the request`);
   const line: ExportRecord = {
     version: 1,
     kind: "state-export",

@@ -42,7 +42,7 @@ describe("a copy's state key", () => {
     expect(copyBackend(root("none", 'resource "terraform_data" "x" {}\n'), "none", "pr-3")).toMatchObject({ type: "local", attribute: "path", key: "terraform-pr-3.tfstate" });
     expect(copyBackend(write(join(dir, "json"), { "cdk.tf.json": JSON.stringify({ terraform: { backend: { s3: { bucket: "b", key: "j.tfstate" } } } }) }), "json", "pr-3")).toMatchObject({ key: "j-pr-3.tfstate" });
     expect(() => copyBackend(root("cloud", "terraform {\n  cloud {\n    organization = \"o\"\n  }\n}\n"), "cloud", "pr-3")).toThrow(/HCP Terraform \(a cloud block\)/);
-    expect(() => copyBackend(root("http", 'terraform {\n  backend "http" {\n    address = "https://x"\n  }\n}\n'), "http", "pr-3")).toThrow(/backend is http/);
+    expect(() => copyBackend(root("http", 'terraform {\n  backend "http" {\n    address = "https://x"\n  }\n}\n'), "http", "pr-3")).toThrow(/not a GitLab project's state API/);
     expect(() => copyBackend(root("nokey", 'terraform {\n  backend "s3" {\n    bucket = "b"\n  }\n}\n'), "nokey", "pr-3")).toThrow(/names no key/);
   });
 });
