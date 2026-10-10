@@ -111,6 +111,9 @@ async function run(repo: string, args: string[], options: TerramateOptions): Pro
     throw new ConfigError(`terramate ${args[0]} did not run (${(e as Error).message}); put Terramate ${TERRAMATE_VERSION} on the path, or set TERRAGUCCI_TERRAMATE`);
   }
   const why = (out.stderr || out.stdout).trim();
+  if (/unable to detect a project root/.test(why)) {
+    throw new ConfigError("terramate found no project root: run terragucci in the repo's git checkout, as Terramate itself needs");
+  }
   if (out.code === null || (out.code !== 0 && /ENOENT|not found/.test(why.split("\n")[0] ?? ""))) {
     throw new ConfigError(`terramate ${args[0]} did not run (${why.split("\n")[0]}); put Terramate ${TERRAMATE_VERSION} on the path, or set TERRAGUCCI_TERRAMATE`);
   }
