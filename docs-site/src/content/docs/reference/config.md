@@ -147,7 +147,7 @@ dashboards: true
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Runtimes](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
-| `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers` and `required_version` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
+| `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers`, `required_version` and, for Terragrunt units, `disable_init` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -369,7 +369,7 @@ terragrunt:
 | `version` | the version `terragrunt_version_constraint` pins exactly, or terragucci's | the Terragrunt release the jobs run |
 | `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once; each unit running starts its own providers, about 800 MB each with the AWS provider, so 16 need about 13 GB: set 4 on a 7 GB runner |
-| `dependents` | `follow` | `follow`, or `plan` to preview them on the planned outputs of the units they read, provisional and undigested |
+| `dependents` | `plan` | `plan` previews a changed unit's dependents in the pull request, on the planned outputs of the units they read, provisional and undigested; `follow` leaves them to plan once what they read applies |
 | `credentials` | none | AWS roles by unit glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 
 Terragrunt 1.1 or later is required; see [Use Terragrunt](/terragucci/guides/use-terragrunt/).

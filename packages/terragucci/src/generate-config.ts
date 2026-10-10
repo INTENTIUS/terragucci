@@ -12,6 +12,13 @@ export interface GenerateLevel {
   providers?: Record<string, Record<string, unknown> | null>;
   /** The roots' `required_version` constraint; `null` drops it. */
   required_version?: string | null;
+  /**
+   * Terragrunt units only: `disable_init` in the `remote_state` block
+   * terragucci.hcl writes. Default `true`: Terragrunt neither creates nor
+   * changes the bucket. `false` lets an apply job bootstrap it. `null` drops
+   * a value an earlier level set.
+   */
+  disable_init?: boolean | null;
 }
 
 /** terragucci.yml's `generate` key. */
@@ -22,7 +29,7 @@ export interface GenerateSettings extends GenerateLevel {
   roots?: Record<string, GenerateLevel>;
 }
 
-export const LEVEL_KEYS = ["backend", "providers", "required_version"] as const;
+export const LEVEL_KEYS = ["backend", "providers", "required_version", "disable_init"] as const;
 const TOP_KEYS = [...LEVEL_KEYS, "dirs", "roots"] as const;
 export const IDENT = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const PROVIDER_KEY = /^[a-z][a-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)?$/;
@@ -81,6 +88,8 @@ function checkLevel(level: unknown, where: string, problems: string[], top: bool
   }
   const r = level.required_version;
   if (r !== undefined && r !== null && (typeof r !== "string" || r.trim() === "")) problems.push(`${where}.required_version must be a version constraint, such as ">= 1.6", or null`);
+  const d = level.disable_init;
+  if (d !== undefined && d !== null && typeof d !== "boolean") problems.push(`${where}.disable_init must be true, false or null`);
   if (!top) return;
   for (const k of ["dirs", "roots"] as const) {
     const m = level[k];
@@ -118,6 +127,7 @@ export function overlayLevel(base: GenerateLevel, over: GenerateLevel): Generate
   }
   if (over.providers !== undefined) out.providers = overlay(base.providers ?? {}, over.providers) as GenerateLevel["providers"];
   if (over.required_version !== undefined) out.required_version = over.required_version;
+  if (over.disable_init !== undefined) out.disable_init = over.disable_init;
   return out;
 }
 
