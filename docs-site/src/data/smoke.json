@@ -678,7 +678,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f69bb93b"
+      "commit": "0c494d98"
     },
     {
       "claim": "atmos-workspace",
@@ -686,7 +686,55 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f69bb93b"
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-affected",
+      "says": "a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-from-plan",
+      "says": "an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-upstream-wait",
+      "says": "an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-check",
+      "says": "the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-version",
+      "says": "atmos.version in terragucci.yml is the Atmos release every job installs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-roles",
+      "says": "oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
     },
     {
       "claim": "policy-source",
