@@ -3,7 +3,9 @@
  * [digger.yml]` and `terragucci import terrateam [.terrateam/config.yml]`:
  * write terragucci.yml from an Atlantis repo config, an OpenTaco (digger)
  * config or a Terrateam config (./terrateam.ts), and say what became of
- * every setting.
+ * every setting. `import spacelift` (./spacelift.ts) and `import env0`
+ * (./env0.ts) do the same from a Spacelift or env zero repo, its files and
+ * its admin code, by the guide "Coming from Spacelift or env zero".
  *
  * The mapping is the guide's (./guide.ts holds its tables, which a test holds
  * equal to the page). Each setting the file carries ends up as one note:
@@ -40,11 +42,14 @@ import {
 import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
 import { APPLY_TIMING_TABLE, GUIDE_URL, plain, TERRATEAM_URL, type SettingRow } from "./guide";
 import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind } from "./notes";
+import { readEnv0, convertEnv0, ENV0_DISCOVERY_FILES } from "./env0";
+import { PLATFORM_GUIDE_URL } from "./platform-guide";
+import { convertSpacelift, readSpacelift, SPACELIFT_FILES } from "./spacelift";
 import { convertTerrateam, type RepoShape } from "./terrateam";
 
 export { rootOf, type ImportNote, type NoteKind } from "./notes";
 
-export const IMPORT_SOURCES = ["atlantis", "digger", "terrateam"] as const;
+export const IMPORT_SOURCES = ["atlantis", "digger", "terrateam", "spacelift", "env0"] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 /** The file each source reads when none is named, first found wins. */
@@ -52,9 +57,17 @@ export const SOURCE_FILES: Record<ImportSource, string[]> = {
   atlantis: ["atlantis.yaml", "atlantis.yml"],
   digger: ["digger.yml", "digger.yaml"],
   terrateam: [".terrateam/config.yml", ".terrateam/config.yaml"],
+  spacelift: SPACELIFT_FILES,
+  env0: ENV0_DISCOVERY_FILES,
 };
 
-const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", terrateam: "Terrateam" };
+/** The page each source's mapping is on. */
+const SOURCE_URLS: Record<ImportSource, string> = { atlantis: GUIDE_URL, digger: GUIDE_URL, terrateam: TERRATEAM_URL, spacelift: PLATFORM_GUIDE_URL, env0: PLATFORM_GUIDE_URL };
+
+/** Sources that read admin code beside their file, and run without the file. */
+const PLATFORMS = new Set<ImportSource>(["spacelift", "env0"]);
+
+const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", terrateam: "Terrateam", spacelift: "Spacelift", env0: "env zero" };
 
 export interface Converted {
   settings: ProjectSettings;
@@ -355,6 +368,8 @@ function readDigger(doc: Record<string, unknown>, g: Gathered, notes: Notes): vo
 export function convert(source: ImportSource, doc: unknown, o: ImportOptions = {}): Converted & { missing?: string[] } {
   if (!isMap(doc)) throw new ConfigError(`the ${SOURCE_NAMES[source]} config is not a map of settings`);
   if (source === "terrateam") return convertTerrateam(doc, o);
+  if (source === "spacelift") return convertSpacelift(doc, [], o);
+  if (source === "env0") return convertEnv0({ discovery: doc, flows: [], resources: [] }, o);
   const notes = new Notes();
   const g = gathered();
   if (source === "atlantis") readAtlantis(doc, g, notes);
@@ -471,20 +486,31 @@ function repoShape(repo: string): RepoShape {
   }
 }
 
-/** Read the source file in `repo`, convert it, and write terragucci.yml unless `dryRun`. */
+/** Read the source file in `repo` (and, for Spacelift and env zero, their admin code), convert it, and write terragucci.yml unless `dryRun`. */
 export function importConfig(repo: string, source: ImportSource, o: ImportOptions & { file?: string; dryRun?: boolean; force?: boolean } = {}): ImportResult {
-  const file = o.file ? resolve(repo, o.file) : SOURCE_FILES[source].map((f) => join(repo, f)).find((f) => existsSync(f));
-  if (!file || !existsSync(file)) throw new ConfigError(`import ${source} reads ${o.file ?? SOURCE_FILES[source].join(" or ")}, and there is none in ${repo}`);
-  let doc: unknown;
-  try {
-    doc = parseYAML(readFileSync(file, "utf-8"));
-  } catch (e) {
-    throw new ConfigError(`${relative(repo, file)} is not YAML: ${(e as Error).message}`);
-  }
   const forge = o.forge ?? detectForge(repo)?.value;
-  const { settings, notes, missing: unmatched } = convert(source, doc, { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}), repo: repoShape(repo) });
-  const from = relative(repo, file) || file;
-  const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
+  const opts = { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}), repo: repoShape(repo) };
+  let converted: Converted & { missing?: string[] };
+  let from: string;
+  if (PLATFORMS.has(source)) {
+    const file = o.file ? relative(repo, resolve(repo, o.file)) : undefined;
+    const r = (source === "spacelift" ? readSpacelift : readEnv0)(repo, { ...opts, ...(file !== undefined ? { file } : {}) });
+    converted = r;
+    from = r.read.join(", ");
+  } else {
+    const file = o.file ? resolve(repo, o.file) : SOURCE_FILES[source].map((f) => join(repo, f)).find((f) => existsSync(f));
+    if (!file || !existsSync(file)) throw new ConfigError(`import ${source} reads ${o.file ?? SOURCE_FILES[source].join(" or ")}, and there is none in ${repo}`);
+    let doc: unknown;
+    try {
+      doc = parseYAML(readFileSync(file, "utf-8"));
+    } catch (e) {
+      throw new ConfigError(`${relative(repo, file)} is not YAML: ${(e as Error).message}`);
+    }
+    converted = convert(source, doc, opts);
+    from = relative(repo, file) || file;
+  }
+  const { settings, notes, missing: unmatched } = converted;
+  const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${SOURCE_URLS[source]}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
   const missing = unmatched ?? (settings.roots ?? []).filter((r) => findRoots(repo, [r]).length === 0);
   const existing = findConfig(repo);
   let wrote: string | undefined;
@@ -521,7 +547,8 @@ export function describeImport(r: ImportResult): string {
       out.push(`  ${n.key}${n.row ? ` (${n.row})` : ""}: ${detail}${quoted}`);
     }
   }
-  if (r.missing.length) out.push("", r.source === "terrateam" ? `No root matches the dirs ${r.missing.join(", ")}; check those keys.` : `No directory with Terraform files matches ${r.missing.join(", ")}; check those projects' dir.`);
-  out.push("", `Next: \`npx terragucci init\` writes the pipeline for these settings. Every mapping: ${r.source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}`);
+  const what = r.source === "spacelift" ? "stacks' project_root" : r.source === "env0" ? "environments' templates" : "projects' dir";
+  if (r.missing.length) out.push("", r.source === "terrateam" ? `No root matches the dirs ${r.missing.join(", ")}; check those keys.` : `No directory with Terraform files matches ${r.missing.join(", ")}; check those ${what}.`);
+  out.push("", `Next: \`npx terragucci init\` writes the pipeline for these settings. Every mapping: ${SOURCE_URLS[r.source]}`);
   return out.join("\n");
 }
