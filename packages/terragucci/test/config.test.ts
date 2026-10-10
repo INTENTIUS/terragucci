@@ -58,6 +58,29 @@ describe("loading", () => {
     const dir = write(tmp(), { "terragucci.yml": "\n" });
     expect(await loadConfig(join(dir, "terragucci.yml"))).toEqual({});
   });
+
+  it("a file that holds only comments is the empty config", async () => {
+    const dir = write(tmp(), { "terragucci.yml": "# nothing set yet\n" });
+    expect(await loadConfig(join(dir, "terragucci.yml"))).toEqual({});
+  });
+
+  // #803: a top-level list used to parse as {} and pass as the empty config.
+  it.each([
+    ["a list", "- binary: tofu\n- gate: on-destroy\n", "a list"],
+    ["an empty flow list", "[]\n", "a list"],
+    ["a quoted string", '"binary"\n', "a string"],
+    ["a number", "5\n", "a number"],
+  ])("refuses a file that holds %s, and says the config must be a mapping", async (_what, text, got) => {
+    const dir = write(tmp(), { "terragucci.yml": text });
+    const path = join(dir, "terragucci.yml");
+    await expect(loadConfig(path)).rejects.toThrow(ConfigError);
+    await expect(loadConfig(path)).rejects.toThrow(`${path}: the config must be a mapping of setting names to values (key: value at the top level), and this file holds ${got}`);
+  });
+
+  it("refuses a JSON config that is an array", async () => {
+    const dir = write(tmp(), { "terragucci.json": '[{"binary":"tofu"}]' });
+    await expect(loadConfig(join(dir, "terragucci.json"))).rejects.toThrow(/must be a mapping .* holds a list/);
+  });
 });
 
 describe("validation", () => {
