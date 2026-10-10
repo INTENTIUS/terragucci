@@ -80,6 +80,28 @@
               }
             }
           },
+          "progress": {
+            "type": "object",
+            "description": "A choudoufu wave's resources while it applies and once it ended: each change its plans make, done, in flight, waiting or not applied, as its estates' records stood at the last read.",
+            "required": ["read", "resources"],
+            "properties": {
+              "read": { "type": "string", "description": "When the records were last read." },
+              "resources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "address", "action", "status"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "address": { "type": "string" },
+                    "action": { "enum": ["create", "update", "replace", "delete", "forget"] },
+                    "status": { "enum": ["done", "in-flight", "waiting", "not-applied"] },
+                    "done_at": { "type": "string", "description": "When a read first found it done." }
+                  }
+                }
+              }
+            }
+          },
           "updated": { "type": "string" }
         }
       }

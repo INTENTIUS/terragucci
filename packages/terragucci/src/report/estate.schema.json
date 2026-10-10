@@ -181,6 +181,22 @@
             "page": { "type": "string" }
           }
         },
+        "applying": {
+          "type": "array",
+          "description": "The waves of that run view still applying whose resources are followed (a choudoufu wave): how many are done, in flight and waiting at the last read of the records.",
+          "items": {
+            "type": "object",
+            "required": ["wave", "read", "total", "done", "in_flight", "waiting"],
+            "properties": {
+              "wave": { "type": "integer" },
+              "read": { "type": "string" },
+              "total": { "type": "integer" },
+              "done": { "type": "integer" },
+              "in_flight": { "type": "integer" },
+              "waiting": { "type": "integer" }
+            }
+          }
+        },
         "ephemeral": {
           "type": "array",
           "description": "The live ephemeral environments, from its ephemeral.json: each pull request's copy of the ephemeral roots, their state keys, and when it expires. Absent when none is live.",
