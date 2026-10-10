@@ -490,12 +490,20 @@
       "commit": "ff7d397e"
     },
     {
-      "claim": "import-tg-scale",
-      "says": "terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own",
+      "claim": "import-spacelift",
+      "says": "terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6792b9e1"
+      "commit": "2bdb05f3"
+    },
+    {
+      "claim": "import-env0",
+      "says": "terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "import-hcp",
@@ -514,20 +522,12 @@
       "commit": "190e171f"
     },
     {
-      "claim": "import-spacelift",
-      "says": "terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask",
+      "claim": "import-tg-scale",
+      "says": "terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "2bdb05f3"
-    },
-    {
-      "claim": "import-env0",
-      "says": "terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "2bdb05f3"
+      "commit": "6792b9e1"
     },
     {
       "claim": "waves-after",
@@ -2100,6 +2100,22 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "2bdb05f3"
+    },
+    {
+      "claim": "migrate-backend-consul",
+      "says": "a migration moves the state of a root between two consul paths: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its session lock, the old key left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5ca8858a"
+    },
+    {
+      "claim": "migrate-backend-http",
+      "says": "a migration moves the state of a root between two http backend addresses: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the lock of the server, the old state left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5ca8858a"
     },
     {
       "claim": "migrate-revert",
