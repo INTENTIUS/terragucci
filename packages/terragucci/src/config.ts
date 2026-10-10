@@ -33,6 +33,8 @@ export const APPROVALS = ["ledger", "pr-review", "sealed"] as const;
 /** Every stage runs on the forge's CI. */
 export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
+/** What a pull request does with the dependents of a changed unit when terragrunt.dependents is unset. */
+export const DEFAULT_DEPENDENTS: Dependents = "plan";
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
 export const POLICY_INPUTS = ["plan", "hcp"] as const;
 /**
@@ -212,7 +214,7 @@ export interface TerragruntSettings {
   exclude?: string[];
   /** How many units one `run --all` runs at once. Default: from the state backend. */
   parallelism?: number;
-  /** Units that depend on a changed unit: `follow` plans them in later waves, `plan` also previews them at pull-request time. */
+  /** Units that depend on a changed unit: `plan` (the default) previews them at pull-request time as well as planning them in later waves, `follow` only plans them in later waves. */
   dependents?: Dependents;
   /**
    * Plan and apply roles by unit path glob, assumed over OIDC through a

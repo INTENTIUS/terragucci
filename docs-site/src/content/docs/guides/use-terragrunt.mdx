@@ -127,7 +127,7 @@ A pull request's plan covers the units of every layer the change reaches. A unit
 
 No unit is planned on a placeholder for an unknown value or on `mock_outputs`. A unit that reads its upstream without asking the binary (as Terragrunt does with `TG_DEPENDENCY_FETCH_OUTPUT_FROM_STATE`) gets no preview; the note says so.
 
-With a base branch, the plan covers the units the change reaches. Their dependents are listed as planned once what they wait for applies; with `dependents: plan` they are previewed the same way layer by layer, as provisional plans outside every digest.
+With a base branch, the plan covers the units the change reaches, and previews their dependents the same way layer by layer, as provisional plans outside every digest. With `dependents: follow` the dependents are only listed, as planned once what they wait for applies.
 
 After the merge, each wave plans again on the state the earlier waves left, and its gate binds that plan. When a unit's plan differs from the preview in the merged pull request's plan note, the wave names each resource and attribute that moved before it prints its approve command:
 

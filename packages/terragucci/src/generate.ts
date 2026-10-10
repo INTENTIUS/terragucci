@@ -62,6 +62,8 @@ export interface RootSettings {
   required_version?: string;
   /** Where `required_version` came from, when `version` gave it. */
   versionFrom?: string;
+  /** A Terragrunt unit's remote_state `disable_init`, when a level sets it. */
+  disableInit?: boolean;
 }
 
 export const GENERATED_FILES = { backend: "backend.tf", providers: "providers.tf", versions: "versions.tf" } as const;
@@ -101,6 +103,7 @@ export function rootSettings(generate: GenerateSettings, root: string, settings:
     out.backend = { type, config: fill(settle(level.backend[type])) as Record<string, unknown> };
   }
   for (const [name, s] of Object.entries(level.providers ?? {})) if (s) out.providers[name] = fill(settle(s)) as Record<string, unknown>;
+  if (typeof level.disable_init === "boolean") out.disableInit = level.disable_init;
   // A choudoufu release is not the OpenTofu language version required_version names.
   const pin = settings.binary === "choudoufu" ? undefined : versionPin(settings.version, root);
   if (typeof level.required_version === "string") {
@@ -272,6 +275,7 @@ export function planGenerate(repo: string, settings: ResolvedSettings): Generate
   const wanted = new Set<string>();
   for (const root of roots) {
     const s = rootSettings(gen, root, settings);
+    if (s.disableInit !== undefined) throw new ConfigError(`generate sets disable_init for ${root}, which is a plain root; disable_init is the remote_state setting terragucci.hcl writes for Terragrunt units, so remove it`);
     const dir = join(repo, root);
     const contents = renderRoot(s);
     for (const [kind, name] of Object.entries(GENERATED_FILES) as [keyof typeof GENERATED_FILES, string][]) {
@@ -348,8 +352,10 @@ export function includesGenerated(text: string): boolean {
  * terragucci.hcl for a Terragrunt repo: each unit's settings, resolved as a
  * plain root's are, in a map keyed by the unit's path, which Terragrunt
  * reads through `path_relative_to_include("terragucci")`. The backend goes
- * through `remote_state` (with `disable_init`, so Terragrunt makes no bucket:
- * the backend is the binary's, as for a plain root); the providers and the
+ * through `remote_state`, with `disable_init = true` unless generate sets
+ * `disable_init: false` (by default Terragrunt makes no bucket: the backend
+ * is the binary's, as for a plain root; with false, an apply job lets
+ * Terragrunt bootstrap it, see backendBootstrap); the providers and the
  * versions through `generate` blocks, each off for a unit without them.
  * Written as `terragrunt hcl fmt` leaves it.
  */
@@ -360,14 +366,22 @@ export function renderTerragrunt(units: Map<string, RootSettings>): string | und
     const without = [...rendered.keys()].filter((u) => !withBackend.includes(u));
     throw new ConfigError(`generate gives ${withBackend.join(", ")} a backend and not ${without.join(", ")}; terragucci.hcl gives every unit that includes it a remote_state, so give each unit a backend or none`);
   }
+  const setsInit = [...rendered].filter(([, r]) => r.s.disableInit !== undefined).map(([u]) => u);
+  if (withBackend.length === 0 && setsInit.length > 0) {
+    throw new ConfigError(`generate sets disable_init for ${setsInit.join(", ")} and gives no unit a backend, so terragucci.hcl writes no remote_state for it; give the units a backend, or remove disable_init`);
+  }
+  // disable_init: one literal when every unit has the same, else each unit's own in the map.
+  const inits = new Set([...rendered.values()].map((r) => r.s.disableInit ?? true));
+  const perUnitInit = inits.size > 1;
   const has = (k: "providers" | "versions"): boolean => [...rendered.values()].some((r) => r.files[k] !== undefined);
   if (withBackend.length === 0 && !has("providers") && !has("versions")) return undefined;
-  const keys = [...(withBackend.length ? ["backend", "config"] : []), ...(has("providers") ? ["providers"] : []), ...(has("versions") ? ["versions"] : [])];
+  const keys = [...(withBackend.length ? ["backend", "config"] : []), ...(perUnitInit ? ["disable_init"] : []), ...(has("providers") ? ["providers"] : []), ...(has("versions") ? ["versions"] : [])];
   const width = Math.max(...keys.map((k) => k.length));
   const attr = (k: string, v: string): string => `      ${k.padEnd(width)} = ${v}`;
   const entries = [...rendered].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([u, r]) => {
     const lines = [`    ${hclString(u)} = {`];
     if (r.s.backend) lines.push(attr("backend", hclString(r.s.backend.type)), attr("config", backendConfig(r.s.backend)));
+    if (perUnitInit) lines.push(attr("disable_init", String(r.s.disableInit ?? true)));
     for (const k of ["providers", "versions"] as const) {
       if (!keys.includes(k)) continue;
       const f = r.files[k];
@@ -391,7 +405,8 @@ export function renderTerragrunt(units: Map<string, RootSettings>): string | und
     "}",
   ];
   if (withBackend.length) {
-    out.push("", "remote_state {", "  backend      = local.terragucci_unit.backend", "  disable_init = true", "", "  generate = {", `    path      = "${GENERATED_FILES.backend}"`, '    if_exists = "overwrite_terragrunt"', "  }", "", "  config = local.terragucci_unit.config", "}");
+    const init = perUnitInit ? "local.terragucci_unit.disable_init" : String([...inits][0]);
+    out.push("", "remote_state {", "  backend      = local.terragucci_unit.backend", `  disable_init = ${init}`, "", "  generate = {", `    path      = "${GENERATED_FILES.backend}"`, '    if_exists = "overwrite_terragrunt"', "  }", "", "  config = local.terragucci_unit.config", "}");
   }
   for (const k of ["providers", "versions"] as const) {
     if (!keys.includes(k)) continue;
@@ -416,6 +431,22 @@ function backendConfig(backend: NonNullable<RootSettings["backend"]>): string {
   const k = key.replace(/\/+$/, "");
   const marked = /\.tfstate$/.test(k) ? k.replace(/\.tfstate$/, `${marker}.tfstate`) : `${k}${marker}`;
   return hclValue({ ...backend.config, [attribute!]: marked }).replace(marker, () => `\${${SUFFIX_READ}}`);
+}
+
+/**
+ * Whether an apply job lets Terragrunt bootstrap the backend
+ * (`TG_BACKEND_BOOTSTRAP`): when generate gives any Terragrunt unit
+ * `disable_init: false`. Terragrunt then creates a missing bucket and brings
+ * an existing one to its settings (versioning, encryption, access), so only
+ * an apply job does it: a pull request's plan runs its own code with the plan
+ * role, and leaves the bucket as it is.
+ */
+export function backendBootstrap(repo: string, settings: Pick<ResolvedSettings, "generate" | "terragrunt" | "version" | "binary">): boolean {
+  const gen = settings.generate;
+  if (!gen) return false;
+  const levels = [gen, ...Object.values(gen.dirs ?? {}), ...Object.values(gen.roots ?? {})];
+  if (!levels.some((l) => l?.disable_init === false)) return false;
+  return walkUnits(repo, settings.terragrunt?.exclude).some((u) => rootSettings(gen, u.path, settings).disableInit === false);
 }
 
 /** generate in a Terragrunt repo: terragucci.hcl, and why a unit or another file would keep it from taking effect. */
