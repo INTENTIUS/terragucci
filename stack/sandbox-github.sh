@@ -1779,6 +1779,10 @@ EOF
     done
     [ -n "$phases" ] || phases="merge pull-request modules"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "prove needs Docker, for the roots' state"; fi
+    # The merge phase sets the agent's and the merge token's secrets; find a
+    # token that cannot before the first phase rather than in it.
+    gh api "repos/$REPO/actions/secrets/public-key" >/dev/null 2>&1 \
+      || fail "the token cannot read $REPO's Actions secrets; a fine-grained token needs Secrets read and write on it"
     started="$(date +%s)"
     : > "$WORK/verdicts"
     for phase in $phases; do
