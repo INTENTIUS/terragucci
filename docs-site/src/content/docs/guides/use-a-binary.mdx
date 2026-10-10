@@ -68,10 +68,11 @@ binary: choudoufu
 | Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner and a write conflict naming it | [your applies](/terragucci/concepts/locking-per-resource/#locking-per-resource); the loser's re-plan shows the value that landed |
 | A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
 | One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
+| A root that reads another estate's outputs through `data "terraform_estate_outputs"` applies after the root whose `live` block owns that estate | the layers `init --dry-run` counts, and each wave's apply order |
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
-A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
+A `live-check` refusal fails `tf-check` and names its rule in the log. `drift` is a config error when a root keeps its resources under live resource markers: a drift check is a refresh-only plan, which choudoufu refuses there, and each plan of such a root already reads the live system. terragucci does not read a root's `required_version` as a choudoufu release.
 </TabItem>
 <TabItem label="Terraform">
 

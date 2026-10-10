@@ -14,20 +14,33 @@ type Row = {
 	verdict: string;
 	break: string | null;
 	forge?: string;
+	binary?: string;
 };
 const rows = record.claims as Row[];
 
-// A row with no forge is Forgejo's; a GitLab row carries forge: "gitlab" and
-// sits in the GitLab column of its claim, which shows only once one exists.
-const forgejo = rows.filter((c) => (c.forge ?? 'forgejo') === 'forgejo' && !STACK_ONLY.has(c.claim));
-const gitlab = new Map(rows.filter((c) => c.forge === 'gitlab').map((c) => [c.claim, c]));
-const claims = [
-	...forgejo.map((c) => ({ claim: c.claim, says: c.says, forgejo: c as Row | undefined, gitlab: gitlab.get(c.claim) })),
-	...[...gitlab.values()]
-		.filter((g) => !forgejo.some((c) => c.claim === g.claim))
-		.map((g) => ({ claim: g.claim, says: g.says, forgejo: undefined, gitlab: g })),
-];
-const withGitlab = gitlab.size > 0;
+// A row with no forge is Forgejo's and one with no binary is OpenTofu's. A
+// GitLab row carries forge: "gitlab", and a Terraform or choudoufu row, run on
+// Forgejo, carries binary. Each sits in its own column of its claim, which
+// shows only once a row of it exists.
+const COLUMNS = [
+	{ key: 'forgejo tofu', label: 'Forgejo' },
+	{ key: 'forgejo terraform', label: 'Terraform' },
+	{ key: 'forgejo choudoufu', label: 'choudoufu' },
+	{ key: 'gitlab tofu', label: 'GitLab' },
+] as const;
+const keyOf = (c: Row) => `${c.forge ?? 'forgejo'} ${c.binary ?? 'tofu'}`;
+const byClaim = new Map<string, { claim: string; says: string; cells: Map<string, Row> }>();
+for (const c of rows) {
+	if (STACK_ONLY.has(c.claim)) continue;
+	const entry = byClaim.get(c.claim) ?? { claim: c.claim, says: c.says, cells: new Map<string, Row>() };
+	// The OpenTofu row on Forgejo says what the claim shows; another names its own run.
+	if (keyOf(c) === 'forgejo tofu') entry.says = c.says;
+	entry.cells.set(keyOf(c), c);
+	byClaim.set(c.claim, entry);
+}
+const claims = [...byClaim.values()];
+const columns = COLUMNS.filter((col) => col.key === 'forgejo tofu' || rows.some((c) => keyOf(c) === col.key));
+const single = columns.length === 1;
 
 const result = (c: Row | undefined) => {
 	if (!c) return '';
@@ -40,15 +53,18 @@ const result = (c: Row | undefined) => {
 <div class="tg-smoke not-content">
 	<table>
 		<thead>
-			<tr><th>Check</th><th>What it shows</th>{withGitlab ? <><th>Forgejo</th><th>GitLab</th></> : <th>Result</th>}</tr>
+			<tr><th>Check</th><th>What it shows</th>{single ? <th>Result</th> : columns.map((col) => <th>{col.label}</th>)}</tr>
 		</thead>
 		<tbody>
 			{claims.map((c) => (
 				<tr>
 					<td><code>{c.claim}</code></td>
 					<td>{c.says}</td>
-					<td class={c.forgejo ? `v-${c.forgejo.verdict}` : ''}>{result(c.forgejo)}</td>
-					{withGitlab && <td class={c.gitlab ? `v-${c.gitlab.verdict}` : ''}>{result(c.gitlab)}</td>}
+					{columns.map((col) => {
+						const cell = c.cells.get(col.key);
+						// A binary's row that shows something else, such as a refusal, says what.
+						return <td class={cell ? `v-${cell.verdict}` : ''}>{result(cell)}{cell?.binary && cell.says !== c.says && <span class="also">{cell.says}</span>}</td>;
+					})}
 				</tr>
 			))}
 		</tbody>
@@ -81,6 +97,12 @@ const result = (c: Row | undefined) => {
 		font-family: var(--sl-font-mono);
 		font-size: 0.85em;
 		white-space: nowrap;
+	}
+	.also {
+		display: block;
+		font-size: 0.8rem;
+		font-weight: 400;
+		color: var(--sl-color-gray-3);
 	}
 	.v-pass {
 		color: var(--sl-color-white);

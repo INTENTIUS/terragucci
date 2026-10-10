@@ -47,6 +47,9 @@ function target(req) {
   const host = (req.headers.host ?? "").split(":")[0];
   if (!alias || !host.endsWith(`.${alias}`)) return req.url;
   const bucket = host.slice(0, -(alias.length + 1));
+  // <account>.<ALIAS> is S3 Control (the provider's bucket tags), whose path
+  // floci reads as it is.
+  if (/^[0-9]{12}$/.test(bucket)) return req.url;
   if (req.url === "/") return `/${bucket}`;
   return req.url.startsWith("/?") ? `/${bucket}${req.url.slice(1)}` : `/${bucket}${req.url}`;
 }

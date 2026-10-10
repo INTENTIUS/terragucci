@@ -357,10 +357,78 @@ export function backendBlock(dir: string): { type: string; attrs: Record<string,
 /** Two addresses name one state: the same key, and the same bucket where both name one. */
 export const sameState = (a: StateAddress, b: StateAddress): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
 
-/** For each root, the roots whose state it reads through `terraform_remote_state`. */
-export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
+/**
+ * A choudoufu root's estate, from the `live` block in its `terraform` block
+ * or the `estate` of its `estate.chdf.hcl`, and the estates whose recorded
+ * outputs it reads through `data "terraform_estate_outputs"`.
+ */
+export function estateOf(dir: string): { estate?: string; reads: string[] } {
+  let estate: string | undefined;
+  const reads: string[] = [];
+  const sidecar = join(dir, "estate.chdf.hcl");
+  if (existsSync(sidecar)) estate = attr(stripComments(readFileSync(sidecar, "utf-8")), "estate");
+  for (const f of tfFiles(dir)) {
+    if (isJson(f)) continue;
+    const text = stripComments(readFileSync(f, "utf-8"));
+    for (const t of text.matchAll(/^\s*terraform\s*\{/gm)) {
+      const body = blockBody(text, t.index!);
+      const live = body.match(/\blive\s*\{/);
+      if (live && !estate) estate = attr(blockBody(body, live.index!), "estate");
+    }
+    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"[^"]+"\s*\{/g)) {
+      const e = attr(blockBody(text, m.index!), "estate");
+      if (e) reads.push(e);
+    }
+  }
+  return { estate, reads };
+}
+
+/** The roots that keep their resources under choudoufu's live resource markers: a `live` block in a `terraform` block, or an `estate.chdf.hcl`. */
+export function liveRoots(repo: string, roots: string[]): string[] {
+  return roots.filter((r) => {
+    const dir = join(repo, r);
+    if (existsSync(join(dir, "estate.chdf.hcl"))) return true;
+    return tfFiles(dir).some((f) => {
+      if (isJson(f)) return false;
+      const text = stripComments(readFileSync(f, "utf-8"));
+      return [...text.matchAll(/^\s*terraform\s*\{/gm)].some((t) => /\blive\s*\{/.test(blockBody(text, t.index!)));
+    });
+  });
+}
+
+/**
+ * Why tf-drift cannot read these roots, or undefined when it can: a drift
+ * check is a refresh-only plan, which choudoufu refuses under live resource
+ * markers, since a live root keeps no state to compare the live system with.
+ */
+export function driftRefusal(binary: string, live: string[]): string | undefined {
+  if (binary !== "choudoufu" || live.length === 0) return undefined;
+  live = [...live].sort();
+  const named = live.length > 3 ? `${live.slice(0, 3).join(", ")} and ${live.length - 3} more` : live.join(", ");
+  return `drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and ${named} ${live.length === 1 ? "keeps its" : "keep their"} resources under them: a live root keeps no state to compare the live system with, and each of its plans reads the live system, so remove drift`;
+}
+
+/**
+ * For each root, the roots whose state it reads through
+ * `terraform_remote_state`, and under choudoufu the roots whose estate's
+ * outputs it reads through `terraform_estate_outputs` (unless `estates` is
+ * false, for a caller that reasons about state files alone).
+ */
+export function rootDependencies(repo: string, roots: string[], { estates: withEstates = true }: { estates?: boolean } = {}): Map<string, Set<string>> {
   const reads = remoteStateReads(repo, roots);
-  return new Map(roots.map((r) => [r, new Set(reads.get(r)!.map((x) => x.upstream))]));
+  const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, r)) : { reads: [] as string[] }]));
+  const owner = new Map<string, string>();
+  for (const [r, e] of estates) if ("estate" in e && e.estate) owner.set(e.estate, r);
+  return new Map(
+    roots.map((r) => {
+      const deps = new Set(reads.get(r)!.map((x) => x.upstream));
+      for (const e of estates.get(r)!.reads) {
+        const up = owner.get(e);
+        if (up && up !== r) deps.add(up);
+      }
+      return [r, deps];
+    }),
+  );
 }
 
 /**

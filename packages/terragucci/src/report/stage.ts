@@ -29,7 +29,7 @@ import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
-import { applyLayers, detectBinary, findRoots, globMatch, remoteStateReads, rootDependencies } from "../detect";
+import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
@@ -933,6 +933,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
+  const noDrift = drift ? driftRefusal(binary, liveRoots(repo, roots)) : undefined;
+  if (noDrift) throw new ConfigError(noDrift);
   const planner = plannerForBinary(binary);
   // Each root's binary: the job's, or the version the root pins, installed once per version.
   const binaries = new RootBinaries(repo, binary, settings.version, env, options.installer);
