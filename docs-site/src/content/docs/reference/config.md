@@ -97,6 +97,8 @@ oidc:
 parallelism: 8
 terragrunt:                   # read in a Terragrunt repo only
   version: 1.1.6
+atmos:                        # read in an Atmos repo only
+  version: 1.230.1
 policy:
   engine: conftest
   path: policy
@@ -153,6 +155,7 @@ dashboards: true
 | `oidc` | none | plan and apply identities per cloud, and with `oidc.roles` AWS roles by root glob; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
 | `parallelism` | 3 for GitLab-managed state, else 4 | roots planned at once, and applied at once in a wave; Terragrunt uses `terragrunt.parallelism`. Each root running starts its own providers: with the AWS provider, about 800 MB each, so 4 fit a 7 GB runner and 16 need about 13 GB |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
+| `atmos` | detected | Atmos settings: `version`, the Atmos release every job installs (default: the one this terragucci release pins). Set only in a repo with `atmos.yaml` at its root, and never beside `terragrunt`; see [Use Atmos](/terragucci/guides/use-atmos/) |
 | `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`), [`override`](/terragucci/reference/policy/#overriding-a-denial) (who may let one denied plan through, read at base; unset, nobody); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |

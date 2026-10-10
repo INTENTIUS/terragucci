@@ -1,7 +1,7 @@
 ---
 title: Use Atmos
 description: Add terragucci to an Atmos repo, where each component instance is a root that plans and applies in its own workspace, and dependencies decide the waves.
-claims: [atmos-waves, atmos-workspace]
+claims: [atmos-waves, atmos-workspace, atmos-affected, atmos-from-plan, atmos-upstream-wait, atmos-check, atmos-version, atmos-roles]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-atmos/.
   Run `npx terragucci init --dry-run --json`, list the instances and waves it found,
@@ -64,6 +64,7 @@ A pipeline whose roots are your [Atmos](https://atmos.tools) component instances
 | What | How |
 |---|---|
 | Order | `dependencies.components`, and `settings.depends_on`; an entry with no `stack` means the instance's own stack |
+| A read with `!terraform.state` or `!terraform.output` | puts the instance after the one it reads |
 | Each wave | one dependency layer, in its own apply job behind its own gate |
 | A dependency on a disabled instance | holds nothing back |
 | A dependency no stack deploys, or a cycle | `init` stops and names it |
@@ -71,11 +72,18 @@ A pipeline whose roots are your [Atmos](https://atmos.tools) component instances
 
 ## Jobs
 
-Every job installs Atmos 1.230.1, checked against the release's `SHA256SUMS`, then runs `terragucci atmos write` before it reads the roots.
+Every job installs Atmos 1.230.1, checked against the release's `SHA256SUMS`, then runs `terragucci atmos write` before it reads the roots. To install another release, name it in `terragucci.yml` and run `init` again:
+
+```yaml
+atmos:
+  version: 1.230.0
+```
+
+The check job runs `atmos validate stacks` first, so a manifest Atmos refuses fails the check with Atmos's own error.
 
 | `terragucci atmos write` | |
 |---|---|
-| Reads | `atmos describe stacks` |
+| Reads | `atmos describe stacks`, with `!terraform.state`, `!terraform.output` and `!store` left unevaluated |
 | Writes | the component's Terraform to `<stack>/<component>`, with the varfile, backend and provider override Atmos generates for that instance |
 | Local module sources | a `../` source outside the component is rewritten to reach the same directory from the copy |
 | A directory of your repo at `<stack>/<component>` | refused |
@@ -86,7 +94,54 @@ These directories are made in the job. If you run `terragucci atmos write` yours
 
 Each instance plans and applies in the Terraform workspace Atmos names for it, never `default`. With an `s3` backend its state is at `<workspace_key_prefix>/<workspace>/<key>`, as Atmos keeps it.
 
-The jobs run `atmos describe stacks` before they get any cloud credential, so a stack that reads state with `!terraform.state`, `!terraform.output` or `!store` fails there.
+## Pull requests
+
+A pull request plans the instances whose written files differ from the base's, and every instance that depends on one of them. The plan job writes the instances at the base too and compares the two, with no cloud credential.
+
+| A pull request that changes | Plans |
+|---|---|
+| `prod/vpc`'s vars | `prod/vpc`, then `prod/app`, which depends on it |
+| a component's Terraform | every instance of that component, and their dependents |
+| nothing an instance is written from | nothing |
+
+## Approval
+
+A wave applies the plans whose digest was approved, as plain roots do. If the stacks change after the approval, the wave plans again, applies nothing, and names the instances that moved; approve the new plans to apply them.
+
+## Reads of another instance
+
+A var set with `!terraform.state` or `!terraform.output` reads another instance's outputs:
+
+```yaml
+components:
+  terraform:
+    app:
+      vars:
+        vpc_cidr: !terraform.state vpc .cidr
+```
+
+`atmos describe stacks` runs before the job gets a cloud credential, so the job reads the value itself, once it has one, from the upstream's state in its own workspace. While the upstream has no state, the instance is held back rather than planned on a stand-in, and the plan note says which instance it waits for.
+
+| Form | Read |
+|---|---|
+| `!terraform.state <component> <output>` | the output of the instance in the same stack |
+| `!terraform.state <component> <stack> <output>` | the output of the instance in another stack |
+| An output as `.name` or `.name.key` | that output, or a key inside it |
+| `!terraform.output` | the same as `!terraform.state` |
+| `!store`, a read inside a map or a list, or a yq expression | refused; output the value from an instance and read it whole |
+
+## Roles by stack
+
+An instance's root is `<stack>/<component>`, so `oidc.roles` globs give each stack its roles:
+
+```yaml
+oidc:
+  roles:
+    "dev/*": { plan: arn:aws:iam::111:role/dev-plan, apply: arn:aws:iam::111:role/dev-apply }
+    "prod/*": { plan: arn:aws:iam::222:role/prod-plan, apply: arn:aws:iam::222:role/prod-apply }
+```
+
+`terragucci config check` lists each role with its stack's instances and their state keys, and warns when an instance reads another stack's state. A read uses the upstream's role.
 
 ## Next
 

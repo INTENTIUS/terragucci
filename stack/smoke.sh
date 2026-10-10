@@ -7157,11 +7157,11 @@ claim_atmos_version() {
   git -C "$work/tree" init -q -b main
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  n="$(grep -c "terragucci install atmos $want\$" "$wf" || true)"
-  log "jobs that install atmos $want: $n; any other release: $(grep "terragucci install atmos" "$wf" | grep -vc "atmos $want\$" || true)"
+  n="$(grep -o 'terragucci install atmos [0-9][0-9.]*' "$wf" | grep -c " $want\$" || true)"
+  log "jobs that install atmos $want: $n; any other release: $(grep -o 'terragucci install atmos [0-9][0-9.]*' "$wf" | grep -vc " $want\$" || true)"
   [ "$n" -gt 0 ] || { log "no job installs atmos $want"; rc=1; }
-  grep "terragucci install atmos" "$wf" | grep -qv "atmos $want\$" && { log "a job installs another Atmos release"; rc=1; }
-  install="$(grep -m1 -o 'terragucci install atmos [0-9.]*' "$wf")"
+  grep -o 'terragucci install atmos [0-9][0-9.]*' "$wf" | grep -qv " $want\$" && { log "a job installs another Atmos release"; rc=1; }
+  install="$(grep -m1 -o 'terragucci install atmos [0-9][0-9.]*' "$wf")"
   # shellcheck disable=SC2016 # expanded by the container's shell
   got="$(run_copied --rm -v "$JOB_CACHE_VOLUME:/cache" -e TOFU_INSTALL_DIR=/cache/bin -e "INSTALL=$install" "$image" \
     sh -c 'dir="$($INSTALL 2>/dev/null)" && cd /tmp && PATH="$dir:$PATH" ATMOS_TELEMETRY_ENABLED=false atmos version 2>/dev/null' | tr -d '\r' | sed -n 's/.*Atmos \([0-9][0-9.]*\) on .*/\1/p' | head -1)"
