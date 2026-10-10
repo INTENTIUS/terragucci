@@ -65,7 +65,7 @@ describe("where a root's state is", () => {
   });
 
   it("names any other backend as one it does not read versions from", () => {
-    expect(stateObject(initialised("gcs", { bucket: "b", prefix: "p" }), ENV)).toMatchObject({ backend: "gcs", unsupported: expect.stringContaining("s3, local and GitLab-managed http backends") });
+    expect(stateObject(initialised("cos", { bucket: "b", prefix: "p" }), ENV)).toMatchObject({ backend: "cos", unsupported: expect.stringContaining("s3, gcs, azurerm, local and GitLab-managed http backends") });
   });
 });
 
@@ -119,7 +119,9 @@ describe("the version an apply leaves", () => {
     // GitLab's state API keeps each version by serial, which is read (gitlab-state.test.ts); a GitLab that cannot be read is unknown.
     const gitlab = await stateVersion(initialised("http", { address: "https://gitlab.com/api/v4/projects/42/terraform/state/net" }), ENV, headOnly(401).fetch);
     expect(gitlab).toMatchObject({ backend: "http", location: "https://gitlab.com/api/v4/projects/42/terraform/state/net", versioning: "unknown", note: expect.stringContaining("GitLab answered 401") });
-    expect(await stateVersion(initialised("gcs", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "gcs", versioning: "unknown", note: "a gcs backend can keep versions of the state, which terragucci does not read" });
+    expect(await stateVersion(initialised("cos", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "cos", versioning: "unknown", note: "a cos backend can keep versions of the state, which terragucci does not read" });
+    // A gcs backend the job has no credentials for: unknown, with why.
+    expect(await stateVersion(initialised("gcs", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "gcs", versioning: "unknown", note: expect.stringContaining("no credentials to read gs://b") });
     expect(await stateVersion(initialised("remote", { organization: "acme", workspaces: [{ name: "net" }] }), ENV)).toMatchObject({ backend: "remote", versioning: "unknown", location: "remote:app.terraform.io/acme/net" });
     // A refusal elsewhere (export, migrations) still names the backend it does not read.
     expect(stateObject(initialised("pg", { conn_str: "postgres://db/states" }))).toMatchObject({ unsupported: expect.stringContaining("this root's backend is pg") });

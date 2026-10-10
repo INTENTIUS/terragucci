@@ -870,13 +870,16 @@ export async function main(argv: string[]): Promise<number> {
           // The shape detection finds in the repo refuses what init would: the same table, worded for that shape.
           const shape = config.projects ? undefined : detectShape(repoDir, resolveRepo(config));
           if (shape) problems.push(...shape.problems("config"));
-          if (shape && problems.length === 0 && config.oidc?.roles && shape.kind === "atmos") {
+          // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients.
+          const oidc = config.oidc;
+          const clouds = !oidc ? [] : (["aws", "gcp", "azure"] as const).filter((c) => (c === "aws" ? oidc.roles : oidc[c]?.roles));
+          if (shape && problems.length === 0 && oidc && clouds.length > 0 && (shape.kind === "atmos" || shape.engine === "per-root")) {
             // An Atmos repo's roots are its instances, <stack>/<component>, so a glob such as prod/* gives a stack its roles.
-            const instances = atmosInstances(await describeStacks(repoDir));
-            access = stateAccess(repoDir, instances.map((i) => i.path), config.oidc, { ...instanceStates(instances), via: "!terraform.state" });
-            warnings = access.warnings;
-          } else if (shape && problems.length === 0 && config.oidc?.roles && shape.engine === "per-root") {
-            access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
+            const instances = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)) : undefined;
+            const roots = instances ? instances.map((i) => i.path) : findRoots(repoDir, config.roots);
+            const known = instances ? { ...instanceStates(instances), via: "!terraform.state" } : undefined;
+            const each = clouds.map((c) => stateAccess(repoDir, roots, oidc, known, c));
+            access = { roles: each.flatMap((a) => a.roles), warnings: each.flatMap((a) => a.warnings) };
             warnings = access.warnings;
           }
           // A state the roots' code does not address can't order a reader after its writer: say which.
@@ -901,7 +904,7 @@ export async function main(argv: string[]): Promise<number> {
           if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
           if (access) {
             console.log("state access:");
-            for (const r of access.roles) console.log(`  ${r.role} (${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
+            for (const r of access.roles) console.log(`  ${r.role} (${r.cloud ? `${r.cloud}, ` : ""}${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
           }
         } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
         if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);

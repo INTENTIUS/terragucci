@@ -117,6 +117,9 @@ const passName: JsonSchema = {
 
 const rolePair: JsonSchema = map(["plan", "apply"], { plan: { type: "string", minLength: 1 }, apply: { type: "string", minLength: 1 } }, { required: ["plan", "apply"] });
 
+const serviceAccount: JsonSchema = { type: "string", pattern: "^[^@\\s]+@[^@\\s]+$" };
+const serviceAccountPair: JsonSchema = map(["plan", "apply"], { plan: serviceAccount, apply: serviceAccount }, { required: ["plan", "apply"] });
+
 const runnerSpec: JsonSchema = {
   anyOf: [
     pat(JOB_LABEL),
@@ -237,18 +240,20 @@ const oidc = map(OIDC_KEYS, {
   apply_role: { type: "string", minLength: 1 },
   audience: str,
   roles: { type: "object", minProperties: 1, additionalProperties: rolePair },
-  gcp: map(["workload_identity_provider", "plan_service_account", "apply_service_account", "token_url"], {
+  gcp: map(["workload_identity_provider", "plan_service_account", "apply_service_account", "token_url", "roles"], {
     workload_identity_provider: pat(WIF_PROVIDER),
     plan_service_account: { type: "string", pattern: "^[^@\\s]+@[^@\\s]+$" },
     apply_service_account: { type: "string", pattern: "^[^@\\s]+@[^@\\s]+$" },
     token_url: { type: "string", pattern: "^https://[^\\s/]+/\\S*$" },
+    roles: { type: "object", minProperties: 1, additionalProperties: serviceAccountPair },
   }, { required: ["workload_identity_provider", "plan_service_account", "apply_service_account"] }),
-  azure: map(["tenant_id", "subscription_id", "plan_client_id", "apply_client_id", "audience"], {
+  azure: map(["tenant_id", "subscription_id", "plan_client_id", "apply_client_id", "audience", "roles"], {
     tenant_id: { type: "string", minLength: 1 },
     subscription_id: { type: "string", minLength: 1 },
     plan_client_id: { type: "string", minLength: 1 },
     apply_client_id: { type: "string", minLength: 1 },
     audience: { type: "string", minLength: 1 },
+    roles: { type: "object", minProperties: 1, additionalProperties: rolePair },
   }, { required: ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"] }),
 }, {
   minProperties: 1,
