@@ -1,24 +1,32 @@
 ---
-title: Changes in 0.4.5
-description: "terragucci 0.4.5, released 2026-10-10."
+title: Changes in 0.4.6
+description: "terragucci 0.4.6, released 2026-10-10."
 ---
 
-Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.5) lists every change.
+Release `0.4.6` is on npm as `@intentius/terragucci@0.4.6`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.6) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.5 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.6 init`, then merge the pipeline it writes |
+| Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.6
+
+| What | Where |
+|---|---|
+| Approvals are one command, `terragucci approve`, for waves, migrations, state exports, lock releases and pull request environments, and every printed hint names it | [approve](/terragucci/reference/cli/#approve) |
+| The choudoufu image runs choudoufu 0.25.0. Resource history lists each choudoufu record's past versions, and the estate page shows the count | [Change history](/terragucci/guides/see-every-project/#change-history) |
+
+## From 0.4.5
+
+0.4.6 carries every change of 0.4.5, listed by area below. Upgrading from 0.4.4 or earlier, also note:
+
+| From 0.4.4 | Run |
+|---|---|
 | A Terragrunt repo that uses `generate` | `terragucci generate` again, so each unit's state key reads the ephemeral suffix ([In a Terragrunt repo](/terragucci/guides/generate-root-files/#in-a-terragrunt-repo)) |
 
 - Changed default: a pull request that changes a Terragrunt unit also previews the units that depend on it, provisional and outside every digest. Set `terragrunt.dependents: follow` to keep the old behavior ([The terragrunt block](/terragucci/reference/config/#the-terragrunt-block)).
 - Applies now run per root. With stock binaries, two overlapping pushes to one root can fail the newer apply with "Saved plan is stale"; run it again and it plans again ([Two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate)).
-
-## Since 0.4.5
-
-| What | Where |
-|---|---|
-| Approvals are one command, `terragucci approve`, for waves, migrations, state exports, lock releases and pull request environments, and installing terragucci is enough | [approve](/terragucci/reference/cli/#approve) |
-| The choudoufu image runs choudoufu 0.25.0. Resource history lists each choudoufu record's past versions, and the estate page shows the count | [Change history](/terragucci/guides/see-every-project/#change-history) |
 
 ## Applies and locking
 
