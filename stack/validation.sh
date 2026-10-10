@@ -24,7 +24,7 @@ forgejo|tg-check|the generated workflow for a Terragrunt repo fails an unformatt
 forgejo|tg-apply|the generated workflow for a Terragrunt repo applies both of its units on the default branch
 forgejo|cdf-check|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
 forgejo|cdf-apply|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
-forgejo|pr-review|with approval: pr-review a pull request approved on its head by a second user with write access merges, and its gated wave applies with no chant approve
+forgejo|pr-review|with approval: pr-review a pull request approved on its head by a second user with write access merges, and its gated wave applies with no terragucci approve
 github|check|the generated workflow fails an unformatted root and names the file
 github|apply|the generated workflow applies the root on the default branch
 github|reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies both roots

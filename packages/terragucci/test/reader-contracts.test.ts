@@ -79,7 +79,7 @@ function runs(): Report[] {
     buildReport({ run: { ...RUN, project: WEB, stage: "tf-drift", finished: at(4, 17) }, roots: smallFixture().slice(0, 2) }),
     // The next check finds none: its row names the drift it cleared.
     buildReport({ run: { ...RUN, project: WEB, commit: "f".repeat(40), stage: "tf-drift", finished: at(5, 17) }, roots: [{ path: "envs/dev/orders", planner: "tofu", plan: plan([]) }] }),
-    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", plan: created, applied: true, state: { backend: "s3", location: "s3://state/a.tfstate", version_id: "v1", versioning: "on", note: "n" }, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", plan: created, applied: true, recordVersions: new Map([["aws_s3_bucket.logs", { kept: true, store: "s3", versions: [{ version_id: "r1", last_modified: at(8, 54), current: true, deleted: false }], read: at(8, 55) }]]), state: { backend: "s3", location: "s3://state/a.tfstate", version_id: "v1", versioning: "on", note: "n" }, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 2, finished: at(10) }, roots: smallFixture().slice(0, 2), waves: [{ number: 2, roots: ["envs/dev/orders", "envs/dev/search"], approval: "waiting", waitingSince: at(9) }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
     // A share of a wave split across jobs (waves.jobs).
@@ -133,7 +133,7 @@ describe("run.json", () => {
     const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]), states);
     const spans = [{ phase: "plan" as const, start: at(1), end: at(1, 2) }, { phase: "gate" as const, start: at(1, 2) }, { phase: "apply" as const, start: at(1, 30), share: 1 }];
     let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1", changed: ["net"], spans }, at(1));
-    v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "chant approve tf-apply wave-2 --plan d2", shares: 2 }, at(2));
+    v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "terragucci approve wave-2 --plan d2", shares: 2 }, at(2));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
     const progress = { read: at(1, 31), resources: [{ root: "net", address: "terraform_data.a", action: "create" as const, status: "done" as const, done_at: at(1, 31) }, { root: "net", address: "terraform_data.b", action: "update" as const, status: "in-flight" as const }] };
     v = withWave(JSON.stringify(v), skeleton, { number: 1, progress }, at(3));

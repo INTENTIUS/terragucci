@@ -73,7 +73,7 @@ describe("terragucci state export", () => {
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: (l) => lines.push(l) });
     expect(r.code).toBe(3);
     expect(r.digest).toBe(requestDigest({ root: "app", location: "s3://state/app.tfstate", version_id: "v1", by: "alice", at: T(0) }));
-    expect(r.command).toBe(`chant approve tf-state-export app --plan ${r.digest}`);
+    expect(r.command).toBe(`terragucci approve export app --plan ${r.digest}`);
     expect(w.seen.every((s) => s.method === "HEAD")).toBe(true);
     const pending = JSON.parse(show(work, EXPORT_LEDGER).trim());
     expect(pending).toMatchObject({ kind: "pending", op: "tf-state-export", gate: "app", planDigest: r.digest, request: { root: "app", version_id: "v1", by: "alice" } });

@@ -37,8 +37,8 @@ describe("effectiveApproval", () => {
     expect(effectiveApproval(undefined, 0, "sealed", "at base")).toEqual({ mode: "sealed", source: "the pipeline's --approval" });
   });
 
-  it("approval: ledger beside listed gates says chant approve would still ask for a seal", () => {
-    expect(effectiveApproval("ledger", 1, undefined, "at base").note).toMatch(/chant approve refuses an unsigned approval/);
+  it("approval: ledger beside listed gates says terragucci approve would still ask for a seal", () => {
+    expect(effectiveApproval("ledger", 1, undefined, "at base").note).toMatch(/terragucci approve refuses an unsigned approval/);
   });
 });
 
@@ -89,7 +89,7 @@ describe("checkoutApproval", () => {
 
 describe("approveLine", () => {
   it("asks for --sign only under approval: sealed, and always names the digest", () => {
-    expect(approveLine(2, "jcs1-sha256:ab")).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:ab");
-    expect(approveLine(2, "jcs1-sha256:ab", "sealed")).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:ab --sign");
+    expect(approveLine(2, "jcs1-sha256:ab")).toBe("terragucci approve wave-2 --plan jcs1-sha256:ab");
+    expect(approveLine(2, "jcs1-sha256:ab", "sealed")).toBe("terragucci approve wave-2 --plan jcs1-sha256:ab --sign");
   });
 });

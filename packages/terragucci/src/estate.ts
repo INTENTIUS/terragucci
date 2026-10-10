@@ -266,13 +266,17 @@ export const HISTORY_FILES = { json: "history.json", page: "history.html" } as c
 
 /** Point the page at the history: its count, and each listed resource that has one at its section. */
 function linkHistory(page: Estate, history: History): void {
-  const ids = new Set(history.resources.map((r) => r.id));
+  const ids = new Map(history.resources.map((r) => [r.id, r]));
   page.history = { page: HISTORY_FILES.page, resources: history.resources.length, generated: history.generated };
   for (const p of page.projects) {
     for (const root of p.inventory?.roots ?? []) {
       for (const r of root.resources) {
         const id = historyId(p.project, root.root, r.address);
-        if (ids.has(id)) r.history = `${HISTORY_FILES.page}#${id}`;
+        const h = ids.get(id);
+        if (!h) continue;
+        r.history = `${HISTORY_FILES.page}#${id}`;
+        const v = h.record_versions;
+        if (v) r.record_versions = v.error !== undefined ? { kept: false, error: v.error } : v.kept ? { kept: true, count: v.versions?.length ?? 0 } : { kept: false };
       }
     }
   }
