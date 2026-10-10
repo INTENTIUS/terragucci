@@ -33,6 +33,7 @@ import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
+import { liveRoots } from "./detect";
 import { detectShape } from "./shape";
 import { call, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
 import { lockKey } from "./migrate";
@@ -154,6 +155,8 @@ export interface UnlockResult {
   /** The runs that kept the lock held. */
   alive?: LiveRun[];
   command?: string;
+  /** The root is under choudoufu's live resource markers, which take no state lock. */
+  live?: boolean;
 }
 
 /** One line of `_gates/tf-unlock/done.jsonl`. */
@@ -218,6 +221,13 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const settings: ResolvedSettings = resolveRepo(config);
   const shape = detectShape(repo, settings);
   const binary = options.binary ?? settings.binary ?? shape.binary([rel]).value;
+  // Under choudoufu's live resource markers there is no state file and so no
+  // state lock: each resource is a record written on a condition, and a
+  // killed apply leaves nothing held. The binary is never run.
+  if (binary === "choudoufu" && liveRoots(repo, [rel]).length > 0) {
+    log(`${rel}: choudoufu keeps its resources under live resource markers, with no state file and no state lock; nothing to release`);
+    return { code: UNLOCK_EXIT.released, live: true };
+  }
 
   // A root that names its workspace (an Atmos instance) inits in default and keeps its state, and its lock, under its own.
   const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);

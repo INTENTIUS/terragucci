@@ -252,7 +252,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "65cae39f"
     },
     {
       "claim": "apply-serial",
@@ -261,6 +261,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "apply-serial",
+      "says": "two pushes to main apply one after the other, and the commit carries one terragucci/apply status",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "1813d451"
     },
     {
       "claim": "apply-serial",
@@ -503,6 +512,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "lock-wait",
+      "says": "with binary: terraform a tf-apply wave whose plan meets a state lock another Terraform plan holds waits for it under the default -lock-timeout terragucci adds, the root's plan time in the report covering the wait, and applies once the lock is released",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "1813d451"
     },
     {
       "claim": "dash-pipeline",
@@ -766,6 +784,15 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "pr-apply-lock",
+      "says": "with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "4b61c25b"
+    },
+    {
       "claim": "pr-apply-stale",
       "says": "a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies",
       "needs": null,
@@ -886,6 +913,14 @@
       "commit": "3559bac3"
     },
     {
+      "claim": "terramate-pr-apply-lock",
+      "says": "with apply.when: pull-request in a Terramate repo, a pull request applied on a comment locks the stack it changes, and a second pull request that changes that stack is refused with the stack and the holder named, its state left as the first applied it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1813d451"
+    },
+    {
       "claim": "terramate-sharing",
       "says": "a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied",
       "needs": null,
@@ -908,6 +943,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "0c494d98"
+    },
+    {
+      "claim": "atmos-pr-apply-lock",
+      "says": "with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instances it reaches (every instance, for a change to a stack manifest), and a second pull request that changes one is refused with the instance and the holder named, its state left as the first applied it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1813d451"
     },
     {
       "claim": "atmos-refuse",
@@ -1439,6 +1482,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "pr-close-release",
+      "says": "with apply.when pull-request, closing a merge request releases the roots it locked: /terragucci lock on a second merge request then takes them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "4b61c25b"
     },
     {
       "claim": "tg-lock-fanout",
@@ -2257,7 +2309,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "65cae39f"
+    },
+    {
+      "claim": "linked-plan-local",
+      "says": "two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "65cae39f"
     },
     {
       "claim": "linked-states",
@@ -2298,6 +2358,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "unlock-state",
+      "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "1813d451"
+    },
+    {
+      "claim": "unlock-state",
+      "says": "with binary: choudoufu and a root under live resource markers, terragucci unlock-state finds no state file and no state lock: it says there is nothing to release, runs no binary, asks for no approval and records nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "1813d451"
     },
     {
       "claim": "tip-moved",

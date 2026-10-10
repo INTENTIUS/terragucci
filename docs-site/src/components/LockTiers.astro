@@ -1,0 +1,163 @@
+---
+// The three tiers of locking on a change's path from pull request to apply:
+// terragucci's layers around the backend's state lock, and choudoufu, which
+// takes the place of that lock. Each layer sits under the step it acts on.
+const steps = ['Pull request', 'Plan', 'Approval', 'Apply'];
+const layers = [
+	{ col: 1, name: 'Pull request locks', note: 'per root or unit, until merge or close' },
+	{ col: 2, name: 'Plans take no lock', note: 'never wait for an apply' },
+	{ col: 3, name: 'Stale plans refused', note: 'the approval binds the plan digest' },
+	{ col: 4, name: 'Applies kept apart', note: 'per root; a superseded push stands down' },
+];
+---
+<figure class="tg-tiers not-content" aria-label="terragucci's layers wrap the backend's state lock at apply; choudoufu replaces that lock">
+	<ol class="steps">
+		{steps.map((s, i) => <li style={`grid-column: ${i + 1}`}>{s}</li>)}
+	</ol>
+	<div class="band tg">
+		<span class="tier">terragucci, every binary and repo shape</span>
+		{layers.map((l) => (
+			<div class="layer" style={`grid-column: ${l.col}`}>
+				<span class="step">{steps[l.col - 1]}</span>
+				<strong>{l.name}</strong>
+				<span>{l.note}</span>
+			</div>
+		))}
+		<div class="inner">
+			<div class="band backend">
+				<span class="tier">your backend, at apply</span>
+				<strong>One state lock per state file</strong>
+				<span>held while the binary writes; waits shown, released by <code>unlock-state</code> behind a gate</span>
+			</div>
+			<span class="or">or</span>
+			<div class="band cdf">
+				<span class="tier">choudoufu, at apply</span>
+				<strong>No state lock</strong>
+				<span>a record per resource, each write conditional</span>
+			</div>
+		</div>
+	</div>
+</figure>
+
+<style>
+	.tg-tiers {
+		margin: 2rem 0;
+		display: grid;
+		gap: 0.6rem;
+		--cols: repeat(4, minmax(0, 1fr));
+	}
+	.steps {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: var(--cols);
+		gap: 0.6rem;
+	}
+	.steps li {
+		margin: 0;
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+		border-top: 2px solid var(--tg-rule);
+		padding-top: 0.4rem;
+	}
+	.band {
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		padding: 0.75rem;
+		display: grid;
+		gap: 0.3rem;
+		align-content: start;
+		min-width: 0;
+	}
+	.band.tg {
+		grid-template-columns: var(--cols);
+		gap: 0.6rem;
+		border-color: var(--tg-accent);
+	}
+	.tier {
+		grid-column: 1 / -1;
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.tg > .tier {
+		color: var(--tg-accent);
+	}
+	.layer {
+		grid-row: 2;
+		display: grid;
+		gap: 0.2rem;
+		align-content: start;
+		background: var(--tg-panel);
+		border-radius: 0.35rem;
+		padding: 0.6rem;
+		min-width: 0;
+	}
+	.layer .step {
+		display: none;
+	}
+	strong {
+		font-weight: 600;
+		font-size: 0.92rem;
+		color: var(--sl-color-white);
+	}
+	.layer > span:last-child,
+	.band > span:last-child {
+		font-size: 0.82rem;
+		color: var(--sl-color-gray-2);
+		overflow-wrap: anywhere;
+	}
+	.inner {
+		grid-column: 1 / -1;
+		grid-row: 3;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+		gap: 0.6rem;
+		align-items: stretch;
+	}
+	.or {
+		align-self: center;
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		color: var(--sl-color-gray-3);
+	}
+	.band.cdf {
+		border-style: dashed;
+		border-color: var(--sl-color-gray-4);
+	}
+	code {
+		font-family: var(--sl-font-mono);
+		font-size: 0.85em;
+	}
+	@media (max-width: 40rem) {
+		.steps {
+			display: none;
+		}
+		.band.tg,
+		.inner {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.layer,
+		.inner {
+			grid-column: 1 !important;
+			grid-row: auto;
+		}
+		.layer .step {
+			display: block;
+			font-family: var(--sl-font-mono);
+			font-size: 0.68rem;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: var(--sl-color-gray-3);
+		}
+		.or {
+			justify-self: center;
+		}
+	}
+</style>
