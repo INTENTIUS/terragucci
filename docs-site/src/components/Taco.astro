@@ -4,7 +4,7 @@
 // every art pixel stays square and sharp; `small` is the 26x16 mark for inline
 // use, a PNG at twice that size resampled once from the sharp art.
 // Decorative by default (alt=""), since a word beside it names terragucci.
-// Every taco sits on a tile, white in the light theme and black in the dark.
+// The art is transparent, so a taco sits on whatever is behind it.
 interface Props {
 	scale?: number | 'small';
 	alt?: string;
@@ -25,13 +25,12 @@ const n = small ? 1 : scale;
 /></span>
 
 <style>
-	/* Every taco sits on a tile: white in the light theme, black in the dark. */
+	/* The span keeps the taco's padding and centering; the art itself is transparent. */
 	.tg-taco-tile {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		vertical-align: middle;
-		background: var(--tg-taco-ground);
 		line-height: 0;
 	}
 	.tg-taco {

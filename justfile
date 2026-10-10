@@ -32,6 +32,7 @@ test:
 [doc("Score the docs with the sentences prose linter.")]
 lint-docs strictness="2" limit="8":
     node scripts/lint-docs.mjs {{strictness}} {{limit}}
+    node scripts/lint-ui-text.mjs {{strictness}} {{limit}}
     node scripts/lint-config-docs.mjs
 
 [doc("Fail when a published tutorial page shows a claim that does not pass, or a capture that is missing or stale.")]

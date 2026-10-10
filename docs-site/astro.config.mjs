@@ -74,20 +74,26 @@ export default defineConfig({
 				Head: './src/components/Head.astro',
 				PageTitle: './src/components/PageTitle.astro',
 				Footer: './src/components/Footer.astro',
+				SocialIcons: './src/components/SocialIcons.astro',
+				SiteTitle: './src/components/SiteTitle.astro',
+				ThemeProvider: './src/components/ThemeProvider.astro',
+				ThemeSelect: './src/components/ThemeSelect.astro',
 			},
-			description: 'One workflow, one audit trail and one place to enforce policy for every Terraform and OpenTofu repo, Terragrunt, Atmos, Terramate and CDK Terrain included, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
+			description: 'One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],
 			editLink: {
 				baseUrl: 'https://github.com/INTENTIUS/terragucci/edit/main/docs-site/',
 			},
-			// The doors come first: a room per repo shape, binary and role, the pages
+			// Your setup comes first: a page per repo shape, binary and role, the pages
 			// for people leaving another tool, and the proof. The guides then follow
-			// what the reader is doing.
+			// what the reader is doing. Every group starts collapsed; the current page's
+			// group opens.
 			sidebar: [
 				{
 					label: 'Start here',
+					collapsed: true,
 					items: [
 						{ label: 'Get your first plan note', slug: 'getting-started' },
 						{ label: 'Architecture', slug: 'concepts/how-it-works' },
@@ -95,14 +101,17 @@ export default defineConfig({
 				},
 				{
 					label: 'Tutorial',
+					collapsed: true,
 					items: [{ autogenerate: { directory: 'tutorial' } }],
 				},
 				{
-					label: 'Rooms',
-					items: [{ autogenerate: { directory: 'rooms' } }],
+					label: 'Your setup',
+					collapsed: true,
+					items: [{ autogenerate: { directory: 'for' } }],
 				},
 				{
 					label: 'Coming from',
+					collapsed: true,
 					items: [
 						{ label: 'Atlantis, OpenTaco or Terrateam', slug: 'guides/coming-from-atlantis-or-opentaco' },
 						{ label: 'HCP Terraform, Scalr or OTF', slug: 'guides/coming-from-hcp-terraform-scalr-or-otf' },
@@ -112,6 +121,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Proof',
+					collapsed: true,
 					items: [
 						{ label: 'Validation', slug: 'reference/validation' },
 						{ label: 'Scale', slug: 'reference/scale' },
@@ -119,10 +129,12 @@ export default defineConfig({
 				},
 				{
 					label: 'How-to guides',
+					collapsed: true,
 					items: [
 						{ label: 'Add terragucci to a repo', slug: 'guides/add-to-a-repo' },
 						{
 							label: 'Ship changes',
+							collapsed: true,
 							items: [
 								{ label: 'Approve a waiting wave', slug: 'guides/approve-a-wave' },
 								{ label: 'Fix a refused wave', slug: 'guides/fix-a-refused-wave' },
@@ -138,6 +150,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Policy and audit',
+							collapsed: true,
 							items: [
 								{ label: 'Write a policy', slug: 'guides/write-a-policy' },
 								{ label: 'Read the audit trail', slug: 'guides/read-the-audit-trail' },
@@ -148,6 +161,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Watch and keep',
+							collapsed: true,
 							items: [
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
 								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
@@ -162,6 +176,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Your repo shape',
+							collapsed: true,
 							items: [
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
@@ -174,6 +189,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Many repos',
+							collapsed: true,
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
 								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
@@ -181,6 +197,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Integrations',
+							collapsed: true,
 							items: [
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
 								{ label: 'Approve from Slack and Teams', slug: 'guides/approve-from-chat' },
@@ -189,6 +206,7 @@ export default defineConfig({
 						},
 						{
 							label: 'With a coding agent',
+							collapsed: true,
 							items: [
 								{ label: 'Set up with a coding agent', slug: 'getting-started/agents' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
@@ -202,6 +220,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Reference',
+					collapsed: true,
 					items: [
 						{ label: 'terragucci.yml keys', slug: 'reference/config' },
 						{ label: 'CLI commands', slug: 'reference/cli' },
@@ -227,6 +246,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Concepts',
+					collapsed: true,
 					items: [
 						{ label: 'Waves and approvals', slug: 'concepts/waves-and-approvals' },
 						{ label: 'Plan grouping', slug: 'concepts/why-plans-are-grouped' },
@@ -238,6 +258,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Standards',
+					collapsed: true,
 					items: [
 						{ label: 'Overview', slug: 'standards' },
 						{ label: 'tacos.guru', slug: 'standards/tacos-guru' },
