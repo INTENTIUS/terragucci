@@ -39,7 +39,7 @@ import {
 } from "../config";
 import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
 import { APPLY_TIMING_TABLE, GUIDE_URL, plain, TERRATEAM_URL, type SettingRow } from "./guide";
-import { isMap, list, Notes, rootOf, type ImportNote, type NoteKind } from "./notes";
+import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind } from "./notes";
 import { convertTerrateam, type RepoShape } from "./terrateam";
 
 export { rootOf, type ImportNote, type NoteKind } from "./notes";
@@ -66,7 +66,7 @@ export interface ImportOptions {
   forge?: ForgeName;
   /** Overrides when the change applies; otherwise the source tool's own timing. */
   applyWhen?: ApplyWhen;
-  /** The repo's roots and their order, which Terrateam's depends_on is read against. */
+  /** The repo's roots and their order, which depends_on is read against. */
   repo?: RepoShape;
 }
 
@@ -100,10 +100,16 @@ interface Gathered {
   tofu: string[];
   env: Map<string, { value: string; key: string }>;
   envConflicts: Set<string>;
+  /** Each project's root by its name, which depends_on names. */
+  named: Map<string, string>;
+  /** Each project's depends_on, with its key and root. */
+  dependsOn: { at: string; root: string; names: unknown }[];
+  /** Projects Terragrunt runs (OpenTaco's `terragrunt`). */
+  terragrunt: boolean;
 }
 
 function gathered(): Gathered {
-  return { roots: [], afterMerge: false, requirements: new Map(), projectsWithRequirements: 0, projects: 0, versions: new Map(), tofu: [], env: new Map(), envConflicts: new Set() };
+  return { roots: [], afterMerge: false, requirements: new Map(), projectsWithRequirements: 0, projects: 0, versions: new Map(), tofu: [], env: new Map(), envConflicts: new Set(), named: new Map(), dependsOn: [], terragrunt: false };
 }
 
 /** An env step's variable with a fixed value; anything else is a custom step. */
@@ -143,6 +149,42 @@ function steps(g: Gathered, notes: Notes, key: string, raw: unknown): void {
       else if (!["init", "plan", "apply", "show"].includes(name)) notes.unknown(k);
     }
   });
+}
+
+/** A project's name, for depends_on to name it by. */
+function takeName(g: Gathered, p: Record<string, unknown>, root: string | undefined): void {
+  if (typeof p.name === "string" && root !== undefined && !g.named.has(p.name)) g.named.set(p.name, root);
+}
+
+/**
+ * depends_on as `waves.after`: each project after the projects it names, by
+ * their roots. A dependency the reads already give needs nothing; a name no
+ * project has, and a cycle, are named and not written.
+ */
+function dependsOnOrder(g: Gathered, notes: Notes, s: ProjectSettings, reads?: ReadonlyMap<string, ReadonlySet<string>>): void {
+  if (!g.dependsOn.length) return;
+  if (g.terragrunt) {
+    for (const d of g.dependsOn) notes.unmapped(d.at, "Order", "in a Terragrunt repo the units' dependency blocks order them");
+    return;
+  }
+  const edges: { at: string; d: string; u: string }[] = [];
+  for (const d of g.dependsOn) {
+    const names = list(d.names);
+    const unknown = names.filter((n) => typeof n !== "string" || !g.named.has(n));
+    if (unknown.length) notes.unmapped(`${d.at}: ${unknown.map(String).join(", ")}`, "Order", `${unknown.map((n) => JSON.stringify(n)).join(", ")} ${unknown.length === 1 ? "names" : "name"} no project`);
+    for (const n of names) if (typeof n === "string" && g.named.has(n) && g.named.get(n) !== d.root) edges.push({ at: d.at, d: d.root, u: g.named.get(n)! });
+  }
+  const { after, fromReads, cycle } = wavesAfterOf(edges.map((e) => [e.d, e.u] as const), reads);
+  if (Object.keys(after).length) s.waves = { ...s.waves, after };
+  const byKey = new Map<string, typeof edges>();
+  for (const e of edges) byKey.set(e.at, [...(byKey.get(e.at) ?? []), e]);
+  for (const [key, es] of byKey) {
+    const fmt = (xs: typeof es) => xs.map((e) => `${e.d} after ${e.u}`).join(", ");
+    const written = es.filter((e) => !fromReads.has(`${e.d}\0${e.u}`));
+    if (cycle && written.length) notes.unmapped(key, "Order", `${fmt(written)} ${written.length === 1 ? "is" : "are"} not kept: with the terraform_remote_state reads they make a cycle, ${cycle.join(" after ")}`);
+    else if (!written.length) notes.covered(key, "Order", `the terraform_remote_state reads already order ${fmt(es)}`);
+    else notes.mapped(key, "Order", `waves.after: ${fmt(written)}`);
+  }
 }
 
 /** One project's apply requirements. */
@@ -190,7 +232,8 @@ function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): 
     if (p.plan_requirements !== undefined) notes.unmapped(`${at}.plan_requirements`, "Plan requirements");
     if (p.import_requirements !== undefined) notes.leftOut(`${at}.import_requirements`, "`import` or `state rm` from a comment");
     if (p.execution_order_group !== undefined) notes.unmapped(`${at}.execution_order_group`, "Order");
-    if (p.depends_on !== undefined) notes.unmapped(`${at}.depends_on`, "Order");
+    takeName(g, p, root);
+    if (p.depends_on !== undefined && root !== undefined) g.dependsOn.push({ at: `${at}.depends_on`, root, names: p.depends_on });
     if (p.repo_locks !== undefined) locks(g, notes, `${at}.repo_locks`, p.repo_locks);
     if (p.custom_policy_check !== undefined) notes.unmapped(`${at}.custom_policy_check`, "Policy");
   });
@@ -247,7 +290,9 @@ function readDigger(doc: Record<string, unknown>, g: Gathered, notes: Notes): vo
     if (p.terragrunt !== undefined) notes.covered("projects[].terragrunt", "Terragrunt");
     if (p.include_patterns !== undefined) notes.covered("projects[].include_patterns", "What triggers a plan");
     if (p.exclude_patterns !== undefined) notes.covered("projects[].exclude_patterns", "What triggers a plan");
-    if (p.depends_on !== undefined) notes.unmapped(`${at}.depends_on`, "Order");
+    if (p.terragrunt === true) g.terragrunt = true;
+    takeName(g, p, root);
+    if (p.depends_on !== undefined && root !== undefined) g.dependsOn.push({ at: `${at}.depends_on`, root, names: p.depends_on });
     if (p.aws_role_to_assume !== undefined) notes.unmapped(`${at}.aws_role_to_assume`, "Cloud credentials", "name a read-only plan role and an apply role under `oidc`");
     takeRequirements(g, notes, `${at}.apply_requirements`, p.apply_requirements);
   });
@@ -336,6 +381,9 @@ export function convert(source: ImportSource, doc: unknown, o: ImportOptions = {
       notes.mapped("projects[].opentofu", "Binary version", "binary: tofu");
     } else notes.unmapped("projects[].opentofu", "Binary version", `only ${g.tofu.join(", ")} run OpenTofu, and the pipeline runs one binary`);
   }
+
+  // Order: depends_on.
+  dependsOnOrder(g, notes, s, o.repo?.reads);
 
   // Concurrency.
   if (source === "atlantis" && (doc.parallel_plan === false || doc.parallel_apply === false)) s.parallelism = 1;
@@ -434,7 +482,7 @@ export function importConfig(repo: string, source: ImportSource, o: ImportOption
     throw new ConfigError(`${relative(repo, file)} is not YAML: ${(e as Error).message}`);
   }
   const forge = o.forge ?? detectForge(repo)?.value;
-  const { settings, notes, missing: unmatched } = convert(source, doc, { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}), ...(source === "terrateam" ? { repo: repoShape(repo) } : {}) });
+  const { settings, notes, missing: unmatched } = convert(source, doc, { ...(forge ? { forge } : {}), ...(o.applyWhen ? { applyWhen: o.applyWhen } : {}), repo: repoShape(repo) });
   const from = relative(repo, file) || file;
   const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${source === "terrateam" ? TERRATEAM_URL : GUIDE_URL}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
   const missing = unmatched ?? (settings.roots ?? []).filter((r) => findRoots(repo, [r]).length === 0);

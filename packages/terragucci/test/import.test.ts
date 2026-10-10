@@ -134,6 +134,26 @@ describe("import atlantis", () => {
     expect(settings.locks).toBe("plan");
   });
 
+  it("writes depends_on as waves.after, by the projects' directories", () => {
+    expect(settings.waves).toEqual({ after: { "envs/dev/app": ["envs/dev/net"] } });
+    expect(note(notes, "projects[dev-app].depends_on")).toMatchObject({ kind: "mapped", row: "Order", detail: "waves.after: envs/dev/app after envs/dev/net" });
+  });
+
+  it("names a depends_on that names no project, and leaves out an order the reads already give", () => {
+    const yaml = `version: 3
+projects:
+- name: net
+  dir: net
+- name: app
+  dir: app
+  depends_on: [net, dns]
+`;
+    const r = convert("atlantis", parseYAML(yaml), { repo: { roots: ["app", "net"], layers: [["net"], ["app"]], reads: new Map([["app", new Set(["net"])]]) } });
+    expect(r.settings.waves).toBeUndefined();
+    expect(note(r.notes, "projects[app].depends_on: dns")).toMatchObject({ kind: "unmapped", detail: '"dns" names no project' });
+    expect(note(r.notes, "projects[app].depends_on")).toMatchObject({ kind: "default", detail: "the terraform_remote_state reads already order app after net" });
+  });
+
   it("applies before merge, as Atlantis does, with the requirements every project named, mergeable as mergeable and checks", () => {
     expect(settings.apply).toEqual({ when: "pull-request", requires: ["approved", "mergeable", "undiverged", "checks"], merge: "auto" });
     expect(note(notes, "projects[dev-net].apply_requirements")).toMatchObject({ kind: "mapped", row: "Checks green", detail: "apply.requires: mergeable, checks" });
@@ -161,7 +181,6 @@ describe("import atlantis", () => {
     const cell = (row: string) => SETTINGS_TABLE.find((r) => r[0] === row)![3];
     expect(note(notes, "projects[blue].workspace")).toMatchObject({ kind: "unmapped", row: "Workspace", text: cell("Workspace") });
     expect(note(notes, "projects[dev-app].execution_order_group")).toMatchObject({ kind: "unmapped", row: "Order" });
-    expect(note(notes, "projects[dev-app].depends_on")).toMatchObject({ kind: "unmapped", row: "Order" });
     expect(note(notes, "projects[blue].plan_requirements")).toMatchObject({ kind: "unmapped", row: "Plan requirements" });
     expect(note(notes, "projects[dev-net].autoplan.enabled")).toMatchObject({ kind: "unmapped", row: "What triggers a plan" });
     expect(note(notes, "projects[].autoplan.when_modified")).toMatchObject({ kind: "default", row: "What triggers a plan" });
@@ -221,6 +240,14 @@ describe("import atlantis", () => {
 
 describe("import digger", () => {
   const { settings, notes } = convert("digger", parseYAML(DIGGER));
+
+  it("writes depends_on as waves.after, and leaves a Terragrunt project's order to its dependency blocks", () => {
+    expect(settings.waves).toEqual({ after: { prod: ["dev"] } });
+    expect(note(notes, "projects[prod].depends_on")).toMatchObject({ kind: "mapped", detail: "waves.after: prod after dev" });
+    const tg = convert("digger", parseYAML("projects:\n- name: a\n  dir: a\n  terragrunt: true\n- name: b\n  dir: b\n  terragrunt: true\n  depends_on: [a]\n"));
+    expect(tg.settings.waves).toBeUndefined();
+    expect(note(tg.notes, "projects[b].depends_on")?.detail).toBe("in a Terragrunt repo the units' dependency blocks order them");
+  });
 
   it("writes roots from the projects and generate_projects, tofu, and applies after merge when on_commit_to_default runs digger apply", () => {
     expect(settings.roots).toEqual(["dev", "prod", "teams/*"]);

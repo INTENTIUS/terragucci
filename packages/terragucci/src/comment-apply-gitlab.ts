@@ -36,6 +36,7 @@ import { spawnSync } from "node:child_process";
 import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { reachedRoots, reachedUnits, type ApplyCommentDecision, type Git } from "./comment-apply";
+import type { WavesAfter } from "./detect";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
@@ -207,6 +208,8 @@ export interface GitLabApplyOptions {
   requires?: readonly ApplyRequire[];
   /** A Terragrunt repo: the locks are on the units a merge request reaches. */
   terragrunt?: boolean;
+  /** `waves.after` of plain roots: a root it puts after a reached root is reached too. */
+  after?: WavesAfter;
   wait?: (ms: number) => Promise<void>;
 }
 
