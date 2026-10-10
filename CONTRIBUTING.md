@@ -371,7 +371,7 @@ just sandbox prove --break         # the locking claims, each with its property 
 | `oidc` | `change oidc`, `merge oidc` | in the pull request's plan job and main's apply job, the token verifies against GitHub's keys and names the repo, run, commit, event and `sts.amazonaws.com`; the plan job holds the plan role and the apply job the apply role |
 | `comment-apply` | `/terragucci apply` on the merged oidc pull request, on one-root, and on the merged destroy while wave 4 waits | the first applies waves 1 to 4 from the merge commit and links the run; one-root is refused as not merged; the destroy's reply says wave 4 waits and gives `chant approve ... --sign` |
 | `policy-override` | `change override`, `merge override`, `terragucci override` as `sandbox-stranger` then as `sandbox-signer`, each followed by a re-run | wave 1 is denied, still denied with "not listed" after the first override, and applies after the second; the wave's report names the override, its rules, reason and plan digest |
-| `apply-serial` | `change module-bump`; merge it, and merge orders-note once its wave 1 is applying | no apply step of one run overlaps one of the other, none is cancelled, both runs pass, and each merge commit's newest `terragucci/apply` is a success |
+| `apply-serial` | `change module-bump`; merge it, and merge orders-note once its wave 1 is applying | no apply step of one run overlaps one of the other, none is cancelled, both runs pass, each merge commit's newest `terragucci/apply` is a success, and the older one's says it was superseded by a newer push |
 | `gate-wait` | `change destroy`, `merge destroy`, `approve --hold`, then the re-run of `approve-command` | wave 4 stops with its approve command, and the re-run after a sealed approval succeeds |
 | `explain-refusal` | `change refuse`, `merge refuse` | wave 4 is refused, since its last approval was for the destroy's plan and no run applied it, and the `explain-refusal` job passes and prints `envs/staging/payments` among the roots that moved |
 | `approve-command` | `terragucci approve --dry-run`, then `terragucci approve`, in a clone; the re-run | the dry run prints the command and the ledger keeps its length; the approval names wave 4 with no digest given, and the re-run applies both destroys |
@@ -391,7 +391,7 @@ No token is traded with STS: the sandbox has no cloud account (the Forgejo claim
 |---|---|
 | `pr-lock` | once one-root holds `envs/dev/orders`, `_locks/tf-apply.json` is deleted from `chant/lifecycle`, so orders-note takes the root instead of failing `terragucci/lock` |
 | `pr-lock-fmt` | the fmt job's step that locks the pull request's new head is cut from the committed pipeline, so nothing answers the lock on the formatted head |
-| `apply-serial` | each apply wave's stand-down for a newer push (the check at the top of the wave and the stage's `--stand-down`) is cut from the committed pipeline, so the older run's waves apply beside the newer run's |
+| `apply-serial` | each apply wave's stand-down for a newer push (the check at the top of the wave and the stage's `--stand-down`) is cut from the committed pipeline, so the older run applies after the newer push lands and its commit is not marked superseded |
 | `pr-apply-lock` | once the first pull request applied, `_locks/tf-apply.json` is deleted from `chant/lifecycle`, so the second applies instead of being refused |
 | `pr-apply-stale` | main's `apply.requires` is `[approved, mergeable, checks]`, leaving out `undiverged`, so the head behind main applies |
 

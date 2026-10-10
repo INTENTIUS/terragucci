@@ -499,7 +499,7 @@ github.com|tips|the plan note counts the tips the run report holds, and each tip
 github.com|comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed
 github.com|comment-apply|/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused
 github.com|policy-override|a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing
-github.com|apply-serial|two merges pushed back to back apply in the order they arrived, the older run applies nothing beside the newer one except a wave that stands down for it, none is cancelled, and each commit ends with a terragucci/apply success
+github.com|apply-serial|two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and applies nothing beside it, none is cancelled, and each commit ends with a terragucci/apply success
 github.com|explain-refusal|after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step
 github.com|approve-command|terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing
 github.com|pr-apply-lock|with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock
@@ -994,9 +994,10 @@ claim_pr_lock_fmt() {
 # orders-note pull request merges too. No apply of one run overlaps one of
 # the other, except a wave that stood down for the newer push (it applied
 # nothing), none is cancelled, and each commit ends with one
-# terragucci/apply success.
+# terragucci/apply success, the older one's saying it was superseded.
 # BREAK: every wave's stand-down is cut from the pipeline (break_pipeline),
-# so the older run's waves apply beside the newer run's.
+# so the older run applies its waves after the newer push lands and its
+# commit says applied, not superseded. The waves need not overlap in time.
 claim_apply_serial() {
   local m since sha1 sha2 run1 run2 applying spans overlaps cancelled first_order c1 c2 s1 s2 ran
   if [ -z "${b:-}" ] || ! step change module-bump; then
@@ -1040,7 +1041,7 @@ claim_apply_serial() {
   s1="$(status_on "$sha1" terragucci/apply)"; s2="$(status_on "$sha2" terragucci/apply)"
   ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])\(if .stood then " stood down" else "" end)") | join(", ")' <<<"$spans")"
   if [ "$overlaps" = 0 ] && [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
-    && [ "${s1%% *}" = success ] && [ "${s2%% *}" = success ]; then
+    && [ "${s1%% *}" = success ] && [[ "$s1" == *"superseded by a newer push"* ]] && [ "${s2%% *}" = success ]; then
     verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; no overlap, none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
   else
     verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; overlaps $overlaps; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
