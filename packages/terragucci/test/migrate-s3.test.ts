@@ -151,7 +151,7 @@ describe("a backend move", () => {
 
   it("parses the root and the backend it moves from, and refuses one with no bucket or of another type", () => {
     expect(parseMigration("migrations/move-app.yml", file)).toMatchObject({ kind: "backends", backends: [{ root: "app", from: { backend: "s3", config: { bucket: "state", key: "old/app.tfstate" } } }] });
-    expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: pg\n      config: {}\n")).toThrow(/from.backend must be s3, gcs, azurerm, local, remote, cloud, file/);
+    expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: oss\n      config: {}\n")).toThrow(/from.backend must be s3, gcs, azurerm, local, pg, kubernetes, consul, http, remote, cloud, file/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: gcs\n      config: {}\n")).toThrow(/must name the bucket of the state/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: azurerm\n      config: { storage_account_name: a }\n")).toThrow(/must name the storage_account_name, container_name and key of the state/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: s3\n      config: { bucket: b }\n")).toThrow(/must name the bucket and key/);
