@@ -1851,7 +1851,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "bbf48896"
+    },
+    {
+      "claim": "migrate-backend-tfe",
+      "says": "a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bbf48896"
     },
     {
       "claim": "migrate-revert",
