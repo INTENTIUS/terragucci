@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { ConfigError } from "./config";
 
-export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign" | "atmos";
+export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign" | "atmos" | "terramate";
 
 /** The Infracost release a plan job installs for `cost:`. */
 export const INFRACOST_VERSION = "0.10.45";
@@ -74,6 +74,12 @@ export function release(tool: Tool, version: string, a = arch()): Release {
     const base = `https://github.com/cloudposse/atmos/releases/download/v${version}`;
     const file = `atmos_${version}_linux_${a}`;
     return { url: `${base}/${file}`, sums: `${base}/atmos_${version}_SHA256SUMS`, file, kind: "binary" };
+  }
+  if (tool === "terramate") {
+    // A tar.gz per platform, named x86_64 for amd64, listed in the release's checksums.txt.
+    const base = `https://github.com/terramate-io/terramate/releases/download/v${version}`;
+    const file = `terramate_${version}_linux_${a === "amd64" ? "x86_64" : a}.tar.gz`;
+    return { url: `${base}/${file}`, sums: `${base}/checksums.txt`, file, kind: "tar.gz" };
   }
   if (tool === "choudoufu") {
     const base = `https://github.com/INTENTIUS/choudoufu/releases/download/v${version}`;

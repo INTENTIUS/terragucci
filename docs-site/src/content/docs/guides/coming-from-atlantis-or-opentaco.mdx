@@ -79,7 +79,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Policy | conftest, set in the server's config; a workflow's `policy_check`; a project's `custom_policy_check` | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides |
 | Custom steps | `workflows` | `workflows` | none: the jobs are generated; `env` sets variables every job gets, which an import writes from the workflows' `env` steps that set a fixed value |
 | Cloud credentials | the server's environment | `aws-role-to-assume` in your workflow, or a project's `aws_role_to_assume`, over OIDC | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
-| Many repos | the server's repo config | | a control repo's `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
+| Many repos | the server's repo config | | a [control repo](/terragucci/concepts/control-repo/)'s `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
 | Terragrunt | a custom workflow, or terragrunt-atlantis-config | `generate_projects` with Terragrunt parsing, or a project's `terragrunt` | detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/)) |
 | Drift | drift webhooks | drift detection | `drift`, a cron schedule |
 

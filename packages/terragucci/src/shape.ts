@@ -9,6 +9,7 @@
  *   synth       Roots a command writes, such as CDK Terrain's stacks.
  *   atmos       Instances `terragucci atmos write` writes from Atmos stacks (./atmos.ts).
  *   terragrunt  Terragrunt units, run with `terragrunt run --all` (./terragrunt.ts).
+ *   terramate   Terramate stacks, committed with their generated code (./terramate.ts).
  *
  * detectShape is the only detector: every command asks it, never the
  * markers. There are two execution engines: one binary run per root, and
@@ -25,6 +26,7 @@ import { applyLayers, detectBinary, findRootsWithReasons, rootDependencies, root
 import { refusal, shapeProblems, type Feature, type ShapeKind } from "./refusals";
 import { terragruntStepsRefusal } from "./steps";
 import { detectTerragrunt, discoverUnits, unitWaves, type TerragruntDetection } from "./terragrunt";
+import { detectTerramate, TERRAMATE_GENERATE, terramateDiscover } from "./terramate";
 import { generateStacks, generatingStack, stackFile } from "./tg-stacks";
 
 export type { Feature, ShapeKind } from "./refusals";
@@ -43,6 +45,8 @@ export interface Discovered {
   order: Map<string, Set<string>>;
   /** What discovery noticed, for init to print. */
   notes: string[];
+  /** A Terramate repo's: the stacks that hold no Terraform, so are no roots. */
+  skipped?: string[];
   /** A Terragrunt repo's: how the units were found. */
   source?: "terragrunt find" | "terragrunt.hcl files";
 }
@@ -54,6 +58,8 @@ export interface DiscoverOptions {
   terragrunt?: string;
   /** The `atmos` executable. Default: `TERRAGUCCI_ATMOS`, then `atmos` on the path. */
   atmos?: string;
+  /** The `terramate` executable. Default: `TERRAGUCCI_TERRAMATE`, then `terramate` on the path. */
+  terramate?: string;
   exec?: TerragruntExec;
 }
 
@@ -67,6 +73,8 @@ export interface Shape {
   engine: Engine;
   /** The command every job runs before it reads the roots: the synth, or the Atmos write. Undefined when git holds the roots. */
   prepare?: string;
+  /** Whether git holds the roots, so a pull request's diff names the ones it changes; false when prepare writes them. */
+  rootsInGit: boolean;
   /** A Terragrunt repo's detection: its marker and its explicit stacks. */
   terragrunt?: TerragruntDetection;
   /** The roots, their waves and edges. Throws ConfigError when there is none. */
@@ -116,9 +124,12 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
   if (settings.terragrunt && !tg) conflicts.push("terragucci.yml has a terragrunt block, but the repo has no root.hcl, terragrunt.hcl or terragrunt.stack.hcl");
   if (settings.atmos && !atmos) conflicts.push(`terragucci.yml has an atmos block, but the repo has no ${ATMOS_MARKER} at its root`);
   if (atmos && tg) conflicts.push(`the repo has ${atmos} and ${tg.reason}; terragucci runs an Atmos repo or a Terragrunt repo, not both`);
+  const tmMarker = detectTerramate(repo);
+  if (tmMarker && (atmos || tg)) conflicts.push(`the repo has ${tmMarker} and ${atmos ?? tg!.reason}; terragucci runs a Terramate repo, an Atmos repo or a Terragrunt repo, one at a time`);
+  const terramate = !atmos && !tg ? tmMarker : undefined;
   const synth = typeof settings.synth === "string" && settings.synth.trim() !== "" ? settings.synth : undefined;
-  const kind: ShapeKind = atmos ? "atmos" : tg ? "terragrunt" : synth ? "synth" : "roots";
-  const reason = atmos ?? tg?.reason ?? (synth ? `synth: ${synth}` : "roots");
+  const kind: ShapeKind = atmos ? "atmos" : tg ? "terragrunt" : terramate ? "terramate" : synth ? "synth" : "roots";
+  const reason = atmos ?? tg?.reason ?? terramate ?? (synth ? `synth: ${synth}` : "roots");
   const canary = settings.waves?.canary;
   let instances: AtmosInstance[] | undefined;
 
@@ -145,6 +156,7 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
         notes: [],
       };
     }
+    if (kind === "terramate") return terramateDiscover(repo, terramate!, canary, { ...(options.terramate ? { terramate: options.terramate } : {}), ...(options.exec ? { exec: options.exec } : {}) });
     if (kind === "terragrunt") {
       const found = await discoverUnits(repo, {
         exclude: settings.terragrunt?.exclude,
@@ -217,7 +229,9 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
     kind,
     reason,
     engine: kind === "terragrunt" ? "terragrunt" : "per-root",
-    ...(kind === "atmos" ? { prepare: ATMOS_WRITE } : synth && kind === "synth" ? { prepare: synth } : {}),
+    // A Terramate repo commits its generated code: its prepare checks it and writes no root.
+    rootsInGit: kind !== "synth" && kind !== "atmos",
+    ...(kind === "atmos" ? { prepare: ATMOS_WRITE } : kind === "terramate" ? { prepare: TERRAMATE_GENERATE } : synth && kind === "synth" ? { prepare: synth } : {}),
     ...(tg && kind === "terragrunt" ? { terragrunt: tg } : {}),
     discover,
     binary,

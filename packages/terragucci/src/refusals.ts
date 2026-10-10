@@ -10,7 +10,7 @@
 import type { ProjectSettings } from "./config";
 
 /** How a repo's roots come to be: found on disk, written by a synth command, written from Atmos stacks, or Terragrunt units. */
-export type ShapeKind = "roots" | "synth" | "atmos" | "terragrunt";
+export type ShapeKind = "roots" | "synth" | "atmos" | "terragrunt" | "terramate";
 
 /** What a setting asks the pipeline to do, which a shape may refuse. */
 export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "steps" | "ephemeral";
@@ -55,6 +55,12 @@ export const ATMOS_DRIFT_PR = "the drift pull request writes each live value int
 export const ATMOS_ROLLOUTS = "a rollout moves a pin wave by wave, and an Atmos instance runs its component's files, which every instance of the component shares across stacks and waves, so no wave can move a pin alone; leave rollouts unset and move the pin in the component";
 export const ATMOS_GENERATE = "Atmos writes each instance's backend and provider override from the stack's backend and providers settings, and a file generate wrote would declare a second backend beside it; set them in the stack YAML and leave generate unset";
 export const ATMOS_EPHEMERAL = "ephemeral gives each copy a state key of its own by rewriting a root's backend key, and an Atmos instance's state is named by its stack's backend and its workspace, which terragucci atmos write sets; leave ephemeral unset";
+/** A Terramate repo's stacks are committed, and the code Terramate generates in them is owned by its .tm.hcl files. */
+export const ROOTS_NOT_TERRAMATE = "a Terramate repo's roots are the stacks terramate list names, so remove roots and leave a stack out with a .tmskip file in its directory";
+export const SYNTH_NOT_TERRAMATE = "synth is for roots a command writes; a Terramate repo commits its generated code, and its jobs check it with terragucci terramate generate, so remove synth";
+export const TERRAMATE_DRIFT_PR = "the drift pull request writes each live value into a stack's files, and terramate generate owns the generated ones, so the value belongs in the stack's .tm.hcl or its own Terraform; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
+export const TERRAMATE_ROLLOUTS = "a rollout moves a pin in each root's files, and in a Terramate repo the pin is usually in code terramate generate writes from a .tm.hcl, which terragucci does not edit; leave rollouts unset and move the pin there";
+export const TERRAMATE_GENERATE = "terramate generate writes each stack's generated code, its backend and providers among it, and a file terragucci generate wrote would declare a second backend beside it; set them in a generate_hcl block and leave generate unset";
 /** A unit an explicit stack generates: `terragrunt stack generate` writes its files, so git holds none of them. */
 export const STACK_UNIT_DRIFT_PR = "generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template";
 export const STACK_NESTED_GENERATE = "generate reads the units a stack file names in its unit blocks; only Terragrunt can list a nested stack's units, so give each unit its own unit block, or leave generate unset";
@@ -65,6 +71,7 @@ const TABLE: Record<ShapeKind, Partial<Record<Feature, string>>> = {
   roots: {},
   synth: { generate: SYNTH_GENERATE, "drift-pr": SYNTH_DRIFT_PR, rollouts: SYNTH_ROLLOUTS },
   atmos: { roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL },
+  terramate: { roots: ROOTS_NOT_TERRAMATE, synth: SYNTH_NOT_TERRAMATE, generate: TERRAMATE_GENERATE, "drift-pr": TERRAMATE_DRIFT_PR, rollouts: TERRAMATE_ROLLOUTS },
   terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT },
 };
 

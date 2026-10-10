@@ -4,7 +4,7 @@ description: Every key of the config file, its default, and the defaults terragu
 prompt: |
   Read https://intentius.io/terragucci/reference/config/.
   Run `npx terragucci config check --json` on this repo's terragucci.yml and list each problem it finds.
-  Propose the smallest file that keeps current behaviour, run config check again, and open a pull request with it.
+  Propose the smallest file that keeps current behavior, run config check again, and open a pull request with it.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -39,7 +39,7 @@ drift: "17 4 * * *"
 
 ## A file for many repos
 
-In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
+In a [control repo](/terragucci/concepts/control-repo/), a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
 
 A key the control repo sets away from its default reaches each project one of two ways:
 
@@ -125,7 +125,7 @@ dashboards: true
 
 | Key | Default | Meaning |
 |---|---|---|
-| `roots` | detected | globs of root directories. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude` |
+| `roots` | detected | globs of root directories. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude`. A [Terramate](/terragucci/guides/use-terramate/) repo's roots are its stacks, so `roots`, `synth`, `generate`, `rollouts` and a drift pull request are config errors there; leave a stack out with `.tmskip` |
 | `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts`, `generate`, and a `drift` schedule under `respond.drift: pull-request` are config errors, since each edits the files the command writes, and the app sets backends, providers and `required_version` through its own constructs; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
 | `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. In a Terragrunt repo each moment runs once around the wave's `run --all`, in each unit the `roots` globs match, and `after: init` is refused; see [Run steps around a stage](/terragucci/guides/run-steps/) |
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |

@@ -17,7 +17,7 @@ Each smoke claim runs twice and passes only when both runs hold: as written it m
 
 ## The per-forge claims
 
-`reconcile` follows a control repo's pull request until it is merged and applied. Pinned CI images run the `tg-` claims on a two-unit Terragrunt repo and the `cdf-` claims on a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate.
+`reconcile` follows a [control repo](/terragucci/concepts/control-repo/)'s pull request until it is merged and applied. Pinned CI images run the `tg-` claims on a two-unit Terragrunt repo and the `cdf-` claims on a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate.
 
 The github.com claims run the newest published release against real GitHub pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account. The limits:
 
