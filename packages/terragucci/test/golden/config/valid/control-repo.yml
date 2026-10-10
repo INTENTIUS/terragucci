@@ -1,0 +1,17 @@
+defaults:
+  binary: tofu
+  gate: on-destroy
+  rollouts: false
+projects:
+  github.com/acme/infra:
+    roots: ["envs/*/*"]
+    waves:
+      canary: ["envs/dev/*"]
+  gitlab.example.com/platform/network:
+    binary: terraform
+    drift: "17 4 * * *"
+    forge: gitlab
+    comments: "*/5 * * * *"
+    gitlab: { token: protected }
+  codeberg.org/acme/edge: {}
+  https://forgejo.example.com/acme/app.git:

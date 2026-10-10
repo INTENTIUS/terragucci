@@ -56,6 +56,8 @@ packages/terragucci/src/audit.ts          audit* migrate-split unlock-state stat
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-*
 packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr
 packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr tg-generate-init
+packages/terragucci/src/config-schema.ts   config-ts role-refused state-roles sealed-migrate atmos-roles atmos-refuse decide-backends import-terrateam
+packages/terragucci/src/terragucci.schema.json config-ts
 packages/terragucci/src/generate-config.ts generate reconcile tg-generate tg-generate-init
 packages/terragucci/src/notify.ts         notify-chat notify-webhook chat-*
 packages/terragucci/src/relay.ts          chat-approve*
