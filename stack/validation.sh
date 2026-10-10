@@ -15,6 +15,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A person starts it (stack/human-gate.sh).
+. "$HERE/human-gate.sh"; human_gate "the per-forge claims; record takes the whole shared stack down before and after"
 
 # forge|claim|what the claim shows
 CLAIMS='aws|s3|floci starts and answers S3

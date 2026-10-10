@@ -138,6 +138,8 @@ image() {
 }
 
 case "${1:-}" in
+  up|run) . "$HERE/../human-gate.sh"; human_gate "booting the GitLab lab (about 4.5 GB of memory, 40 GB of free disk)" ;; esac
+case "${1:-}" in
   up) up ;;
   image) image ;;
   status) status ;;
