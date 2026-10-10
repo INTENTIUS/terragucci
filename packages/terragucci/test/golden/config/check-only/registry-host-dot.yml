@@ -1,0 +1,6 @@
+# Terraform reads a registry host only when it has a dot.
+modules:
+  registry:
+    dir: public
+    url: https://modules
+    namespace: acme

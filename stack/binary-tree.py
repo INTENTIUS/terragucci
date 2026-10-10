@@ -17,12 +17,12 @@
   <name>--<the root's path, with / as -->. A
   `terraform_remote_state` read becomes a `terraform_estate_outputs` read of
   the estate that holds that state, since a live root keeps no state file.
-  `drift:` is left out of terragucci.yml (--keep-drift keeps it): init
-  refuses it for roots under live resource markers.
   --endpoint adds `env: AWS_ENDPOINT_URL_S3` to terragucci.yml, the host the
   record store is addressed on (virtual-hosted, <bucket>.<host>). It is S3's
   own endpoint variable, since a runner's AWS_ENDPOINT_URL wins over the
   pipeline's env.
+- --config PATH (repeatable) names the terragucci.yml files to write,
+  relative to <dir>, for a dir that holds several repos (default: its own).
 - --names TAG puts the example's names (shop-...) under shop<TAG>-, so a
   binary's copy of the example shares no resource, bucket or state with it.
 
@@ -40,7 +40,7 @@ ap.add_argument("name")
 ap.add_argument("--records", default="terragucci-smoke-records")
 ap.add_argument("--endpoint", default="")
 ap.add_argument("--names", default="")
-ap.add_argument("--keep-drift", action="store_true")
+ap.add_argument("--config", action="append", default=[])
 a = ap.parse_args()
 tree = os.path.abspath(a.dir)
 
@@ -158,24 +158,20 @@ elif a.binary == "choudoufu":
     if ".tofu-records/" not in lines:
         open(ignore, "a").write(("\n" if lines and lines[-1] else "") + ".tofu-records/\n")
 
-cfg = os.path.join(tree, "terragucci.yml")
-text = open(cfg).read() if os.path.exists(cfg) else ""
-if re.search(r"^binary:.*$", text, re.M):
-    text = re.sub(r"^binary:.*$", f"binary: {a.binary}", text, count=1, flags=re.M)
-else:
-    text = f"binary: {a.binary}\n" + text
-# A drift check is refused under live resource markers (init's config error),
-# so a choudoufu tree runs no drift schedule unless asked to keep it.
-if a.binary == "choudoufu" and not a.keep_drift:
-    text = re.sub(r"^drift:.*\n", "", text, flags=re.M)
-if a.endpoint:
-    if re.search(r"^env:\s*$", text, re.M):
-        text = re.sub(r"^env:\s*\n", f"env:\n  AWS_ENDPOINT_URL_S3: {a.endpoint}\n", text, count=1, flags=re.M)
-    elif re.search(r"^env:", text, re.M):
-        raise SystemExit("binary-tree: terragucci.yml has an env: this script cannot add to")
+for cfg in [os.path.join(tree, c) for c in (a.config or ["terragucci.yml"])]:
+    text = open(cfg).read() if os.path.exists(cfg) else ""
+    if re.search(r"^binary:.*$", text, re.M):
+        text = re.sub(r"^binary:.*$", f"binary: {a.binary}", text, count=1, flags=re.M)
     else:
-        text = text + ("" if text.endswith("\n") or not text else "\n") + f"env:\n  AWS_ENDPOINT_URL_S3: {a.endpoint}\n"
-open(cfg, "w").write(text)
+        text = f"binary: {a.binary}\n" + text
+    if a.endpoint:
+        if re.search(r"^env:\s*$", text, re.M):
+            text = re.sub(r"^env:\s*\n", f"env:\n  AWS_ENDPOINT_URL_S3: {a.endpoint}\n", text, count=1, flags=re.M)
+        elif re.search(r"^env:", text, re.M):
+            raise SystemExit("binary-tree: terragucci.yml has an env: this script cannot add to")
+        else:
+            text = text + ("" if text.endswith("\n") or not text else "\n") + f"env:\n  AWS_ENDPOINT_URL_S3: {a.endpoint}\n"
+    open(cfg, "w").write(text)
 
 for root, e in sorted(estates.items()):
     print(f"{root} {e}")

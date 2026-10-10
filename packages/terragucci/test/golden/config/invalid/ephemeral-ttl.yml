@@ -1,0 +1,3 @@
+ephemeral:
+  roots: ["envs/preview/*"]
+  ttl: 1 day

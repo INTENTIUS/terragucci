@@ -1,0 +1,5 @@
+decide:
+  backend: jev
+  model: jev-1.13.0
+  token_env: JEV_API_KEY
+synth: npx cdktn synth
