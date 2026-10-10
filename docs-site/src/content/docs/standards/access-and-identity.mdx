@@ -1,0 +1,58 @@
+---
+title: Access and identity
+description: terragucci has no accounts and no login. SSO is your forge's sign-in, and RBAC is your forge's permissions plus your cloud's IAM; this page maps each action, from opening a pull request to applying production, to the setting that decides who may take it.
+prompt: |
+  Read https://intentius.io/terragucci/standards/access-and-identity/.
+  For this repo, list who can take each action in the page's table: read the forge's collaborators and their roles, the branch protection of the default branch and of the approvals branch, the `approval` key in terragucci.yml on the default branch, the principals in the signers file, and the trust policy of each role `oidc` names, through the forge's API or CLI and the cloud's CLI.
+  Report each action with the people or roles who can take it, and flag any action that the `approval` mode leaves unprovable.
+  Change nothing.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Who can apply to production, and how would you show an auditor that only they did? terragucci answers with the controls you already run. It has no accounts, no login and no roles of its own: every stage is a job in your CI, so sign-in is your forge's and access is your forge's permissions plus your cloud's IAM.
+
+| Need | Comes from |
+|---|---|
+| SSO | the forge's sign-in: SAML or OIDC on GitHub, SAML on GitLab, LDAP or OAuth2 on Forgejo; Slack's or Teams' own sign-in for chat approvals |
+| RBAC | forge permissions and branch protection for the code, the `approval` mode for gated waves, and cloud IAM for what each job's role reaches |
+| Audit | the [audit trail](/terragucci/reference/audit-trail/): each approval with its approver, digest and time, and the apply that used it |
+
+The only lists of people terragucci reads are the signers file and `policy.override`, both in the repo. Offboarding someone means the forge, the chat workspace and their lines there.
+
+## Actions
+
+| Action | Decided by |
+|---|---|
+| Open a pull request and get a plan | write access to the repo. The plan job's role is read-only and its trust names your repo; a fork's pull request gets no plan |
+| Re-plan or apply from a comment | write access to the repo (on GitLab, Developer or above); anyone else gets no plan ([comment checks](/terragucci/reference/pipeline/#apply-from-a-comment)) |
+| Merge | branch protection: required reviews and the required `terragucci/plan` status ([settings per forge](/terragucci/reference/threat-model/#branch-protection)) |
+| Approve a waiting wave, `approval: ledger` | anyone who can push to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a forge branch rule |
+| Approve a waiting wave, `approval: pr-review` | as under `ledger`, or a forge review of the pull request's head by a writer other than its author |
+| Approve a waiting wave, `approval: sealed` | an ssh key in the [signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) on the default branch, which only a reviewed merge changes |
+| Approve from Slack or Teams | the chat platform's sign-in, the user's line in the signers file, and a relay token that can only approve; under `sealed` the relay records nothing ([relay checks](/terragucci/reference/threat-model/#the-chat-relay)) |
+| Override a policy denial | the people `policy.override` lists on the default branch ([overrides](/terragucci/reference/policy/#overriding-a-denial)) |
+| Apply | the apply role, whose trust names the default branch alone; with `oidc.roles`, a role per environment ([scope state access](/terragucci/guides/scope-state-access/)) |
+| Read or write a state | cloud IAM on each role's state keys; `config check` warns when one role reaches two environments |
+| Export a state version | an approval by someone other than the requester, recorded in the audit trail ([export](/terragucci/guides/export-a-state-version/)) |
+| Agents and MCP | write access to start an agent from a comment; no forge token and no cloud role in the agent's step, and its change comes back as a commit that plans like any other. `terragucci mcp` reads with its own environment's credentials and refuses approve ([agents](/terragucci/guides/agent-read-over-mcp/)) |
+
+## Audit-grade approvals
+
+:::caution
+Under `approval: ledger`, the default, an approval line names whoever git says wrote it. Anyone who can push to `chant/lifecycle` can write a line in any name, so `ledger` does not prove who approved.
+:::
+
+Pick the mode that matches what you need to show:
+
+| Mode | Proves |
+|---|---|
+| `ledger` | that the approved plan is the plan that applied |
+| `pr-review` | as `ledger`, plus a forge review by someone other than the author, under their forge identity and so under your SSO |
+| `sealed` | as `ledger`, plus an ssh signature by a key the signers file lists for that approver |
+
+[Approve a waiting wave](/terragucci/guides/approve-a-wave/#approval-modes) sets each mode up, and the [approvals runbook](/terragucci/guides/approvals-runbook/) covers day-to-day use.
+
+## Next
+
+- [Threat model](/terragucci/reference/threat-model/): what each job can reach and what each mode stops.
+- [tacos.guru](/terragucci/standards/tacos-guru/): where this answers the RBAC & SSO criterion.

@@ -123,16 +123,17 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
     if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
   }
 }
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
-import { AGENT_COMMENT_IF, agentCommentJobs, driftAgentJobs } from "./render-agent";
+import { AGENT_COMMENT_IF, agentCommentJobs, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
-import { reviewWorkflow } from "./render-review";
+import { gitlabReviewScript, reviewWorkflow } from "./render-review";
+import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
@@ -571,6 +572,10 @@ const FORGE_API_JS = [
 const FORGE_API_JS_GITLAB = FORGE_API_JS.replace(
   `{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });`,
   '{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url, ...(sha === e.CI_COMMIT_SHA && /^[0-9]+$/.test(e.CI_PIPELINE_ID || "") ? { pipeline_id: Number(e.CI_PIPELINE_ID) } : {}) });',
+).replace(
+  // A run is a pipeline on GitLab (`tg alive`, for the shared apply lock of waves.jobs).
+  `call("GET", repo + "/actions/runs/" + a[0]);\n      console.log(["success", "failure", "cancelled", "skipped", "completed"]`,
+  `call("GET", repo + "/pipelines/" + a[0]);\n      console.log(["success", "failed", "canceled", "skipped"]`,
 );
 
 /** Shell that defines `tg`, the forge calls above. */
@@ -751,7 +756,8 @@ export function forgejoLock(standDown = true): string {
 
 /**
  * The apply lock of a pipeline that splits a wave across jobs (`waves.jobs`),
- * on GitHub and Forgejo alike: forgejoLock's tag, held by a run rather than a
+ * on every forge (on GitLab in place of the apply jobs' resource group, which
+ * runs one job at a time): forgejoLock's tag, held by a run rather than a
  * job, so the share jobs of a wave apply side by side while no other run
  * applies. Each job first pushes a hold tag naming its run and itself, then
  * takes the lock, or joins it when its own run holds it. On exit a job drops
@@ -761,8 +767,9 @@ export function forgejoLock(standDown = true): string {
  * waiter takes it over, as from any run that is gone, and drops that run's
  * holds.
  */
-export function sharedApplyLock(job: string): string {
-  const id = "${GITHUB_RUN_ID:-$$}";
+export function sharedApplyLock(job: string, forge: ForgeName = "github"): string {
+  // On GitLab the run is the pipeline, and `tg alive` asks GitLab whether it still runs.
+  const id = forge === "gitlab" ? "${CI_PIPELINE_ID}" : "${GITHUB_RUN_ID:-$$}";
   return [
     'lock_ref="refs/tags/terragucci-apply-lock"',
     `hold_prefix="refs/tags/terragucci-apply-hold-${id}-"`,
@@ -946,11 +953,12 @@ export function applyScript(
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
-    ...(input.sharedLock ? [sharedApplyLock(input.sharedLock)] : forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
+    // GitLab's lock tags go up with the project's token, as the ledger's pushes do.
+    ...(input.sharedLock ? [...(forge === "gitlab" ? [gitlabPushRemote] : []), sharedApplyLock(input.sharedLock, forge)] : forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
     // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
-    ...(forge === "gitlab" && (gate !== "never" || input.policy || input.costGate) ? [gitlabPushRemote] : []),
+    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.policy || input.costGate) ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -1610,9 +1618,9 @@ export const MERGE_ENVIRONMENT = "terragucci-merge";
  * jobs' reports. It runs nothing itself: no plan, no apply and no cloud
  * credentials.
  */
-export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false): string {
+export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean; review?: boolean } = {}): string {
   const requires = prApply?.requires && !APPLY_REQUIRES.every((r) => prApply.requires!.includes(r)) ? ` --requires ${prApply.requires.length ? prApply.requires.join(",") : "none"}` : "";
-  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}`;
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
 }
 
 /**
@@ -1766,7 +1774,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tg = input.terragrunt;
   // waves.jobs: a wave of more roots than one job spreads across share jobs, after a job of its own plans it and decides its gate.
   const waveJobs = input.waveJobs !== undefined && input.waveJobs > 1 ? input.waveJobs : undefined;
-  if (waveJobs && forge === "gitlab") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
   const applyBranches = input.applyBranches && Object.keys(input.applyBranches).length > 0 ? input.applyBranches : undefined;
@@ -1904,9 +1911,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {
-    if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
+    if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
-    if (input.review) throw new RenderError("review.agent runs on GitHub and Forgejo; leave review unset on GitLab");
+    if (input.review && !input.comments) throw new RenderError(`review: ${NEEDS_COMMENTS_ON_GITLAB.review}`);
     // With gitlab.token: protected no merge request pipeline holds the token, and the comments job posts the plan notes.
     const protectedToken = input.gitlabToken === "protected";
     if (protectedToken && !input.comments) throw new RenderError(`gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`);
@@ -1935,7 +1942,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // A scheduled pipeline is drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
     const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
-    const notMrApply = prApply ? ` && $${MR_VAR} == null` : "";
+    // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them.
+    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
+    const notMrApply = startedBy.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
     // apply.branches: a push to a named branch runs the apply jobs too, for that branch's roots.
@@ -1992,18 +2001,33 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     }
     jobs.set("plan", plan as never);
     for (const job of pushApplyJobs) {
+      // The job after the last wave's shares runs no stage and holds no credential: it posts the one success.
+      if (job.done) {
+        jobs.set(job.name, new GitLabJob({
+          stage: "apply",
+          image: jobImage,
+          needs: job.needs.map((n) => ({ job: n, artifacts: false })),
+          variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_SHA: gitlabEnv.TG_SHA },
+          rules: [new Rule({ if: onApply })],
+          script: [bash("APPLY", job.body)],
+        } as never) as never);
+        continue;
+      }
       jobs.set(job.name, new GitLabJob({
         stage: "apply",
         image: jobImage,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: onApply })],
-        resource_group: "terragucci-apply",
+        // One apply at a time per project. With waves.jobs a wave's shares apply side by side, so the jobs hold
+        // the run's shared lock tag instead of the resource group, which runs one job at a time (sharedApplyLock).
+        ...(split ? {} : { resource_group: "terragucci-apply" }),
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", job.body))],
         // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
-        artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
+        // A wave split across jobs hands its decision to its shares, which take this job's artifacts through needs.
+        artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(job.decides ? [`${DECIDED_DIR}/`] : []), ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
     if (prApply) {
@@ -2119,7 +2143,52 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: Boolean(input.agentComment), review: Boolean(input.review) }))],
+      } as never) as never);
+    }
+    if (input.agentComment) {
+      // `/terragucci agent <ask>`: the comments job starts a pipeline of the default branch for it. The agent runs in
+      // one job with the model's key alone (its environment cleared), and a fresh job pushes its change with the agent's token.
+      const agent = input.agentComment;
+      const onAgent = `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${AGENT_MR_VAR}`;
+      jobs.set("agent", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_AGENT_MAX_TURNS: String(agent.maxTurns) },
+        rules: [new Rule({ if: onAgent })],
+        timeout: `${agent.timeout} minutes`,
+        script: [bash("AGENT", gitlabAgentRunScript(agent, GL_AGENT_ARTIFACT))],
+        artifacts: { name: GL_AGENT_ARTIFACT, when: "always", paths: [`${GL_AGENT_ARTIFACT}/`] },
+      } as never) as never);
+      jobs.set("agent-push", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        needs: ["agent"],
+        variables: { TG_TOKEN: `$${agent.tokenSecret}` },
+        rules: [new Rule({ if: onAgent })],
+        script: [bash("AGENT_PUSH", gitlabAgentPushScript(agent.policyDir, GL_AGENT_ARTIFACT))],
+      } as never) as never);
+    }
+    if (input.review) {
+      // review.agent: the comments job starts a pipeline of the default branch for each merge request head once its plan
+      // ended. The review command runs with the model's key alone (its environment cleared); a fresh job posts the note.
+      const onReview = `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${REVIEW_MR_VAR}`;
+      jobs.set(REVIEW_JOB, new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_DEFAULT_BRANCH: "$CI_DEFAULT_BRANCH", GIT_DEPTH: "0" },
+        rules: [new Rule({ if: onReview })],
+        timeout: `${input.review.timeout} minutes`,
+        script: [bash("REVIEW", gitlabReviewScript(input.review, GL_REVIEW_ARTIFACT))],
+        artifacts: { name: GL_REVIEW_ARTIFACT, when: "always", paths: [`${GL_REVIEW_ARTIFACT}/`] },
+      } as never) as never);
+      jobs.set("review-note", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        needs: [REVIEW_JOB],
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, GIT_STRATEGY: "none" },
+        rules: [new Rule({ if: onReview, when: "always" } as never)],
+        script: [bash("REVIEW_NOTE", `set -uo pipefail\nterragucci review post --forge gitlab --dir ${GL_REVIEW_ARTIFACT}`)],
       } as never) as never);
     }
     if (input.resume) {
