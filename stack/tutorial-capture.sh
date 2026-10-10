@@ -1056,7 +1056,7 @@ step_tg() {
   # change opens the pull request and waits for its plan.
   if "$HERE/example-terragrunt.sh" change module-bump >"$STAGE/tg-change.out" 2>&1; then
     pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open&limit=50" | jq -r '.[] | select(.head.ref == "change/module-bump") | .number' | head -1)"
-    if [ -n "$pr" ]; then (REPO="$repo"; FORGEJO="$URL/$repo"; note_shot tg note "$pr" 1400); else log "tg: no module-bump pull request"; fi
+    if [ -n "$pr" ]; then (REPO="$repo"; FORGEJO="$URL/$repo"; note_shot tg note "$pr" --height 1400); else log "tg: no module-bump pull request"; fi
   else
     log "tg: 'just example-terragrunt change module-bump' failed: $(tail -3 "$STAGE/tg-change.out" | tr '\n' ' ')"
   fi

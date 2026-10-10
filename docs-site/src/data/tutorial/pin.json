@@ -1,6 +1,6 @@
 {
   "step": "pin",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "ac868b48e3e584a9",
   "commands": [
     {
       "cmd": "just example change pin",
