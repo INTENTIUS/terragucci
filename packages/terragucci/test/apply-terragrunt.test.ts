@@ -213,7 +213,7 @@ describe("a Terragrunt wave behind its gate", () => {
     const diff = "wave 2 of 2:   live/b: terraform_data.x (create): input differs from the preview";
     expect(said).toContain("wave 2 of 2: pull request 9 previewed live/b on the planned outputs of the waves before; this unit plans differently now:");
     expect(said).toContain(diff);
-    expect(said.indexOf(diff)).toBeLessThan(said.indexOf("chant approve tf-apply wave-2"));
+    expect(said.indexOf(diff)).toBeLessThan(said.indexOf("terragucci approve wave-2"));
     const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
     expect(report.waves[0].preview).toEqual({ pull_request: 9, units: [{ unit: "live/b", differences: ["terraform_data.x (create): input differs from the preview"] }] });
     expect(readFileSync(join(work, "terragucci-report", "note.md"), "utf-8")).toContain("**Wave 2 plans differently from the preview in pull request 9 (1 of 1):**");

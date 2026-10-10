@@ -12,16 +12,16 @@ import { tmp, validate, write } from "./helpers";
 const NOTIFY_SCHEMA = JSON.parse(readFileSync(join(import.meta.dirname, "../src/notify.schema.json"), "utf-8"));
 
 const ENV = { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" };
-const waiting: WaveOutcome = { schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 2, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:ab", set_digest: "jcs1-sha256:ab", approval: "waiting", approval_mode: "ledger", approve_command: "chant approve tf-apply wave-2 --plan jcs1-sha256:ab" };
+const waiting: WaveOutcome = { schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 2, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 2 waits: terragucci approve wave-2 --plan jcs1-sha256:ab", set_digest: "jcs1-sha256:ab", approval: "waiting", approval_mode: "ledger", approve_command: "terragucci approve wave-2 --plan jcs1-sha256:ab" };
 const report = (): string => write(tmp(), { "report.json": JSON.stringify({ run: { project: "github.com/acme/infra" }, waves: [{ number: 2, roots: ["envs/prod/app", "envs/prod/db"] }] }) });
 
 describe("notify: chat webhooks for a wave", () => {
   it("names the wave, its roots, the approve command and the run of a waiting wave", () => {
     const n = waveNotice("waiting", 2, { outcome: waiting.line, result: waiting, reportDir: report(), env: ENV });
     expect(n).toMatchObject({ project: "github.com/acme/infra", roots: ["envs/prod/app", "envs/prod/db"], digest: "jcs1-sha256:ab", run: "https://github.com/acme/infra/actions/runs/42" });
-    expect(n.approve).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:ab (or npx terragucci approve wave-2 --plan jcs1-sha256:ab)");
+    expect(n.approve).toBe("npx terragucci approve wave-2 --plan jcs1-sha256:ab");
     const slack = slackMessage(n).text;
-    for (const want of ["wave 2 of github.com/acme/infra waits for an approval", "envs/prod/app, envs/prod/db", "chant approve tf-apply wave-2", "<https://github.com/acme/infra/actions/runs/42>"]) expect(slack).toContain(want);
+    for (const want of ["wave 2 of github.com/acme/infra waits for an approval", "envs/prod/app, envs/prod/db", "npx terragucci approve wave-2", "<https://github.com/acme/infra/actions/runs/42>"]) expect(slack).toContain(want);
     const card = teamsMessage(n) as any;
     expect(card.attachments[0].contentType).toBe("application/vnd.microsoft.card.adaptive");
     expect(card.attachments[0].content.body[0].text).toContain("wave 2 of github.com/acme/infra waits");
@@ -35,7 +35,7 @@ describe("notify: chat webhooks for a wave", () => {
     const lines = slackMessage(n).text.split("\n");
     expect(lines[1]).toBe("Review and approve: <https://github.com/acme/infra/pull/7/files|pull request 7>, then run the wave again");
     expect(lines).toContain("Digest: `jcs1-sha256:ab`");
-    expect(lines.some((l) => l.startsWith("Or approve: `chant approve tf-apply wave-2"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("Or approve: `npx terragucci approve wave-2"))).toBe(true);
     const card = (teamsMessage(n) as any).attachments[0].content;
     expect(card.actions[0]).toEqual({ type: "Action.OpenUrl", title: "Review and approve", url: "https://github.com/acme/infra/pull/7/files" });
     expect(card.body[1].facts).toContainEqual({ title: "Digest", value: "jcs1-sha256:ab" });

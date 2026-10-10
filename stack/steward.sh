@@ -222,7 +222,7 @@ open(op, "w").write(
     "// tf-apply on the fountain steward: the waves the forge pipeline would run,\n"
     "// one step each, written by stack/steward.sh from that pipeline. A wave that\n"
     "// has to wait records its pending fact on chant/lifecycle and ends the run\n"
-    "// gated; `chant approve tf-apply wave-<n> --sign` and a second run go on.\n"
+    "// gated; `terragucci approve wave-<n> --sign` and a second run go on.\n"
     'import { Op, phase, shell } from "@intentius/chant/op";\n\n'
     "export const tfApply = Op({\n"
     '  name: "tf-apply",\n'

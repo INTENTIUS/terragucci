@@ -2089,8 +2089,8 @@ async function gateWave(
       console.log(`  ${approveLine(wave, digest, mode)}`);
       // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
       console.log(mode === "sealed"
-        ? "chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>."
-        : "chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
+        ? "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>."
+        : "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
       console.log("Then run this job again.");
       w.command = approveLine(wave, digest, mode);
       writeOutcome(options.env, `wave ${wave} waits: ${w.command}`, w);

@@ -240,7 +240,7 @@ print_logs() { # pipeline id
 held_lines() { # pipeline id
   local id name
   failed_jobs "$1" | while read -r id name; do
-    trace "$id" | grep -E 'chant approve tf-apply wave-|changed after it was approved|planned differently since' || true
+    trace "$id" | grep -E 'terragucci approve wave-|changed after it was approved|planned differently since' || true
   done
 }
 
@@ -429,7 +429,7 @@ OUT
     pipe="$(last_failed main)"
     wave="${1:-}"
     if [ -z "$wave" ] && [ -n "$pipe" ]; then
-      wave="$(held_lines "$pipe" | grep -o 'chant approve tf-apply wave-[0-9]*' | head -1 | sed 's/.*tf-apply //' || true)"
+      wave="$(held_lines "$pipe" | grep -o 'terragucci approve wave-[0-9]*' | head -1 | sed 's/.*approve //' || true)"
     fi
     [ -n "$wave" ] || fail "no wave is waiting; run 'just example-gitlab change destroy' and 'just example-gitlab merge destroy' first"
     [ -f "$READER_KEY" ] || fail "the reader's key is listed by 'just example-gitlab merge'; merge a scenario first"
@@ -672,9 +672,9 @@ OUT
     pipe="$(last_failed main)"
     job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name | startswith("apply-wave-")) | .id' | head -1)"
     [ -n "$job" ] || fail "no waiting wave on main after merge destroy"
-    take waiting "/$REPO/-/jobs/$job" --scroll '.job-log-line' --match 'wave [0-9]+ of [0-9]+:' --through 'chant approve tf-apply' --margin 4
+    take waiting "/$REPO/-/jobs/$job" --scroll '.job-log-line' --match 'wave [0-9]+ of [0-9]+:' --through 'terragucci approve wave-' --margin 4
 
-    log_lines "the waiting apply job on main" "$job" '^wave [0-9]+ of [0-9]+:' 'chant approve tf-apply' 3
+    log_lines "the waiting apply job on main" "$job" '^wave [0-9]+ of [0-9]+:' 'terragucci approve wave-' 3
 
     # Drift comes last: the queue it deletes would be applied back by any later merge.
     step change drift || fail "change drift failed"

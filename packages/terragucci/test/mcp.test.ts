@@ -145,7 +145,7 @@ describe("terragucci mcp", () => {
       const r = await client.callTool({ name, arguments: { wave: "wave-1" } });
       expect(r.isError, name).toBe(true);
       expect(said(r)).toContain("terragucci mcp is read-only");
-      expect(said(r)).toContain("chant refuses a gate approval made over MCP");
+      expect(said(r)).toContain("a gate approval made over MCP is refused");
     }
     expect(refusal("approve")).toContain("approve would approve");
     expect(refusal("nothing")).toContain("there is no tool nothing");

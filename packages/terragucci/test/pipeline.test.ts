@@ -418,7 +418,7 @@ describe("the comment trigger", () => {
         "#!/usr/bin/env bash",
         'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
         'echo "wave $4 at $(git rev-parse HEAD)" >> "$LOG"',
-        ...(waits ? [`if [ "$4" = ${waits} ]; then echo "wave $4 waits: chant approve tf-apply wave-$4 --plan jcs1-sha256:abc123 --sign" > "$TG_OUTCOME"; exit 3; fi`] : []),
+        ...(waits ? [`if [ "$4" = ${waits} ]; then echo "wave $4 waits: terragucci approve wave-$4 --plan jcs1-sha256:abc123 --sign" > "$TG_OUTCOME"; exit 3; fi`] : []),
         "exit 0",
       ].join("\n"),
     });
@@ -461,7 +461,7 @@ describe("the comment trigger", () => {
         expect(r.status).toBe(3);
         const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
         expect(reply).toContain("wave 2 waits for an approval of its set digest jcs1-sha256:abc123");
-        expect(reply).toContain("`chant approve tf-apply wave-2 --plan jcs1-sha256:abc123 --sign`");
+        expect(reply).toContain("`terragucci approve wave-2 --plan jcs1-sha256:abc123 --sign`");
         expect(reply).toContain("(applied: wave 1)");
         expect(reply).toContain("https://forge.test/acme/infra/actions/runs/9");
         expect(api.hits.some((h) => h.url.includes("chant") || h.url.includes("lifecycle"))).toBe(false);
@@ -1571,7 +1571,7 @@ describe("stale plan notes", () => {
   });
 
   it.each([
-    [3, "pending", "wave 1 waits: chant approve tf-apply wave-1 --plan jcs1-sha256:abc123 --sign"],
+    [3, "pending", "wave 1 waits: terragucci approve wave-1 --plan jcs1-sha256:abc123 --sign"],
     [4, "failure", "wave 1 was refused: its plans changed since the approval"],
   ] as const)("a wave that ends %i in the step's own shell still posts its status before the job fails", async (code, state, outcome) => {
     const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", { terragucci: `#!/usr/bin/env bash\necho ${JSON.stringify(outcome)} > "$TG_OUTCOME"\nexit ${code}\n` });
@@ -1603,7 +1603,7 @@ describe("a GitLab wave in the runner's own shell", () => {
   });
 
   it.each([
-    [3, "failed", "wave 1 waits: chant approve tf-apply wave-1 --plan jcs1-sha256:abc123 --sign"],
+    [3, "failed", "wave 1 waits: terragucci approve wave-1 --plan jcs1-sha256:abc123 --sign"],
     [4, "failed", "wave 1 was refused: its plans changed since the approval"],
     [1, "failed", "an apply failed"],
   ] as const)("a wave that ends %i ends its job with that code, and its status call is not refused", async (code, state, outcome) => {
@@ -1625,7 +1625,7 @@ describe("a GitLab wave in the runner's own shell", () => {
   });
 
   it("a later wave that waits fails the running status, and the retry after the approval posts a new one", async () => {
-    const wait = "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:abc123 --sign";
+    const wait = "wave 2 waits: terragucci approve wave-2 --plan jcs1-sha256:abc123 --sign";
     const gl = gitlabStatuses();
     const api = await stubApi(gl.route);
     try {

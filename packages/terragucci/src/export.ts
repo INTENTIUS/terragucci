@@ -58,7 +58,7 @@ export const EXPORT_DONE = `_gates/${EXPORT_OP}/done.jsonl`;
 const REQUEST_HOURS = 48;
 
 /** The command that approves an export request. */
-export const exportApproveCommand = (root: string, digest: string, sealed = false): string => `chant approve ${EXPORT_OP} ${root} --plan ${digest}${sealed ? " --sign" : ""}`;
+export const exportApproveCommand = (root: string, digest: string, sealed = false): string => `terragucci approve export ${root} --plan ${digest}${sealed ? " --sign" : ""}`;
 
 /** What a request names: the pending line carries it, and its digest covers it. */
 export interface ExportRequest {

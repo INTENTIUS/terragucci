@@ -72,7 +72,7 @@ describe("the run view", () => {
   it("replaces one wave's row and keeps the rows other jobs wrote", () => {
     const skeleton = runSkeleton("p", "c", waves, deps);
     const one = withWave(undefined, skeleton, { number: 1, state: "applied", digest: "d1" }, "t1");
-    const two = withWave(JSON.stringify(one), skeleton, { number: 2, state: "waiting", command: "chant approve tf-apply wave-2 --plan d2" }, "t2");
+    const two = withWave(JSON.stringify(one), skeleton, { number: 2, state: "waiting", command: "terragucci approve wave-2 --plan d2" }, "t2");
     expect(two.waves.map((w) => [w.number, w.state])).toEqual([[1, "applied"], [2, "waiting"]]);
     expect(two.waves[0]).toMatchObject({ digest: "d1", updated: "t1" });
     expect(two.updated).toBe("t2");
@@ -99,12 +99,12 @@ describe("the run view", () => {
 
   it("renders each wave with its state, gate, the roots and what each reads, and carries the view as JSON", () => {
     const skeleton = runSkeleton("p", "c0ffee", waves, deps);
-    const v = withWave(undefined, skeleton, { number: 2, state: "waiting", policy: "always", approval: "waiting", command: "chant approve tf-apply wave-2 --plan d", report: "2026/10/c0ffee/tf-apply-wave-2" }, "t");
+    const v = withWave(undefined, skeleton, { number: 2, state: "waiting", policy: "always", approval: "waiting", command: "terragucci approve wave-2 --plan d", report: "2026/10/c0ffee/tf-apply-wave-2" }, "t");
     const html = renderRunHtml(v);
     expect(html).toContain('data-wave="2" data-state="waiting"');
     expect(html).toContain("waiting for an approval");
     expect(html).toContain("gate <code>wave-2</code>, always, waiting");
-    expect(html).toContain("<code>chant approve tf-apply wave-2 --plan d</code>");
+    expect(html).toContain("<code>terragucci approve wave-2 --plan d</code>");
     expect(html).toContain('href="../../2026/10/c0ffee/tf-apply-wave-2/report.html"');
     expect(html).toContain("reads <code>net</code>");
     expect(html).toContain("after wave 1");

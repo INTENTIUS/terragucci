@@ -103,7 +103,7 @@ export const ephemeralGate = (pr: number): string => `pr-${pr}`;
 export const ephemeralSuffix = (pr: number): string => `pr-${pr}`;
 
 /** The command that approves a copy's plans. */
-export const ephemeralApproveCommand = (pr: number, digest: string, sealed = false): string => `chant approve ${EPHEMERAL_OP} ${ephemeralGate(pr)} --plan ${digest}${sealed ? " --sign" : ""}`;
+export const ephemeralApproveCommand = (pr: number, digest: string, sealed = false): string => `terragucci approve ephemeral ${pr} --plan ${digest}${sealed ? " --sign" : ""}`;
 
 /**
  * A state key with the suffix: before a closing `.tfstate`, else at the end.

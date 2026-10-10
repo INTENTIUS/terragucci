@@ -33,6 +33,9 @@
   "scripts": {
     "build": "node ../../scripts/build-cli.mjs"
   },
+  "dependencies": {
+    "@intentius/chant": "0.109.0"
+  },
   "peerDependencies": {
     "@intentius/tsad-reference": "2.x",
     "@cdktn/hcl2json": "0.x"
@@ -47,7 +50,6 @@
   },
   "devDependencies": {
     "@cdktn/hcl2json": "0.24.0",
-    "@intentius/chant": "0.109.0",
     "@intentius/chant-lexicon-forgejo": "0.109.0",
     "@intentius/chant-lexicon-github": "0.109.0",
     "@intentius/chant-lexicon-gitlab": "0.109.0",
