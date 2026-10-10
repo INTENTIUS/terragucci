@@ -242,7 +242,7 @@ example-gitlab *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
-[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--record FILE], reset, shot <view>|all|list, minutes.")]
+[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--break] [--record FILE], reset, shot <view>|all|list, minutes.")]
 sandbox *args:
     stack/sandbox-github.sh {{args}}
 

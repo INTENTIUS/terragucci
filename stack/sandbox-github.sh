@@ -36,13 +36,18 @@
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
 #                                     the docs show, screenshotted into
 #                                     docs-site as step `github`, then reset
-#   stack/sandbox-github.sh prove [merge|pull-request|modules] [--record FILE]
+#   stack/sandbox-github.sh prove [merge|pull-request|modules] [--break] [--record FILE]
 #                                     from a reset sandbox, each phase (all
 #                                     three when none is named) sets main up
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
 #                                     into FILE (docs-site/src/data/validation.json)
+#                                     --break (or BREAK=1): the locking claims
+#                                     alone (merge and pull-request phases), each
+#                                     on a sandbox whose property is broken on
+#                                     purpose; a claim that fails is the break
+#                                     caught, one that passes it missed
 #   stack/sandbox-github.sh reset          close the pull requests and issues,
 #                                     delete every other branch, every tag and
 #                                     every secret, and put main back to its
@@ -77,6 +82,9 @@ SIGNER="sandbox-signer"
 # 1: the sandbox's terragucci.yml marks the checkout safe for git (build_main).
 SAFE_DIRECTORY="${TERRAGUCCI_SANDBOX_SAFE_DIRECTORY:-0}"
 WEB="https://github.com/$REPO"
+# Set (BREAK=1 or prove --break): prove runs the locking claims on a sandbox
+# whose property each proves is broken on purpose.
+BREAK="${BREAK:-}"
 
 log()  { echo "[sandbox] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
@@ -663,11 +671,43 @@ SH
   grep -q 'id-token: write' "$tree/.github/workflows/terragucci.yml" || fail "init asked for no OIDC token"
   grep -q '^  agent-push:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no agent-push job"
   explain_job >> "$tree/.github/workflows/terragucci.yml"
+  [ -z "$BREAK" ] || break_pipeline "$tree/.github/workflows/terragucci.yml"
   gh secret set "$AGENT_SECRET" -R "$REPO" --body "$GH_TOKEN" >/dev/null || fail "could not set the $AGENT_SECRET secret"
   apply_state "$tree"
-  commit "$tree" "Turn on plan locks, a policy with overrides, OIDC roles and the agent comment, with a root that checks each job's token [skip ci]"
+  commit "$tree" "Turn on plan locks, a policy with overrides, OIDC roles and the agent comment, with a root that checks each job's token${BREAK:+, and break the fmt job's lock step and the waves' stand-down} [skip ci]"
   sha="$(push "$tree" main)"
-  log "main at ${sha:0:8}: locks: plan, policy/replace.rego, oidc, agent, explain-refusal and $PROBE"
+  log "main at ${sha:0:8}: locks: plan, policy/replace.rego, oidc, agent, explain-refusal and $PROBE${BREAK:+; BREAK: no fmt lock step, no stand-down}"
+}
+
+# BREAK: the pipeline init wrote, with two guards cut. The fmt job loses its
+# step that answers the lock on the head it formatted (pr-lock-fmt), and each
+# apply wave its stand-down for a newer push, both the check at the top of
+# the wave and the stage's --stand-down (apply-serial), so an older run's
+# waves apply beside the newer run's.
+break_pipeline() { # workflow file
+  local wf="$1"
+  grep -q "new head reaches" "$wf" || fail "the pipeline has no fmt lock step to cut"
+  grep -qe '--stand-down' "$wf" || fail "the pipeline has no stand-down to cut"
+  awk '/^      - name: Lock the roots the pull request.s new head reaches$/ {skip=1; next} skip && /^       / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  # shellcheck disable=SC2016 # the pipeline's own shell, matched as text
+  sed -e 's/^\( *\)if \[ -n "\$tip" \] && \[ "\$tip" != "\${GITHUB_SHA:-}" \]; then$/\1if false; then/' -e 's/ --stand-down//g' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  ! grep -q "new head reaches" "$wf" || fail "BREAK left the fmt job's lock step in the pipeline"
+  # shellcheck disable=SC2016 # the pipeline's own shell, matched as text
+  ! grep -qe '--stand-down' -e '"$tip" != ' "$wf" || fail "BREAK left a stand-down in the pipeline"
+  log "BREAK: cut the fmt job's lock step and every wave's stand-down from the pipeline"
+}
+
+# BREAK: the locks file is taken off chant/lifecycle, so nothing holds the
+# roots the first pull request locked. Run it in a subshell: push fails the
+# shell it is in.
+drop_locks() {
+  local tree
+  tree="$(mktemp -d "$WORK/drop-locks.XXXXXX")"
+  git clone -q --branch chant/lifecycle "$GIT_URL" "$tree" 2>/dev/null || fail "could not clone chant/lifecycle"
+  git -C "$tree" rm -q _locks/tf-apply.json || fail "chant/lifecycle holds no _locks/tf-apply.json"
+  commit "$tree" "Drop the locks, to break the claim [skip ci]"
+  push "$tree" chant/lifecycle >/dev/null
+  log "BREAK: dropped _locks/tf-apply.json from chant/lifecycle"
 }
 
 # The explain-refusal job of the agent-refused-wave guide's GitHub tab, for
@@ -849,19 +889,35 @@ ledger_lines() { # clone dir, path
 
 # ── the phases prove runs ────────────────────────────────────────────────────
 
-verdict() { # claim, pass|fail, what was seen
+put_verdict() { # claim, pass|fail|caught|missed, what was seen
   printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$WORK/verdicts"
   log "claim $1: $2 ($3)"
   write_prove || true
 }
 
+# Under BREAK the claim ran with its property broken on purpose: a fail is
+# the break caught, a pass the break missed.
+verdict() { # claim, pass|fail, what was seen
+  if [ -z "$BREAK" ]; then put_verdict "$@"
+  elif [ "$2" = fail ]; then put_verdict "$1" caught "$3"
+  else put_verdict "$1" missed "$3"; fi
+}
+
+# A claim whose scenario could not be set up fails, and under BREAK its
+# break is missed: nothing showed the claim fail for the property.
+unrun() { # claim, what was seen
+  if [ -z "$BREAK" ]; then put_verdict "$1" fail "$2"; else put_verdict "$1" missed "not run: $2"; fi
+}
+
 # The rows the validation page lists, for the verdicts so far, as prove.json.
 # Each verdict rewrites it, so a run cut short by its timeout keeps the
-# verdicts it reached.
+# verdicts it reached. Under BREAK a row carries the break (caught or
+# missed) and no verdict.
 prove_rows() {
   while IFS=$'\t' read -r claim result _; do
     says="$(grep "^github.com|$claim|" <<<"$PROVE_CLAIMS" | cut -d'|' -f3)"
-    jq -n --arg c "$claim" --arg s "$says" --arg v "$result" '{forge: "github.com", claim: $c, says: $s, verdict: $v, break: null}'
+    jq -n --arg c "$claim" --arg s "$says" --arg v "$result" --arg brk "$BREAK" \
+      '{forge: "github.com", claim: $c, says: $s} + if $brk == "" then {verdict: $v, break: null} else {verdict: null, break: $v} end'
   done < "$WORK/verdicts" | jq -s .
 }
 write_prove() {
@@ -870,6 +926,127 @@ write_prove() {
 # Each step runs as its own command; a step that fails fails the claims that
 # need it, and the rest still run.
 step() { "$0" "$@" >"$DIR/logs/prove-$1-${2:-}.out"; }
+
+# ── the locking claims, plain and under BREAK ────────────────────────────────
+
+# pr-lock: one-root holds dev orders; orders-note reaches it too.
+# BREAK: one-root's lock is dropped once it holds, so orders-note finds
+# envs/dev/orders free and takes it.
+claim_pr_lock() {
+  local held locked reply
+  [ -n "$a" ] || { unrun pr-lock "no one-root pull request to hold the lock"; return 0; }
+  held="$(wait_status "$head_a" terragucci/lock success)"
+  if [ -n "$BREAK" ]; then
+    [ "$held" = "success holds envs/dev/orders" ] || { unrun pr-lock "pull request $a: terragucci/lock ${held:-none}, so no lock to drop"; return 0; }
+    ( drop_locks ) || { unrun pr-lock "could not drop the locks"; return 0; }
+  fi
+  if step change orders-note; then
+    b="$(pr_for orders-note open)"
+    locked="$(wait_status "$(head_of "$b")" terragucci/lock failure)"
+    reply="$(replies_of "$b" | grep -F "is locked by pull request $a" | head -1 || true)"
+    # shellcheck disable=SC2016 # the reply quotes the root in backticks
+    if [ "$held" = "success holds envs/dev/orders" ] && [ "${locked%% *}" = failure ] && grep -qF '`envs/dev/orders`' <<<"$reply"; then
+      verdict pr-lock pass "pull request $a: terragucci/lock $held; pull request $b: terragucci/lock $locked; $reply"
+    else
+      verdict pr-lock fail "pull request $a: terragucci/lock ${held:-none}; pull request $b: terragucci/lock ${locked:-none}; reply: ${reply:-none}"
+    fi
+  else
+    unrun pr-lock "change orders-note failed"
+  fi
+}
+
+# pr-lock-fmt: unformatted reaches dev orders, which one-root holds. Its
+# fmt job pushes the formatting with the job's token, which starts no
+# workflow, so no pr-lock run sees the formatted head: the fmt job answers
+# its lock itself, refused with one-root named as the holder.
+# BREAK: the fmt job's lock step is cut from the pipeline (break_pipeline),
+# so nothing answers the lock on the formatted head.
+claim_pr_lock_fmt() {
+  local u u0 uf="" i got
+  if [ -z "$a" ] || ! step change unformatted; then
+    unrun pr-lock-fmt "change unformatted failed, or no one-root pull request holds dev orders"
+    return 0
+  fi
+  u="$(pr_for unformatted open)"
+  # The commit the scenario pushed, the pull request's first: by the time
+  # the step has waited for the check run, the fmt job may already have
+  # pushed the formatting on top of it.
+  u0="$(gh api "repos/$REPO/pulls/$u/commits?per_page=100" -q '.[0].sha' 2>/dev/null || true)"
+  for i in $(seq 1 30); do
+    uf="$(head_of "$u")"
+    [ "$uf" != "$u0" ] && break
+    sleep 10
+  done
+  if [ "$uf" = "$u0" ]; then
+    unrun pr-lock-fmt "pull request $u: no formatting commit on its head ${u0:0:8} in five minutes"
+  else
+    got="$(wait_status "$uf" terragucci/lock failure)"
+    if [ "${got%% *}" = failure ] && grep -qF "pull request $a" <<<"$got"; then
+      verdict pr-lock-fmt pass "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: $got"
+    else
+      verdict pr-lock-fmt fail "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: ${got:-none}"
+    fi
+  fi
+  gh pr close "$u" -R "$REPO" >/dev/null 2>&1 || true
+}
+
+# apply-serial: module-bump merges, and once its wave 1 is applying the
+# orders-note pull request merges too. No apply of one run overlaps one of
+# the other, except a wave that stood down for the newer push (it applied
+# nothing), none is cancelled, and each commit ends with one
+# terragucci/apply success.
+# BREAK: every wave's stand-down is cut from the pipeline (break_pipeline),
+# so the older run's waves apply beside the newer run's.
+claim_apply_serial() {
+  local m since sha1 sha2 run1 run2 applying spans overlaps cancelled first_order c1 c2 s1 s2 ran
+  if [ -z "${b:-}" ] || ! step change module-bump; then
+    unrun apply-serial "no orders-note pull request, or change module-bump failed"
+    return 0
+  fi
+  m="$(pr_for module-bump open)"
+  ( ensure_signer ) || true
+  since="$(now)"
+  gh pr merge "$m" -R "$REPO" --squash --admin >/dev/null 2>&1 || true
+  sha1="$(gh pr view "$m" -R "$REPO" --json mergeCommit -q '.mergeCommit.oid // empty' || true)"
+  run1="" run2="" sha2="" applying=""
+  # The second merge waits until the first run's wave 1 is applying.
+  for _ in $(seq 1 100); do
+    [ -n "$run1" ] || run1="$(gh run list -R "$REPO" --commit "$sha1" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
+    [ -z "$run1" ] || applying="$(gh api "repos/$REPO/actions/runs/$run1/jobs?per_page=100" \
+      -q '[.jobs[] | select(.name == "apply-wave-1") | .steps[]? | select(.name | startswith("Apply wave")) | .status] | first // ""' 2>/dev/null || true)"
+    case "$applying" in in_progress|completed) break ;; esac
+    sleep 3
+  done
+  log "run ${run1:-none} on ${sha1:0:8} is applying wave 1; merging pull request $b"
+  gh pr merge "$b" -R "$REPO" --squash --admin >/dev/null 2>&1 || true
+  sha2="$(gh pr view "$b" -R "$REPO" --json mergeCommit -q '.mergeCommit.oid // empty' || true)"
+  ( wait_run push "$since" "$sha2" ) >/dev/null 2>&1 || true
+  run2="$(gh run list -R "$REPO" --commit "$sha2" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
+  [ -z "$run1" ] || gh run watch "$run1" -R "$REPO" --interval 10 >/dev/null 2>&1 || true
+  spans="$(for r in $run1 $run2; do
+    gh api "repos/$REPO/actions/runs/$r/jobs?per_page=100" | jq -c --arg r "$r" '.jobs[] | select(.name | startswith("apply-wave-"))
+      | {run: $r, id, job: .name, conclusion, steps: [.steps[] | select(.name | startswith("Apply wave")) | select(.started_at != null and .completed_at != null)]}
+      | select(.steps | length > 0) | {run, id, job, conclusion, start: .steps[0].started_at, end: .steps[0].completed_at}' \
+      | while read -r s; do
+        # A wave that stood down for the newer push applied nothing, so its span is no overlap.
+        if gh api "repos/$REPO/actions/jobs/$(jq -r .id <<<"$s")/logs" 2>/dev/null | grep -v 'echo "' | grep -q "standing down"; then jq -c '. + {stood: true}' <<<"$s"; else jq -c '. + {stood: false}' <<<"$s"; fi
+      done
+  done | jq -s . 2>/dev/null || echo '[]')"
+  overlaps="$(jq '[.[] as $x | .[] as $y | select($x.run < $y.run and ($x.stood | not) and $x.start < $y.end and $y.start < $x.end)] | length' <<<"$spans")"
+  cancelled="$(for r in $run1 $run2; do gh run view "$r" -R "$REPO" --json jobs -q '.jobs[] | select(.conclusion == "cancelled") | .name'; done | tr '\n' ' ')"
+  first_order="$(jq -r --arg a "$run1" --arg b "$run2" '([.[] | select(.run == $a and .job == "apply-wave-1")][0].start) < ([.[] | select(.run == $b and .job == "apply-wave-1")][0].start // "~")' <<<"$spans")"
+  c1="$(gh run view "$run1" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
+  c2="$(gh run view "$run2" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
+  s1="$(status_on "$sha1" terragucci/apply)"; s2="$(status_on "$sha2" terragucci/apply)"
+  ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])\(if .stood then " stood down" else "" end)") | join(", ")' <<<"$spans")"
+  if [ "$overlaps" = 0 ] && [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
+    && [ "${s1%% *}" = success ] && [ "${s2%% *}" = success ]; then
+    verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; no overlap, none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
+  else
+    verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; overlaps $overlaps; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
+  fi
+  ( record_state ) || log "could not record the state after the two merges"
+}
 
 # The merge phase: main as prove_main sets it, applying after merge.
 prove_merge() {
@@ -940,56 +1117,9 @@ prove_merge() {
     verdict comment-plan fail "no one-root pull request to comment on"
   fi
 
-  # pr-lock: one-root holds dev orders; orders-note reaches it too.
-  if [ -n "$a" ]; then
-    held="$(wait_status "$head_a" terragucci/lock success)"
-    if step change orders-note; then
-      b="$(pr_for orders-note open)"
-      locked="$(wait_status "$(head_of "$b")" terragucci/lock failure)"
-      reply="$(replies_of "$b" | grep -F "is locked by pull request $a" | head -1 || true)"
-      # shellcheck disable=SC2016 # the reply quotes the root in backticks
-      if [ "$held" = "success holds envs/dev/orders" ] && [ "${locked%% *}" = failure ] && grep -qF '`envs/dev/orders`' <<<"$reply"; then
-        verdict pr-lock pass "pull request $a: terragucci/lock $held; pull request $b: terragucci/lock $locked; $reply"
-      else
-        verdict pr-lock fail "pull request $a: terragucci/lock ${held:-none}; pull request $b: terragucci/lock ${locked:-none}; reply: ${reply:-none}"
-      fi
-    else
-      verdict pr-lock fail "change orders-note failed"
-    fi
-  else
-    verdict pr-lock fail "no one-root pull request to hold the lock"
-  fi
+  claim_pr_lock
 
-  # pr-lock-fmt: unformatted reaches dev orders, which one-root holds. Its
-  # fmt job pushes the formatting with the job's token, which starts no
-  # workflow, so no pr-lock run sees the formatted head: the fmt job answers
-  # its lock itself, refused with one-root named as the holder.
-  if [ -n "$a" ] && step change unformatted; then
-    local u u0 uf="" i
-    u="$(pr_for unformatted open)"
-    # The commit the scenario pushed, the pull request's first: by the time
-    # the step has waited for the check run, the fmt job may already have
-    # pushed the formatting on top of it.
-    u0="$(gh api "repos/$REPO/pulls/$u/commits?per_page=100" -q '.[0].sha' 2>/dev/null || true)"
-    for i in $(seq 1 30); do
-      uf="$(head_of "$u")"
-      [ "$uf" != "$u0" ] && break
-      sleep 10
-    done
-    if [ "$uf" = "$u0" ]; then
-      verdict pr-lock-fmt fail "pull request $u: no formatting commit on its head ${u0:0:8} in five minutes"
-    else
-      got="$(wait_status "$uf" terragucci/lock failure)"
-      if [ "${got%% *}" = failure ] && grep -qF "pull request $a" <<<"$got"; then
-        verdict pr-lock-fmt pass "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: $got"
-      else
-        verdict pr-lock-fmt fail "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: ${got:-none}"
-      fi
-    fi
-    gh pr close "$u" -R "$REPO" >/dev/null 2>&1 || true
-  else
-    verdict pr-lock-fmt fail "change unformatted failed, or no one-root pull request holds dev orders"
-  fi
+  claim_pr_lock_fmt
 
   # comment-agent: on the orders-note pull request, the stand-in agent's
   # edit is pushed as one commit on its head, which plans again; an ask that
@@ -1105,58 +1235,7 @@ prove_merge() {
     verdict policy-override fail "change override failed"
   fi
 
-  # apply-serial: module-bump merges, and once its wave 1 is applying the
-  # orders-note pull request merges too. No apply of one run overlaps one of
-  # the other, except a wave that stood down for the newer push (it applied
-  # nothing), none is cancelled, and each commit ends with one
-  # terragucci/apply success.
-  if [ -n "${b:-}" ] && step change module-bump; then
-    m="$(pr_for module-bump open)"
-    ( ensure_signer ) || true
-    since="$(now)"
-    gh pr merge "$m" -R "$REPO" --squash --admin >/dev/null 2>&1 || true
-    sha1="$(gh pr view "$m" -R "$REPO" --json mergeCommit -q '.mergeCommit.oid // empty' || true)"
-    run1="" run2="" sha2="" applying=""
-    # The second merge waits until the first run's wave 1 is applying.
-    for _ in $(seq 1 100); do
-      [ -n "$run1" ] || run1="$(gh run list -R "$REPO" --commit "$sha1" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
-      [ -z "$run1" ] || applying="$(gh api "repos/$REPO/actions/runs/$run1/jobs?per_page=100" \
-        -q '[.jobs[] | select(.name == "apply-wave-1") | .steps[]? | select(.name | startswith("Apply wave")) | .status] | first // ""' 2>/dev/null || true)"
-      case "$applying" in in_progress|completed) break ;; esac
-      sleep 3
-    done
-    log "run ${run1:-none} on ${sha1:0:8} is applying wave 1; merging pull request $b"
-    gh pr merge "$b" -R "$REPO" --squash --admin >/dev/null 2>&1 || true
-    sha2="$(gh pr view "$b" -R "$REPO" --json mergeCommit -q '.mergeCommit.oid // empty' || true)"
-    ( wait_run push "$since" "$sha2" ) >/dev/null 2>&1 || true
-    run2="$(gh run list -R "$REPO" --commit "$sha2" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
-    [ -z "$run1" ] || gh run watch "$run1" -R "$REPO" --interval 10 >/dev/null 2>&1 || true
-    spans="$(for r in $run1 $run2; do
-      gh api "repos/$REPO/actions/runs/$r/jobs?per_page=100" | jq -c --arg r "$r" '.jobs[] | select(.name | startswith("apply-wave-"))
-        | {run: $r, id, job: .name, conclusion, steps: [.steps[] | select(.name | startswith("Apply wave")) | select(.started_at != null and .completed_at != null)]}
-        | select(.steps | length > 0) | {run, id, job, conclusion, start: .steps[0].started_at, end: .steps[0].completed_at}' \
-        | while read -r s; do
-          # A wave that stood down for the newer push applied nothing, so its span is no overlap.
-          if gh api "repos/$REPO/actions/jobs/$(jq -r .id <<<"$s")/logs" 2>/dev/null | grep -v 'echo "' | grep -q "standing down"; then jq -c '. + {stood: true}' <<<"$s"; else jq -c '. + {stood: false}' <<<"$s"; fi
-        done
-    done | jq -s . 2>/dev/null || echo '[]')"
-    overlaps="$(jq '[.[] as $x | .[] as $y | select($x.run < $y.run and ($x.stood | not) and $x.start < $y.end and $y.start < $x.end)] | length' <<<"$spans")"
-    cancelled="$(for r in $run1 $run2; do gh run view "$r" -R "$REPO" --json jobs -q '.jobs[] | select(.conclusion == "cancelled") | .name'; done | tr '\n' ' ')"
-    first_order="$(jq -r --arg a "$run1" --arg b "$run2" '([.[] | select(.run == $a and .job == "apply-wave-1")][0].start) < ([.[] | select(.run == $b and .job == "apply-wave-1")][0].start // "~")' <<<"$spans")"
-    c1="$(gh run view "$run1" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
-    c2="$(gh run view "$run2" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
-    s1="$(status_on "$sha1" terragucci/apply)"; s2="$(status_on "$sha2" terragucci/apply)"
-    ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])\(if .stood then " stood down" else "" end)") | join(", ")' <<<"$spans")"
-    if [ "$overlaps" = 0 ] && [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
-      && [ "${s1%% *}" = success ] && [ "${s2%% *}" = success ]; then
-      verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; no overlap, none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
-    else
-      verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; overlaps $overlaps; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
-    fi
-    ( record_state ) || log "could not record the state after the two merges"
-  else
-    verdict apply-serial fail "no orders-note pull request, or change module-bump failed"
-  fi
+  claim_apply_serial
 
   # gate-wait: the destroy's wave waits, and applies once approved. Its
   # approval is held, not applied, so the next merge in wave 4 meets a stale
@@ -1291,6 +1370,8 @@ pr_config() { # merge (manual|auto), [merge token secret]
     echo "  when: pull-request"
     echo "  merge: $1"
     [ -z "${2:-}" ] || echo "  merge_token_env: $2"
+    # BREAK: undiverged is left out, so a head behind main applies (pr-apply-stale).
+    [ -z "$BREAK" ] || echo "  requires: [approved, mergeable, checks]"
   } >> "$tree/terragucci.yml"
   mkdir -p "$tree/.github/workflows"
   cat > "$tree/.github/workflows/sandbox-open.yml" <<'YML'
@@ -1319,9 +1400,10 @@ YML
   (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-pr-init.log" 2>&1) \
     || { cat "$DIR/logs/prove-pr-init.log" >&2; fail "terragucci init failed"; }
   grep -q '^  apply-comment:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no apply-comment job"
-  commit "$tree" "Apply pull requests before merge, merge: $1${2:+ with $2} [skip ci]"
+  [ -z "$BREAK" ] || grep -q -- '--requires approved,mergeable,checks' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no --requires without undiverged"
+  commit "$tree" "Apply pull requests before merge, merge: $1${2:+ with $2}${BREAK:+, undiverged not required} [skip ci]"
   sha="$(push "$tree" main)"
-  log "main at ${sha:0:8}: apply.when: pull-request, merge: $1${2:+, merge_token_env: $2}"
+  log "main at ${sha:0:8}: apply.when: pull-request, merge: $1${2:+, merge_token_env: $2}${BREAK:+, requires: approved, mergeable, checks}"
 }
 
 # A pull request that sets one root's job retention, opened by sandbox-open,
@@ -1353,17 +1435,21 @@ bot_pr() { # branch, root, seconds, title
   echo "$n"
 }
 
-prove_pull_request() {
-  local x y c d e r1 r2 r3 r4 held at moved n merged by pushed
-  ( pr_config manual ) || { for x in pr-apply-lock pr-apply-stale pr-apply pr-apply-token; do verdict "$x" fail "main could not be set up"; done; return 0; }
-
-  # pr-apply-lock: x and y both change dev orders. x applies from its head
-  # and holds the lock; y is refused, naming the root and x; once x is
-  # unlocked, y applies.
+# pr-apply-lock: x and y both change dev orders. x applies from its head
+# and holds the lock; y is refused, naming the root and x; once x is
+# unlocked, y applies.
+# BREAK: x's lock is dropped once it applied, so y finds envs/dev/orders
+# free and applies it.
+claim_pr_apply_lock() {
+  local x y r1 r2 r3 r4
   x="$( (bot_pr lock-a envs/dev/orders 600 "Keep dev orders' jobs ten minutes") || true)"
   y="$( (bot_pr lock-b envs/dev/orders 900 "Keep dev orders' jobs fifteen minutes") || true)"
   if [ -n "$x" ] && [ -n "$y" ]; then
     r1="$( (say "$x" "/terragucci apply") || true)"
+    if [ -n "$BREAK" ]; then
+      grep -qF "applied wave 1, 2, 3, 4 of pull request $x" <<<"$r1" || { unrun pr-apply-lock "pull request $x: ${r1:-no reply}, so no lock to drop"; return 0; }
+      ( drop_locks ) || { unrun pr-apply-lock "could not drop the locks"; return 0; }
+    fi
     r2="$( (say "$y" "/terragucci apply") || true)"
     r3="$( (say "$x" "/terragucci unlock") || true)"
     r4="$( (say "$y" "/terragucci apply") || true)"
@@ -1376,11 +1462,16 @@ prove_pull_request() {
       verdict pr-apply-lock fail "pull request $x: ${r1:-no reply}; $y: ${r2:-no reply}; unlock on $x: ${r3:-no reply}; then $y: ${r4:-no reply}"
     fi
   else
-    verdict pr-apply-lock fail "sandbox-open could not open and plan both pull requests"
+    unrun pr-apply-lock "sandbox-open could not open and plan both pull requests"
   fi
+}
 
-  # pr-apply-stale: c is approved, then main moves; /terragucci apply on c is
-  # refused as not up to date, and nothing applies.
+# pr-apply-stale: c is approved, then main moves; /terragucci apply on c is
+# refused as not up to date, and nothing applies.
+# BREAK: main's apply.requires leaves out undiverged (pr_config), so the
+# head behind main applies.
+claim_pr_apply_stale() {
+  local c r1
   c="$( (bot_pr stale envs/dev/payments 600 "Keep dev payments' jobs ten minutes") || true)"
   if [ -n "$c" ]; then
     ( tree="$WORK/stale-main"; clone_main "$tree"; printf '\nmain moved under an open pull request.\n' >> "$tree/README.md"
@@ -1394,8 +1485,17 @@ prove_pull_request() {
       verdict pr-apply-stale fail "pull request $c: ${r1:-no reply}; run $run has ${applied:-0} applies"
     fi
   else
-    verdict pr-apply-stale fail "sandbox-open could not open and plan the pull request"
+    unrun pr-apply-stale "sandbox-open could not open and plan the pull request"
   fi
+}
+
+prove_pull_request() {
+  local x y c d e r1 r2 r3 r4 held at moved n merged by pushed
+  ( pr_config manual ) || { for x in pr-apply-lock pr-apply-stale pr-apply pr-apply-token; do verdict "$x" fail "main could not be set up"; done; return 0; }
+
+  claim_pr_apply_lock
+
+  claim_pr_apply_stale
 
   # pr-apply: merge: auto with the job's token. d applies from its head and
   # pr-merge merges it as github-actions[bot].
@@ -1438,6 +1538,26 @@ prove_pull_request() {
   else
     verdict pr-apply-token fail "sandbox-open could not open and plan the pull request"
   fi
+}
+
+# The merge phase under BREAK: main as prove_main sets it, its pipeline's fmt
+# lock step and stand-down cut, and the locking claims alone. pr-lock-fmt
+# runs before pr-lock, whose break drops one-root's lock.
+break_merge() {
+  prove_main
+  if step change one-root; then a="$(pr_for one-root open)"; head_a="$(head_of "$a")"; else a="" head_a=""; fi
+  claim_pr_lock_fmt
+  claim_pr_lock
+  claim_apply_serial
+}
+
+# The pull-request phase under BREAK: merge: manual with requires leaving
+# out undiverged, and its two locking claims.
+break_pull_request() {
+  local x
+  ( pr_config manual ) || { for x in pr-apply-lock pr-apply-stale; do unrun "$x" "main could not be set up"; done; return 0; }
+  claim_pr_apply_lock
+  claim_pr_apply_stale
 }
 
 # The modules phase: modules.publish: git-tags. A conventional commit to
@@ -1839,10 +1959,16 @@ EOF
     while [ $# -gt 0 ]; do
       case "$1" in
         --record) record="${2:?--record needs a file}"; shift 2 ;;
+        --break) BREAK=1; shift ;;
         merge|pull-request|modules) phases="$phases $1"; shift ;;
-        *) fail "unknown argument '$1' (merge, pull-request, modules, --record FILE)" ;;
+        *) fail "unknown argument '$1' (merge, pull-request, modules, --break, --record FILE)" ;;
       esac
     done
+    # Under BREAK only the phases with locking claims run.
+    if [ -n "$BREAK" ]; then
+      [ -n "$phases" ] || phases="merge pull-request"
+      case " $phases " in *" modules "*) fail "the modules phase has no locking claim to break" ;; esac
+    fi
     [ -n "$phases" ] || phases="merge pull-request modules"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "prove needs Docker, for the roots' state"; fi
     # The merge phase sets the agent's and the merge token's secrets; find a
@@ -1853,27 +1979,38 @@ EOF
     : > "$WORK/verdicts"
     for phase in $phases; do
       "$0" reset
-      log "phase $phase"
-      "prove_${phase//-/_}"
+      log "phase $phase${BREAK:+ under BREAK}"
+      if [ -n "$BREAK" ]; then "break_${phase//-/_}"; else "prove_${phase//-/_}"; fi
     done
 
     "$0" reset
     printf '\n'
     rc=0
     while IFS=$'\t' read -r claim result seen; do
-      printf '  %-16s %-5s %s\n' "$claim" "$result" "$seen"
-      [ "$result" = pass ] || rc=1
+      printf '  %-16s %-6s %s\n' "$claim" "$result" "$seen"
+      [ "$result" = pass ] || [ "$result" = caught ] || rc=1
     done < "$WORK/verdicts"
     printf '  Took             %s minutes\n' "$(( ($(date +%s) - started + 59) / 60 ))"
     # The rows the validation page lists, beside the local stack's: each
-    # github.com row this run made replaces the one of its claim, new ones
-    # follow, and the github.com rows go after the GitHub rows.
+    # github.com row this run made replaces the one of its claim, keeping the
+    # break its last BREAK run recorded, new ones follow, and the github.com
+    # rows go after the GitHub rows. Under BREAK a row's break is written
+    # into the row of its claim, and a claim with no row gets one whose
+    # verdict is pending.
     rows="$(prove_rows)"
     write_prove
-    if [ -n "$record" ]; then
+    if [ -n "$record" ] && [ -n "$BREAK" ]; then
+      jq --argjson rows "$rows" '.claims |= (
+        [.[] | select(.forge == "github.com") | .claim] as $had
+        | map(if .forge == "github.com" then (.claim as $c | ([$rows[] | select(.claim == $c)] | first) as $b | if $b then .break = $b.break else . end) else . end)
+        | (map(.forge == "github.com") | rindex(true) // (length - 1)) as $i
+        | .[:$i + 1] + [$rows[] | select(.claim | IN($had[]) | not) | .verdict = "pending"] + .[$i + 1:])' "$record" > "$WORK/record"
+      cp "$WORK/record" "$record"
+      log "wrote the github.com breaks into $record"
+    elif [ -n "$record" ]; then
       jq --argjson rows "$rows" '.claims |= (
         [.[] | select(.forge == "github.com")] as $old | ($old | map(.claim)) as $had
-        | ([$old[] | . as $r | ([$rows[] | select(.claim == $r.claim)] | first) // $r] + [$rows[] | select(.claim | IN($had[]) | not)]) as $gh
+        | ([$old[] | . as $r | ([$rows[] | select(.claim == $r.claim)] | first | if . == null then null else .break = $r.break end) // $r] + [$rows[] | select(.claim | IN($had[]) | not)]) as $gh
         | [.[] | select(.forge != "github.com")]
         | (map(.forge == "github") | rindex(true) // (length - 1)) as $i | .[:$i + 1] + $gh + .[$i + 1:])' "$record" > "$WORK/record"
       cp "$WORK/record" "$record"

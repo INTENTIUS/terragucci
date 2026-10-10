@@ -100,12 +100,14 @@ const token = {
 
 /**
  * One job per phase of prove, each from a reset sandbox: merge, then
- * pull-request, then modules. Each has its own timeout, so a slow phase (jobs
- * on the sandbox queue behind the organization's other runs) no longer starves
- * the phases after it, and each keeps its own verdicts. A phase runs after the
+ * pull-request, then modules, then the locking claims under BREAK
+ * (`prove --break`). Each has its own timeout, so a slow phase (jobs on the
+ * sandbox queue behind the organization's other runs) no longer starves the
+ * phases after it, and each keeps its own verdicts. A phase runs after the
  * one before it whatever that one's result, since they share the sandbox.
  */
-const sandboxSteps = (phase: "merge" | "pull-request" | "modules") => [
+type Phase = "merge" | "pull-request" | "modules" | "break";
+const sandboxSteps = (phase: Phase) => [
   new Step({
     name: "Check the sandbox token",
     env: token,
@@ -130,9 +132,9 @@ const sandboxSteps = (phase: "merge" | "pull-request" | "modules") => [
     run: `echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"`,
   }),
   new Step({
-    name: `Prove the ${phase} phase on the sandbox`,
+    name: phase === "break" ? "Prove the locking claims under BREAK on the sandbox" : `Prove the ${phase} phase on the sandbox`,
     env: token,
-    run: `just sandbox prove ${phase}`,
+    run: phase === "break" ? "just sandbox prove --break" : `just sandbox prove ${phase}`,
   }),
   // prove.json is rewritten after each verdict, so a job cut short by its
   // timeout still lists the verdicts it reached.
@@ -142,7 +144,9 @@ const sandboxSteps = (phase: "merge" | "pull-request" | "modules") => [
     run: [
       `f="${SANDBOX_DIR}/prove.json"`,
       `[ -f "$f" ] || exit 0`,
-      `{ echo "Release $(jq -r .release "$f"), phase ${phase}"; echo; echo "| Claim | Result |"; echo "|---|---|"; jq -r '.claims[] | "| \\(.claim) | \\(.verdict) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"`,
+      phase === "break"
+        ? `{ echo "Release $(jq -r .release "$f"), the locking claims under BREAK"; echo; echo "| Claim | Break |"; echo "|---|---|"; jq -r '.claims[] | "| \\(.claim) | \\(.break) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"`
+        : `{ echo "Release $(jq -r .release "$f"), phase ${phase}"; echo; echo "| Claim | Result |"; echo "|---|---|"; jq -r '.claims[] | "| \\(.claim) | \\(.verdict) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"`,
     ].join("\n"),
   }),
   new Step({
@@ -193,4 +197,17 @@ export const sandboxModules = new Job({
   concurrency: { group: "terragucci-sandbox", "cancel-in-progress": false },
   env: { TERRAGUCCI_SANDBOX_DIR: SANDBOX_DIR },
   steps: sandboxSteps("modules"),
+});
+
+// The locking claims (pr-lock, pr-lock-fmt, apply-serial, pr-apply-lock,
+// pr-apply-stale) again, each with its property broken on purpose: two
+// phases' setups and five scenarios, about half the merge phase's runs.
+export const sandboxBreak = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 150,
+  needs: "sandbox-modules",
+  if: "always()",
+  concurrency: { group: "terragucci-sandbox", "cancel-in-progress": false },
+  env: { TERRAGUCCI_SANDBOX_DIR: SANDBOX_DIR },
+  steps: sandboxSteps("break"),
 });
