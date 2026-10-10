@@ -2352,6 +2352,22 @@
       "commit": "4db5e993"
     },
     {
+      "claim": "runner-label",
+      "says": "with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a3582cb7"
+    },
+    {
+      "claim": "pass-secrets",
+      "says": "with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a3582cb7"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,

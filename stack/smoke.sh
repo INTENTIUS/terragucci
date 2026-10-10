@@ -425,7 +425,7 @@ cdktn-linked|a CDK Terrain stack that reads the state of another through a remot
 image|with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies|
 env|with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state|
 local-plan|terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0|
-runner-label|with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply job alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one|
+runner-label|with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one|
 pass-secrets|with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state|'
 
 # The core claims, which SMOKE_BINARY=terraform and SMOKE_BINARY=choudoufu run
@@ -17924,7 +17924,7 @@ job_runner() { # repo, run id, job name -> the uuid of the runner that ran the j
 claim_runner_label() {
   # A one-root repo whose terragucci.yml sets runner.apply to a label that
   # only a second Forgejo runner serves (labelled_runner). init writes that
-  # label as the apply job's runs-on and leaves every other job on the
+  # label as the runs-on of the apply jobs and leaves the others on the
   # default; the push to main runs check on the stack's runner and
   # apply-wave-1 on the labelled one, and app applies.
   # BREAK: terragucci.yml sets no runner, so init renders the default label
@@ -17940,7 +17940,7 @@ claim_runner_label() {
   one_root_repo runner-label <<<"$cfg" || { drop_work "$work"; return 1; }
   if [ -z "${BREAK:-}" ]; then
     grep -qx "    runs-on: $LABELLED_LABEL" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init did not write runs-on: $LABELLED_LABEL"; rc=1; }
-    [ "$(grep -c "runs-on: $LABELLED_LABEL" "$work/tree/.forgejo/workflows/terragucci.yml")" = 1 ] || { log "a job other than apply-wave-1 asks for $LABELLED_LABEL"; rc=1; }
+    grep -qx "    runs-on: docker" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "no job is left on the default label"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "runner-label: one root")" || rc=1
