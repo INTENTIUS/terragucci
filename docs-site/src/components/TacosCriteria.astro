@@ -59,7 +59,7 @@ const legend = (['proven', 'forge', 'license', 'open'] as const).filter((s) => s
 		))}
 	</div>
 	<figcaption>
-		Each block is as wide as its criterion's default weight. <span class="total">{sum('proven')} of {total}</span> weight points rest on a passing smoke claim.
+		Each block is as wide as its criterion's default weight. <span class="total">{sum('proven')} of {total}</span> weight points rest on a passing smoke claim. tacos.guru scores each criterion 0 to 3 times its weight, {3 * total} in all, and has not scored terragucci.
 		<ul class="legend">
 			{legend.map((s) => <li><span class={`key s-${s}`} />{LABEL[s]} ({sum(s)})</li>)}
 		</ul>
