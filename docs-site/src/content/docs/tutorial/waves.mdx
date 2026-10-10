@@ -10,7 +10,7 @@ claims: [waves]
 prompt: |
   Read https://intentius.io/terragucci/tutorial/waves/.
   In the terragucci clone with the example booted, run `just example change destroy` and read the plan note. Then stop and print the `just example merge destroy` and `just example approve` commands for me. Do not run either of them.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Captured from '../../../components/Captured.astro';
@@ -36,7 +36,7 @@ With the default gate `on-destroy` a wave waits only when its plans destroy or r
 
 That pull request drops the records table of staging email. Its note names the destroy at the top:
 
-<Shot step="wave-waiting" view="note" alt="The plan note on the destroy pull request in Forgejo: the records table of staging email named under destroys, and wave 4 waiting for an approval, with the chant approve command for its digest" optional />
+<Shot step="wave-waiting" view="note" alt="The plan note on the destroy pull request in Forgejo: the records table of staging email named under destroys, and wave 4 waiting for an approval, with the terragucci approve command for its digest" optional />
 
 The example runs `approval: sealed`, so its approvals need a key. Your own repo defaults to `ledger`, with no key:
 
@@ -55,9 +55,9 @@ The example runs `approval: sealed`, so its approvals need a key. Your own repo 
 
 2. Wave 4 plans the destroy and stops. Its job exits with code 3 and prints the approve command:
 
-   <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing chant approve tf-apply wave-4 with the plan's digest" optional />
+   <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing terragucci approve wave-4 with the plan's digest" optional />
 
-3. Read the wave's plans in the report. The [`chant approve`](/terragucci/concepts/glossary/#chant) command carries the digest the wave planned, so the approval covers those plans and no others.
+3. Read the wave's plans in the report. The [`terragucci approve`](/terragucci/reference/cli/#approve) command carries the digest the wave planned, so the approval covers those plans and no others.
 
 4. Approve with the example's generated key:
 
@@ -65,7 +65,7 @@ The example runs `approval: sealed`, so its approvals need a key. Your own repo 
    just example approve
    ```
 
-   It runs `chant approve tf-apply wave-4` with that key.
+   It runs `terragucci approve wave-4` with that key.
 
 5. Run the wave's job again, and wave 4 applies. A plan that changes afterwards is not covered, as the next page shows.
 

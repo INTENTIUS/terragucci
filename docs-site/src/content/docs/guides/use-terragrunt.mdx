@@ -7,7 +7,7 @@ prompt: |
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
   add a `terragrunt:` block only where the page says one is needed, and open a
   pull request.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
@@ -93,7 +93,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate` and plans th
 
 A held wave of units waits as a wave of roots does. It names its units and set digest and prints the approve command:
 
-<Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the chant approve tf-apply wave-2 command, and exits with code 3" />
+<Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the terragucci approve wave-2 command, and exits with code 3" />
 
 ## Explicit stacks
 

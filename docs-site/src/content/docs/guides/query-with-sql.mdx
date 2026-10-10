@@ -5,7 +5,7 @@ claims: [query-sql]
 prompt: |
   Read https://intentius.io/terragucci/guides/query-with-sql/.
   Write the terragucci query command that lists the resources of type aws_sqs_queue changed in the last 7 days with their approvers, for this repo's reports bucket, and run it. Do not create or print credentials.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';

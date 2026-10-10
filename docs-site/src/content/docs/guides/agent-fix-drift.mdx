@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/agent-fix-drift/.
   Add the `agent.drift` block and `respond.drift: off` to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
   List the machine user, token scopes and secrets I must set; do not create tokens or secrets yourself.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';

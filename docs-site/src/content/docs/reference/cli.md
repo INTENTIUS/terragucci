@@ -4,7 +4,7 @@ description: Every terragucci command, its flags and its exit codes.
 prompt: |
   Read https://intentius.io/terragucci/reference/cli/.
   Run `npx terragucci config check` and `npx terragucci init --dry-run --json` in this repo and tell me the roots, binary and forge it found, and any config problem, with the exit code of each.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Run `npx terragucci <command>` from a repo's root; a generated pipeline calls the same commands.
@@ -26,8 +26,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
 | `pr-lock` | takes or releases a pull request's plan locks under `locks: plan`; the generated pipeline runs it |
-| `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
-| `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
+| `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and records an approval of its digest, with `--sign` under `approval: sealed`; also approves a migration, a state export, a lock release and a pull request environment; a person runs it |
+| `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and records the override with the reason; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
@@ -71,7 +71,7 @@ The approval mode decides what else `init` writes.
 |---|---|
 | `ledger` (the default) | writes no `chant.workspace.json`; with `approval: ledger` set, drops the wave gates an earlier `init` listed under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) |
 | `pr-review` | the same as `ledger`; on GitHub and Forgejo adds the `approval` job and the `terragucci/approval` status ([the pipeline](/terragucci/reference/pipeline/#statuses-and-stale-plans)) |
-| `sealed` | writes chant's `chant.workspace.json` with each wave's gate (`wave-1`, `wave-2`) under `identity.gates`, so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant); an existing file gains missing gates |
+| `sealed` | writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with each wave's gate (`wave-1`, `wave-2`) under `identity.gates`, so a wave counts only an approval sealed with `terragucci approve --sign`; an existing file gains missing gates |
 
 [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
 
@@ -501,7 +501,7 @@ Every tool is marked read-only, and the server refuses these calls.
 
 | A call | The answer |
 |---|---|
-| to a tool it does not list, such as `approve`, `apply` or `override` | an error: the server is read-only, approvals belong to a person at a shell, and chant refuses a gate approval made over MCP |
+| to a tool it does not list, such as `approve`, `apply` or `override` | an error: the server is read-only, approvals belong to a person at a shell, and an approval made over MCP is refused |
 | with an argument the tool does not list | an error naming the argument; one named like a credential (`token`, `secret`, `key`) says credentials come from the server's environment |
 | with a `path` outside the reports prefix | an error |
 
@@ -569,25 +569,30 @@ terragucci.yml: 1 warning(s)
 
 ```bash
 terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run] [--no-resume]
+terragucci approve export <root> --plan <digest> [--sign]
+terragucci approve unlock <root> --plan <digest> [--sign]
+terragucci approve ephemeral <pr> --plan <digest> [--sign]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `wave-<k>` | the wave to approve; needed only when several wait and no `--plan` picks one |
-| `<migration>` | a [state migration](/terragucci/reference/migration-files/) wave 1 waits on, by name: it runs `chant approve tf-migrate <migration> --plan <digest>`, and resumes wave 1; needed only when another gate waits too and no `--plan` picks one |
+| `<migration>` | a [state migration](/terragucci/reference/migration-files/) wave 1 waits on, by name: it approves the migration's digest and resumes wave 1; needed only when another gate waits too and no `--plan` picks one |
 | `--plan` | the digest you read, from a chat message, a plan note or a report: approve only a wave waiting for exactly that digest. When none does, it approves nothing, prints the digest waiting and exits 1 |
 | `--actor` | the name the approval records; under `approval: sealed`, your principal in the signers file |
 | `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
-| `--dry-run` | print the `chant approve` command and run nothing |
+| `export <root>` | a [state export](#state-export) request for `<root>`; it counts only from someone other than the person who asked |
+| `unlock <root>` | the release of the lock [`unlock-state`](#unlock-state) found on `<root>` |
+| `ephemeral <pr>` | pull request `<pr>`'s [ephemeral environment](#ephemeral) |
+| `--dry-run` | print what it would approve and record nothing |
 | `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
 
-Run it in a checkout whose `origin` you can push to; chant is looked up in `node_modules/.bin`, then on the path.
+Run it in a checkout whose `origin` you can push to.
 
 ```text
 wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), since 2026-10-07T18:04:11.000Z
   roots: app
   destroys app: aws_s3_bucket.logs
-running: chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
 ```
 
 With a digest that no longer waits, because the plans moved after you read them, `terragucci approve wave-2 --plan jcs1-sha256:9f2c...` prints:
@@ -621,7 +626,7 @@ Run it twice in a checkout whose `origin` you can push to, signed in to the clou
 
 | Run | Does | Exits |
 |---|---|---|
-| first | reads the version's metadata, records a request on `chant/lifecycle` and prints `chant approve tf-state-export <root> --plan <digest>` for someone else to run | 3 |
+| first | reads the version's metadata, records a request on `chant/lifecycle` and prints `terragucci approve export <root> --plan <digest>` for someone else to run | 3 |
 | second, once that approval stands | downloads the version, records the export in `_gates/tf-state-export/done.jsonl`, then writes the file, readable by you alone | 0 |
 
 ```text
@@ -646,7 +651,7 @@ Releases the state lock a job killed mid-apply left on `<root>`: the lock file a
 |---|---|
 | read the lock | inits the root and reads the lock file, the gcs lock object or the azurerm lease and metadata, or asks GitLab's lock endpoint: its ID, who took it and when |
 | check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
-| wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `chant approve tf-unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
+| wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `terragucci approve unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
 | release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
 
 | Flag | Meaning |
@@ -658,7 +663,7 @@ Releases the state lock a job killed mid-apply left on `<root>`: the lock file a
 terragucci unlock-state: slow: s3://acme-state/slow.tfstate.tflock holds lock 1f0c..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z
 terragucci unlock-state: slow: no run that began before the lock is alive
 terragucci unlock-state: slow: releasing lock 1f0c..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z waits for an approval of digest jcs1-sha256:6d2b.... Approve it with:
-terragucci unlock-state:   chant approve tf-unlock slow --plan jcs1-sha256:6d2b...
+terragucci unlock-state:   terragucci approve unlock slow --plan jcs1-sha256:6d2b...
 ```
 
 An approval names one lock. If that lock was released some other way and a new one taken, the approval does not release the new one and the command exits 4.
@@ -675,7 +680,7 @@ The generated pipeline runs it for [`ephemeral`](/terragucci/reference/config/#e
 
 | Subcommand | What it does |
 |---|---|
-| `up` | inits each root the globs match at `--head` with `-backend-config` naming its key with `-pr-<n>` added, plans it, and decides gate `pr-<n>` of op `tf-ephemeral` on the set digest as `gate` says, printing `chant approve tf-ephemeral pr-<n> --plan <digest>` and exiting 3 while it waits; then applies, and appends the copy, its expiry and who approved it to `_gates/tf-ephemeral/done.jsonl` |
+| `up` | inits each root the globs match at `--head` with `-backend-config` naming its key with `-pr-<n>` added, plans it, and decides gate `pr-<n>` of op `tf-ephemeral` on the set digest as `gate` says, printing `terragucci approve ephemeral <n> --plan <digest>` and exiting 3 while it waits; then applies, and appends the copy, its expiry and who approved it to `_gates/tf-ephemeral/done.jsonl` |
 | `down` | plans the destroy of each root of the live copy and applies it, in reverse order, from the commit the copy applied, and appends the destroy with `--reason` and its digest; with no live copy it does nothing |
 | `sweep` | destroys each live copy whose TTL passed (`expired`), and each whose pull request the forge says is closed or merged (`closed`), reading it with `TG_TOKEN` |
 
@@ -709,12 +714,11 @@ terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--actor <n
 | `--reason` | required: why this plan goes out, kept on the ledger and shown in the report |
 | `--actor` | the name the override records; it counts only when [`policy.override`](/terragucci/reference/policy/#overriding-a-denial) at base lists it |
 | `--sign` | as for `approve`; the default under `approval: sealed` |
-| `--dry-run` | print the `chant approve` command and run nothing |
+| `--dry-run` | print what it would override and record nothing |
 
 ```text
 envs/prod/app: its plan jcs1-sha256:4c1e09d2... was denied by main.deny_public_bucket, since 2026-10-07T18:04:11.000Z
   the override binds the root, that plan and those rules: sha256:9b0f2a71...
-running: chant approve policy-override envs/prod/app --plan sha256:9b0f2a71... --note 'the incident needs the bucket public until 18:00' --actor github:alice
 ```
 
 ## check-root, check-pins and check-policy
@@ -779,7 +783,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `verify-release` | every target verified | a target refused | | | |
 | `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
-| `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
+| `approve`, `override` | approved | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
 | `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 | `query` | rows printed | | a bad flag or config, a statement that does not run or writes | | |

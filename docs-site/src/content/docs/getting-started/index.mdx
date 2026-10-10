@@ -8,7 +8,7 @@ prompt: |
   Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
   Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
   Do not create secrets.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -199,11 +199,11 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
 ## First approval
 
-With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a person only when its plan destroys or replaces something. You approve it from your machine with [chant](/terragucci/concepts/glossary/#chant), the tool terragucci's stages are written in.
+With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a person only when its plan destroys or replaces something. You approve it from your machine with [`terragucci approve`](/terragucci/reference/cli/#approve).
 
 | Approval mode | Set up once |
 |---|---|
-| `ledger`, the default | `npm i -D @intentius/chant` where you approve |
+| `ledger`, the default | nothing |
 | `pr-review`, a pull request review counts | `approval: pr-review` in `terragucci.yml`; to hold unreviewed changes, require `terragucci/approval` on GitHub or Forgejo, or an approval rule on GitLab: [approve by review](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review) |
 | `sealed`, signed approvals | the same, and your ssh public key in `.chant/allowed_signers` on the default branch before the first change that destroys something: [set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) |
 

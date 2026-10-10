@@ -4,7 +4,7 @@ description: The fields of terragucci.notify/v1, the signed JSON event notify po
 prompt: |
   Read https://intentius.io/terragucci/reference/notify-event/.
   Write a small HTTP handler that verifies X-Terragucci-Signature over the raw body with a key from the environment, drops a repeated id, and prints the wave, its roots and, for a waiting wave, the approve command.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 When a wave waits, is refused or fails, its apply job posts one event to `notify.webhook`, provided `notify.webhook_key` is set. [Send events to your own webhook](/terragucci/guides/notify-a-chat-channel/#send-events-to-your-own-webhook) sets it up and verifies it. Slack and Teams notices need none of it; it is for a program of yours, such as a relay that turns a chat click into `terragucci approve --plan`.
@@ -30,7 +30,7 @@ When a wave waits, is refused or fails, its apply job posts one event to `notify
     "roots": ["envs/prod/app", "envs/prod/db"],
     "set_digest": "jcs1-sha256:9f2c...",
     "approval_mode": "ledger",
-    "approve_command": "chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c..."
+    "approve_command": "terragucci approve wave-2 --plan jcs1-sha256:9f2c..."
   }
 }
 ```
@@ -58,6 +58,6 @@ An event is never posted unsigned. Check the signature over the bytes received, 
 | `pr` | the pull or merge request, when a comment's apply posted it |
 | `wave`, `roots` | the wave, and its roots; for a refused or denied wave the roots that moved or were denied, for a failed one the roots that failed |
 | `run_url`, `report_url` | the run, and the wave's report when [`reports`](/terragucci/guides/keep-reports-in-a-bucket/) serves one |
-| `outcome` | the stage's [outcome](/terragucci/reference/cli-json/#the-apply-outcome) as it wrote it, with the [chant](/terragucci/concepts/glossary/#chant) command that approves a waiting wave |
+| `outcome` | the stage's [outcome](/terragucci/reference/cli-json/#the-apply-outcome) as it wrote it, with the `terragucci approve` command that approves a waiting wave |
 
 The JSON Schema ships with the package as `@intentius/terragucci/notify.schema.json`.

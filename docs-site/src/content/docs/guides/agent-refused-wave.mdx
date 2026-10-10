@@ -8,7 +8,7 @@ prompt: |
   for this forge names, set own_jobs in terragucci.yml to that file, run
   `npx terragucci init`, give the job no permission beyond what that tab gives,
   and open a pull request.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -17,7 +17,7 @@ One of four features that run a model; the others are the [`/terragucci agent` c
 
 ## Result
 
-One comment on what changed between the approved plan and the refused one. The agent never approves, applies or merges, and its prompt forbids running [chant](/terragucci/concepts/glossary/#chant) or terragucci.
+One comment on what changed between the approved plan and the refused one. The agent never approves, applies or merges, and its prompt forbids running terragucci.
 
 ## Prerequisites
 
@@ -85,7 +85,7 @@ One comment on what changed between the approved plan and the refused one. The a
                github_token: ${{ secrets.AGENT_FORGE_TOKEN }}
                prompt: |
                  Read refusal.json. Summarize which roots changed since the approval and why
-                 the plan moved, in five lines or fewer. Do not run chant approve,
+                 the plan moved, in five lines or fewer. Do not run
                  terragucci or any apply command.
        ```
      </TabItem>
@@ -109,7 +109,7 @@ One comment on what changed between the approved plan and the refused one. The a
            - >
              npx -y @anthropic-ai/claude-code@2.1.290 -p
              "Read refusal.json. Summarize which roots changed since the approval and why
-             the plan moved, in five lines or fewer. Do not run chant approve,
+             the plan moved, in five lines or fewer. Do not run
              terragucci or any apply command."
        ```
      </TabItem>
@@ -135,7 +135,7 @@ One comment on what changed between the approved plan and the refused one. The a
                test -f refusal.json || exit 0;
                npx -y @anthropic-ai/claude-code@2.1.290 -p
                "Read refusal.json. Summarize which roots changed since the approval and why
-               the plan moved, in five lines or fewer. Do not run chant approve,
+               the plan moved, in five lines or fewer. Do not run
                terragucci or any apply command."
              env:
                ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

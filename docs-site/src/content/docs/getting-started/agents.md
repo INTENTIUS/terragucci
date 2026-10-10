@@ -26,19 +26,19 @@ A key that `terragucci config check` refuses is not part of terragucci.
 2. Check what it found. Pass `--binary` or `--forge` if either is wrong, or ask the user.
 3. Write a `terragucci.yml`, as small as possible, only if the defaults are wrong; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
-5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. Then stop. Approvals are [chant](/terragucci/concepts/glossary/#chant) records on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and they belong to the user.
+5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. Then stop. Approvals are records on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and they belong to the user.
 
    ```text
-   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
    ```
-6. Tell the user to install chant, and under `approval: sealed` to add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#first-approval)). Do not add a key yourself. The file must be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
+6. Under `approval: sealed`, tell the user to add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#first-approval)). Do not add a key yourself. The file must be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
 
 ## Rules for the agent
 
 - Set terragucci up or change its config from the shell with `--json`, and parse the envelope ([JSON output](/terragucci/reference/cli-json/)).
 - Read what terragucci already wrote through `terragucci mcp`, when the user has added it ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
 - Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
-- Approvals belong to people. Print the `chant approve` command for a waiting wave but never run it; chant refuses to resolve a wave's gate over MCP or ACP.
+- Approvals belong to people. Print the `terragucci approve` command for a waiting wave but never run it; an approval made over MCP or ACP is refused.
 - [Responses to pipeline events](/terragucci/reference/responses/) need no model.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
 
@@ -50,7 +50,7 @@ A key that `terragucci config check` refuses is not part of terragucci.
 | plan a root, or run a response in dry run | the CLI with `--json` | they run the binary in the checkout |
 | read the estate, a root's last apply, a run's report, the state versions, the audit trail or the DORA figures | `terragucci mcp` | it reads the reports bucket with the credentials in its own environment, and every tool only reads |
 | find a waiting wave and its digest | `terragucci mcp`'s `waiting` tool | it prints the `terragucci approve` command for a person to run |
-| approve, apply, override or merge | neither | these belong to a person at a shell; the server has no such tool, and chant refuses a gate approval made over MCP |
+| approve, apply, override or merge | neither | these belong to a person at a shell; the server has no such tool, and an approval made over MCP is refused |
 
 ## Next
 

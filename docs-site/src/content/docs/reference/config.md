@@ -5,7 +5,7 @@ prompt: |
   Read https://intentius.io/terragucci/reference/config/.
   Run `npx terragucci config check --json` on this repo's terragucci.yml and list each problem it finds.
   Propose the smallest file that keeps current behavior, run config check again, and open a pull request with it.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root; two is an error. `terragucci config check` lists every problem.
@@ -300,7 +300,7 @@ apply:
     staging: ["envs/staging/*"]
 ```
 
-Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves and their approvals work as on the default branch, and `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
+Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves and their approvals work as on the default branch, and `terragucci approve wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
 
 | On a push to | Applies |
 |---|---|
@@ -523,7 +523,7 @@ terragucci ignores an answer that is weak or missing or comes from another model
 
 ## Parameters
 
-None. [`chant approve`](/terragucci/concepts/glossary/#chant) writes approvals to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). A local run can narrow:
+None. [`terragucci approve`](/terragucci/reference/cli/#approve) writes approvals to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). A local run can narrow:
 
 ```bash
 terragucci plan --project github.com/acme/infra --root envs/dev/core

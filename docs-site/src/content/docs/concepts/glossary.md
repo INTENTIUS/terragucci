@@ -1,6 +1,6 @@
 ---
 title: Glossary
-description: The words terragucci, chant and the example use, and the ones that mean something different in Terraform and HCP Terraform.
+description: The words terragucci and the example use, and the ones that mean something different in Terraform and HCP Terraform.
 ---
 
 A page links a word here on first use, unless the page explains it.
@@ -47,13 +47,13 @@ The hash over the plan digests of the roots in a wave whose plan changes somethi
 
 ### gate
 
-Where a wave waits for a person, per the `gate` setting: `on-destroy` (default), `always` or `never`. A waiting job exits 3 and prints its `chant approve` command.
+Where a wave waits for a person, per the `gate` setting: `on-destroy` (default), `always` or `never`. A waiting job exits 3 and prints its `terragucci approve` command.
 
 ## Approvals
 
 ### chant
 
-The tool terragucci's stages are written in. [chant](https://intentius.io/chant/) renders them for your forge, and `chant approve` (`npm i -D @intentius/chant`) writes approvals from your machine.
+The record format terragucci writes to [`chant/lifecycle`](#chantlifecycle): approvals, applies and lock releases, one line each. Approvers' keys are in [`.chant/allowed_signers`](#chantallowed_signers).
 
 ### chant/lifecycle
 
@@ -61,7 +61,7 @@ A branch holding the apply job's records and one commit per approval. Let only t
 
 ### chant.workspace.json
 
-chant's file at the repository root, written by `init` under `approval: sealed`, listing the wave gates under `identity.gates`. It has nothing to do with Terraform workspaces.
+The file at the repository root, written by `init` under `approval: sealed`, listing the wave gates under `identity.gates`. It has nothing to do with Terraform workspaces.
 
 ### identity.gates
 
@@ -73,17 +73,17 @@ The signers file holds one ssh public key per approver in ssh-keygen's allowed_s
 
 ### pr-review
 
-The `approval:` mode where the merged pull request's approving review of its head approves a gated wave, when the wave plans what the review saw. Any `chant approve` of the digest still counts, as under `ledger`. [Approve by review](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review).
+The `approval:` mode where the merged pull request's approving review of its head approves a gated wave, when the wave plans what the review saw. Any `terragucci approve` of the digest still counts, as under `ledger`. [Approve by review](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review).
 
 ### seal
 
-The ssh signature `chant approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing. `ledger` (the default) and `pr-review` need no seal.
+The ssh signature `terragucci approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing. `ledger` (the default) and `pr-review` need no seal.
 
 ## Other tools
 
 ### fountain
 
-A separate runtime that runs chant stages on a long-lived machine. terragucci's pipelines run on your forge's CI and never on [fountain](https://github.com/managoat/fountain).
+A separate runtime that runs pipeline stages on a long-lived machine. terragucci's pipelines run on your forge's CI and never on [fountain](https://github.com/managoat/fountain).
 
 ### steward
 
@@ -108,7 +108,7 @@ The OpenTofu fork from the team behind terragucci ([Choose your binary](/terragu
 
 | Here | What it means here | Not to be confused with |
 |---|---|---|
-| `chant.workspace.json` | chant's file that lists the gates | a Terraform or HCP Terraform workspace; each root plans in `default` unless `TF_WORKSPACE` says otherwise |
+| `chant.workspace.json` | the file that lists the sealed gates | a Terraform or HCP Terraform workspace; each root plans in `default` unless `TF_WORKSPACE` says otherwise |
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
 | layer | a step of the dependency order | a wave, an apply batch built from layers |
 | `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need an approval of their digest | Atlantis `apply`, which applies its stored plan; here each wave plans again |

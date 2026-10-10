@@ -4,7 +4,7 @@ description: Opt-in policy checks that run conftest or OPA over each plan and fa
 prompt: |
   Read https://intentius.io/terragucci/reference/policy/.
   Write a Rego policy under the policy directory that denies the rule I name, with tests, and open a pull request.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -208,7 +208,7 @@ policy:
      terragucci override envs/prod/app --rule main.deny_public_bucket --reason "<why>"
    ```
 
-2. A listed approver reads the plan and the denial, then runs that command in a checkout, with the reason ([`override`](/terragucci/reference/cli/#override)). That command runs `chant approve policy-override <root> --plan <digest> --note <reason>`, with `--sign` under `approval: sealed`.
+2. A listed approver reads the plan and the denial, then runs that command in a checkout, with the reason ([`override`](/terragucci/reference/cli/#override)). It records the override with the reason, with `--sign` under `approval: sealed`.
 
 3. Run the wave's job again. Before applying the root, it marks the override used in `_gates/policy-override/applied.jsonl`; its report and note name the override.
 

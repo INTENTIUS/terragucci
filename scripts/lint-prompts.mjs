@@ -37,8 +37,7 @@ const flat = (text) => text.replace(/\s+/g, " ");
 const NEVER_PARTS = [
   ["Never apply", "apply"],
   ["approve (a pull request review", "a pull request review"],
-  ["`terragucci approve`", "`terragucci approve`"],
-  ["`chant approve`", "`chant approve`"],
+  ["`terragucci approve`)", "`terragucci approve`"],
   ["override a policy denial (`terragucci override`)", "`terragucci override`"],
   ["use `--mode apply`", "`--mode apply`"],
   ["or merge;", "merge"],

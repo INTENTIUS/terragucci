@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/ephemeral-environments/.
   Look at this repo's roots and tell me which of them could be copied per pull request with ephemeral: name each root's backend and the key its copy would get, and, in a Terragrunt repo, whether the remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX.
   Do not edit terragucci.yml or run terragucci init.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
@@ -65,7 +65,7 @@ The environment waits at gate `pr-<n>` of op `tf-ephemeral` under the `gate` you
 The job prints the command that approves it:
 
 ```bash
-chant approve tf-ephemeral pr-12 --plan jcs1-sha256:6d2b...
+terragucci approve ephemeral 12 --plan jcs1-sha256:6d2b...
 ```
 
 The next push or a re-run of the job then applies it. Under `approval: sealed` only a sealed approval counts.

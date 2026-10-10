@@ -5,7 +5,7 @@ prompt: |
   Read https://intentius.io/terragucci/reference/reports-bucket/.
   Write a script that reads estate.json and index.json at the top of my reports prefix with a read-only identity, validates each against the JSON Schema the page names, and prints every waiting wave with its project, age and report.
   Read only: write nothing to the bucket.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `reports.bucket` names an S3 or GCS bucket or an Azure Blob container, and terragucci writes under one prefix in it (`reports.prefix`, empty by default). A release adds keys and never moves one, so a program can rely on the layout below.

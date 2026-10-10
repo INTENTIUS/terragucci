@@ -11,7 +11,7 @@ prompt: |
   Read https://intentius.io/terragucci/tutorial/.
   Clone https://github.com/INTENTIUS/terragucci, run `npm ci` and `just example up` as the page says, and report the Forgejo URL and the boot time. If it fails, match the error to "Troubleshooting" and tell me the fix.
   `just example up` applies the example to floci, its local AWS stand-in. That is the one exception to the line below, and only against floci.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Captured from '../../../components/Captured.astro';
@@ -48,8 +48,6 @@ Clone terragucci and install its dependencies.
 git clone https://github.com/INTENTIUS/terragucci && cd terragucci
 npm ci
 ```
-
-`npm ci` installs [chant](/terragucci/concepts/glossary/#chant), which the approval step runs later.
 
 ## Boot it
 

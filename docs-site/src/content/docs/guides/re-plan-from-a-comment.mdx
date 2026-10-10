@@ -7,7 +7,7 @@ prompt: |
   Check that the default branch's pipeline has the comment trigger (on GitLab, the `comments` job and a pipeline schedule with TERRAGUCCI_SCHEDULE set to comments); if it does not, run `npx terragucci init` and open a pull request with the result.
   You may comment `/terragucci plan` on a pull request and report what the note says.
   Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -158,7 +158,7 @@ No comment approves, and a re-plan cannot change what an approval binds. [When a
 
 On a merged pull request, `/terragucci apply` re-runs `tf-apply` for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
 
-<Shot step="statuses" view="reply" alt="A merged pull request\'s replies in Forgejo: wave 1 waits for an approval of its set digest, with the chant approve --sign command; a commenter with no write access is refused; and, once wave 1 is sealed, wave 1 applies and the reply says wave 2 now waits, linking the run" optional />
+<Shot step="statuses" view="reply" alt="A merged pull request\'s replies in Forgejo: wave 1 waits for an approval of its set digest, with the terragucci approve --sign command; a commenter with no write access is refused; and, once wave 1 is sealed, wave 1 applies and the reply says wave 2 now waits, linking the run" optional />
 
 | Part | What happens |
 |---|---|

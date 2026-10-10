@@ -37,7 +37,7 @@ Set up terragucci in this repository.
 Read https://intentius.io/terragucci/llms.txt first, then
 https://intentius.io/terragucci/getting-started/agents/ and follow it.
 Open a pull request with the result.
-Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ```
 
 `llms.txt` lists every page and `llms-full.txt` holds their text. After setup an agent reads the estate (down to a root's last apply) and the audit trail over the read-only MCP server `terragucci mcp` ([Read the estate over MCP](https://intentius.io/terragucci/guides/agent-read-over-mcp/)). Agents working on this repo itself follow [AGENTS.md](AGENTS.md).

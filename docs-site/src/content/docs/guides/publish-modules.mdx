@@ -9,7 +9,7 @@ prompt: |
   registry credentials I must add; do not add them. If I ask for attested
   releases, add `attest: true` and tell me to run `cosign generate-key-pair`
   myself; never create, read or commit a private key.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -227,7 +227,7 @@ A [rollout](/terragucci/guides/roll-out-a-module-version/) of `modules/network` 
 
 ## Attest each release
 
-With `modules.attest`, the publish job also signs each new release with a key you hold and records the version in [chant](/terragucci/concepts/glossary/#chant)'s release ledger, so a root's pin can be checked against all of it.
+With `modules.attest`, the publish job also signs each new release with a key you hold and records the version in the release ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), so a root's pin can be checked against all of it.
 
 <Steps>
 
@@ -272,7 +272,7 @@ With `modules.attest`, the publish job also signs each new release with a key yo
 
 </Steps>
 
-Each version runs as a chant component that terragucci writes from this config, so you write no component file:
+terragucci runs each version through these phases from this config, with no file of your own:
 
 | Phase | Does |
 |---|---|
@@ -286,7 +286,7 @@ Each version runs as a chant component that terragucci writes from this config, 
 
 | What | Where |
 |---|---|
-| The release record | a line of `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which `chant components status modules` lists |
+| The release record | a line of `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 | The bundles and the SBOM | `modules/attest/<digest>/` beside it |
 | An OCI tag's signature and attestations | attached to its manifest |
 | A git tag and its record | pushed together in one atomic push; an OCI tag is pushed only after its record |

@@ -5,7 +5,7 @@ claims: [mcp-last-apply]
 prompt: |
   Read https://intentius.io/terragucci/guides/agent-read-over-mcp/.
   Tell me the command line and the environment variables to add terragucci mcp to my MCP client for this repo's reports bucket; do not add it yourself, and do not create or print credentials.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
@@ -97,7 +97,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
 
 | A call | The answer |
 |---|---|
-| `approve`, `apply`, `override`, or any tool it does not list | an error: approvals belong to a person at a shell, and [chant](/terragucci/concepts/glossary/#chant) refuses a gate approval made over MCP |
+| `approve`, `apply`, `override`, or any tool it does not list | an error: approvals belong to a person at a shell, and an approval made over MCP is refused |
 | an argument the tool does not list, such as `token` | an error; credentials come from the server's environment |
 | a `report` path outside the bucket's prefix | an error |
 
