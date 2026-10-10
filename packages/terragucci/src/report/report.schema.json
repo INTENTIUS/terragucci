@@ -212,7 +212,7 @@
             }
           },
           "dependencies": {
-            "description": "A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads, as plain paths in its terragrunt.hcl (minor 23). Absent when it names none.",
+            "description": "A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads, as plain paths in its terragrunt.hcl (minor 23). For a plain root, the roots waves.after puts before it. Absent when it names none.",
             "type": "array",
             "items": { "type": "string" }
           },

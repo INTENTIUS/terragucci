@@ -11,12 +11,9 @@
  *
  * `depends_on` is the one setting that needs the repo. terragucci orders
  * roots by their `terraform_remote_state` reads, so a dependency the reads
- * already give needs nothing. One they do not give goes into `waves.canary`,
- * which puts the roots it names before the rest. That is one step of order:
- * a dependency between two roots that would both have to go first stays
- * unmapped, and the note names it.
+ * already give needs nothing. One they do not give goes into `waves.after`,
+ * by root.
  */
-import { applyWaves } from "../apply";
 import {
   APPLY_REQUIRES,
   PR_APPLY_NEEDS_ON_GITLAB,
@@ -30,7 +27,7 @@ import {
   type StepStage,
 } from "../config";
 import { globMatch } from "../detect";
-import { isMap, list, Notes, rootOf, type ImportNote } from "./notes";
+import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote } from "./notes";
 
 /** The repo as terragucci finds it: its roots, their dependency layers, and which roots each one reads. */
 export interface RepoShape {
@@ -581,9 +578,9 @@ function readDrift(r: Reader, d: unknown): void {
 }
 
 /**
- * The order depends_on asks for, in the waves terragucci makes: dependencies
- * the reads already give need nothing; the rest go into waves.canary as far
- * as one canary set can carry them.
+ * The order depends_on asks for, as waves.after: dependencies the reads
+ * already give need nothing; the rest are written, by root. A cycle they and
+ * the reads make together is named, and nothing is written.
  */
 function order(r: Reader): void {
   const { notes } = r;
@@ -592,54 +589,21 @@ function order(r: Reader): void {
     for (const key of new Set([...r.edges.values()].flatMap((m) => [...m.values()]))) notes.terrateam("unmapped", key, "Order", "in a Terragrunt repo the units' dependency blocks order them");
     return;
   }
-  const layers = r.o.repo?.layers ?? [r.roots];
-  const reads = r.o.repo?.reads ?? new Map<string, Set<string>>();
-  const waveOf = (canary: Set<string>): Map<string, number> => {
-    const m = new Map<string, number>();
-    applyWaves(layers, [...canary]).forEach((w, i) => w.forEach((x) => m.set(x, i)));
-    return m;
-  };
   const edges = [...r.edges].flatMap(([d, ups]) => [...ups].map(([u, key]) => ({ d, u, key })));
-  const ok = (w: Map<string, number>, e: { d: string; u: string }): boolean => (w.get(e.u) ?? 0) < (w.get(e.d) ?? 0);
-  const plain = waveOf(new Set());
-  const canary = new Set(edges.filter((e) => !ok(plain, e)).map((e) => e.u));
-  // A canary root's upstreams go first with it.
-  const upstreams = (x: string, into: Set<string>): void => {
-    for (const u of reads.get(x) ?? []) if (!into.has(u)) {
-      into.add(u);
-      upstreams(u, into);
-    }
-  };
-  for (const x of [...canary]) upstreams(x, canary);
-  // A canary root that must wait for another root cannot go first: drop it, and every canary root that reads it.
-  for (;;) {
-    const w = waveOf(canary);
-    const bad = edges.find((e) => canary.has(e.d) && !ok(w, e));
-    if (!bad) break;
-    const drop = new Set([bad.d]);
-    for (let grew = true; grew; ) {
-      grew = false;
-      for (const x of canary) if (!drop.has(x) && [...(reads.get(x) ?? [])].some((u) => drop.has(u))) {
-        drop.add(x);
-        grew = true;
-      }
-    }
-    for (const x of drop) canary.delete(x);
-  }
-  const final = waveOf(canary);
-  if (canary.size) r.s.waves = { canary: [...canary].sort() };
+  const { after, fromReads, cycle } = wavesAfterOf(edges.map((e) => [e.d, e.u] as const), r.o.repo?.reads);
+  if (Object.keys(after).length) r.s.waves = { ...r.s.waves, after };
   const byKey = new Map<string, typeof edges>();
   for (const e of edges) byKey.set(e.key, [...(byKey.get(e.key) ?? []), e]);
   for (const [key, es] of byKey) {
-    const late = es.filter((e) => !ok(final, e));
-    const fromReads = es.filter((e) => ok(plain, e));
     const fmt = (xs: typeof es) => xs.map((e) => `${e.d} after ${e.u}`).join(", ");
-    if (late.length) {
-      notes.terrateam("unmapped", key, "Order", `${fmt(late)} ${late.length === 1 ? "is" : "are"} not kept: waves.canary puts one set of roots first, and ${late.length === 1 ? "this needs" : "these need"} a second; read the upstream's outputs with terraform_remote_state to order ${late.length === 1 ? "it" : "them"}`);
-    } else if (fromReads.length === es.length) {
+    const given = es.filter((e) => fromReads.has(`${e.d}\0${e.u}`));
+    const written = es.filter((e) => !given.includes(e));
+    if (cycle && written.length) {
+      notes.terrateam("unmapped", key, "Order", `${fmt(written)} ${written.length === 1 ? "is" : "are"} not kept: with the terraform_remote_state reads they make a cycle, ${cycle.join(" after ")}`);
+    } else if (!written.length) {
       notes.terrateam("default", key, "Order", `the terraform_remote_state reads already order ${fmt(es)}`);
     } else {
-      notes.terrateam("mapped", key, "Order", `waves.canary: ${[...canary].sort().join(", ")}, which apply before every other root`);
+      notes.terrateam("mapped", key, "Order", `waves.after: ${fmt(written)}`);
     }
   }
 }
