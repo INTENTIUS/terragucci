@@ -14,7 +14,7 @@
     },
     {
       "cmd": "echo 'gates: always' >> terragucci.yml && npx terragucci config check",
-      "output": "terragucci.yml: 1 problem(s)\n  config.gates is not a setting (settings: roots, binary, version, forge, url, gate, approval, apply, locks, waves, drift, comments, gitlab, runtime, reports, token_env, env, telemetry, tips, modules, oidc, parallelism, terragrunt, policy, respond, agent, decide, audit_region, dashboards, synth, steps, image, notify, cost, rollouts)",
+      "output": "terragucci.yml: 1 problem(s)\n  config.gates is not a setting (settings: roots, binary, version, forge, url, gate, approval, apply, locks, waves, drift, comments, gitlab, runtime, reports, token_env, env, telemetry, tips, modules, oidc, parallelism, terragrunt, policy, respond, agent, decide, audit_region, dashboards, synth, steps, image, notify, cost, rollouts, atlantis_comments, generate, review, own_jobs)",
       "exit": 2
     }
   ]

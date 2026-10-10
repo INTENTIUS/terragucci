@@ -4,14 +4,14 @@
   "commands": [
     {
       "cmd": "just example change one-root",
-      "output": "[example] pushed change/one-root at b985b0e1\n[example] run 9 for b985b0e1 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/1/attempt/1)\n[example] run 10 for b985b0e1 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/10/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/10/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/one-root at 52a1c694\n[example] run 29 for 52a1c694 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/29/jobs/1/attempt/1)\n[example] run 30 for 52a1c694 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/30/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/11 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/29/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/30/jobs/0/attempt/1 (success)",
       "exit": 0
     }
   ],
   "shots": {
-    "note-light": "68785649ae1e6a33",
-    "note-dark": "1af3601ff2eb1fc4",
-    "replies-light": "212056d4ede3fd2a",
-    "replies-dark": "e57332151937bc0e"
+    "note-light": "be1e9328d62b7207",
+    "note-dark": "dcec6be0ca960fd7",
+    "replies-light": "44baf72f4ff53e3a",
+    "replies-dark": "15c5c04ae930aaf2"
   }
 }

@@ -4,17 +4,17 @@
   "commands": [
     {
       "cmd": "just example-gitlab change one-root",
-      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/15 (success)\nCheck          /root/example/-/pipelines/14 (success)",
+      "output": "Merge request  /root/example/-/merge_requests/6 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/31 (success)\nCheck          /root/example/-/pipelines/29 (success)",
       "exit": 0
     },
     {
       "cmd": "just example-gitlab plan-comment one-root",
-      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is updated in place)\nRe-plan        /root/example/-/pipelines/17 (success)",
+      "output": "Merge request  /root/example/-/merge_requests/6 (the plan note is updated in place)\nRe-plan        /root/example/-/pipelines/33 (success)",
       "exit": 0
     },
     {
       "cmd": "just example-gitlab change unformatted",
-      "output": "Merge request  /root/example/-/merge_requests/4 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/19 (failed)\nCheck          /root/example/-/pipelines/18 (failed)",
+      "output": "Merge request  /root/example/-/merge_requests/7 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/35 (failed)\nCheck          /root/example/-/pipelines/34 (failed)",
       "exit": 0
     },
     {
@@ -24,44 +24,44 @@
     },
     {
       "cmd": "just example-gitlab change destroy",
-      "output": "Merge request  /root/example/-/merge_requests/5 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/23 (success)\nCheck          /root/example/-/pipelines/22 (success)",
+      "output": "Merge request  /root/example/-/merge_requests/8 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/39 (success)\nCheck          /root/example/-/pipelines/38 (success)",
       "exit": 0
     },
     {
       "cmd": "just example-gitlab merge destroy",
-      "output": "Merged    merge request !5 into main\nPipeline  /root/example/-/pipelines/25 (failed)\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "output": "Merged    merge request !8 into main\nPipeline  /root/example/-/pipelines/41 (failed)\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
       "exit": 0
     },
     {
       "cmd": "the waiting apply job on main",
-      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: planning up to 4 roots at once (the s3 backend)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28, 2 changes, 1 destroy\nwave 4 of 4: approval sealed (identity.gates in chant.workspace.json at base, with no approval key)\nwave 4 of 4: note: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates\nwave 4 of 4 waits for an approval of digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: envs/prod/email plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/prod/orders plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/prod/payments plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/prod/search plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/staging/email plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: envs/staging/orders plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: envs/staging/payments plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: envs/staging/search plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: planning up to 4 roots at once (the s3 backend)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28, 2 changes, 1 destroy\nwave 4 of 4: approval sealed (identity.gates in chant.workspace.json at base, with no approval key)\nwave 4 of 4: note: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates\nwave 4 of 4 waits for an approval of digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
       "exit": 3
     },
     {
       "cmd": "just example-gitlab change drift",
-      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform\nDrift run  /root/example/-/pipelines/27 (success)\nIssue      /root/example/-/issues/1",
+      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform\nDrift run  /root/example/-/pipelines/42 (success)\nIssue      /root/example/-/issues/2",
       "exit": 0
     },
     {
       "cmd": "just example-gitlab pr-apply",
-      "output": "Merge request  /root/example/-/merge_requests/6 (merged)\nApply          /root/example/-/pipelines/34 (success)\nterragucci: started pipeline http://gitlab:8929/root/example/-/pipelines/34 on main to apply !6's head 082b4d03 for root; its job reads !6 again before it applies\nterragucci: applied wave 1, 2, 3, 4 of !6 at 082b4d03; pr-merge merges it next. http://gitlab:8929/root/example/-/jobs/106 \nterragucci: merged !6 at 082b4d03 and released its locks on envs/dev/orders. http://gitlab:8929/root/example/-/pipelines/34",
+      "output": "Merge request  /root/example/-/merge_requests/9 (merged)\nApply          /root/example/-/pipelines/50 (success)\nterragucci: started pipeline http://gitlab:8929/root/example/-/pipelines/50 on main to apply !9's head e8a28ac4 for root; its job reads !9 again before it applies\nterragucci: applied wave 1, 2, 3, 4 of !9 at e8a28ac4; pr-merge merges it next. http://gitlab:8929/root/example/-/jobs/150 \nterragucci: merged !9 at e8a28ac4 and released its locks on envs/dev/orders. http://gitlab:8929/root/example/-/pipelines/50",
       "exit": 0
     }
   ],
   "shots": {
-    "required-light": "2f66b6b5a4df4ef8",
-    "required-dark": "3c3e915489af1fd6",
-    "note-light": "663743029c3e3071",
-    "note-dark": "370f2f24d50351ff",
-    "replan-light": "ac8fe1de4f792045",
-    "replan-dark": "bdee5d5d840b086b",
-    "check-light": "42bd65898d244f07",
-    "check-dark": "23f1e434ca6457fa",
-    "waiting-light": "aa64a35ae34c9e4c",
-    "waiting-dark": "2ec0f6295963fa3e",
-    "drift-light": "ac75267c1fdaf245",
-    "drift-dark": "39e21da3e8e79fb1",
-    "apply-light": "6b9ce4a7bb05af12",
-    "apply-dark": "66923814ac0d89fb"
+    "required-light": "3258877ba5abd164",
+    "required-dark": "f78d50e6f452a35a",
+    "note-light": "8d49e573490346c0",
+    "note-dark": "74d78d67e55e12b5",
+    "replan-light": "4c8fc235c0a0060b",
+    "replan-dark": "9f60c1cea3a6294d",
+    "check-light": "3eecfec229e9e100",
+    "check-dark": "9ef001ff53087a9e",
+    "waiting-light": "92c747a40b20580d",
+    "waiting-dark": "a745de2f7d21305f",
+    "drift-light": "eb6279587f1608d5",
+    "drift-dark": "8ca0648944b0ee43",
+    "apply-light": "3caa9bd95491729a",
+    "apply-dark": "8b8a67b50aa1b275"
   }
 }
