@@ -251,6 +251,17 @@ describe("unlockState", () => {
     await expect(run(world({ type: "gcs", bucket: "b" }), forge([]))).rejects.toThrow(ConfigError);
   });
 
+  it("says a root under choudoufu's live resource markers holds no state lock, without running the binary", async () => {
+    const w = world();
+    writeFileSync(join(w.work, "app/main.tf"), 'terraform {\n  live {\n    estate = "app"\n  }\n}\n\nresource "terraform_data" "x" {}\n');
+    const r = await run(w, forge([]), { binary: "choudoufu" });
+    expect(r.code).toBe(0);
+    expect(r.live).toBe(true);
+    expect(r.lines.join("\n")).toContain("no state file and no state lock; nothing to release");
+    expect(w.calls).toEqual([]);
+    expect(lifecycle(w.origin, UNLOCK_LEDGER)).toBe("");
+  });
+
   it("refuses a path that is not a root", async () => {
     const w = world();
     await expect(unlockState(w.work, "../elsewhere", { env: ENV, exec: w.exec })).rejects.toThrow(/not a root/);

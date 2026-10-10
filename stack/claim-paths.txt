@@ -47,7 +47,7 @@ packages/terragucci/src/tg-preview-gate.ts tg-preview-gate tg-layers tg-gate-* t
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-* token-scrub plan-token-free check
 packages/terragucci/src/pins.ts           root-pins tg-root-pins pinned-install tf-terraform check zero-config note-* report
 packages/terragucci/src/install.ts        root-pins tg-root-pins tg-choudoufu pinned-install tf-terraform tg-terraform cdf-* cost-* atmos-* terramate-*
-packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
+packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release atmos-pr-apply-lock terramate-pr-apply-lock
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-mixed reconcile-parallelism estate-control audit-control provider-project
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-* behold-view
@@ -80,7 +80,7 @@ packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* drift-overdue
 packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent
 packages/terragucci/src/gitlab-ci.ts
-packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard
+packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard atmos-pr-apply-lock terramate-pr-apply-lock
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard replan-dispatch
 packages/terragucci/src/import/guide.ts   import-atlantis import-terrateam comment-*
 packages/terragucci/src/import/terrateam.ts import-terrateam
@@ -149,11 +149,11 @@ stack/mock-github/                        github-drift-issue
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/cdf-race                   cdf-*
 stack/fixtures/terraform-lock             boot report drift
-stack/binary-tree.py                      boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan
+stack/binary-tree.py                      boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan unlock-state
 stack/fixtures/atmos-two-stacks          atmos-*
 stack/fixtures/tg-stack                  tg-stack-*
 stack/fixtures/atmos-reads               atmos-upstream-wait
-stack/fixtures/terramate-stacks          terramate-waves terramate-affected terramate-stale
+stack/fixtures/terramate-stacks          terramate-waves terramate-affected terramate-stale terramate-pr-apply-lock
 stack/fixtures/terramate-sharing         terramate-sharing
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/linked-states              linked-*

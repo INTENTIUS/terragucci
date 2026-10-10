@@ -64,7 +64,7 @@ const forgejo = check({ file: "smoke.sh", table: "CLAIMS", forge: "forgejo", fn:
 const gitlab = check({ file: "smoke-gitlab.sh", table: "GITLAB_CLAIMS", forge: "gitlab", fn: "gitlab_claim_", groups: "GITLAB_CLAIM_GROUPS" });
 
 // BINARY_CLAIMS names Forgejo claims, and SMOKE_BINARY=terraform and
-// choudoufu list exactly those, in CLAIMS order.
+// choudoufu list exactly those and their BINARY_LOCK_CLAIMS, in CLAIMS order.
 {
   const src = readFileSync(script, "utf8");
   const m = src.match(/\nBINARY_CLAIMS='([^']*)'/);
@@ -74,7 +74,10 @@ const gitlab = check({ file: "smoke-gitlab.sh", table: "GITLAB_CLAIMS", forge: "
     const all = execFileSync("bash", [script, "--list"], { encoding: "utf8", env: { ...process.env, SMOKE_FORGE: "forgejo" } })
       .split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
     for (const n of core) if (!all.includes(n)) errors.push(`BINARY_CLAIMS names ${n}, which is not in CLAIMS`);
+    const locking = src.match(/\nBINARY_LOCK_CLAIMS='([^']*)'/);
+    const extra = (binary) => (locking?.[1] ?? "").split("\n").map((l) => l.trim().split(/\s+/)).find((w) => w[0] === binary)?.slice(1) ?? [];
     for (const binary of ["terraform", "choudoufu"]) {
+      for (const n of extra(binary)) if (!all.includes(n)) errors.push(`BINARY_LOCK_CLAIMS names ${n} for ${binary}, which is not in CLAIMS`);
       let out = "";
       try {
         out = execFileSync("bash", [script, "--list"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SMOKE_FORGE: "forgejo", SMOKE_BINARY: binary } });
@@ -82,7 +85,7 @@ const gitlab = check({ file: "smoke-gitlab.sh", table: "GITLAB_CLAIMS", forge: "
         errors.push(`SMOKE_BINARY=${binary} smoke.sh --list failed: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
       }
       const listed = out.split("\n").filter(Boolean).map((l) => l.split(" ")[0]);
-      const want = all.filter((n) => core.includes(n));
+      const want = all.filter((n) => core.includes(n) || extra(binary).includes(n));
       if (listed.join(" ") !== want.join(" ")) errors.push(`SMOKE_BINARY=${binary} lists ${listed.join(" ")}, not ${want.join(" ")}`);
     }
   }
