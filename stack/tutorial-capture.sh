@@ -32,9 +32,19 @@
 #   alone    it needs nothing of the example: it runs the CLI on a copy of
 #            example/, or brings up what it needs itself
 # --reuse skips all of that and runs the step on the example as it stands.
+#
+# It runs on the capture stack (TG_STACK=capture, stack/instance.sh): its own
+# Forgejo, runner and floci, on host ports 100 up, with a stack lock of its
+# own, so a capture never makes the smoke claims wait. TG_STACK=shared
+# captures on the shared stack instead, holding its lock as before. Output
+# naming the capture stack's host ports is written with the shared stack's
+# (localhost:3400 as localhost:3300), the ones the tutorial tells a reader.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export TG_STACK="${TG_STACK:-capture}"
+# shellcheck source=instance.sh
+. "$HERE/instance.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
 EXAMPLE="$ROOT/example"
 DATA="$ROOT/docs-site/src/data/tutorial"
@@ -117,11 +127,12 @@ STEP=""
 . "$HERE/locks.sh"
 trap 'rc=$?; release_mine; [ "$rc" = 0 ] || [ -z "$STEP" ] || log "FAIL: the $STEP step stopped the capture (exit $rc)"; drop_work "$STAGE"' EXIT
 # The capture boots, resets and drives the stack's example, so it holds the
-# whole stack alone, as stack/smoke.sh's claims hold their parts: it waits for
-# the claims running from any worktree, and claims started after it wait for
-# it. The claims it runs itself (claim_run) take their locks in a directory
-# of their own, under its hold.
-log "waiting for the stack to itself (the stack lock in $SMOKE_LOCKS)"
+# whole stack alone, as stack/smoke.sh's claims hold their parts: on the
+# capture stack that waits only for another capture; on the shared stack it
+# waits for the claims running from any worktree, and claims started after it
+# wait for it. The claims it runs itself (claim_run) take their locks in a
+# directory of their own, under its hold.
+log "waiting for the $TG_STACK stack to itself (the stack lock in $SMOKE_LOCKS)"
 hold_locks "$$.capture" "stack!"
 export SMOKE_LOCK_DIR="$STAGE/locks"
 
@@ -159,9 +170,17 @@ claims_pass() { # claim...
   done
 }
 
+# The capture stack's host ports, written as the shared stack's: a reader's
+# stack listens where the tutorial says.
+PORT_SED=()
+for pair in FORGEJO:3300 FLOCI:4580 GRAFANA:3310 PROMETHEUS:9190 TEMPO:3210 OTLP:4328 FOUNTAIN:4010 REGISTRY:5050; do
+  var="TERRAGUCCI_${pair%%:*}_PORT"; want="${pair#*:}"
+  [ "${!var:-$want}" = "$want" ] || PORT_SED+=(-e "s/localhost:${!var}([^0-9]|\$)/localhost:$want\1/g")
+done
+
 # Output a reader would see, with what changes run to run made stable.
 normalize() {
-  sed -E \
+  sed -E ${PORT_SED[@]+"${PORT_SED[@]}"} \
     -e 's/ready in [0-9]+s/ready in 90s/' \
     -e 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
     -e 's/\x1b\[[0-9;]*m//g' \
@@ -308,7 +327,7 @@ FORGEJO=""
 # The stack's Forgejo: URL, TOKEN, USER, api, REPO and FORGEJO (the repo's page).
 forge() {
   # shellcheck disable=SC1091
-  . "$HERE/.state/forgejo.env"
+  . "${TG_STATE:-$HERE/.state}/forgejo.env"
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   # lib.sh's api, made to say which step's request failed and its URL.
@@ -594,7 +613,7 @@ plan_example() { # step, work dir, scenario, lines to add to terragucci.yml, [do
   git -C "$work" add -A
   GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
     git -C "$work" -c user.name=terragucci -c user.email=example@terragucci.local -c commit.gpgsign=false commit -qm "$scenario"
-  run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
@@ -1111,7 +1130,7 @@ STEP=""
 
 if [ "$CHANGED" = 1 ] || [ ! -f "$DATA/manifest.json" ]; then
   # shellcheck disable=SC1091
-  . "$HERE/.state/forgejo.env"
+  . "${TG_STATE:-$HERE/.state}/forgejo.env"
   jq -n \
     --arg at "$(date -u +%Y-%m-%d)" \
     --arg commit "$(git -C "$ROOT" rev-parse --short HEAD)" \

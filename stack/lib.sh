@@ -30,13 +30,16 @@
 declare -F fail >/dev/null || fail() { echo "$*" >&2; return 1; }
 
 LIB_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The stack instance (TG_STACK): its state directory, container names, ports.
+# shellcheck source=instance.sh
+. "$LIB_HERE/instance.sh" || return 1
 TIMEOUT="${TERRAGUCCI_VALIDATE_TIMEOUT:-900}"
 
 if [ "${LIB_FORGE:-forgejo}" = gitlab ]; then
   if [ -z "${TERRAGUCCI_GITLAB_TOKEN:-}" ]; then
-    [ -f "$LIB_HERE/.state/gitlab.env" ] || fail "no stack/.state/gitlab.env; run 'just stack-up gitlab' first" || return 1
+    [ -f "$TG_STATE/gitlab.env" ] || fail "no stack/.state/gitlab.env; run 'just stack-up gitlab' first" || return 1
     # shellcheck disable=SC1091
-    . "$LIB_HERE/.state/gitlab.env"
+    . "$TG_STATE/gitlab.env"
   fi
   URL="$TERRAGUCCI_GITLAB_URL"
   TOKEN="$TERRAGUCCI_GITLAB_TOKEN"
@@ -47,9 +50,9 @@ if [ "${LIB_FORGE:-forgejo}" = gitlab ]; then
     || fail "GitLab at $URL does not accept the token; run 'just stack-up gitlab' again" || return 1
 else
   if [ -z "${TERRAGUCCI_FORGEJO_TOKEN:-}" ]; then
-    [ -f "$LIB_HERE/.state/forgejo.env" ] || fail "no stack/.state/forgejo.env; run 'just stack-up forgejo' first" || return 1
+    [ -f "$TG_STATE/forgejo.env" ] || fail "no $TG_STATE/forgejo.env; run 'just stack-up forgejo' first" || return 1
     # shellcheck disable=SC1091
-    . "$LIB_HERE/.state/forgejo.env"
+    . "$TG_STATE/forgejo.env"
   fi
   URL="$TERRAGUCCI_FORGEJO_URL"
   TOKEN="$TERRAGUCCI_FORGEJO_TOKEN"
@@ -184,13 +187,13 @@ runner_watch() {
   if [ "$stuck" != yes ]; then RUNNER_STUCK_SINCE=""; return 0; fi
   [ -n "$RUNNER_STUCK_SINCE" ] || { RUNNER_STUCK_SINCE="$now"; return 0; }
   [ $(( now - RUNNER_STUCK_SINCE )) -ge "${TG_RUNNER_WATCH_AFTER:-60}" ] || return 0
-  stamp="${SMOKE_LOCKS:-$LIB_HERE/.state}/runner-nudge"
+  stamp="${SMOKE_LOCKS:-$TG_STATE}/runner-nudge"
   read -r last 2>/dev/null <"$stamp" || last=0
   case "$last" in ''|*[!0-9]*) last=0 ;; esac
   if [ $(( now - last )) -ge 60 ]; then
     mkdir -p "$(dirname "$stamp")" && echo "$now" >"$stamp"
     echo "[runner-watch] a job has waited $(( now - RUNNER_STUCK_SINCE ))s with no job running; restarting forgejo-runner (Forgejo 16, forgejo#14576)" >&2
-    docker restart terragucci-forgejo-runner >/dev/null 2>&1 || true
+    docker restart "${TG_PROJECT:-terragucci}-forgejo-runner" >/dev/null 2>&1 || true
     RUNNER_NUDGES=$(( RUNNER_NUDGES + 1 ))
   fi
   RUNNER_STUCK_SINCE=""

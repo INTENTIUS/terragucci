@@ -172,7 +172,7 @@ describe("pollGitLabComments: plan", () => {
     expect(r[0]).toMatch(/a comment never runs `approve`/);
     expect(r[1]).toMatch(/`\/terragucci unlock` does not run here: this project applies after merge/);
     expect(r[2]).toMatch(/`\/terragucci lock` does not run here/);
-    expect(r[3]).toMatch(/`\/terragucci agent` does not run on GitLab/);
+    expect(r[3]).toMatch(/the agent command is off in this project; `agent\.comment` in terragucci\.yml turns it on/);
     expect(posts(api.calls, /\/pipelines$|\/retry$/)).toEqual([]);
   });
 

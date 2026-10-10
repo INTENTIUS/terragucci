@@ -1,6 +1,6 @@
 {
   "step": "approved",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "be9f7c9320e2bc21",
   "commands": [
     {
       "cmd": "just example approve",
@@ -9,11 +9,11 @@
     }
   ],
   "shots": {
-    "record-light": "1d7a92fd3b5c6bda",
-    "record-dark": "fd00dd83975e5e7f",
+    "record-light": "6f5d18767513d162",
+    "record-dark": "e97bf26b16e55f4f",
     "reply-light": "2dd0bbd1838e364f",
     "reply-dark": "b8bc0189ca22b8e5",
-    "log-light": "76632b6c55513b1a",
-    "log-dark": "0b5b81917af50d7a"
+    "log-light": "a0402f5217ef4831",
+    "log-dark": "f196621719b050a4"
   }
 }
