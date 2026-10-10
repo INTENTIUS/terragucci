@@ -82,16 +82,17 @@ function checkCaptures(label, text) {
   }
 }
 
-// A tutorial page, a guide or a concept page. A published one names its smoke
+// A tutorial page, a guide, a concept or a standards page. A published one names its smoke
 // claims in `claims:`, and each must pass. A guide must carry the line:
 // `claims: []` says that no recorded claim backs it.
 let checked = 0;
 const guides = join(root, "docs-site/src/content/docs/guides");
 const concepts = join(root, "docs-site/src/content/docs/concepts");
+const standards = join(root, "docs-site/src/content/docs/standards");
 function checkDir(dir, kind) {
   for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
     if (!/\.mdx?$/.test(name)) continue;
-    const label = kind === "guide" ? `guides/${name}` : kind === "concept" ? `concepts/${name}` : name;
+    const label = kind === "page" ? name : `${kind === "guide" ? "guides" : kind === "concept" ? "concepts" : "standards"}/${name}`;
     const text = readFileSync(join(dir, name), "utf8");
     const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
     if (/^draft:\s*true\s*$/m.test(front)) {
@@ -113,9 +114,10 @@ function checkDir(dir, kind) {
 checkDir(pages, "page");
 checkDir(guides, "guide");
 checkDir(concepts, "concept");
+checkDir(standards, "standards page");
 // Every other page that embeds a capture or a screenshot.
 const docs = join(root, "docs-site/src/content/docs");
-for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/") && !p.startsWith(concepts + "/")).sort()) {
+for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/") && !p.startsWith(concepts + "/") && !p.startsWith(standards + "/")).sort()) {
   checkCaptures(relative(docs, file), readFileSync(file, "utf8"));
 }
 if (problems.length) {
