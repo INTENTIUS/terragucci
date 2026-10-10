@@ -61,7 +61,7 @@ A coding agent makes the change and terragucci commits it to the pull request's 
    | Variable | `AGENT_FORGE_TOKEN`, masked; the model's key in `ANTHROPIC_API_KEY`, masked |
    | Default branch | protected, with the bot off the push and merge lists |
 
-   Add `comments:` beside the `agent` block. The `comments` job starts the agent's pipeline on the default branch with its own job token, so it runs as the user who owns the comments schedule.
+   GitLab also needs `comments:` beside the `agent` block. The `comments` job starts the agent's pipeline on the default branch with its own job token, so it runs as the user who owns the comments schedule.
    </TabItem>
    <TabItem label="Forgejo">
 
@@ -99,7 +99,7 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 
    <Shot step="agent" view="reply" alt="terragucci's reply on a Forgejo pull request: it pushed a commit to agent-change, changing app/rev.txt; the push plans the pull request again, and nothing was applied, approved or merged" />
 
-   The commit names who asked on which pull request, with the ask:
+   The commit records the ask and who made it on which pull request:
 
    <Shot step="agent" view="commit" alt="The agent's commit in Forgejo: Change asked for by terragucci-admin on the pull request, with the ask set app's rev to 3, authored by terragucci agent, changing app/rev.txt from 1 to 3" />
 
@@ -113,7 +113,7 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 | `agent-push` | applies the patch to the same head in a fresh container; refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), with a reply naming the paths; pushes any other as one commit without force | the agent's token |
 | the plan job | plans the pushed change with its read-only role | the plan role |
 
-On GitLab the `comments` job answers the note and starts a pipeline on the default branch with `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE` and `TERRAGUCCI_AGENT_HEAD`. Both jobs run there, from the default branch's pipeline file, and each reads the merge request and the note from GitLab again before it acts. GitLab hands every job the project's variables, so the agent runs under `env -i` with the prompt, the turn limit and the model's key, and nothing else.
+On GitLab the `comments` job answers the note and starts a pipeline on the default branch with `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE` and `TERRAGUCCI_AGENT_HEAD`. Both jobs run there from the default branch's pipeline file. Each reads the merge request and the note from GitLab again before it acts. GitLab hands every job the project's variables, so the agent runs under `env -i` and gets only the prompt and turn limit plus the model's key.
 
 | Guard | What it stops |
 |---|---|
@@ -123,7 +123,7 @@ On GitLab the `comments` job answers the note and starts a pipeline on the defau
 | `agent-push` pushes to the same head, without force | a lost commit: when the agent fails, hits its turn limit, or the pull request moves, the branch stays as it was |
 | the command below lets the agent edit files and run `terragucci config check` and `terragucci init --dry-run`, and loads no MCP server and none of the repository's Claude Code settings | any other command, web fetches and MCP tools |
 
-The default command is Claude Code in print mode, pinned to one release:
+The default command pins one release of Claude Code and runs it in print mode:
 
 ```text
 npx -y @anthropic-ai/claude-code@2.1.290 -p --max-turns "$TG_AGENT_MAX_TURNS"

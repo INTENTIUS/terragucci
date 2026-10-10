@@ -14,7 +14,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-Each root plans and applies with its environment's roles. A dev root's init, plan, apply and steps run as the dev roles, which your IAM policies limit to reading and writing dev's state keys.
+Each root runs every command, steps included, with its environment's roles. In dev those are the dev roles, which your IAM policies limit to dev's state keys.
 
 | Where | What it shows |
 |---|---|
@@ -55,7 +55,7 @@ Each root plans and applies with its environment's roles. A dev root's init, pla
      arn:aws:iam::111122223333:role/prod-apply (apply, envs/prod/**): s3://acme-state/prod/app.tfstate
    ```
 
-3. Scope each role's policy to those keys. The plan role reads; the apply role reads and writes, and with `use_lockfile` writes and deletes the lock file beside the state:
+3. Scope each role's policy to those keys. The plan role only reads. With `use_lockfile` the apply role also writes and deletes the lock file beside the state it reads and writes:
 
    ```json
    {
@@ -67,7 +67,7 @@ Each root plans and applies with its environment's roles. A dev root's init, pla
    }
    ```
 
-   Trust each pair as you trust `plan_role` and `apply_role`: the pull-request and default branch subjects for plan, the default branch's alone for apply.
+   Trust each pair as you trust `plan_role` and `apply_role`. Plan trusts the pull-request and default branch subjects; apply trusts only the default branch's.
 
 4. Read the warnings. `config check` prints them on stderr and still exits 0:
 

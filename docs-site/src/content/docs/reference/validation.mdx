@@ -6,7 +6,7 @@ description: Every pipeline feature is proven on a local Forgejo against an AWS 
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
-A local check must pass, and also fail when broken on purpose.
+Each smoke claim runs twice and passes only when both runs hold: as written it must pass, and with its property broken on purpose (the BREAK) it must fail.
 
 | Forge | What runs |
 |---|---|
@@ -17,9 +17,9 @@ A local check must pass, and also fail when broken on purpose.
 
 ## The per-forge claims
 
-Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
+`reconcile` follows a control repo's pull request until it is merged and applied. Pinned CI images run the `tg-` claims on a two-unit Terragrunt repo and the `cdf-` claims on a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate.
 
-The github.com claims run the newest published release against real GitHub pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account, with these limits:
+The github.com claims run the newest published release against real GitHub pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account. The limits:
 
 | Limit | What runs instead |
 |---|---|
@@ -27,15 +27,15 @@ The github.com claims run the newest published release against real GitHub pull 
 | no bucket | report upload credentials are proven on Forgejo, against the AWS emulator; the estate page's scheduled job does not run here |
 | one GitHub account | the refusals of a commenter with no write access and of a pull request from a fork are proven on Forgejo; the apply-before-merge pull requests are opened by a workflow, so the account that runs the claims may approve them |
 | no model key | the agent comment and the refused-wave job run a stand-in agent that makes one edit or prints the summary input |
-| no broken run | these claims are not broken on purpose, so they read "passes" |
+| no BREAK | these claims have no BREAK run, so they read "passes" |
 
 <ValidationClaims />
 
 ## The example's checks
 
-Each check runs against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo with OpenTofu; a passing check also failed when broken on purpose. The GitLab column lists the checks that also run on a local GitLab CE and its runner, each in a small repo with the pipeline `terragucci init` writes for GitLab.
+These checks run against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo with OpenTofu. The GitLab column lists the ones that also run on a local GitLab CE and its runner. There, each gets a small repo holding the pipeline `terragucci init` writes for GitLab.
 
-The Terraform and choudoufu columns list the core checks run again on that binary, in its CI image, with `binary:` set in each repo's `terragucci.yml`. Each runs on a copy of its repo written for the binary, with names of its own:
+The Terraform and choudoufu columns list the core checks run again on that binary in its CI image. They use `binary:` in each repo's `terragucci.yml`, on a copy of the repo written for the binary under names of its own:
 
 | Binary | What the copy changes |
 |---|---|

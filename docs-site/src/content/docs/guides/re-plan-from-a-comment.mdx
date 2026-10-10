@@ -26,7 +26,7 @@ import Shot from '../../../components/Shot.astro';
 
 <Tabs syncKey="forge">
 <TabItem label="GitHub">
-The `replan` job runs on each new pull request comment.
+Each new pull request comment starts the `replan` job.
 </TabItem>
 <TabItem label="GitLab">
 GitLab starts no pipeline for a merge request note. A pipeline schedule polls for notes instead and answers each on its next run.
@@ -66,7 +66,7 @@ As on GitHub.
    </TabItem>
    <TabItem label="GitLab">
 
-   The note changes once the pipeline the `comments` job started has planned:
+   When the pipeline the `comments` job started has planned, it edits the note:
 
    <Shot step="gitlab" view="replan" alt="The plan note on a GitLab merge request, edited after the /terragucci plan note below it: one instance in one group, wave 2 with its set digest, and dev orders' queue keeping messages for seven days; below it, the comments job's reply that it started a pipeline to re-plan the merge request" />
 
@@ -95,7 +95,7 @@ A chat front end or a script can re-plan without a comment. On GitHub and Forgej
 | `pr` | the pull request's number; left empty, the dispatch runs the drift job where `drift:` is set |
 | `root` | optional: one root path, read by the comment grammar |
 
-The re-plan matches `/terragucci plan [root]`: same checks, same note, same status.
+The re-plan runs the same checks as `/terragucci plan [root]` and updates the same note and status.
 
 <Tabs syncKey="forge">
 <TabItem label="GitHub">
@@ -104,7 +104,7 @@ The re-plan matches `/terragucci plan [root]`: same checks, same note, same stat
 gh workflow run terragucci.yml -f pr=42 -f root=envs/dev/orders
 ```
 
-The decision step reads the dispatcher's permission through the API; without write access, nothing is planned.
+The decision step asks the API for the dispatcher's permission and plans nothing without write access.
 
 </TabItem>
 <TabItem label="GitLab">
@@ -116,7 +116,7 @@ curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
   "$CI_API_V4_URL/projects/<id>/merge_requests/<iid>/pipelines"
 ```
 
-GitLab allows it from the Developer role up, and plans the whole merge request.
+It needs the Developer role or above, and plans the whole merge request.
 
 </TabItem>
 <TabItem label="Forgejo">
@@ -134,7 +134,7 @@ Forgejo answers 403 to a dispatcher without write access and starts no run. Its 
 
 ## Comment forms
 
-The text is untrusted and never reaches a script; `terragucci comment` reads it from the event file, or on GitLab from the API. It accepts one line in one of these forms and refuses anything else, giving the reason.
+The text is untrusted and never reaches a script. `terragucci comment` reads it from the event file, or on GitLab from the API. Only one line in one of these forms is accepted; anything else is refused with the reason.
 
 | Comment | Runs | Where | GitLab, with `comments:` set |
 |---|---|---|---|
@@ -149,11 +149,14 @@ The text is untrusted and never reaches a script; `terragucci comment` reads it 
 
 No comment approves, and a re-plan cannot change what an approval binds. [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists every check each command must pass. A refusal is a reply that starts with `terragucci:`.
 
-A comment that asks for nothing ends the job cleanly. A forge 403 or failure, or an unreadable event file, fails the job with the cause in the log.
+| Case | Job |
+|---|---|
+| a comment that asks for nothing | ends cleanly |
+| a forge 403 or failure, or an unreadable event file | fails, with the cause in the log |
 
 ## Apply a merged pull request
 
-`/terragucci apply` on a merged pull request re-runs `tf-apply` for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
+On a merged pull request, `/terragucci apply` re-runs `tf-apply` for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
 
 <Shot step="statuses" view="reply" alt="A merged pull request\'s replies in Forgejo: wave 1 waits for an approval of its set digest, with the chant approve --sign command; a commenter with no write access is refused; and, once wave 1 is sealed, wave 1 applies and the reply says wave 2 now waits, linking the run" optional />
 

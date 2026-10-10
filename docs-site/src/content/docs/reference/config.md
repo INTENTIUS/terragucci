@@ -12,8 +12,6 @@ terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root;
 
 ## Defaults with no file
 
-`init` starts from these defaults:
-
 | Setting | Default |
 |---|---|
 | Roots | every directory whose `*.tf` or `*.tofu` files declare a backend or configure a provider, or, in a Terragrunt repo, each unit `terragrunt find` lists |
@@ -65,7 +63,7 @@ projects:
 
 ## A full example
 
-Most keys set away from their default; [Keys](#keys) lists every one. Keep only the lines you need. This file passes `config check`.
+Most settings here differ from their default, and [Keys](#keys) lists every one. Keep only the lines you need; this file passes `config check`.
 
 ```yaml
 roots: ["envs/*/*"]
@@ -196,7 +194,7 @@ version:
 
 A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
-A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`; `choudoufu` takes one version. A Terragrunt unit is pinned the same ways, and an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` pins the Terragrunt release that runs it, installed the same way. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-each-directory-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Only `tofu` and `terraform` take pins. A Terragrunt unit is pinned the same ways. An exact `terragrunt_version_constraint` in its own `terragrunt.hcl` also pins the Terragrunt release that runs it, and the job installs that release like any other pin. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-each-directory-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
 
 ## Apply before merge
 
@@ -234,7 +232,7 @@ Leaving an entry out drops that check, and `requires: []` drops all four. These 
 
 ### Apply before merge on GitLab
 
-A merge request note starts no pipeline, and a merge request's own pipeline runs its own `.gitlab-ci.yml`. So the `comments` job reads `/terragucci apply` and starts a pipeline on the default branch, whose `mr-apply` job applies the head.
+A merge request note starts no pipeline, and a merge request's own pipeline runs its own `.gitlab-ci.yml`. Instead, the `comments` job reads `/terragucci apply` and starts a pipeline on the default branch, whose `mr-apply` job applies the head.
 
 ```yaml
 forge: gitlab
@@ -251,13 +249,13 @@ apply:
 | `merge_token_env` | a CI/CD variable with a token whose role may merge into the default branch: only such a token may start a pipeline there, and with `merge: auto` it merges |
 | `forge: gitlab` | needed with `merge: manual`, so `config check` knows the token is not only for merging |
 
-`config check` and `init` refuse `when: pull-request` on GitLab without `comments` or `merge_token_env`. [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) has the variable's settings.
+Without `comments` or `merge_token_env`, `config check` and `init` refuse `when: pull-request` on GitLab. [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) has the variable's settings.
 
 :::caution
-On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts, such as `terragucci/apply`, blocks every apply. Leave it out of branch protection.
+On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts (such as `terragucci/apply`) blocks every apply. Leave it out of branch protection.
 :::
 
-Gate, approval mode, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists every check an apply comment must pass.
+Everything that decides an apply (gate, approval mode, signers, this file) comes from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists every check an apply comment must pass.
 
 Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [What the pull request's code can reach](/terragucci/reference/pipeline/#pull-request-code-access).
 
@@ -270,7 +268,7 @@ apply:
     staging: ["envs/staging/*"]
 ```
 
-Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves, gate and approval work as on the default branch, and `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
+Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves and their approvals work as on the default branch, and `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
 
 | On a push to | Applies |
 |---|---|
@@ -282,7 +280,7 @@ The waves are cut from the roots the branch applies, so a branch's wave 1 holds 
 
 In a Terragrunt repo the globs match unit paths, such as `release: ["live/prod/**"]`. A push to `release` applies those units in their own dependency layers, each behind its gate, cut from `terragrunt find` as every Terragrunt wave is; a unit there that depends on a unit the default branch applies plans against that unit's applied state.
 
-The drift job checks each root from the branch that applies it, so the difference between the branches is not drift ([Roots another branch applies](/terragucci/guides/turn-on-drift-checks/#roots-another-branch-applies)).
+Drift checks run each root from the branch that applies it, so the difference between the branches is not drift ([Roots another branch applies](/terragucci/guides/turn-on-drift-checks/#roots-another-branch-applies)).
 
 The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) applies the default branch's waiting waves only. A wave waiting on a branch named here applies when its run runs again: `terragucci approve` re-runs it on GitHub and GitLab, and on Forgejo the branch's next push runs it.
 
@@ -296,7 +294,7 @@ ephemeral:
   ttl: 24h
 ```
 
-Each open pull request gets its own copy of the roots `roots` matches, applied from its head. A copy's state is the root's own backend with `-pr-<n>` added to the key: `envs/preview/app/terraform.tfstate` becomes `envs/preview/app/terraform-pr-12.tfstate`, and a `gcs` prefix `preview/app` becomes `preview/app-pr-12`. The root keeps its own state, and its own plan and apply waves, as before.
+Each open pull request gets its own copy of the roots `roots` matches and applies it from its head. A copy's state is the root's own backend with `-pr-<n>` added to the key: `envs/preview/app/terraform.tfstate` becomes `envs/preview/app/terraform-pr-12.tfstate`, and a `gcs` prefix `preview/app` becomes `preview/app-pr-12`. The root keeps its own state, and its own plan and apply waves, as before.
 
 | Event | What happens |
 |---|---|
@@ -304,11 +302,11 @@ Each open pull request gets its own copy of the roots `roots` matches, applied f
 | the pull request closes or merges | its copy is destroyed: a `plan -destroy` of each root, applied in reverse order, from the commit the copy applied; on GitLab, which starts no pipeline when a merge request closes, at the next sweep |
 | `ttl` passes | the sweep destroys the copy the same way, whether the pull request is open or not |
 
-Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which the [audit trail](/terragucci/reference/audit-trail/) lists as `ephemeral-apply` and `ephemeral-destroy`. With `reports` set, the [estate page](/terragucci/guides/see-every-project/) lists each live copy and its expiry.
+Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which the [audit trail](/terragucci/reference/audit-trail/) lists as `ephemeral-apply` and `ephemeral-destroy`. The [estate page](/terragucci/guides/see-every-project/) lists each live copy and its expiry when `reports` is set.
 
-A state key suffix, rather than a workspace: terragucci runs no CLI workspaces, and a suffixed key is a state of its own that the backend block, its lock file and a bucket listing all name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
+terragucci runs no CLI workspaces, so a copy uses a state key suffix instead. A suffixed key is a separate state, and its lock file and the bucket listing show it by name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
 
-In a Terragrunt repo `roots` names units, and each unit's `remote_state` key must read `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`, which the job sets to `-pr-<n>`; a unit whose prepared backend does not carry the suffix fails the job with a config error before anything plans. The `terragucci.hcl` that `generate` writes reads it already. With `synth`, the job runs the command in the pull request's checkout before it finds the roots, and again on the applied commit before a destroy. `config check` refuses `ephemeral` on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The settings are read from the default branch, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
+In a Terragrunt repo `roots` names units, and each unit's `remote_state` key must read `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`, which the job sets to `-pr-<n>`; a unit whose prepared backend does not carry the suffix fails the job with a config error before anything plans. The `terragucci.hcl` that `generate` writes reads it already. With `synth`, the job runs the command in the pull request's checkout before it finds the roots, and again on the applied commit before a destroy. `config check` refuses `ephemeral` on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The default branch supplies these settings, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
 
 ## Jobs of your own
 
@@ -333,7 +331,7 @@ notify-done:
 | Forgejo | under `jobs:` in `.forgejo/workflows/terragucci.yml` |
 | GitLab | at the top level of `.gitlab/terragucci.yml`, which `.gitlab-ci.yml` includes |
 
-Each job keeps every key and value the file gives it, in the forge's own syntax; comments in the file are not carried, and `init` checks only the job's name. A name terragucci gives one of its own jobs is refused, and so is a GitLab keyword such as `variables`. The jobs run in the same run as terragucci's, so `needs` may name a wave's job and an artifact download reads that run's reports. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) adds its job this way.
+Each job keeps every key and value the file gives it in the forge's own syntax; comments in the file are dropped, and `init` checks only the job's name. A name terragucci gives one of its own jobs is refused, and so is a GitLab keyword such as `variables`. Since they share terragucci's run, `needs` may name a wave's job and an artifact download reads that run's reports. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) adds its job this way.
 
 ## Plan locks
 
@@ -417,11 +415,11 @@ agent:
     timeout: 30
 ```
 
-Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. As with the comment agent, its jobs get no cloud credentials; `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
+Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule and `respond.drift` set to `attribute` or `off`, since the agent's pull request takes the place of the codified one. Neither drift agent job gets cloud credentials, and `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
 
 ## The review
 
-`review.agent` adds two jobs after a pull request's plan: a model compares the title and description with the diff, the plan note and the policy results, and the pipeline posts its review as a note. GitHub and Forgejo only; [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/).
+`review.agent` adds two jobs after a pull request's plan. A model compares the title and description with the diff, the plan note and the policy results, then the pipeline posts its review as a note. GitHub and Forgejo only; [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/).
 
 ```yaml
 review:
@@ -440,7 +438,7 @@ review:
 | `instructions` | `.terragucci/review.md` | the instructions file, read from the default branch only |
 | `timeout` | 10 | minutes before the review job is stopped |
 
-The review jobs get no cloud credentials and the command's step no forge token. On GitLab it needs `comments`, whose job starts each review in a pipeline of the default branch. With `policy` set, each `tf-apply` wave reads the review's risk as [`input.review`](/terragucci/reference/policy/#review).
+Neither review job gets cloud credentials, and the command's step gets no forge token. GitLab runs each review in a default-branch pipeline that the `comments` job starts. With `policy` set, each `tf-apply` wave reads the review's risk as [`input.review`](/terragucci/reference/policy/#review).
 
 ## The decide block
 
@@ -461,7 +459,7 @@ decide:
 | `token_env` | none, required for `jev` | the bearer token's variable |
 | `thresholds` | `noul` 0.8, `choice` 0.7, `score` 0.7 | the probability an answer needs before a response acts on it |
 
-A weak, missing or other-model answer is ignored. A decision never approves, applies or resolves a gate, and the model reads only the redacted report.
+terragucci ignores an answer that is weak or missing or comes from another model. A decision never approves or applies anything and never resolves a gate; the model reads only the redacted report.
 
 ## Parameters
 

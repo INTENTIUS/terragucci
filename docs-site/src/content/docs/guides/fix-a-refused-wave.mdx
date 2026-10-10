@@ -31,16 +31,16 @@ A decision on a refused wave: the new plan approved and applied, or the change t
 
 1. Understand why it refused.
 
-   An approval binds a wave's set digest, so if any root's plan changes between the approval and the apply, the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
+   An approval binds a wave's set digest. The wave applies nothing if any root's plan changes between the approval and the apply. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
 
-   In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
+   In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave and then merge the module bump. Its job stops and names the roots that moved:
 
    <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, both digests and the roots whose plans moved" optional />
    <Captured step="wave-refused" cmd="just example merge" optional />
 
 2. Get the two reports.
 
-   The refused job keeps `terragucci-report/` as the artifact `terragucci-report-apply-wave-<k>`: the approved report in `approved/report.json` and its own in `current/report.json`. Download it into `terragucci-report/`:
+   The artifact `terragucci-report-apply-wave-<k>` holds the refused job's `terragucci-report/`, with the approved report in `approved/report.json` and the job's own in `current/report.json`. Fetch it to a local `terragucci-report/` directory.
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
@@ -69,7 +69,7 @@ A decision on a refused wave: the new plan approved and applied, or the change t
    npx terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2
    ```
 
-   It lists each root whose plan digest moved, with what changed inside it. `--json` prints one envelope.
+   It lists each root whose plan digest moved and what changed inside it. `--json` prints one envelope.
 
 4. Decide.
 

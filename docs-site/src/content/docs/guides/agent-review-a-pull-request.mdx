@@ -15,7 +15,7 @@ One of the features that run a model ([what needs an agent](/terragucci/#opt-in-
 
 ## Result
 
-After each plan of a pull request, a note on it, with the model's review under terragucci's first lines:
+After each plan of a pull request, a note with the model's review under terragucci's first lines:
 
 ```markdown
 ### terragucci review of `3f9c2a1e`
@@ -29,7 +29,7 @@ Questions: is `terraform_data.old` still read by anything?
 risk: high
 ```
 
-The note never approves, requests changes or sets a status. Reviewers read it beside the plan note. A policy can act on its risk when the pull request applies ([below](#use-the-risk-in-a-policy)).
+The note neither approves nor requests changes, and it sets no status. Reviewers read it beside the plan note. A policy can act on its risk when the pull request applies ([below](#risk-in-a-policy)).
 
 ## Prerequisites
 
@@ -51,7 +51,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
    Every root under envs/prod/ needs a reason in the description.
    ```
 
-   The review reads it from the default branch alone; a pull request that edits it changes nothing until it merges, and its note says it edits the instructions.
+   Only the default branch's copy counts; a pull request that edits it changes nothing until it merges, and its note says it edits the instructions.
 
 2. Turn it on in `terragucci.yml`:
 
@@ -72,7 +72,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 
    `init` writes the review workflow, `.github/workflows/terragucci-review.yml` or `.forgejo/workflows/terragucci-review.yml`. The forge runs it from the default branch, so it first reviews pull requests opened after this one merges.
 
-   On GitLab `init` writes the `review` and `review-note` jobs into `.gitlab/terragucci.yml`. Once a merge request's plan job ends, the next run of the comments schedule starts a pipeline on the default branch for its head, and edits the review note to say so; the review replaces that text when the pipeline ends.
+   GitLab gets the `review` and `review-note` jobs in `.gitlab/terragucci.yml`. Once a merge request's plan job ends, the next run of the comments schedule starts a pipeline on the default branch for its head, and edits the review note to say so; when the pipeline ends, the model's text replaces it.
 
 </Steps>
 
@@ -103,9 +103,9 @@ The prompt marks everything but the instructions as written by the pull request'
 | `review-note` turns every HTML comment in the review into text before it posts | a review that forges terragucci's markers, such as the plan note's |
 | `review-note` posts an issue comment, never a pull request review | a review that approves |
 
-## Use another model
+## Other models
 
-`command` takes any command line that reads the prompt on stdin and prints the review on stdout. The default is Claude Code in print mode with no tools, pinned to one release:
+`command` takes any command line that reads the prompt on stdin and prints the review on stdout. The default is one pinned release of Claude Code in print mode with no tools:
 
 ```text
 npx -y @anthropic-ai/claude-code@2.1.290 -p --max-turns 1 --permission-prompts none
@@ -127,7 +127,7 @@ review:
 | `TG_REVIEW_PROMPT` | the prompt's path |
 | the `key_secret` name | the model's key, under its own name |
 
-## Use the risk in a policy
+## Risk in a policy
 
 With `review.agent` and [`policy`](/terragucci/reference/policy/) set, each `tf-apply` wave passes the policy the review of the applied pull request's head as `input.review`:
 
@@ -142,7 +142,7 @@ deny contains msg if {
 }
 ```
 
-The wave reads the risk only from the review job's artifact in a run of the default branch's review workflow, never from the note. On GitLab the review note names its review job, and the wave reads that job's artifact once GitLab says the job is `review` in a pipeline of the default branch. A note someone posts on the pull request, or an artifact the pull request's own pipeline keeps, changes nothing the policy sees. A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
+The policy gets the risk only from the review job's artifact in a run of the default branch's review workflow. On GitLab the review note names its review job, and the wave reads that job's artifact once GitLab says the job is `review` in a pipeline of the default branch. A note someone posts on the pull request or an artifact the pull request's own pipeline keeps is ignored. A denied wave applies nothing; a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
 
 ## MCP or `--json`
 

@@ -9,7 +9,7 @@ A shared module change can reach two hundred roots with near-identical plans, an
 
 ## Grouping
 
-terragucci normalizes each root's changes and groups the roots whose changes are the same:
+terragucci normalizes each root's changes and groups the roots whose changes are the same.
 
 ```text
 180 roots: identical change (update aws_iam_role.app, tags)
@@ -18,11 +18,11 @@ terragucci normalizes each root's changes and groups the roots whose changes are
 destroys: prod-eu/db (delete aws_db_instance.main)
 ```
 
-A hundred and eighty identical updates become one line with a count, so the reviewer reads the change once, then the 20 roots that differ.
+The reviewer reads the shared change once, then the 20 roots that differ.
 
 <Shot step="report" view="top" alt="The top of a plan report for a shared-module change with a destroy beside it: the destroy named on its own, two outliers to read first, and ten identical roots folded into one group" />
 
-## Never grouped
+## Rules by change
 
 | Change | In the report |
 |---|---|
@@ -35,7 +35,7 @@ A hundred and eighty identical updates become one line with a count, so the revi
 | values known after apply | folded |
 | roots with no changes | folded |
 
-The report links each root and group to its full plan as printed and as JSON. Approvals bind the plan digests, taken before redaction or rendering, so the summary's wording never changes what was approved.
+Each root and group links to its full plan in text and JSON. Approvals bind the plan digests, taken before redaction or rendering, so the summary's wording never changes what was approved.
 
 ## Next
 

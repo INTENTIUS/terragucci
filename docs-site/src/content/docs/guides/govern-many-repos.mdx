@@ -55,9 +55,9 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
        source: git+https://github.com/acme/policy.git@v3
    ```
 
-   `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it, and likewise the other keys the jobs read there, such as [`reports`](/terragucci/guides/keep-reports-in-a-bucket/), `parallelism` and `respond`; [A file for many repos](/terragucci/reference/config/#a-file-for-many-repos) lists them. With [`generate`](/terragucci/guides/generate-root-files/#in-a-control-repo) set, the same pull request carries each root's generated backend, provider and version files.
+   `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it. The other keys the jobs read there, [`reports`](/terragucci/guides/keep-reports-in-a-bucket/) among them, go the same way; [A file for many repos](/terragucci/reference/config/#a-file-for-many-repos) lists them. With [`generate`](/terragucci/guides/generate-root-files/#in-a-control-repo) set, the same pull request carries each root's generated files.
 
-   A project with a `terragucci.yml` of its own keeps it; if one of those keys differs from the control repo's, `reconcile` fails that project and names the key.
+   A project's own `terragucci.yml` stays; `reconcile` fails the project and names the key when one of those keys differs from the control repo's.
 
 2. Check the file.
 

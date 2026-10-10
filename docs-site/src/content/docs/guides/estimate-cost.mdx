@@ -94,7 +94,7 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 | `report.json`, `cost` | the estimator, the currency, the change and the totals, and each root's figures; see [Report JSON schema](/terragucci/reference/report-schema/) |
 | `roots/<root>/cost.json` | Infracost's own output for the root, beside its `plan.json` |
 
-An estimate that fails never fails the plan. A wave's report keeps its own estimate the same way, with the wave's change under `waves[].cost`.
+An estimate that fails never fails the plan. A wave's report keeps its own estimate, and the wave's change sits under `waves[].cost`.
 
 In a Terragrunt repo the estimator reads the plan the wave's `run --all` saved for each unit, and treats each unit as a root.
 

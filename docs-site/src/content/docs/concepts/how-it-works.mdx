@@ -11,7 +11,7 @@ The pipeline is made of [chant](/terragucci/concepts/glossary/#chant) stages. ch
 
 ## A change, start to finish
 
-Each step names its stage and the identity it runs with. Every step runs on GitHub, GitLab and Forgejo.
+Each step names its stage and the identity it runs with. All of them run on GitHub, GitLab and Forgejo.
 
 <Steps>
 
@@ -23,9 +23,9 @@ Each step names its stage and the identity it runs with. Every step runs on GitH
 
 4. The waves: `tf-apply` runs one job per [wave](/terragucci/concepts/glossary/#wave), `waves.canary` roots first, then dependency order. With [`waves.jobs`](/terragucci/concepts/waves-and-approvals/), a large wave gets a job that decides it and share jobs that apply it. Each wave plans after the previous one applied.
 
-5. The approval: no stage runs. A waiting job exits 3 and prints the approve command for its [set digest](/terragucci/concepts/glossary/#set-digest). A person runs `terragucci approve` to record an approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), using their push access to that branch; under `approval: pr-review` a review of the head also counts. Under `approval: sealed` the approval also carries a seal that must verify against `.chant/allowed_signers` from the commit before the applied one.
+5. The approval: no stage runs. A waiting job exits 3 and prints the approve command for its [set digest](/terragucci/concepts/glossary/#set-digest). A person runs `terragucci approve` to record an approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), using their push access to that branch; under `approval: pr-review` a review of the head also counts. With `approval: sealed` the approval also carries a seal that must verify against `.chant/allowed_signers` from the commit before the applied one.
 
-6. The apply: `tf-apply`, with the apply identity. `terragucci approve` restarts the waiting wave, as do a rerun of the job, a push, and a `/terragucci apply` comment (on GitLab, with the `comments` schedule). The wave re-plans and refuses on a changed digest, and never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#ignored-comments) runs nothing.
+6. The apply: `tf-apply`, with the apply identity. `terragucci approve` or a rerun of the job restarts the waiting wave. So does a push or a `/terragucci apply` comment (on GitLab, with the `comments` schedule). The wave re-plans and refuses on a changed digest, and never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#ignored-comments) runs nothing.
 
 7. Drift: with `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only` under the plan identity and keeps one issue updated, closing it when drift is gone. It never applies.
 
