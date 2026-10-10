@@ -36,18 +36,19 @@
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
 #                                     the docs show, screenshotted into
 #                                     docs-site as step `github`, then reset
-#   stack/sandbox-github.sh prove [merge|pull-request|modules] [--break] [--record FILE]
+#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports] [--break] [--record FILE]
 #                                     from a reset sandbox, each phase (all
-#                                     three when none is named) sets main up
+#                                     four when none is named) sets main up
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
 #                                     into FILE (docs-site/src/data/validation.json)
-#                                     --break (or BREAK=1): the locking claims
-#                                     alone (merge and pull-request phases), each
-#                                     on a sandbox whose property is broken on
-#                                     purpose; a claim that fails is the break
-#                                     caught, one that passes it missed
+#                                     --break (or BREAK=1): the locking and
+#                                     report claims alone (merge, pull-request
+#                                     and reports phases), each on a sandbox
+#                                     whose property is broken on purpose; a
+#                                     claim that fails is the break caught,
+#                                     one that passes it missed
 #   stack/sandbox-github.sh reset          close the pull requests and issues,
 #                                     delete every other branch, every tag and
 #                                     every secret, and put main back to its
@@ -82,8 +83,8 @@ SIGNER="sandbox-signer"
 # 1: the sandbox's terragucci.yml marks the checkout safe for git (build_main).
 SAFE_DIRECTORY="${TERRAGUCCI_SANDBOX_SAFE_DIRECTORY:-0}"
 WEB="https://github.com/$REPO"
-# Set (BREAK=1 or prove --break): prove runs the locking claims on a sandbox
-# whose property each proves is broken on purpose.
+# Set (BREAK=1 or prove --break): prove runs the locking and report claims on
+# a sandbox whose property each proves is broken on purpose.
 BREAK="${BREAK:-}"
 
 log()  { echo "[sandbox] $*" >&2; }
@@ -508,7 +509,10 @@ github.com|pr-apply|with apply.merge: auto a comment on an open, approved pull r
 github.com|pr-apply-token|with apply.merge: auto and merge_token_env the merge is made with that token, so the merge commit starts its own run on main
 github.com|publish|with modules.publish: git-tags a conventional commit to a module on main makes the publish job push the module tag
 github.com|rollout|once the roots pin that tag and the next version is published, terragucci rollout --mode apply opens one pull request for the canary wave that moves those pins alone
-github.com|drift-issue|the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it'
+github.com|drift-issue|the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it
+github.com|report-keys|with the bucket keys in repo secrets, which the pipeline maps, the plan job writes report.json to the bucket and the index lists the run; the bucket is floci, run in the job
+github.com|report-oidc|with no static keys, the plan job takes reports.role with its GitHub-signed OIDC token, writes report.json to the bucket, and the index lists the run; floci in the job stands in for STS and the bucket
+github.com|estate-job|the estate workflow of the see-every-project page, committed with its role in the account floci serves and the stand-ins added to its job, and run by workflow_dispatch with only its OIDC token, writes estate.html showing the project to the bucket and prints a presigned link; floci in the job stands in for STS and the bucket'
 
 OVERRIDE_LOCAL='# The sandbox keeps this root'"'"'s state in the repo, beside its code.
 terraform {
@@ -1634,6 +1638,414 @@ prove_modules() {
   fi
 }
 
+# ── the report claims ────────────────────────────────────────────────────────
+
+# The reports phase writes to a stand-in for AWS that runs inside each job:
+# floci (the stack's AWS emulator, public on GHCR) as a service container
+# holding the bucket, and .sandbox/stand-in.mjs, a recorder in front of
+# floci's STS that checks each AssumeRoleWithWebIdentity's token as the oidc
+# probe does before passing it on. Every STS request a job makes goes to the
+# recorder (AWS_ENDPOINT_URL_STS), so no request reaches AWS. The job keeps
+# the bucket's objects and what the recorder found as the sandbox-stand-in
+# artifact, since floci is gone with the job.
+FLOCI_IMAGE=ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813
+STS_PORT=4599
+REPORTS_PREFIX=sandbox
+# floci keeps each account's buckets apart, so every role is in its account.
+REPORTS_ROLE=arn:aws:iam::000000000000:role/terragucci-sandbox-reports
+SEED="" SEED_HEAD=""
+
+stand_in_script() { # dir
+  mkdir -p "$1/.sandbox"
+  cat > "$1/.sandbox/stand-in.mjs" <<'JS'
+// The sandbox's stand-ins for AWS, in a job: floci, a service container,
+// holds the reports bucket, and a recorder in front of floci's STS checks
+// the token of each AssumeRoleWithWebIdentity against GitHub's published
+// keys, with the role it asks for, before passing it on. Nothing reaches AWS.
+//   up [seed dir]  wait for floci, make the bucket, put the seed's files in
+//                  it under their paths, and start the recorder
+//   sts            the recorder, on 127.0.0.1:4599
+//   keep           the bucket's objects and what the recorder found, to sandbox-out/
+import { spawn } from "node:child_process";
+import { createPublicKey, verify } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createServer, request } from "node:http";
+import { dirname, join, relative } from "node:path";
+
+const FLOCI = "http://floci:4566", BUCKET = "tg-reports", PORT = 4599;
+const e = process.env;
+const ws = e.GITHUB_WORKSPACE || process.cwd();
+const tmp = e.RUNNER_TEMP || "/tmp";
+const found = join(tmp, "sandbox-sts.jsonl");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const url = (k) => `${FLOCI}/${BUCKET}/${k.split("/").map(encodeURIComponent).join("/")}`;
+
+async function up(seed) {
+  for (let i = 0; ; i++) {
+    try { await fetch(FLOCI + "/"); break; } catch { if (i === 60) throw new Error("floci did not answer in two minutes"); await sleep(2000); }
+  }
+  await fetch(`${FLOCI}/${BUCKET}`, { method: "PUT" });
+  const files = (d) => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? files(join(d, n)) : [join(d, n)]));
+  for (const f of seed && existsSync(seed) ? files(seed) : []) {
+    const r = await fetch(url(relative(seed, f)), { method: "PUT", body: readFileSync(f) });
+    if (!r.ok) throw new Error(`could not seed ${relative(seed, f)}: ${r.status}`);
+  }
+  const log = openSync(join(tmp, "sandbox-sts.log"), "a");
+  spawn(process.execPath, [process.argv[1], "sts"], { detached: true, stdio: ["ignore", log, log] }).unref();
+  for (let i = 0; i < 40; i++) {
+    try { await fetch(`http://127.0.0.1:${PORT}/ping`); console.log(`floci holds ${BUCKET}; the STS recorder is on 127.0.0.1:${PORT}`); return; } catch { await sleep(500); }
+  }
+  throw new Error("the STS recorder did not start");
+}
+
+// The checks of the oidc probe: the token verifies against GitHub's keys and
+// names this repo, run, commit and event, with the audience AWS reads.
+async function check(token, role) {
+  const out = { role, problems: [] };
+  const [h, p, s] = token.split(".");
+  if (!s) { out.problems.push("the token is no JWT"); return out; }
+  const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+  const head = dec(h), c = dec(p);
+  const ISS = "https://token.actions.githubusercontent.com";
+  const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
+  const jwk = (await (await fetch(conf.jwks_uri)).json()).keys.find((k) => k.kid === head.kid);
+  out.verified = head.alg === "RS256" && !!jwk
+    && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
+  if (!out.verified) out.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${conf.jwks_uri}`);
+  const [owner, name] = e.GITHUB_REPOSITORY.split("/");
+  const what = e.GITHUB_EVENT_NAME === "pull_request" ? "pull_request" : "ref:" + e.GITHUB_REF;
+  const subs = [`repo:${owner}/${name}:${what}`, `repo:${owner}@${e.GITHUB_REPOSITORY_OWNER_ID}/${name}@${e.GITHUB_REPOSITORY_ID}:${what}`];
+  if (!subs.includes(c.sub)) out.problems.push(`sub is ${c.sub}, not ${subs.join(" or ")}`);
+  const want = { iss: ISS, aud: "sts.amazonaws.com", repository: e.GITHUB_REPOSITORY, repository_id: e.GITHUB_REPOSITORY_ID, run_id: e.GITHUB_RUN_ID, sha: e.GITHUB_SHA, event_name: e.GITHUB_EVENT_NAME };
+  for (const [k, v] of Object.entries(want)) if (String(c[k]) !== String(v)) out.problems.push(`${k} is ${c[k]}, not ${v}`);
+  return Object.assign(out, { sub: c.sub, aud: c.aud, event: c.event_name });
+}
+
+function sts() {
+  createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", async () => {
+      if (req.url === "/ping") { res.end("ok"); return; }
+      const body = Buffer.concat(chunks);
+      const form = new URLSearchParams(body.toString());
+      if (form.get("Action") === "AssumeRoleWithWebIdentity") {
+        let rec;
+        try { rec = await check(form.get("WebIdentityToken") || "", form.get("RoleArn") || ""); }
+        catch (err) { rec = { role: form.get("RoleArn"), problems: [`the token could not be checked: ${err.message}`] }; }
+        rec.session = form.get("RoleSessionName");
+        appendFileSync(found, JSON.stringify(rec) + "\n");
+      }
+      const fwd = request(FLOCI + req.url, { method: req.method, headers: req.headers }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
+      fwd.on("error", (err) => { res.writeHead(502); res.end(String(err)); });
+      fwd.end(body);
+    });
+  }).listen(PORT, "127.0.0.1");
+}
+
+async function keep() {
+  const out = join(ws, "sandbox-out");
+  mkdirSync(join(out, "bucket"), { recursive: true });
+  const held = { keys: [], sts: [] };
+  try {
+    let next = "";
+    do {
+      const xml = await (await fetch(`${FLOCI}/${BUCKET}?list-type=2${next ? "&continuation-token=" + encodeURIComponent(next) : ""}`)).text();
+      held.keys.push(...[...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => m[1]));
+      next = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? (/<NextContinuationToken>([^<]*)</.exec(xml)?.[1] ?? "") : "";
+    } while (next);
+    for (const k of held.keys) {
+      const f = join(out, "bucket", k);
+      mkdirSync(dirname(f), { recursive: true });
+      writeFileSync(f, Buffer.from(await (await fetch(url(k))).arrayBuffer()));
+    }
+  } catch (err) {
+    held.problem = `could not read ${BUCKET}: ${err.message}`;
+  }
+  if (existsSync(found)) held.sts = readFileSync(found, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  writeFileSync(join(out, "found.json"), JSON.stringify(held, null, 2) + "\n");
+  console.log(`${held.keys.length} objects in ${BUCKET}; ${held.sts.length} AssumeRoleWithWebIdentity`);
+}
+
+const mode = process.argv[2];
+if (mode === "up") await up(process.argv[3]);
+else if (mode === "sts") sts();
+else if (mode === "keep") await keep();
+else throw new Error(`stand-in.mjs up [seed dir] | sts | keep, not ${mode}`);
+JS
+}
+
+# The steps that keep what the stand-ins hold, whatever the job's result.
+KEEP_STEPS="      - name: Keep what the stand-ins hold
+        if: always()
+        run: node .sandbox/stand-in.mjs keep
+      - name: Keep the stand-ins' objects
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-stand-in
+          path: sandbox-out/
+          if-no-files-found: ignore
+"
+
+# main as the reports phase needs it: reports in floci's bucket, every STS
+# request to the recorder, and the stand-ins added to the plan job of the
+# pipeline init writes. keys: no role, so the plan job maps the AWS secrets.
+# oidc: reports.role, which the job takes with its OIDC token, and so maps no
+# key. BREAK: oidc is cut, so the job has no token to take reports.role with.
+# The commit skips CI.
+reports_main() { # keys|oidc
+  local tree="$WORK/reports-$1" wf sha env
+  clone_main "$tree"
+  awk '/^# Set by stack\/sandbox-github.sh prove reports/ { exit } { print }' "$tree/terragucci.yml" > "$tree/terragucci.yml.new"
+  mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  # An env main already has (SAFE_DIRECTORY) takes the endpoint at its top.
+  if grep -q '^env:$' "$tree/terragucci.yml"; then
+    env=""
+    grep -q '^  AWS_ENDPOINT_URL_STS:' "$tree/terragucci.yml" \
+      || awk -v l="  AWS_ENDPOINT_URL_STS: http://127.0.0.1:$STS_PORT" '{ print } $0 == "env:" { print l }' "$tree/terragucci.yml" > "$tree/terragucci.yml.new"
+    [ ! -f "$tree/terragucci.yml.new" ] || mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  else
+    env="$(printf 'env:\n  AWS_ENDPOINT_URL_STS: http://127.0.0.1:%s' "$STS_PORT")"
+  fi
+  {
+    echo "# Set by stack/sandbox-github.sh prove reports; reset takes it away."
+    printf 'reports:\n  bucket: s3://tg-reports\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORTS_PREFIX"
+    [ "$1" != oidc ] || echo "  role: $REPORTS_ROLE"
+    [ "$1" != oidc ] || [ -n "$BREAK" ] || printf 'oidc:\n  plan_role: %s\n  apply_role: %s\n' "$PLAN_ROLE" "$APPLY_ROLE"
+    [ -z "$env" ] || echo "$env"
+  } >> "$tree/terragucci.yml"
+  stand_in_script "$tree"
+  (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-reports-init.log" 2>&1) \
+    || { cat "$DIR/logs/prove-reports-init.log" >&2; fail "terragucci init failed"; }
+  wf="$tree/.github/workflows/terragucci.yml"
+  # The plan job runs floci beside it, starts the stand-ins before its plan
+  # and keeps what they hold after it.
+  SERVICES="    services:
+      floci:
+        image: $FLOCI_IMAGE
+        env:
+          FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: \"false\"
+" START="      - name: Start the stand-ins for S3 and STS
+        run: node .sandbox/stand-in.mjs up
+" KEEP="$KEEP_STEPS" awk '
+    /^  [a-z0-9-]+:$/ { if (plan) printf "%s", ENVIRON["KEEP"]; plan = ($0 == "  plan:") }
+    plan && $0 == "      - name: Plan the roots the change reaches and write the plan report" { printf "%s", ENVIRON["START"] }
+    { print }
+    plan && $0 == "    runs-on: ubuntu-latest" { printf "%s", ENVIRON["SERVICES"] }
+    END { if (plan) printf "%s", ENVIRON["KEEP"] }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  if [ "$(grep -c 'stand-in.mjs' "$wf")" != 2 ] || ! grep -q "image: $FLOCI_IMAGE" "$wf"; then fail "could not add the stand-ins to the plan job"; fi
+  # The plan job's own map of the AWS secrets: there with keys, not with a role.
+  if [ "$1" = keys ]; then
+    # shellcheck disable=SC2016 # the workflow's own expression, matched as text
+    grep -q 'AWS_ACCESS_KEY_ID: .\${{ secrets.AWS_ACCESS_KEY_ID }}' "$wf" || fail "init mapped no AWS_ACCESS_KEY_ID secret for the report upload"
+  else
+    ! grep -q 'secrets.AWS_ACCESS_KEY_ID' "$wf" || fail "init mapped the AWS secrets though reports.role is set"
+    [ -n "$BREAK" ] || grep -q 'id-token: write' "$wf" || fail "init asked for no OIDC token"
+  fi
+  commit "$tree" "Write reports to the stand-in bucket, $([ "$1" = keys ] && echo "with keys" || echo "with reports.role${BREAK:+ and no oidc}") [skip ci]"
+  sha="$(push "$tree" main)"
+  log "main at ${sha:0:8}: reports to s3://tg-reports/$REPORTS_PREFIX on floci, $1${BREAK:+ (BREAK)}"
+}
+
+# The repo secrets the plan job maps for the static-keys route: keys floci
+# takes, or none (deleted, so the job maps them empty).
+reports_keys() { # set|delete
+  local k
+  for k in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+    if [ "$1" = set ]; then
+      gh secret set "$k" -R "$REPO" --body "sandbox-reports-$k" >/dev/null || return 1
+    else
+      gh secret delete "$k" -R "$REPO" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+# One-root planned on main as it is. Sets PLANNED (its head) and HELD (the
+# directory of what the plan job's stand-ins kept), empty when there is none.
+reports_plan() {
+  local run f
+  PLANNED="" HELD=""
+  step change one-root || return 0
+  PLANNED="$(head_of "$(pr_for one-root open)")"
+  run="$(gh run list -R "$REPO" --commit "$PLANNED" --event pull_request -L 1 --json databaseId -q '.[0].databaseId // empty' || true)"
+  f="$(artifact_file "${run:-0}" sandbox-stand-in found.json)"
+  [ -z "$f" ] || HELD="$(dirname "$f")"
+}
+
+# The index at the top of the prefix lists the head, and its report.json is
+# in the bucket. Prints what it found; fails when either is missing.
+reports_landed() { # held dir, head
+  local b="$1/bucket/$REPORTS_PREFIX" path
+  [ -f "$b/index.json" ] || { echo "no $REPORTS_PREFIX/index.json in the bucket: $(jq -c '.problem // .keys' "$1/found.json" 2>/dev/null || echo 'the job kept nothing')"; return 1; }
+  path="$(jq -r --arg c "$2" '[.reports[] | select(.commit == $c) | .path] | first // empty' "$b/index.json")"
+  [ -n "$path" ] || { echo "$REPORTS_PREFIX/index.json does not list ${2:0:8}: $(jq -c '[.reports[].commit[0:8]]' "$b/index.json")"; return 1; }
+  jq -e --arg c "$2" '.run.commit == $c' "$b/$path/report.json" >/dev/null 2>&1 || { echo "no report.json of ${2:0:8} at $REPORTS_PREFIX/$path"; return 1; }
+  echo "$REPORTS_PREFIX/index.json lists ${2:0:8}, and its report.json is at $REPORTS_PREFIX/$path"
+}
+
+# Every AssumeRoleWithWebIdentity the recorder saw, as JSON.
+recorded() { # held dir
+  if [ -z "$1" ]; then echo "the job kept nothing"; else jq -c '.sts' "$1/found.json"; fi
+}
+
+# What the recorder found for one role: verified, with no problem.
+sts_took() { # held dir, role -> the record, empty when none
+  jq -c --arg r "$2" '[.sts[] | select(.role == $r and .verified == true and .problems == [])] | first // empty' "$1/found.json" 2>/dev/null || true
+}
+
+# report-keys: the repo secrets AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+# hold keys floci takes, and the plan job maps them; one-root's plan writes
+# report.json to the bucket, and the index lists the run. Its bucket seeds
+# the estate job's.
+# BREAK: the secrets are deleted, so the job maps them empty and writes nothing.
+claim_report_keys() {
+  local seen
+  if [ -n "$BREAK" ]; then reports_keys delete; else reports_keys set || { unrun report-keys "could not set the AWS secrets"; return 0; }; fi
+  reports_plan
+  [ -n "$PLANNED" ] || { unrun report-keys "change one-root failed"; return 0; }
+  if seen="$(reports_landed "${HELD:-/nonexistent}" "$PLANNED")"; then
+    verdict report-keys pass "with the keys in the repo secrets, $seen"
+    [ -n "$BREAK" ] || SEED="$HELD" SEED_HEAD="$PLANNED"
+  else
+    verdict report-keys fail "${BREAK:+with the secrets deleted, }$seen"
+  fi
+}
+
+# report-oidc: reports.role, oidc with the plan and apply roles, and no AWS
+# secret; the pipeline maps no key. One-root's plan job takes reports.role
+# with its OIDC token through the recorder, which finds the token GitHub's,
+# for this repo, run and event, with the audience sts.amazonaws.com; floci's
+# STS answers, report.json goes to the bucket, and the index lists the run.
+# BREAK: oidc is cut, so the job has no token to take reports.role with.
+claim_report_oidc() {
+  local seen took
+  reports_keys delete
+  ( reports_main oidc ) || { unrun report-oidc "main could not be set up"; return 0; }
+  reports_plan
+  [ -n "$PLANNED" ] || { unrun report-oidc "change one-root failed"; return 0; }
+  seen="$(reports_landed "${HELD:-/nonexistent}" "$PLANNED")" || true
+  took="$( [ -z "$HELD" ] || sts_took "$HELD" "$REPORTS_ROLE")"
+  if [[ "$seen" == *"report.json is at"* ]] && [ -n "$took" ]; then
+    verdict report-oidc pass "with no keys, $(jq -r '"the job took \(.role | split("/") | last) as \(.session) with \(.sub), \(.aud)"' <<<"$took"); $seen"
+  else
+    verdict report-oidc fail "$seen; the recorder: $(recorded "$HELD")"
+  fi
+}
+
+# The YAML block of a docs page's GitHub tab, as a reader copies it.
+gh_page_snippet() { # page under docs-site/src/content/docs
+  awk '/<TabItem label="GitHub">/ { tab = 1; next } tab && /^ *```yaml/ { code = 1; match($0, /^ */); cut = RLENGTH; next }
+       code && /^ *```/ { exit } code { print substr($0, cut + 1) }' "$HERE/../docs-site/src/content/docs/$1"
+}
+
+# The page's estate workflow with the stand-ins around its job: floci as a
+# service on the runner's port 4566, every STS request to the recorder, and
+# floci's name and AWS's STS hosts on the runner's own address, so a request
+# that ignored the endpoint fails rather than reach AWS. The job's own lines
+# stay as they are.
+estate_workflow() { # snippet
+  SERVICES="    env:
+      AWS_ENDPOINT_URL_STS: http://127.0.0.1:$STS_PORT
+    services:
+      floci:
+        image: $FLOCI_IMAGE
+        env:
+          FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: \"false\"
+        ports:
+          - 4566:4566
+" START="      - name: Start the stand-ins for S3 and STS
+        run: |
+          echo '127.0.0.1 floci sts.amazonaws.com sts.us-east-1.amazonaws.com' | sudo tee -a /etc/hosts >/dev/null
+          node .sandbox/stand-in.mjs up .sandbox/seed
+" KEEP="$KEEP_STEPS" awk '
+    /^  [a-z0-9-]+:$/ { job = ($0 == "  estate:") }
+    { print }
+    job && $0 == "    runs-on: ubuntu-latest" { printf "%s", ENVIRON["SERVICES"] }
+    job && $0 == "      - uses: actions/checkout@v4" { printf "%s", ENVIRON["START"] }
+    END { printf "%s", ENVIRON["KEEP"] }' <<<"$1"
+}
+
+# estate-job: the estate workflow of see-every-project's GitHub tab, its role
+# in floci's account, committed as .github/workflows/estate.yml with the
+# stand-ins around its job, and the bucket report-keys left as its seed. Run
+# from workflow_dispatch, it maps no secret: configure-aws-credentials takes
+# the role with the job's OIDC token through the recorder, which finds the
+# token GitHub's, and estate writes estate.html and estate.json, whose project
+# shows report-keys' plan, to the bucket, and prints a presigned link.
+# BREAK: the workflow asks for no id-token, so the job has no token for the role.
+claim_estate_job() {
+  local snippet role since run log f held took est rc=0 seen=""
+  [ -n "$SEED" ] || { unrun estate-job "no keyed plan left a bucket to seed"; return 0; }
+  snippet="$(gh_page_snippet guides/see-every-project.mdx)"
+  if ! { grep -q '^  estate:$' <<<"$snippet" && grep -q 'terragucci estate' <<<"$snippet" && grep -q 'role-to-assume:' <<<"$snippet"; }; then
+    unrun estate-job "no estate job in the page's GitHub tab"; return 0
+  fi
+  ! grep -q 'secrets\.' <<<"$snippet" || { unrun estate-job "the page's estate job maps a secret"; return 0; }
+  snippet="${snippet//arn:aws:iam::123456789012:/arn:aws:iam::000000000000:}"
+  role="$(sed -n 's/^ *role-to-assume: *//p' <<<"$snippet")"
+  if [ -n "$BREAK" ]; then
+    snippet="$(grep -vx '  id-token: write' <<<"$snippet")"
+    ! grep -q 'id-token' <<<"$snippet" || { unrun estate-job "could not cut id-token"; return 0; }
+  fi
+  ( tree="$WORK/estate-main"
+    clone_main "$tree"
+    mkdir -p "$tree/.sandbox/seed" "$tree/.github/workflows"
+    cp -R "$SEED/bucket/." "$tree/.sandbox/seed/"
+    estate_workflow "$snippet" > "$tree/.github/workflows/estate.yml"
+    commit "$tree" "The estate workflow of see-every-project, with the stand-ins${BREAK:+ and no id-token} [skip ci]"
+    push "$tree" main >/dev/null ) || { unrun estate-job "could not commit the estate workflow"; return 0; }
+  # The schedule's cron is not waited for: the page's workflow_dispatch runs
+  # it. GitHub may take a moment to list a workflow just pushed.
+  since="$(now)"
+  for _ in $(seq 1 10); do
+    gh workflow run estate.yml -R "$REPO" --ref main >/dev/null 2>&1 && break
+    sleep 5
+  done
+  : > "$DIR/last-run"
+  ( wait_run workflow_dispatch "$since" ) >/dev/null 2>&1 || true
+  run="$(cat "$DIR/last-run")"
+  [ -n "$run" ] || { unrun estate-job "the estate workflow did not start"; return 0; }
+  log="$(job_log "$run" estate)"
+  f="$(artifact_file "$run" sandbox-stand-in found.json)"
+  held="$( [ -z "$f" ] || dirname "$f")"
+  took="$( [ -z "$held" ] || sts_took "$held" "$role")"
+  est="${held:-/nonexistent}/bucket/$REPORTS_PREFIX/estate.json"
+  [ "$(job_conclusion "$run" estate)" = success ] || { seen="$seen; the estate job ended $(job_conclusion "$run" estate)"; rc=1; }
+  [ -n "$took" ] || { seen="$seen; the recorder took no verified token for $role: $(recorded "$held")"; rc=1; }
+  [ -f "${held:-/nonexistent}/bucket/$REPORTS_PREFIX/estate.html" ] || { seen="$seen; no $REPORTS_PREFIX/estate.html in the bucket"; rc=1; }
+  jq -e --arg c "$SEED_HEAD" 'any(.projects[]; .status == "ok" and .plan.commit == $c)' "$est" >/dev/null 2>&1 \
+    || { seen="$seen; estate.json shows no project whose plan is ${SEED_HEAD:0:8}"; rc=1; }
+  grep -q 'estate.html?.*X-Amz-Signature=' "$log" || { seen="$seen; the job printed no presigned link to estate.html"; rc=1; }
+  if [ $rc = 0 ]; then
+    verdict estate-job pass "run $run: the job took $(jq -r '"\(.role | split("/") | last) with \(.sub)"' <<<"$took") and wrote $REPORTS_PREFIX/estate.html, whose project shows the plan of ${SEED_HEAD:0:8}, with a presigned link"
+  else
+    verdict estate-job fail "run $run${seen}"
+  fi
+}
+
+# The reports phase: report-keys, whose bucket seeds estate-job, then report-oidc.
+prove_reports() {
+  local x
+  ( reports_main keys ) || { for x in report-keys estate-job report-oidc; do verdict "$x" fail "main could not be set up"; done; return 0; }
+  claim_report_keys
+  claim_estate_job
+  claim_report_oidc
+}
+
+# The reports phase under BREAK: a plan with the keys first, unbroken, whose
+# bucket seeds estate-job; then report-keys with the secrets deleted, and
+# report-oidc with no oidc.
+break_reports() {
+  local x
+  ( reports_main keys ) || { for x in report-keys estate-job report-oidc; do unrun "$x" "main could not be set up"; done; return 0; }
+  if reports_keys set; then reports_plan; else PLANNED="" HELD=""; fi
+  if [ -n "$PLANNED" ] && reports_landed "${HELD:-/nonexistent}" "$PLANNED" >/dev/null; then SEED="$HELD" SEED_HEAD="$PLANNED"; fi
+  claim_estate_job
+  claim_report_keys
+  claim_report_oidc
+}
+
 # ── commands ─────────────────────────────────────────────────────────────────
 
 close_and_prune() {
@@ -1957,16 +2369,16 @@ EOF
       case "$1" in
         --record) record="${2:?--record needs a file}"; shift 2 ;;
         --break) BREAK=1; shift ;;
-        merge|pull-request|modules) phases="$phases $1"; shift ;;
-        *) fail "unknown argument '$1' (merge, pull-request, modules, --break, --record FILE)" ;;
+        merge|pull-request|modules|reports) phases="$phases $1"; shift ;;
+        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, --break, --record FILE)" ;;
       esac
     done
-    # Under BREAK only the phases with locking claims run.
+    # Under BREAK only the phases with locking or report claims run.
     if [ -n "$BREAK" ]; then
-      [ -n "$phases" ] || phases="merge pull-request"
-      case " $phases " in *" modules "*) fail "the modules phase has no locking claim to break" ;; esac
+      [ -n "$phases" ] || phases="merge pull-request reports"
+      case " $phases " in *" modules "*) fail "the modules phase has no claim to break" ;; esac
     fi
-    [ -n "$phases" ] || phases="merge pull-request modules"
+    [ -n "$phases" ] || phases="merge pull-request modules reports"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "prove needs Docker, for the roots' state"; fi
     # The merge phase sets the agent's and the merge token's secrets; find a
     # token that cannot before the first phase rather than in it.
