@@ -7,9 +7,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
-import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, SYNTH_DRIFT_PR, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
-import { detectBinary, findRoots, globMatch } from "../detect";
-import { detectTerragrunt } from "../terragrunt";
+import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
+import { findRoots, globMatch } from "../detect";
+import { detectShape } from "../shape";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
@@ -171,8 +171,15 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   if (response === "off") return { event: ev, response, skipped: `respond.${ev} is off`, text: `respond.${ev} is off` };
   const mode = o.mode ?? "dry-run";
   const out = resolve(repo, o.out ?? "terragucci-respond");
+  const shape = detectShape(repo, settings);
   const roots = () => findRoots(repo, settings.roots).filter((r) => !o.root || globMatch(o.root, r));
-  const binary = () => o.binary ?? settings.binary ?? (detectTerragrunt(repo) ? detectBinary(repo, []).value : detectBinary(repo, roots()).value);
+  // Where an edit to the roots belongs: an Atmos instance's component, which git holds, never the copy atmos write made.
+  const sources = async (): Promise<{ edit: string[]; waves?: string[] }> => {
+    if (shape.kind !== "atmos") return { edit: roots() };
+    const waves = (await shape.discover()).roots.map((r) => r.root).filter((r) => !o.root || globMatch(o.root, r));
+    return { edit: [...new Set(waves.map(shape.sourceOf))].sort(), waves };
+  };
+  const binary = () => o.binary ?? settings.binary ?? shape.binary(shape.kind === "terragrunt" ? [] : roots()).value;
   const need = (v: unknown, flag: string) => {
     if (!v) throw new ConfigError(`respond ${ev} needs ${flag}`);
   };
@@ -191,9 +198,11 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const t = triage(o.log!);
     r = { text: describeTriage(t), data: t };
   } else if (ev === "drift") {
-    if (settings.synth) throw new ConfigError(`respond drift: ${SYNTH_DRIFT_PR}`);
+    // A shape whose roots git does not hold (synth, Atmos) has no file of the root's own to codify a live value in.
+    const refused = shape.refuses("drift-pr");
+    if (refused) throw new ConfigError(`respond drift: ${refused}`);
     const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions, known: knownAttributions(repo, o.attributions) } : undefined;
-    const tg = detectTerragrunt(repo) !== undefined;
+    const tg = shape.engine === "terragrunt";
     const d = tg
       ? await driftUnits(repo, binary(), o, env, settings, attributing)
       : await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
@@ -209,10 +218,10 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   } else if (ev === "tips") {
     // With a plan's report, the tips its plans show (a rename's moved block), into --branch; otherwise the repo's own.
     // With synth the roots are on disk only once the command has run, as the tips job runs it.
-    if (!o.report && settings.synth && roots().length === 0) throw new ConfigError(`respond tips found no roots: synth writes them, so run ${settings.synth} first`);
+    if (!o.report && shape.kind === "synth" && roots().length === 0) throw new ConfigError(`respond tips found no roots: synth writes them, so run ${shape.prepare} first`);
     const tips = o.report
       ? { proposals: movedProposals(repo, reportRenames(resolve(repo, o.report)).filter((x) => !o.root || globMatch(o.root, x.root)), o.branch), left: [] as string[] }
-      : tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: Boolean(settings.synth) });
+      : await sources().then((src) => tipProposals(repo, src.edit, binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: shape.kind === "synth", ...(src.waves ? { waveRoots: src.waves } : {}) }));
     const proposed = await propose(repo, settings, tips.proposals, { mode, env, fetch: o.fetch });
     r = { text: [...tips.left, ...proposed.map(said)].join("\n") || "no tip to fix", proposals: proposed };
   } else if (ev === "fmt") {
@@ -374,7 +383,7 @@ async function fmt(repo: string, settings: ResolvedSettings, binary: string, mod
     let files = listed;
     // A Terragrunt repo's own files are HCL the binary does not read: terragrunt hcl fmt formats them, in this
     // throwaway checkout, and git names what it changed.
-    if (detectTerragrunt(tree.dir)) {
+    if (detectShape(tree.dir, settings).engine === "terragrunt") {
       const terragrunt = env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
       const h = spawnSync(terragrunt, ["hcl", "fmt", "--no-color"], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv({ ...env, TG_NON_INTERACTIVE: "true" }) });
       if (h.error) throw new ConfigError(`respond fmt could not run ${terragrunt}: ${h.error.message}`);

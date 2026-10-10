@@ -32,12 +32,13 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { ConfigError, SYNTH_GENERATE, type ResolvedSettings } from "./config";
+import { ConfigError, type ResolvedSettings } from "./config";
 import { KEY_ATTRIBUTE, SUFFIX_READ } from "./ephemeral";
 import { findRoots, globMatch } from "./detect";
 import { IDENT, isMap, overlayLevel, type GenerateLevel, type GenerateSettings } from "./generate-config";
 import { versionGlobs } from "./pins";
-import { detectTerragrunt, hclBlocks, walkUnits } from "./terragrunt";
+import { detectShape } from "./shape";
+import { hclBlocks, walkUnits } from "./terragrunt";
 
 export { checkGenerate, combineGenerate, type GenerateLevel, type GenerateSettings } from "./generate-config";
 
@@ -262,12 +263,17 @@ export function generateRoots(repo: string, settings: ResolvedSettings): string[
 
 /**
  * What generate would write, file by file, without writing it. Throws a
- * ConfigError with synth, whose app sets what generate would write, and for
- * settings that cannot be written.
+ * ConfigError where the repo's shape refuses generate (synth, whose app sets
+ * what generate would write, and Atmos, whose stacks do), and for settings
+ * that cannot be written.
  */
 export function planGenerate(repo: string, settings: ResolvedSettings): GeneratePlan {
-  if (settings.synth && settings.generate) throw new ConfigError(`generate: ${SYNTH_GENERATE}`);
-  if (detectTerragrunt(repo)) return planTerragrunt(repo, settings);
+  const shape = detectShape(repo, settings);
+  const noSynth = settings.synth ? shape.refuses("synth") : undefined;
+  if (noSynth) throw new ConfigError(`synth: ${noSynth}`);
+  const refused = settings.generate ? shape.refuses("generate") : undefined;
+  if (refused) throw new ConfigError(`generate: ${refused}`);
+  if (shape.kind === "terragrunt") return planTerragrunt(repo, settings);
   const gen = settings.generate ?? {};
   const roots = settings.generate ? generateRoots(repo, settings) : [];
   const files: FileChange[] = [];
