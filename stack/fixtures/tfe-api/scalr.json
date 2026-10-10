@@ -1,0 +1,527 @@
+{
+ "iacp": {
+  "environments": [
+   {
+    "id": "env-staging",
+    "type": "environments",
+    "attributes": {
+     "name": "staging",
+     "status": "Active"
+    }
+   },
+   {
+    "id": "env-prod",
+    "type": "environments",
+    "attributes": {
+     "name": "prod",
+     "status": "Active"
+    }
+   }
+  ],
+  "workspaces?filter[environment]=env-staging": [
+   {
+    "id": "ws-staging-platform",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-platform",
+     "working-directory": "envs/staging/platform",
+     "terraform-version": "1.10.6",
+     "iac-platform": "opentofu",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main",
+      "trigger-prefixes": []
+     }
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-staging",
+       "type": "environments"
+      }
+     }
+    }
+   },
+   {
+    "id": "ws-staging-orders",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-orders",
+     "working-directory": "envs/staging/orders",
+     "terraform-version": "1.10.6",
+     "iac-platform": "opentofu",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main",
+      "trigger-prefixes": []
+     }
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-staging",
+       "type": "environments"
+      }
+     }
+    }
+   }
+  ],
+  "workspaces?filter[environment]=env-prod": [
+   {
+    "id": "ws-prod-platform",
+    "type": "workspaces",
+    "attributes": {
+     "name": "prod-platform",
+     "working-directory": "envs/prod/platform",
+     "terraform-version": "1.10.6",
+     "iac-platform": "opentofu",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main",
+      "trigger-prefixes": []
+     }
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     }
+    }
+   },
+   {
+    "id": "ws-prod-orders",
+    "type": "workspaces",
+    "attributes": {
+     "name": "prod-orders",
+     "working-directory": "envs/prod/orders",
+     "terraform-version": "1.10.6",
+     "iac-platform": "opentofu",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main",
+      "trigger-prefixes": []
+     }
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     }
+    }
+   },
+   {
+    "id": "ws-prod-email",
+    "type": "workspaces",
+    "attributes": {
+     "name": "prod-email",
+     "working-directory": "envs/prod/email",
+     "terraform-version": "1.10.6",
+     "iac-platform": "opentofu",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main",
+      "trigger-prefixes": []
+     }
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     }
+    }
+   },
+   {
+    "id": "ws-prod-legacy",
+    "type": "workspaces",
+    "attributes": {
+     "name": "prod-legacy",
+     "working-directory": "",
+     "terraform-version": "1.10.6",
+     "iac-platform": "opentofu",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": null
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     }
+    }
+   }
+  ],
+  "vars?filter[environment]=env-staging": [
+   {
+    "id": "var-dd-staging",
+    "type": "vars",
+    "attributes": {
+     "key": "DATADOG_API_KEY",
+     "value": "never-copy-this",
+     "category": "shell",
+     "sensitive": true,
+     "hcl": false
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-staging",
+       "type": "environments"
+      }
+     },
+     "account": {
+      "data": {
+       "id": "acc-acme",
+       "type": "accounts"
+      }
+     }
+    }
+   },
+   {
+    "id": "var-team",
+    "type": "vars",
+    "attributes": {
+     "key": "TEAM",
+     "value": "shop",
+     "category": "shell",
+     "sensitive": false,
+     "hcl": false
+    },
+    "relationships": {
+     "account": {
+      "data": {
+       "id": "acc-acme",
+       "type": "accounts"
+      }
+     }
+    }
+   },
+   {
+    "id": "var-ws-staging",
+    "type": "vars",
+    "attributes": {
+     "key": "region",
+     "value": "us-east-1",
+     "category": "terraform",
+     "sensitive": false,
+     "hcl": false
+    },
+    "relationships": {
+     "workspace": {
+      "data": {
+       "id": "ws-staging-platform",
+       "type": "workspaces"
+      }
+     },
+     "environment": {
+      "data": {
+       "id": "env-staging",
+       "type": "environments"
+      }
+     }
+    }
+   }
+  ],
+  "vars?filter[environment]=env-prod": [
+   {
+    "id": "var-dd-prod",
+    "type": "vars",
+    "attributes": {
+     "key": "DATADOG_API_KEY",
+     "value": "never-copy-this",
+     "category": "shell",
+     "sensitive": true,
+     "hcl": false
+    },
+    "relationships": {
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     },
+     "account": {
+      "data": {
+       "id": "acc-acme",
+       "type": "accounts"
+      }
+     }
+    }
+   },
+   {
+    "id": "var-team",
+    "type": "vars",
+    "attributes": {
+     "key": "TEAM",
+     "value": "shop",
+     "category": "shell",
+     "sensitive": false,
+     "hcl": false
+    },
+    "relationships": {
+     "account": {
+      "data": {
+       "id": "acc-acme",
+       "type": "accounts"
+      }
+     }
+    }
+   },
+   {
+    "id": "var-ws-prod",
+    "type": "vars",
+    "attributes": {
+     "key": "region",
+     "value": "us-east-1",
+     "category": "terraform",
+     "sensitive": false,
+     "hcl": false
+    },
+    "relationships": {
+     "workspace": {
+      "data": {
+       "id": "ws-prod-platform",
+       "type": "workspaces"
+      }
+     },
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     }
+    }
+   }
+  ],
+  "vars?filter[workspace]=ws-staging-platform": [
+   {
+    "id": "var-ws-staging",
+    "type": "vars",
+    "attributes": {
+     "key": "region",
+     "value": "us-east-1",
+     "category": "terraform",
+     "sensitive": false,
+     "hcl": false
+    },
+    "relationships": {
+     "workspace": {
+      "data": {
+       "id": "ws-staging-platform",
+       "type": "workspaces"
+      }
+     },
+     "environment": {
+      "data": {
+       "id": "env-staging",
+       "type": "environments"
+      }
+     }
+    }
+   },
+   {
+    "id": "var-db",
+    "type": "vars",
+    "attributes": {
+     "key": "db_password",
+     "value": "never-copy-this",
+     "category": "terraform",
+     "sensitive": true,
+     "hcl": false
+    },
+    "relationships": {
+     "workspace": {
+      "data": {
+       "id": "ws-staging-platform",
+       "type": "workspaces"
+      }
+     },
+     "environment": {
+      "data": {
+       "id": "env-staging",
+       "type": "environments"
+      }
+     }
+    }
+   }
+  ],
+  "vars?filter[workspace]=ws-staging-orders": [],
+  "vars?filter[workspace]=ws-prod-platform": [
+   {
+    "id": "var-ws-prod",
+    "type": "vars",
+    "attributes": {
+     "key": "region",
+     "value": "us-east-1",
+     "category": "terraform",
+     "sensitive": false,
+     "hcl": false
+    },
+    "relationships": {
+     "workspace": {
+      "data": {
+       "id": "ws-prod-platform",
+       "type": "workspaces"
+      }
+     },
+     "environment": {
+      "data": {
+       "id": "env-prod",
+       "type": "environments"
+      }
+     }
+    }
+   }
+  ],
+  "vars?filter[workspace]=ws-prod-orders": [],
+  "vars?filter[workspace]=ws-prod-email": [],
+  "vars?filter[workspace]=ws-prod-legacy": [],
+  "policy-groups?filter[environment]=env-staging&include=policies": {
+   "data": [
+    {
+     "id": "pg-cost",
+     "type": "policy-groups",
+     "attributes": {
+      "name": "cost-guard",
+      "opa-version": "0.70.0",
+      "status": "active",
+      "vcs-repo": {
+       "identifier": "acme/policies",
+       "path": "cost",
+       "branch": "main"
+      }
+     },
+     "relationships": {
+      "policies": {
+       "data": [
+        {
+         "id": "pol-max_monthly_cost",
+         "type": "policies"
+        },
+        {
+         "id": "pol-instance_types",
+         "type": "policies"
+        },
+        {
+         "id": "pol-owner_tags",
+         "type": "policies"
+        }
+       ]
+      }
+     }
+    }
+   ],
+   "included": [
+    {
+     "id": "pol-max_monthly_cost",
+     "type": "policies",
+     "attributes": {
+      "name": "max_monthly_cost",
+      "enabled": true,
+      "enforced-level": "hard-mandatory"
+     }
+    },
+    {
+     "id": "pol-instance_types",
+     "type": "policies",
+     "attributes": {
+      "name": "instance_types",
+      "enabled": true,
+      "enforced-level": "soft-mandatory"
+     }
+    },
+    {
+     "id": "pol-owner_tags",
+     "type": "policies",
+     "attributes": {
+      "name": "owner_tags",
+      "enabled": true,
+      "enforced-level": "advisory"
+     }
+    }
+   ]
+  },
+  "policy-groups?filter[environment]=env-prod&include=policies": {
+   "data": [
+    {
+     "id": "pg-cost",
+     "type": "policy-groups",
+     "attributes": {
+      "name": "cost-guard",
+      "opa-version": "0.70.0",
+      "status": "active",
+      "vcs-repo": {
+       "identifier": "acme/policies",
+       "path": "cost",
+       "branch": "main"
+      }
+     },
+     "relationships": {
+      "policies": {
+       "data": [
+        {
+         "id": "pol-max_monthly_cost",
+         "type": "policies"
+        },
+        {
+         "id": "pol-instance_types",
+         "type": "policies"
+        },
+        {
+         "id": "pol-owner_tags",
+         "type": "policies"
+        }
+       ]
+      }
+     }
+    }
+   ],
+   "included": [
+    {
+     "id": "pol-max_monthly_cost",
+     "type": "policies",
+     "attributes": {
+      "name": "max_monthly_cost",
+      "enabled": true,
+      "enforced-level": "hard-mandatory"
+     }
+    },
+    {
+     "id": "pol-instance_types",
+     "type": "policies",
+     "attributes": {
+      "name": "instance_types",
+      "enabled": true,
+      "enforced-level": "soft-mandatory"
+     }
+    },
+    {
+     "id": "pol-owner_tags",
+     "type": "policies",
+     "attributes": {
+      "name": "owner_tags",
+      "enabled": true,
+      "enforced-level": "advisory"
+     }
+    }
+   ]
+  }
+ }
+}

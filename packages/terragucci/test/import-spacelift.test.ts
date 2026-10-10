@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config";
 import { describeImport, importConfig, type ImportNote } from "../src/import";
 import { parseHcl, resourcesOf } from "../src/import/hcl";
-import { CONCEPTS_TABLE } from "../src/import/platform-guide";
+import { SPACELIFT_ENV0_TABLE } from "../src/import/spacelift-env0-guide";
 import { slugOf } from "../src/import/spacelift";
 import { backend, remoteState, tmp, write } from "./helpers";
 
@@ -25,8 +25,8 @@ function pageTable(header: string): string[][] {
 const note = (notes: ImportNote[], key: string): ImportNote | undefined => notes.find((n) => n.key === key);
 
 describe("the guide's concepts table", () => {
-  it("is platform-guide.ts's, cell for cell", () => {
-    expect(pageTable("| Concept | Spacelift | env zero | terragucci |")).toEqual(CONCEPTS_TABLE.map((r) => [...r]));
+  it("is spacelift-env0-guide.ts's, cell for cell", () => {
+    expect(pageTable("| Concept | Spacelift | env zero | terragucci |")).toEqual(SPACELIFT_ENV0_TABLE.map((r) => [...r]));
   });
 });
 

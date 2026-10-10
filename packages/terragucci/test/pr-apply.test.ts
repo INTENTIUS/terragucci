@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decideApplyComment, decidePlanLock, mergePullRequest, reached, reachedInstances, reachedUnits, type Git } from "../src/comment-apply";
+import { decideApplyComment, decidePlanLock, mergePullRequest, reached, reachedInstances, reachedSynthesized, reachedUnits, type Git } from "../src/comment-apply";
 import type { Fetch } from "../src/forge";
 import { describeHeld, LOCKS_PATH, parseLocks, readLocks, releaseLocks, takeLocks } from "../src/locks";
 import { backend, git, tmp, write } from "./helpers";
@@ -448,6 +448,67 @@ describe("apply.when: pull-request in an Atmos repo", () => {
     const r = atmosRepos({ "stacks/deploy/prod.yaml": "vars: {}\n" });
     expect(reached(r.work, r.git, "origin/main", r.head, atmosLayers).kind).toBe("instance");
     expect(reached(r.work, r.git, "origin/main", r.head, atmosLayers, { terragrunt: true }).kind).toBe("unit");
+  });
+});
+
+describe("apply.when: pull-request in a CDK Terrain repo (synth)", () => {
+  const stacks = [["cdktf.out/stacks/dev"], ["cdktf.out/stacks/prod"]];
+  /** origin with a CDK Terrain app whose stacks are not committed, a branch `feature` with `change`, and a checkout of main where synth wrote the stacks. */
+  const cdktnRepos = (change: Record<string, string>): ReturnType<typeof repos> => {
+    const dir = tmp("tg-pr-apply-cdktn-");
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", "-b", "main", origin);
+    const work = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", work);
+    git(work, "remote", "add", "origin", origin);
+    write(work, {
+      ".gitignore": "cdktf.out/\n",
+      "README.md": "# stacks\n",
+      "cdktf.json": '{ "app": "node main.js" }\n',
+      "main.js": "const SIZES = { dev: 1, prod: 3 };\n",
+      "terragucci.yml": "synth: npx cdktn synth\n",
+    });
+    commit(work, "base");
+    git(work, "push", "-q", "origin", "main");
+    git(work, "checkout", "-q", "-b", "feature");
+    write(work, change);
+    const head = commit(work, "change");
+    git(work, "push", "-q", "origin", "feature");
+    git(work, "checkout", "-q", "main");
+    git(work, "fetch", "-q", "origin");
+    write(work, { "cdktf.out/stacks/dev/cdk.tf.json": "{}\n", "cdktf.out/stacks/prod/cdk.tf.json": "{}\n" });
+    return { work, origin, head, git: (args) => spawnSync("git", args, { cwd: work, encoding: "utf-8" }) as ReturnType<Git> };
+  };
+
+  it("a change to the app reaches every stack and says which file; Markdown reaches none", () => {
+    const r = cdktnRepos({ "main.js": "const SIZES = { dev: 1, prod: 5 };\n", "README.md": "# more\n" });
+    expect(reachedSynthesized(r.git, "origin/main", r.head, stacks)).toEqual({
+      units: ["cdktf.out/stacks/dev", "cdktf.out/stacks/prod"],
+      every: "it changes `main.js`, and the synth command writes every root from the repo's files",
+      kind: "root",
+    });
+    const md = cdktnRepos({ "README.md": "# more\n" });
+    expect(reachedSynthesized(md.git, "origin/main", md.head, stacks)).toEqual({ units: [], kind: "root" });
+  });
+
+  it("reached picks the synth reach when told, and the plain roots' path rules otherwise, which reach no stack", () => {
+    const r = cdktnRepos({ "main.js": "const SIZES = { dev: 1, prod: 5 };\n" });
+    expect(reached(r.work, r.git, "origin/main", r.head, stacks, { synth: true }).units).toEqual(["cdktf.out/stacks/dev", "cdktf.out/stacks/prod"]);
+    expect(reached(r.work, r.git, "origin/main", r.head, stacks).units).toEqual([]);
+  });
+
+  it("locks every stack, says so once, and refuses a second pull request that changes the app, naming a stack and the holder", async () => {
+    const a = cdktnRepos({ "main.js": "const SIZES = { dev: 1, prod: 4 };\n" });
+    const s = setup("/terragucci apply", { pr: OPEN(a.head), reviews: approved(a.head), statuses: GREEN });
+    const o = { layers: stacks, env: s.env, fetch: s.fetch, git: a.git, repo: a.work, when: "pull-request" as const, synth: true, wait: async () => {} };
+    expect(await decideApplyComment(o)).toMatchObject({ go: true, open: true, pr: 7, sha: a.head });
+    expect(Object.keys(readLocks(a.work).locks).sort()).toEqual(["cdktf.out/stacks/dev", "cdktf.out/stacks/prod"]);
+    expect(replies(s)).toEqual([`terragucci: pull request 7 locks every root: it changes \`main.js\`, and the synth command writes every root from the repo's files. Applying its head ${a.head.slice(0, 8)}`]);
+    const b = cdktnRepos({ "main.js": "const SIZES = { dev: 1, prod: 5 };\n" });
+    await takeLocks(b.work, ["cdktf.out/stacks/dev", "cdktf.out/stacks/prod"], { pr: 3, by: "erin", at: "2026-10-07T00:00:00.000Z", head: "c".repeat(40) }, async () => true);
+    const held = setup("/terragucci apply", { pr: OPEN(b.head), reviews: approved(b.head), statuses: GREEN, others: { 3: "open" } });
+    expect((await decideApplyComment({ ...o, env: held.env, fetch: held.fetch, git: b.git, repo: b.work })).go).toBe(false);
+    expect(replies(held).at(-1)).toContain("`cdktf.out/stacks/dev`, `cdktf.out/stacks/prod` are locked by pull request 3 (applied by erin), so pull request 7 is not applied");
   });
 });
 

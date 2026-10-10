@@ -2,7 +2,7 @@
  * `terragucci import spacelift [.spacelift/config.yml]`: terragucci.yml from
  * a Spacelift repo's runtime config and the admin stack's `spacelift_*`
  * resources, by the concepts table of "Coming from Spacelift or env zero"
- * (./platform-guide.ts).
+ * (./spacelift-env0-guide.ts).
  *
  * A stack comes from a `spacelift_stack` resource, a `stacks` entry of
  * `.spacelift/config.yml`, or both, matched by the stack's ID (its `slug`, or
@@ -21,7 +21,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, type StepStage } from "../config";
 import { literalString, refTo, resourcesOf, shown, stringList, type HclResource, type HclValue } from "./hcl";
 import { isMap, rootOf } from "./notes";
-import { notePlatformOnly, noteUnknown } from "./platform-guide";
+import { notePlatformOnly, noteUnknown } from "./spacelift-env0-guide";
 import { Build, finish, type PlatformConverted, type PlatformOptions, type Unit } from "./platform";
 
 export const SPACELIFT_FILES = [".spacelift/config.yml", ".spacelift/config.yaml"];

@@ -47,10 +47,33 @@ backends:
 | Key | Holds |
 |---|---|
 | `backends[].root` | a root whose backend block, in the same change, names the new backend |
-| `backends[].from.backend` | where the state is now: `s3`, `gcs`, `azurerm`, `local`, `remote`, `cloud` or `file` |
-| `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least; for `gcs`, `bucket`; for `azurerm`, `storage_account_name`, `container_name` and `key` |
+| `backends[].from.backend` | where the state is now: `s3`, `gcs`, `azurerm`, `local`, `pg`, `kubernetes`, `consul`, `http`, `remote`, `cloud` or `file` |
+| `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least; for `gcs`, `bucket`; for `azurerm`, `storage_account_name`, `container_name` and `key`; for `kubernetes`, `secret_suffix`; for `consul`, `path`; for `http`, `address` |
 
-For `s3`, `gcs`, `azurerm` and `local`, the job reads the state through the root with the old backend in an override file. It writes the state unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+For these backends, the job reads the state through the root with the old backend in an override file. It writes the state unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+
+### Unversioned backends
+
+The `pg` and `kubernetes` backends keep no versions. A state moves from or to either one, and a move between roots works on them. The `consul` and `http` backends (other than GitLab-managed state) take the same path but have no claim yet.
+
+```yaml
+backends:
+  - root: envs/dev/platform
+    from:
+      backend: pg
+      config:
+        conn_str: postgres://db.internal/terraform
+        schema_name: platform_old
+```
+
+| Step | What the job does |
+|---|---|
+| plan | `state pull`, through an override file for the source |
+| digest | each state's contents; there is no version id |
+| write | `state push` under the backend's own lock; the binary refuses a state of another lineage or an older serial. A `kubernetes` backend writes an empty state at init, which the move replaces with `-force` |
+| record | each state's address, such as `pg:db.internal/terraform/platform.states` or `kubernetes:<namespace>/<secret_suffix>` |
+
+Credentials stay out of the file: `password`, `token`, `client_key` and `access_token` are refused, and so is a `conn_str` with a password. The job gives them in the backend's own variables, such as `PGPASSWORD` or `KUBE_TOKEN`. The source's lock is not held between the check and the write; the digest check runs just before it. `terragucci migrate revert` refuses these roots, since there is no earlier version to read.
 
 ### Workspaces
 
