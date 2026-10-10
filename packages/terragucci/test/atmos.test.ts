@@ -321,7 +321,7 @@ describe("reads: !terraform.state and !terraform.output", () => {
     const instances = atmosInstances(twoStacks({ dependencies: { components: [{ component: "vpc" }] }, vars: { stage: "dev", cidr: "!terraform.state vpc .cidr" } }));
     writeInstances(repo, instances);
     expect(JSON.parse(readFileSync(join(repo, "dev/app/terragucci-atmos.auto.tfvars.json"), "utf-8"))).toEqual({ stage: "dev" });
-    expect(atmosEdges(join(repo, "dev/app"))).toEqual({ dependencies: ["dev/vpc"], reads: [{ var: "cidr", upstream: "dev/vpc", output: ["cidr"], function: "!terraform.state vpc .cidr" }] });
+    expect(atmosEdges(join(repo, "dev/app"))).toEqual({ component: "components/terraform/app", dependencies: ["dev/vpc"], reads: [{ var: "cidr", upstream: "dev/vpc", output: ["cidr"], function: "!terraform.state vpc .cidr" }] });
     expect(existsSync(join(repo, "dev/vpc", EDGES_FILE))).toBe(true);
     // A state read is a root dependency, as terraform_remote_state is; dependencies.components orders without reading state.
     expect([...rootDependencies(repo, ["dev/app", "dev/vpc"]).get("dev/app")!]).toEqual(["dev/vpc"]);

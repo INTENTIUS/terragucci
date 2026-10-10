@@ -171,7 +171,8 @@ function onPath(cmd: string): boolean {
 export function detectBinary(repo: string, roots: string[]): Detected<Binary> {
   if (existsSync(join(repo, ".opentofu-version"))) return { value: "tofu", reason: ".opentofu-version" };
   if (existsSync(join(repo, ".terraform-version"))) return { value: "terraform", reason: ".terraform-version" };
-  if (roots.some((r) => readdirSync(join(repo, r)).some((n) => n.endsWith(".tofu")))) {
+  // A root not on disk yet (one a synth or atmos write makes) says nothing.
+  if (roots.some((r) => existsSync(join(repo, r)) && readdirSync(join(repo, r)).some((n) => n.endsWith(".tofu")))) {
     return { value: "tofu", reason: ".tofu files" };
   }
   if (onPath("tofu")) return { value: "tofu", reason: "tofu on the path" };
