@@ -24,9 +24,9 @@ WORKFLOW_DIR_NOTE=".github/workflows"
 
 forge_load() {
   if [ -z "${TERRAGUCCI_GITHUB_TOKEN:-}" ]; then
-    [ -f "$HERE/.state/github.env" ] || fail "no stack/.state/github.env; run 'just stack-up github' first"
+    [ -f "${TG_STATE:-$HERE/.state}/github.env" ] || fail "no stack/.state/github.env; run 'just stack-up github' first"
     # shellcheck disable=SC1091
-    . "$HERE/.state/github.env"
+    . "${TG_STATE:-$HERE/.state}/github.env"
   fi
   URL="$TERRAGUCCI_GITHUB_URL"; TOKEN="$TERRAGUCCI_GITHUB_TOKEN"; USER="$TERRAGUCCI_GITHUB_USER"; FLOCI="$TERRAGUCCI_FLOCI_URL"
   REPO="$TERRAGUCCI_GITHUB_REPO"
@@ -84,7 +84,7 @@ forge_run() { # name branch sha [source: unused here; act runs a push event]
     '{ref: $ref, after: $sha, repository: {full_name: $repo, default_branch: "main"}}' > "$dir.event.json"
   RUN_LOG="$dir.log"
   log "act push on ${name}@${sha:0:8} ($branch)"
-  if (cd "$dir" && act push -W "$PIPELINE_FILE" -e "$dir.event.json" --network terragucci \
+  if (cd "$dir" && act push -W "$PIPELINE_FILE" -e "$dir.event.json" --network "${TG_NETWORK:-terragucci}" \
         -P "ubuntu-latest=$image" --pull=false --rm \
         --env AWS_ENDPOINT_URL=http://floci:4566 --env AWS_ACCESS_KEY_ID=test \
         --env AWS_SECRET_ACCESS_KEY=test --env AWS_REGION=us-east-1 \
