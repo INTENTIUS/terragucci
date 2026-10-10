@@ -26,6 +26,7 @@ import {
   type ReportRootBinary,
   type ReportStep,
   type ReportRead,
+  type ReportUnknownRead,
   type WaveState,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost,
 } from "./schema";
@@ -63,6 +64,10 @@ export interface RootInput {
   steps?: ReportStep[];
   /** The roots whose state it reads, and which outputs it planned on. */
   reads?: ReportRead[];
+  /** Its terraform_remote_state blocks whose state the code does not address. */
+  unknownReads?: ReportUnknownRead[];
+  /** Why the code does not address its own state. */
+  unaddressed?: string;
   /** A Terragrunt unit's dependencies, by path. */
   dependencies?: string[];
 }
@@ -285,6 +290,8 @@ export function buildReport(input: BuildInput): Report {
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
+      ...(src.unknownReads?.length ? { unknown_reads: src.unknownReads } : {}),
+      ...(src.unaddressed ? { unaddressed: src.unaddressed } : {}),
       ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
     };
   });

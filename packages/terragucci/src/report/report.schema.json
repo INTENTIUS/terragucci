@@ -257,7 +257,20 @@
                 "why": { "type": "string" }
               }
             }
-          }
+          },
+          "unknown_reads": {
+            "description": "Its terraform_remote_state blocks whose state the code does not address, an expression or a value the backend takes from the environment: no edge orders the root after the root that writes that state, so the edge is unknown (minor 30).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["data", "why"],
+              "properties": {
+                "data": { "type": "string", "description": "The block's label." },
+                "why": { "type": "string" }
+              }
+            }
+          },
+          "unaddressed": { "type": "string", "description": "Why the code does not address the root's own state, when a root of the run reads state through terraform_remote_state: a reader of it is not ordered after it (minor 30)." }
         }
       }
     },

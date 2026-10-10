@@ -43,7 +43,10 @@ function readsList(report: Report): string {
     const on = x.outputs === "planned" ? `planned outputs${x.unknown?.length ? `, ${x.unknown.map((u) => `<code>${esc(u)}</code>`).join(", ")} known once it applies` : ""}` : `applied state${x.why ? ` (${esc(x.why)})` : ""}`;
     return `<li data-root="${esc(r.path)}" data-upstream="${esc(x.upstream)}"><code>${esc(r.path)}</code> reads <code>${esc(x.upstream)}</code> through <code>${esc(x.data)}</code>: ${on}</li>`;
   }));
-  return rows.length ? `<h3>Reads</h3><ul id="reads">${rows.join("")}</ul>` : "";
+  const unknown = report.roots.flatMap((r) => (r.unknown_reads ?? []).map((x) => `<li data-root="${esc(r.path)}" data-unknown="${esc(x.data)}"><code>${esc(r.path)}</code> reads unknown state through <code>${esc(x.data)}</code>: ${esc(x.why)}, so it is not ordered after the root that writes it</li>`));
+  const unaddressed = report.roots.filter((r) => r.unaddressed).map((r) => `<li data-root="${esc(r.path)}" data-unaddressed><code>${esc(r.path)}</code> keeps its state where the code does not say: ${esc(r.unaddressed!)}, so a root that reads it is not ordered after it</li>`);
+  const all = [...rows, ...unknown, ...unaddressed];
+  return all.length ? `<h3>Reads</h3><ul id="reads">${all.join("")}</ul>` : "";
 }
 
 /** The pull request the run planned, linked when its page is known. */

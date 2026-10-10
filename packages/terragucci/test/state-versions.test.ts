@@ -109,6 +109,22 @@ describe("the version an apply leaves", () => {
     expect(await stateVersion(initialised("azurerm", {}), ENV)).toMatchObject({ backend: "azurerm", versioning: "unknown" });
   });
 
+  it("is off for a backend that keeps no history, and unknown for one that keeps versions it does not read", async () => {
+    const pg = await stateVersion(initialised("pg", { conn_str: "postgres://tf:secret@db.internal:5432/states", schema_name: "net" }), ENV);
+    expect(pg).toMatchObject({ backend: "pg", versioning: "off", location: "pg:db.internal:5432/states/net.states", note: expect.stringContaining("which each write replaces") });
+    expect(JSON.stringify(pg)).not.toContain("secret");
+    expect(await stateVersion(initialised("kubernetes", { secret_suffix: "net", namespace: "infra" }), ENV)).toMatchObject({ backend: "kubernetes", versioning: "off", location: "kubernetes:infra/net" });
+    expect(await stateVersion(initialised("consul", { address: "consul:8500", path: "tf/net" }), ENV)).toMatchObject({ backend: "consul", versioning: "off", location: "consul:consul:8500/tf/net" });
+    expect(await stateVersion(initialised("http", { address: "https://state.example.com/net" }), ENV)).toMatchObject({ backend: "http", versioning: "off", note: expect.stringContaining("names no versions") });
+    // GitLab's state API keeps each version by serial: there is history, unread.
+    const gitlab = await stateVersion(initialised("http", { address: "https://gitlab.com/api/v4/projects/42/terraform/state/net" }), ENV);
+    expect(gitlab).toMatchObject({ backend: "http", versioning: "unknown", note: expect.stringContaining("GitLab keeps each version") });
+    expect(await stateVersion(initialised("gcs", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "gcs", versioning: "unknown", note: "a gcs backend can keep versions of the state, which terragucci does not read" });
+    expect(await stateVersion(initialised("remote", { organization: "acme", workspaces: [{ name: "net" }] }), ENV)).toMatchObject({ backend: "remote", versioning: "unknown", location: "remote:app.terraform.io/acme/net" });
+    // A refusal elsewhere (export, migrations) still names the backend it does not read.
+    expect(stateObject(initialised("pg", { conn_str: "postgres://db/states" }))).toMatchObject({ unsupported: expect.stringContaining("this root's backend is pg") });
+  });
+
   it("an S3 HEAD answers whether the object exists, its ETag and its version id", async () => {
     const s3 = new S3Client({ bucket: "b", endpoint: "http://minio:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" }, headOnly(200, { "x-amz-version-id": "v1", etag: '"abc"' }).fetch);
     expect(await s3.head("k")).toEqual({ exists: true, etag: '"abc"', versionId: "v1" });
@@ -222,6 +238,15 @@ describe("the state versions on the estate page", () => {
     const html = renderEstateHtml(e);
     expect(html).toContain('<span class="warn">versions are off</span>: bucket versioning is off for acme-state');
     expect(e.projects[0].states?.[0].versions).toEqual([]);
+  });
+
+  it("tells a backend that keeps no history from one whose versions it does not read", () => {
+    const pg: ReportStateVersion = { backend: "pg", location: "pg:db/states/net.states", versioning: "off", note: "a pg backend keeps one row per workspace, which each write replaces" };
+    const gcs: ReportStateVersion = { backend: "gcs", versioning: "unknown", note: "a gcs backend can keep versions of the state, which terragucci does not read" };
+    const st = addToStateVersions(undefined, [{ root: "net", state: pg, commit: "c", finished: at(9), path: "x" }, { root: "app", state: gcs, commit: "c", finished: at(9), path: "x" }]);
+    const html = renderEstateHtml(buildEstate([{ project: "p", reports: [], states: st }], NOW));
+    expect(html).toContain('<code>net</code>: pg <code>pg:db/states/net.states</code>, <span class="warn">versions are off</span>: a pg backend keeps one row per workspace');
+    expect(html).toContain('<code>app</code>: gcs, <span class="warn">versions not read</span>: a gcs backend can keep versions');
   });
 
   it("says no apply recorded a version when no project has states.json, and escapes what one holds", () => {
