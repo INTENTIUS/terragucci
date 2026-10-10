@@ -1,7 +1,7 @@
 ---
 title: See every project in one page
 description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
-claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph, tg-estate-graph]
+claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph, tg-estate-graph, behold-view]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-every-project/.
   In this control repo, add the scheduled estate job the page gives for my forge,
@@ -255,6 +255,31 @@ For each project and the estate, the Delivery section shows the four DORA metric
 | Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none |
 
 The applies come from the audit trail (step 5). With an OTLP endpoint set, the job also sends the four as gauges for the Estate dashboard.
+
+## A resource graph beside the page
+
+The estate page counts per project. To see which resources in which roots drifted or will change, the job can publish a [behold](https://intentius.io/behold/using/terragucci/) view next to it. It is optional, and terragucci does not run or need it.
+
+Add one step after the estate step, in a repo whose roots the view should draw:
+
+```yaml
+- run: >-
+    npx --yes -p @intentius/behold -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0
+    behold export . --terragucci s3://acme-terragucci/reports --no-source
+    --publish s3://acme-terragucci/reports/views/behold
+```
+
+| The view shows | From |
+|---|---|
+| every root of the checkout and the resources it declares | the checkout |
+| on each resource, what the newest drift check and plan found, and when | each root's newest `tf-drift` and `tf-plan` report |
+| each waiting wave, with the `terragucci approve` line to run | `estate.json` |
+| the counts, as the estate page shows them, with a link to it | `estate.json` |
+
+It writes only under `reports/views/behold/`, which terragucci never writes, with the job's credentials. Add `s3:GetObject` on `reports/*/report.json` and `s3:PutObject` on `reports/views/behold/*` to the policy of step 2. Its links open each run's report through the same presigned link or front door as the page. `--no-source` leaves each root's HCL out of the view.
+
+Give the step `continue-on-error: true` on GitHub and Forgejo, or `allow_failure: true` on GitLab: a view that cannot be built leaves the estate page as it is.
+
 ## Next
 
 - [CLI commands](/terragucci/reference/cli/#estate) lists the flags.
