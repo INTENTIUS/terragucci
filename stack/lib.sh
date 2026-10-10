@@ -235,21 +235,28 @@ wait_run() { # repo, sha, [event]
 # The example's resources (example.sh, example-gitlab.sh).
 # What the 15 roots declare, by name. prod payments adds a dead-letter queue;
 # a scenario applied to main changes this, so verify reads main's tree.
+# EX_SHOP is the names' prefix: shop, or shop<tag> for a binary's copy of the
+# example (TG_EXAMPLE_BINARY in example.sh).
 expected() { # dir -> lines "kind name"
-  local dir="$1" env svc
+  local dir="$1" env svc shop="${EX_SHOP:-shop}"
   for env in dev staging prod; do
-    echo "bucket shop-$env-logs"
+    echo "bucket $shop-$env-logs"
     for svc in orders payments search email; do
-      echo "bucket shop-$env-$svc-files"
-      echo "queue shop-$env-$svc-jobs"
+      echo "bucket $shop-$env-$svc-files"
+      echo "queue $shop-$env-$svc-jobs"
       if ! grep -q 'records_table = false' "$dir/envs/$env/$svc/main.tf"; then
-        echo "table shop-$env-$svc-records"
+        echo "table $shop-$env-$svc-records"
       fi
       if grep -q 'dead_letter_queue = true' "$dir/envs/$env/$svc/main.tf"; then
-        echo "queue shop-$env-$svc-dead-letter"
+        echo "queue $shop-$env-$svc-dead-letter"
       fi
     done
   done
+}
+
+# The tag a binary's copy of the example puts in its names: shop<tag>-...
+binary_tag() { # terraform|choudoufu
+  case "$1" in terraform) echo tf ;; choudoufu) echo cdf ;; *) return 1 ;; esac
 }
 
 floci_json() { # target, body

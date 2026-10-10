@@ -52,6 +52,17 @@ describe("driftPlan", () => {
 });
 
 describe("terragucci stage tf-drift", () => {
+  it("refuses choudoufu roots under live resource markers as a config error, before any plan", async () => {
+    const repo = write(tmp(), {
+      "terragucci.yml": 'binary: choudoufu\nroots: ["envs/*"]\n',
+      "envs/app/main.tf": `terraform {\n  live {\n    estate = "app"\n  }\n}\n`,
+      "envs/net/main.tf": "",
+    });
+    await expect(runStage("tf-drift", repo, { env: { PATH: process.env.PATH } }, () => {})).rejects.toThrow(
+      /drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and envs\/app keeps its resources under them/,
+    );
+  });
+
   it("plans refresh-only, names the root and the queue, and ignores the code change on main", { timeout: 60_000 }, async () => {
     const bin = tmp();
     const repo = repoWith({ orders: drifted, search: clean });

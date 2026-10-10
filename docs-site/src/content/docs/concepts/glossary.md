@@ -23,7 +23,7 @@ A Terragrunt directory with a `terragrunt.hcl`; terragucci lists units with `ter
 
 ### layer
 
-A step of the dependency order set by `terraform_remote_state` reads or Terragrunt `dependency` blocks. `init --dry-run` counts them; `tf-plan` plans one at a time.
+A step of the dependency order set by `terraform_remote_state` reads, choudoufu's `terraform_estate_outputs` reads or Terragrunt `dependency` blocks. `init --dry-run` counts them; `tf-plan` plans one at a time.
 
 ### wave
 

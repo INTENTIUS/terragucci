@@ -283,6 +283,15 @@ just gitlab-lab down
 
 `SMOKE_FORGE=gitlab` switches `stack/smoke.sh` to the claims in `stack/smoke-gitlab.sh` (`GITLAB_CLAIMS`, `GITLAB_CLAIM_GROUPS`, `gitlab_claim_<name>`). A port is a new line in `GITLAB_CLAIMS` with the name of the Forgejo claim it matches, its group line and its function, and `just lint` holds the table to the same rules as `CLAIMS`. Its row in `smoke.json` carries `forge: "gitlab"`, sits after the Forgejo row of the same claim, and shows in the GitLab column of the validation page.
 
+### The core claims on Terraform and choudoufu (SMOKE_BINARY)
+
+```bash
+just binary-claims terraform              # every core claim on Terraform, plain and under BREAK=1
+just binary-claims choudoufu waves,drift  # some of them on choudoufu
+```
+
+`SMOKE_BINARY=terraform|choudoufu` keeps `stack/smoke.sh` to the claims in `BINARY_CLAIMS` and runs each on that binary: `stack/binary-tree.py` writes the claim's tree for it (`binary:`, and under choudoufu a `live` block per root with its records in `terragucci-smoke-records`, reached through a proxy of the claim's own, since choudoufu addresses the bucket virtual-hosted), and the stage runs use its CI image. The example claims (boot, report, drift) run on a copy of the example of the binary's own, `example-<binary>` with names under `shoptf-` or `shopcdf-`, so they never touch the example the other claims read. A row carries `binary: "terraform"` or `"choudoufu"`, sits after the OpenTofu row of the same claim, and shows in that binary's column of the validation page. A feature the binary cannot run is a config error with a claim of its own that proves the refusal, never a claim left out of `BINARY_CLAIMS`.
+
 ### The real-AWS pilot (SMOKE_AWS=1)
 
 floci is the AWS the smoke claims run against, in `just smoke`, `just smoke-record` and CI. `SMOKE_AWS=1` runs five of them on a real account instead, the one the default AWS CLI profile signs in to: boot, drift, respond-drift, tg-drift and report. Any other claim exits with a refusal under it, and so does `--record`, since `smoke.json` is floci's record. forgejo-oidc stays on floci. The ruling and the cost research are in terragucci#116.

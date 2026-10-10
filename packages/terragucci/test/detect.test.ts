@@ -58,6 +58,19 @@ describe("order", () => {
     expect(applyLayers(dir, ["a", "b"])).toEqual([["a", "b"]]);
   });
 
+  it("a choudoufu root that reads another estate's outputs applies after the root that owns that estate", () => {
+    const live = (e: string) => `terraform {\n  live {\n    estate = "${e}"\n  }\n}\n`;
+    const dir = write(tmp(), {
+      "platform/main.tf": live("shop-platform"),
+      "orders/main.tf": live("shop-orders") + `data "terraform_estate_outputs" "platform" {\n  estate = "shop-platform"\n  names  = ["logs_bucket"]\n}\n`,
+      // The sidecar form, read by an estate no root here owns: no edge.
+      "search/estate.chdf.hcl": `estate = "shop-search"\n`,
+      "search/main.tf": `resource "terraform_data" "x" {\n  live {\n    estate = "shop-platform"\n  }\n}\ndata "terraform_estate_outputs" "other" {\n  estate = "elsewhere"\n  names  = ["x"]\n}\n`,
+      "email/main.tf": live("shop-email") + `data "terraform_estate_outputs" "search" {\n  estate = "shop-search"\n  names  = ["x"]\n}\n`,
+    });
+    expect(applyLayers(dir, ["email", "orders", "platform", "search"])).toEqual([["platform", "search"], ["email", "orders"]]);
+  });
+
   it("a cycle is refused by name", () => {
     const dir = write(tmp(), { "a/main.tf": backend("a") + remoteState("b"), "b/main.tf": backend("b") + remoteState("a") });
     expect(() => applyLayers(dir, ["a", "b"])).toThrow(/cycle: a, b/);
