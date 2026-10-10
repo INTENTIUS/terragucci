@@ -182,7 +182,7 @@ async function readStatesOf(store: ObjectStore, at: string): Promise<StateVersio
 }
 
 /** A project's cross-state edges; an unreadable file leaves the project without them, never without its runs. */
-async function readEdgesOf(store: ObjectStore, at: string): Promise<StateEdges | undefined> {
+export async function readEdgesOf(store: ObjectStore, at: string): Promise<StateEdges | undefined> {
   try {
     const text = await store.get(at);
     if (text === undefined) return undefined;
@@ -195,7 +195,7 @@ async function readEdgesOf(store: ObjectStore, at: string): Promise<StateEdges |
 }
 
 /** A project's resource changes, when an apply wrote them; unreadable ones leave the project without a history. */
-async function readChangesOf(store: ObjectStore, at: string): Promise<ChangeRow[] | undefined> {
+export async function readChangesOf(store: ObjectStore, at: string): Promise<ChangeRow[] | undefined> {
   try {
     const text = await store.get(at);
     if (text === undefined) return undefined;
@@ -208,7 +208,7 @@ async function readChangesOf(store: ObjectStore, at: string): Promise<ChangeRow[
 }
 
 /** The audit trail's entries, for the approver of each apply; undefined when there is no record or it cannot be read. */
-async function auditEntries(store: ObjectStore, prefix: string): Promise<AuditEntry[] | undefined> {
+export async function auditEntries(store: ObjectStore, prefix: string): Promise<AuditEntry[] | undefined> {
   try {
     const text = await store.get(key(prefix, AUDIT_FILES.record));
     return text === undefined ? undefined : readRecord(text).entries;
@@ -219,7 +219,7 @@ async function auditEntries(store: ObjectStore, prefix: string): Promise<AuditEn
 }
 
 /** A project's inventory, when an apply wrote one; one that cannot be read leaves the project without a resource list, never without its runs. */
-async function readInventoryOf(store: ObjectStore, at: string): Promise<Inventory | undefined> {
+export async function readInventoryOf(store: ObjectStore, at: string): Promise<Inventory | undefined> {
   try {
     const text = await store.get(at);
     if (text === undefined) return undefined;
@@ -232,14 +232,14 @@ async function readInventoryOf(store: ObjectStore, at: string): Promise<Inventor
 }
 
 /** Which projects, read from where, and where the page goes. */
-async function sources(config: TerragucciConfig, options: EstateOptions, client: (r: Reports) => ObjectStore): Promise<{ projects: { project: string; reports?: Reports }[]; out?: Reports }> {
+export async function sources(config: TerragucciConfig, options: Pick<EstateOptions, "reports">, client: (r: Reports) => ObjectStore, command = "estate"): Promise<{ projects: { project: string; reports?: Reports }[]; out?: Reports }> {
   if (config.projects && Object.keys(config.projects).length > 0) {
-    if (options.reports) throw new ConfigError("--bucket names one bucket; a control repo reads each project's reports and writes the page under defaults.reports");
+    if (options.reports) throw new ConfigError(`--bucket names one bucket; a control repo reads each project's reports and ${command === "estate" ? "writes the page" : "reads the audit trail"} under defaults.reports`);
     const out = config.defaults?.reports;
     return { projects: Object.keys(config.projects).map((p) => ({ project: p, reports: resolveProject(config, p).reports })), ...(out ? { out } : {}) };
   }
   const out = options.reports ?? resolveRepo(config).reports;
-  if (!out?.bucket) throw new ConfigError("estate reads the reports bucket: set reports.bucket in terragucci.yml, or pass --bucket with s3://<bucket>, gs://<bucket> or az://<account>/<container>");
+  if (!out?.bucket) throw new ConfigError(`${command} reads the reports bucket: set reports.bucket in terragucci.yml, or pass --bucket with s3://<bucket>, gs://<bucket> or az://<account>/<container>`);
   // The top-of-prefix index has a row for every project that copies its reports here.
   const top = key(out.prefix ?? "", "index.json");
   const text = await client(out).get(top);
