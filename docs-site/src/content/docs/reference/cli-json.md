@@ -1,6 +1,6 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan, stage, rollout, respond and config check print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
+description: The envelope that init, reconcile, plan, stage, rollout, respond, config check and query print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
 prompt: |
   Read https://intentius.io/terragucci/reference/cli-json/.
   Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
@@ -24,7 +24,7 @@ With `--json`, these commands print only one JSON object on stdout.
 | Field | Holds |
 |---|---|
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` or `config check`. |
+| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check` or `query`. |
 | `exit` | The process exit code. |
 | `status` | `ok` for exit 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |
@@ -164,3 +164,13 @@ Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not 
 | `approval` | for a repo's own config with no problems: `mode` (`ledger`, `pr-review` or `sealed`), `source` (the key, [`identity.gates`](/terragucci/concepts/glossary/#identitygates), or the default) and a `note` when the repo should change something |
 | `warnings` | present when there are some: each role that reaches another environment's state, as text; warnings leave the exit code 0 |
 | `state_access` | with `oidc.roles` and no problems: one entry per role and stage, with `role`, `stage` (`plan` or `apply`), `environment` (the glob, or `plan_role/apply_role`), `roots`, `states` (the state keys its roots' backends name) and `reads` (other environments' states they read) |
+
+## query
+
+`terragucci query "<statement>" --json` prints the rows the statement returned.
+
+| `results` field | Holds |
+|---|---|
+| `columns` | the column names, in order |
+| `rows` | one object per row, by column name; SQL `NULL` is `null` |
+| `tables` | the row count of each table: `inventory`, `changes`, `history`, `audit` and `edges` |

@@ -1,0 +1,71 @@
+---
+title: Query the estate with SQL
+description: Answer questions such as which queues changed this week and who approved them, with SQL over the reports bucket, run on your machine with no server.
+claims: [query-sql]
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/query-with-sql/.
+  Write the terragucci query command that lists the resources of type aws_sqs_queue changed in the last 7 days with their approvers, for this repo's reports bucket, and run it. Do not create or print credentials.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+Which queues changed this week, and who approved each change? The estate page shows one resource at a time. `terragucci query` answers across every project with one SQL statement. It reads the files your runs already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and runs the statement on the SQLite built into Node.js. There is no server and no database to run.
+
+## Result
+
+```bash
+npx terragucci query "SELECT address, actions, approver, finished FROM history
+  WHERE type = 'aws_sqs_queue' AND julianday(finished) >= julianday('now', '-7 days')
+  ORDER BY finished"
+```
+
+```text
+address             actions  approver      finished
+------------------  -------  ------------  ------------------------
+aws_sqs_queue.jobs  create   approver-one  2026-10-09T05:15:39.686Z
+aws_sqs_queue.jobs  update   approver-two  2026-10-09T05:15:54.614Z
+(2 rows)
+```
+
+Each approver is the one the [audit trail](/terragucci/reference/audit-trail/) records for the wave that applied the change.
+
+## Tables
+
+| Table | One row per | Read from |
+|---|---|---|
+| `inventory` | resource a root holds, as its newest applied wave left it | each project's `inventory.json` |
+| `changes` | resource an applied wave changed | each project's `changes.json` |
+| `history` | change, with its wave's `approver` and `approval` entry id | `changes.json` joined to `audit.jsonl` |
+| `audit` | audit trail entry | `audit.jsonl` |
+| `edges` | root whose state another root reads | each project's `edges.json` |
+
+Columns keep the field names of the [JSON the bucket holds](/terragucci/reference/report-schema/#the-index-and-the-estate-page), with `project` added.
+
+- `actions` joins a change's actions with `+`, such as `create` or `move+update`.
+- `attributes` and `audit.detail` hold JSON. Read them with `json_each` and `json_extract`.
+- `approver` is null when no gate held the wave, or when the audit trail has no entry for it.
+- `commit` is an SQL keyword, so quote it: `"commit"`.
+- Times are ISO 8601 text. Compare them with `julianday()`.
+
+No table holds an attribute's value, because no file in the bucket does.
+
+## Steps
+
+<Steps>
+
+1. Keep [reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/), and run `terragucci audit` on a schedule for the `history` approvers and the `audit` table.
+
+2. Use Node.js 22.13 or later, and give your shell read access to the bucket in the variables [Reports](/terragucci/reference/environment/#reports) lists.
+
+3. From the repo's root, run `npx terragucci query "<statement>"`. Outside the repo, add `--bucket` and `--bucket-prefix`. Add `--json` for the rows as JSON.
+
+</Steps>
+
+The query reads only. A statement must begin with `SELECT`, `WITH` or `VALUES`. The database lives in memory and refuses writes.
+
+## Next
+
+- [CLI reference](/terragucci/reference/cli/#query) for the flags and exit codes.
+- [See every project in one page](/terragucci/guides/see-every-project/) for the same files as a page.
