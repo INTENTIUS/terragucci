@@ -137,6 +137,7 @@ export default defineConfig({
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 								{ label: 'Use Atmos', slug: 'guides/use-atmos' },
+								{ label: 'Use Terramate', slug: 'guides/use-terramate' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
 								{ label: 'Approve from Slack and Teams', slug: 'guides/approve-from-chat' },

@@ -16,8 +16,9 @@
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
- *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos <version>   (Linux builds, for a CI job)
+ *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>   (Linux builds, for a CI job)
  *   terragucci atmos write   (write each Atmos instance to <stack>/<component> from atmos describe stacks; run by the generated pipeline)
+ *   terragucci terramate generate   (fail on stale Terramate generated code, then write each stack's order and inputs beside it; run by the generated pipeline)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
  *   terragucci binary <root> [--binary <b>] [--config <file>]   (print the binary a root runs, installing the version it pins; run by the generated pipeline)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
@@ -80,6 +81,7 @@ import { pushAgentChange, writePrompt } from "./agent-comment";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { detectForge, findRoots } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
+import { terramateWrite } from "./terramate";
 import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -425,6 +427,12 @@ export async function main(argv: string[]): Promise<number> {
         for (const line of await atmosWrite(cwd)) console.log(line);
         return 0;
       }
+      case "terramate": {
+        // A Terramate repo's prepare (../shape.ts): every job checks the generated code and writes each stack's edges.
+        if (args[0] !== "generate") throw new ConfigError("usage: terragucci terramate generate");
+        for (const line of await terramateWrite(cwd)) console.log(line);
+        return 0;
+      }
       case "auth-provider": {
         // Terragrunt runs this in each unit's directory and reads the credentials it prints.
         console.log(JSON.stringify(authProviderOutput(cwd, process.env)));
@@ -444,8 +452,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "install": {
         const [tool, version] = args;
-        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign", "atmos"].includes(tool)) {
-          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos <version>");
+        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign", "atmos", "terramate"].includes(tool)) {
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>");
         }
         assertLinux();
         console.log(await install(tool as Tool, version));

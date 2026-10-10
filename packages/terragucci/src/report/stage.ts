@@ -926,7 +926,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // Roots a synth command writes are not in git, so no diff names them: the command runs on the base too, and the roots whose output differs plan.
   const notices: string[] = [];
   let selected: Set<string> | undefined;
-  if (base && synth) {
+  // Roots git holds (a Terramate repo's stacks, with their generated code) are named by the diff, even with a prepare step.
+  if (base && synth && !shape.rootsInGit) {
     // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
     const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, atmosDependencies(repo, all));
     selected = synthed.selected;
@@ -1522,11 +1523,14 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
   const deps = rootDependencies(repo, all);
+  // A Terramate stack's dependents plan with it: the stacks its after, before, nesting or inputs put after it (../terramate.ts).
+  const order = atmosDependencies(repo, all);
+  const upstreams = (root: string): string[] => [...new Set([...(deps.get(root) ?? []), ...(order.get(root) ?? [])])];
   const selected = new Set(changed);
   for (let grew = true; grew; ) {
     grew = false;
-    for (const [root, reads] of deps) {
-      if (!selected.has(root) && [...reads].some((d) => selected.has(d))) {
+    for (const root of new Set([...deps.keys(), ...order.keys()])) {
+      if (!selected.has(root) && upstreams(root).some((d) => selected.has(d))) {
         selected.add(root);
         grew = true;
       }
@@ -1534,7 +1538,9 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   }
   for (const r of changed) log(`affected: ${r} changed`);
   for (const r of [...selected].filter((r) => !changed.includes(r)).sort()) {
-    log(`affected: ${r} reads the state of ${[...deps.get(r)!].filter((d) => selected.has(d)).sort().join(", ")}`);
+    const reads = [...(deps.get(r) ?? [])].filter((d) => selected.has(d)).sort();
+    const after = [...(order.get(r) ?? [])].filter((d) => selected.has(d) && !reads.includes(d)).sort();
+    log(`affected: ${r} ${[...(reads.length ? [`reads the state of ${reads.join(", ")}`] : []), ...(after.length ? [`depends on ${after.join(", ")}`] : [])].join(" and ")}`);
   }
   log(`affected: ${changed.length} of ${roots.length} roots against ${base}, ${selected.size - changed.length} dependents after them`);
   return new Set([...selected].filter((r) => roots.includes(r)));
