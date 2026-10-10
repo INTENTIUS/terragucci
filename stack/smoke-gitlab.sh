@@ -39,7 +39,7 @@ gl-comment-plan|a Developer /terragucci plan note starts a merge request pipelin
 gl-protected-token|with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan|
 gl-mr-apply|with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it|
 gl-pr-review|with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver|
-gl-wave-jobs|with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots side by side under one approval, used once|
+gl-wave-jobs|with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind|
 gl-comment-agent|a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file|
 gl-review-agent|the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk|'
 
@@ -1192,7 +1192,7 @@ gl_user() { # username [project level] -> prints the user's token
   uid="$(glapi "$GL_URL/api/v4/users?username=$1" | jq -r '.[0].id // empty')"
   if [ -z "$uid" ]; then
     uid="$(glapi -X POST "$GL_URL/api/v4/users" --data-urlencode "username=$1" --data-urlencode "name=$1" \
-      --data-urlencode "email=$1@terragucci.local" --data-urlencode "password=Tg9-$1-QvK3mNt8Rp" --data-urlencode "skip_confirmation=true" 2>/dev/null | jq -r '.id // empty')" || true
+      --data-urlencode "email=$1@terragucci.local" --data-urlencode "password=Zq7$(openssl rand -hex 12)!Kx" --data-urlencode "skip_confirmation=true" 2>/dev/null | jq -r '.id // empty')" || true
     # The other run of the claim may have made it meanwhile.
     [ -n "$uid" ] || uid="$(glapi "$GL_URL/api/v4/users?username=$1" | jq -r '.[0].id // empty')"
   fi
@@ -1233,6 +1233,25 @@ gl_notes() { glapi "$(gl_p "$1")/merge_requests/$2/notes?per_page=100&sort=asc&o
 # The job runs COMMAND, a YAML scalar, before its script.
 gl_before() { # pipeline-file job command
   awk -v job="$2:" -v cmd="$3" '{ print } $0 == job { print "  before_script:"; print "    - " cmd }' "$1" > "$1.new" && mv "$1.new" "$1"
+}
+
+# main protected, as a project's default branch is: only Maintainers push,
+# merge or run its pipelines, and protected variables reach its jobs alone.
+gl_protect_main() { # project
+  glapi -o /dev/null -X POST "$(gl_p "$1")/protected_branches" --data-urlencode "name=main" \
+    --data-urlencode "push_access_level=40" --data-urlencode "merge_access_level=40" 2>/dev/null || true
+  glapi "$(gl_p "$1")/protected_branches/main" >/dev/null || { log "main is not protected"; return 1; }
+}
+
+# Approve a merge request as a token's user. GitLab answers 403 for a moment
+# after the user joins the project, so a refusal is tried again.
+gl_approve() { # project iid token
+  local i
+  for i in $(seq 1 10); do
+    curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $3" -X POST "$(gl_p "$1")/merge_requests/$2/approve" 2>/dev/null && return 0
+    sleep 3
+  done
+  return 1
 }
 
 # A file of a branch or commit, raw.
@@ -1361,6 +1380,7 @@ gitlab_claim_gl_protected_token() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   project="$(gl_project gl-protected-token)" || { drop_work "$work"; return 1; }
   log "project $GL_URL/$GL_USER/$project"
+  gl_protect_main "$project" || { drop_work "$work"; return 1; }
   if [ -z "${BREAK:-}" ]; then
     glapi -o /dev/null -X PUT "$(gl_p "$project")/variables/GITLAB_TOKEN" --data-urlencode "protected=true" || { log "could not protect GITLAB_TOKEN"; drop_work "$work"; return 1; }
   fi
@@ -1407,6 +1427,7 @@ gitlab_claim_gl_mr_apply() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   project="$(gl_project gl-mr-apply)" || { drop_work "$work"; return 1; }
   log "project $GL_URL/$GL_USER/$project"
+  gl_protect_main "$project" || { drop_work "$work"; return 1; }
   merge="$GL_TOKEN"
   if [ -n "${BREAK:-}" ]; then merge="$(gl_user smoke-dev "$project" 30)" || { drop_work "$work"; return 1; }; fi
   gl_var "$project" TG_MERGE "$merge" || { log "could not set TG_MERGE"; drop_work "$work"; return 1; }
@@ -1417,7 +1438,7 @@ gitlab_claim_gl_mr_apply() {
   [ $rc = 1 ] || sid="$(gl_schedule "$project" comments comments)" || rc=1
   [ $rc = 1 ] || reviewer="$(gl_user smoke-reviewer "$project" 30)" || rc=1
   if [ $rc = 0 ]; then
-    curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $reviewer" -X POST "$(gl_p "$project")/merge_requests/$MR/approve" || { log "smoke-reviewer's approval failed"; rc=1; }
+    gl_approve "$project" "$MR" "$reviewer" || { log "smoke-reviewer's approval failed"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     before="$(gl_newest "$project")"
@@ -1471,7 +1492,7 @@ gitlab_claim_gl_pr_review() {
     [ -n "${BREAK:-}" ] || approver="$(gl_user smoke-reviewer "$project" 30)" || rc=1
   fi
   if [ $rc = 0 ]; then
-    curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $approver" -X POST "$(gl_p "$project")/merge_requests/$MR/approve" || { log "the approval failed"; rc=1; }
+    gl_approve "$project" "$MR" "$approver" || { log "the approval failed"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     sha=""
@@ -1502,8 +1523,8 @@ gitlab_claim_gl_wave_jobs() {
   # and gates the wave, and two share jobs of two roots each; no apply job
   # takes the resource group. Push, approve wave 1, push: canary/one applies
   # and wave 2 waits at its one gate, its shares skipped. Approve wave 2 once
-  # and push: each share applies its own two roots, the two run side by side,
-  # the ledger holds one approval of wave 2, used once, and no lock tag is
+  # and push: each share applies its own two roots under the pipeline's shared
+  # lock, the ledger holds one approval of wave 2, used once, and no lock tag is
   # left.
   # BREAK: the share jobs lose --shares 2 --share <s>, so each one plans, gates
   # and applies the whole wave.
@@ -1566,8 +1587,11 @@ gitlab_claim_gl_wave_jobs() {
     # Side by side: each share started before the other ended.
     a="$(jq -c '[.[] | select(.name == "apply-wave-2-share-1")] | max_by(.id) | [.started_at, .finished_at]' <<<"$PIPE_JOBS")"
     b="$(jq -c '[.[] | select(.name == "apply-wave-2-share-2")] | max_by(.id) | [.started_at, .finished_at]' <<<"$PIPE_JOBS")"
+    # Side by side as far as runners are free: neither waits for the other's lock, since both hold the pipeline's.
     log "share 1 ran $a, share 2 ran $b"
-    jq -en --argjson a "$a" --argjson b "$b" '$a[0] < $b[1] and $b[0] < $a[1]' >/dev/null || { log "the shares did not run side by side"; rc=1; }
+    for s in 1 2; do
+      share_log "apply-wave-2-share-$s" | grep -q "another apply has held\|which is gone; taking it over" && { log "apply-wave-2-share-$s waited for the apply lock"; rc=1; }
+    done
     git -C "$clone" fetch -q origin chant/lifecycle || rc=1
     ledger="$(git -C "$clone" show FETCH_HEAD:_gates/tf-apply.jsonl 2>/dev/null)"
     used="$(git -C "$clone" show FETCH_HEAD:_gates/tf-apply/applied.jsonl 2>/dev/null | jq -s '[.[] | select(.gate == "wave-2")] | length')"
