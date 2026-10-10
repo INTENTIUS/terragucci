@@ -273,6 +273,7 @@ pr-review-moved|with approval: pr-review a wave whose plans changed between the 
 pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
+cdf-killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
 cdf-rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
@@ -9330,12 +9331,12 @@ claim_cdf_concurrency() {
 }
 
 # A choudoufu whose record update carries no If-Match, for cdf-write-race's
-# BREAK: the source of CHOUDOUFU_BREAK_REF (default v0.22.0, the release the
+# BREAK: the source of CHOUDOUFU_BREAK_REF (default v0.24.0, the release the
 # choudoufu image runs) in the checkout at CHOUDOUFU_DIR, with the line of
 # S3Store.PutIfVersion that sets the condition replaced. Built for Linux the
 # way choudoufu_linux builds, and kept under .state/choudoufu.
 choudoufu_no_if_match() {
-  local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_BREAK_REF:-v0.22.0}" sha arch out src go
+  local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_BREAK_REF:-v0.24.0}" sha arch out src go
   local file=internal/live/staterecord/s3.go cut='s/input\.IfMatch = aws\.String(expectedVersion)/_ = expectedVersion \/\/ smoke BREAK: an update with no precondition/'
   sha="$(git -C "$dir" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || { echo "no choudoufu checkout at $dir with $ref; set CHOUDOUFU_DIR" >&2; return 1; }
   [ "$(git -C "$dir" show "$sha:$file" | grep -c 'input\.IfMatch = aws\.String(expectedVersion)')" = 1 ] \
@@ -9442,6 +9443,96 @@ claim_cdf_write_race() {
   fi
   cdf_down "$work"
   [ $rc = 0 ] && log "from-$winner landed; the wave in checkout $loser failed its If-Match on terraform_data.shared and overwrote nothing, the one record holds from-$winner under the estate and address tags, and the re-plan shows from-$winner to from-$loser"
+  return $rc
+}
+
+# A released choudoufu for Linux, its archive checked against the release's
+# SHA256SUMS, kept under .state/choudoufu/release-<version>-<arch>. Prints the
+# binary's path.
+choudoufu_release() { # version
+  local v="$1" arch out dir name base="https://github.com/INTENTIUS/choudoufu/releases/download/v$1" sum got
+  arch="$(docker version -f '{{.Server.Arch}}' 2>/dev/null)"; [ -n "$arch" ] || arch=amd64
+  dir="$HERE/.state/choudoufu/release-$v-$arch"; out="$dir/choudoufu"
+  [ -x "$out" ] && { echo "$out"; return 0; }
+  mkdir -p "$dir" || return 1
+  name="choudoufu_v${v}_linux_$arch.tar.gz"
+  curl -fsSLo "$dir/$name" "$base/$name" && curl -fsSLo "$dir/SHA256SUMS" "$base/SHA256SUMS" || { echo "could not download choudoufu $v" >&2; return 1; }
+  sum="$(grep "  \./$name\$" "$dir/SHA256SUMS" | cut -d' ' -f1)"
+  got="$(shasum -a 256 "$dir/$name" | cut -d' ' -f1)"
+  [ -n "$sum" ] && [ "$sum" = "$got" ] || { echo "choudoufu $v: $name does not match SHA256SUMS" >&2; return 1; }
+  tar -xzf "$dir/$name" -C "$dir" choudoufu || return 1
+  echo "$out"
+}
+
+claim_cdf_killed_records() {
+  # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
+  # the choudoufu CI image: first, and second, which depends on first and
+  # whose local-exec provisioner leaves a mark in the wave's container and
+  # then sleeps. Once the mark is there, first's apply has returned; the wave's
+  # container is then killed. first's record must be in the record store, and
+  # second's not. tf-plan in the checkout must then plan second as a create
+  # and leave first alone: the killed apply's finished resource is recorded,
+  # so the next run does not create it again.
+  # BREAK: the wave runs choudoufu 0.23.0, which writes every record after
+  # the whole apply: the killed wave leaves no record for first, and the plan
+  # creates it again.
+  log() { echo "[smoke cdf-killed-records] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate over="" pid i keys got rc=0
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then over="$(choudoufu_release 0.23.0)" || { log "no choudoufu 0.23.0"; return 1; }; fi
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  estate="smoke-killed-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_estate "$work/a" "$estate" "$(cat <<'HCL'
+resource "terraform_data" "first" {
+  input = "first"
+}
+
+resource "terraform_data" "second" {
+  input      = "second"
+  depends_on = [terraform_data.first]
+
+  provisioner "local-exec" {
+    command = "touch /repo/second-started && sleep 900"
+  }
+}
+HCL
+)"
+  printf 'second-started\n' >>"$work/a/.gitignore"
+  git -C "$work/a" init -q -b main && git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate" \
+    || { log "could not commit the estate"; cdf_down "$work"; return 1; }
+  ( cdf_run "$work/a" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate never ) >/dev/null 2>&1 &
+  pid=$!
+  # The checkout is copied into the container (run_copied), so the mark is looked for there.
+  started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
+  for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if ! started; then
+    log "second's provisioner never started"; tail -20 "$work/apply.log" >&2
+    docker rm -f "$CDF_ALIAS-apply" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; cdf_down "$work"; return 1
+  fi
+  # docker kill, not rm: the container stops as a killed job does, and
+  # run_copied still copies the checkout back out of it.
+  docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+  log "the wave was killed while second's provisioner ran; its last line: $(tail -1 "$work/apply.log" | cut -c1-200)"
+  keys="$(cdf_keys "$estate" | grep '/terraform_data/' | jq -Rr 'split("/") | last | (try @base64d catch .)' | tr '\n' ' ')"
+  log "records after the kill: ${keys:-none}"
+  grep -q 'first' <<<"$keys" || { log "the killed wave left no record for terraform_data.first, whose apply had returned"; rc=1; }
+  ! grep -q 'second' <<<"$keys" || { log "the killed wave left a record for terraform_data.second, whose apply never returned"; rc=1; }
+  if ! cdf_run "$work/a" "$work/plan.log" "$CDF_ALIAS-plan" choudoufu "$over" tf-plan --binary choudoufu; then
+    log "tf-plan after the kill failed"; tail -20 "$work/plan.log" >&2; rc=1
+  else
+    got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | "\(.address)=\(.action)"] | sort | join(" ")' "$work/a/terragucci-report/report.json" 2>/dev/null || echo none)"
+    log "the plan after the kill: ${got:-no change}"
+    ! grep -q 'terraform_data.first=' <<<"$got" || { log "the plan after the kill changes terraform_data.first: the killed wave's finished resource would be created again"; rc=1; }
+    grep -q 'terraform_data.second=create' <<<"$got" || { log "the plan after the kill does not create terraform_data.second"; rc=1; }
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "the killed wave left a record for first, whose apply had returned, and none for second; the next plan creates second only"
   return $rc
 }
 
@@ -18938,6 +19029,7 @@ resume-schedule      runner self! weight=300
 cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
+cdf-killed-records   weight=90
 apply-per-root       runner self! weight=300
 cdf-rows-overlap     runner self! weight=250
 cdf-rows-wait        self! weight=200

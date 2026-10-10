@@ -27,7 +27,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "check",
@@ -77,7 +77,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "highlight",
@@ -111,7 +111,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "refuse",
@@ -153,7 +153,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "rollout",
@@ -584,7 +584,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "check-diagnostics",
@@ -747,7 +747,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "pr-apply-lock",
@@ -1035,7 +1035,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "fd59fd2a"
     },
     {
       "claim": "cdf-write-race",
@@ -1043,7 +1043,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "fd59fd2a"
+    },
+    {
+      "claim": "cdf-killed-records",
+      "says": "with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fd59fd2a"
     },
     {
       "claim": "cdf-iam",
@@ -1051,7 +1059,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "fd59fd2a"
     },
     {
       "claim": "apply-per-root",
@@ -1067,7 +1075,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d6ba08a"
+      "commit": "fd59fd2a"
     },
     {
       "claim": "cdf-rows-wait",
@@ -1075,7 +1083,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d6ba08a"
+      "commit": "fd59fd2a"
     },
     {
       "claim": "cdf-rows-takeover",
@@ -1083,7 +1091,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "2178b8af"
+      "commit": "fd59fd2a"
     },
     {
       "claim": "resume-approve",
@@ -1125,7 +1133,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "approve-command",
@@ -1663,7 +1671,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "fd59fd2a"
     },
     {
       "claim": "cdktn-synth",
@@ -1849,7 +1857,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "cost-estimate",
@@ -1883,7 +1891,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "cost-policy",
@@ -2013,7 +2021,7 @@
       "verdict": "pass",
       "break": "caught",
       "binary": "choudoufu",
-      "commit": "4db5e993"
+      "commit": "33d0387f"
     },
     {
       "claim": "tg-cost-gate",
