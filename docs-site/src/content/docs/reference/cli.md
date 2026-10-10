@@ -12,7 +12,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | Command | Does |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
-| `import` | writes `terragucci.yml` from an `atlantis.yaml` or a `digger.yml`, and prints what became of each setting |
+| `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml`, a Terrateam config or a Terragrunt Scale `.gruntwork`, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
@@ -39,7 +39,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
-| `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
+| `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
@@ -81,6 +81,9 @@ The approval mode decides what else `init` writes.
 terragucci import atlantis [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import digger [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import spacelift [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
 ```
 
 Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), OpenTaco's `digger.yml` (or `digger.yaml`) or Terrateam's `.terrateam/config.yml`, and writes `terragucci.yml` by the tables of [Coming from Atlantis, OpenTaco or Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/). Each setting the file carries is printed under one of four headings, quoting the guide's row:
@@ -102,6 +105,31 @@ Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), OpenTaco's `digg
 It exits 2 when the file is missing or not YAML, or when `terragucci.yml` exists and `--force` is not given. A project `dir` that matches no directory with Terraform files is written and named.
 
 `import terrateam` writes no `roots`, since terragucci detects the directories Terrateam plans, and names each `dirs` key that matches no root. It reads `depends_on` against the roots' `terraform_remote_state` reads and writes `waves.canary` for an order the reads do not give ([Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam)). A `run` hook or workflow step becomes a [step](/terragucci/guides/run-steps/). Run [`init`](#init) next to write the pipeline.
+
+`import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 2 on a repo with no Terragrunt or a legacy `config.yml`.
+
+`import spacelift` reads `.spacelift/config.yml` (or the file named) and every `spacelift_*` resource in the repo's `.tf` files; `import env0` reads `env0-discovery.yml` (or the file named), each `env0.yml` custom flow and every `env0_*` resource. Either runs on the admin code alone when the file is missing. They map by the concepts table of [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import), keep `apply.when: merge` unless `--apply-when` says otherwise, since both platforms apply a tracked branch after a push, and name each stack or environment whose state the platform manages.
+
+### From a platform's workspaces
+
+```bash
+terragucci import hcp [--hostname <host>] --organization <org> [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
+terragucci import otf --hostname <host> --organization <org> [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
+terragucci import scalr --hostname <account>.scalr.io [--environment <name or ID>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
+```
+
+Reads the workspaces over the platform's API, with the token in `TF_TOKEN_<host>` or `credentials.tfrc.json` (for Scalr, also `SCALR_TOKEN`), and writes `terragucci.yml` and a `terraform.tfvars` in each root that has none, by [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/#import-the-workspaces). It only reads: no workspace, variable or run changes. A sensitive variable's value is never read; its name goes under `pass.secrets`.
+
+| Flag | Meaning |
+|---|---|
+| `--hostname` | the platform's host; `app.terraform.io` for `hcp` when not given |
+| `--organization` | the organization whose workspaces are read (`hcp`, `otf`) |
+| `--environment` | one Scalr environment, by name or ID; every one the token sees when not given |
+| `--repo` | this repo as the platform's VCS connection names it; the `origin` remote's `owner/name` when not given |
+| `--forge` | the forge, when the remote cannot tell; on GitLab the secrets are listed as masked CI/CD variables to create, with no `pass` |
+| `--dry-run`, `--force` | as above |
+
+It exits 2 when the host refuses the token or names no TFE API, and, before it reads anything, when `terragucci.yml` exists and `--force` is not given.
 
 ## reconcile
 
@@ -506,7 +534,7 @@ terragucci.yml: ok
 approval: ledger (the default)
 ```
 
-With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) in a repo of plain roots, it reads each root's backend and `terraform_remote_state` blocks and prints a line per role and stage with the state that role reaches. Every glob in `oidc.roles` is an environment, and the unmatched roots form one more under `plan_role` and `apply_role`. Each warning goes to stderr.
+With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) in a repo of plain roots, it reads each root's backend and `terraform_remote_state` blocks and prints a line per role and stage with the state that role reaches. Every glob in `oidc.roles` is an environment, and the unmatched roots form one more under `plan_role` and `apply_role`. `oidc.gcp.roles` and `oidc.azure.roles` get the same lines and warnings, marked `gcp` or `azure`, for the `gcs` or `azurerm` states their roots keep. Each warning goes to stderr.
 
 | Warning | When |
 |---|---|
@@ -584,7 +612,7 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 
 | Flag | Meaning |
 |---|---|
-| `<root>` | the root whose state to export, with an `s3` backend in a bucket that keeps versions, or on GitLab-managed state: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
+| `<root>` | the root whose state to export, with a backend that keeps versions (an `s3` bucket with versioning, a `gcs` bucket with object versioning, an `azurerm` account with blob versioning or a backend with `snapshot = true`), or on GitLab-managed state: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
 | `--version` | the version id, as the estate page's State versions section lists it (GitLab's serial on GitLab-managed state); the current version by default |
 | `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |
@@ -608,7 +636,7 @@ An approval by the person who asked does not count. A request exports once; anot
 terragucci unlock-state <root> [--actor <name>] [--binary <b>] [--config <file>]
 ```
 
-Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes, or the lock of GitLab-managed state. A comment never runs it. Run it at a shell with:
+Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes, a `gcs` backend's lock object, an `azurerm` backend's lease on the state blob, or the lock of GitLab-managed state. A comment never runs it. Run it at a shell with:
 
 - the backend's credentials;
 - the forge token in the variable `token_env` names (by default `FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN`);
@@ -616,7 +644,7 @@ Releases the state lock a job killed mid-apply left on `<root>`: the lock file a
 
 | Step | Does |
 |---|---|
-| read the lock | inits the root and reads `<key>.tflock`, or asks GitLab's lock endpoint: its ID, who took it and when |
+| read the lock | inits the root and reads the lock file, the gcs lock object or the azurerm lease and metadata, or asks GitLab's lock endpoint: its ID, who took it and when |
 | check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
 | wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `chant approve tf-unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
 | release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
@@ -666,7 +694,7 @@ A destroy that fails leaves the copy live, and the next sweep tries again.
 terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
 ```
 
-The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). From `chant/lifecycle` it finds each waiting wave, and each state migration wave 1 waits on, whose digest has an approval no apply has used. An approved migration resumes wave 1, which runs it. It writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply on GitHub and Forgejo, and retries the waiting apply job on GitLab. It exits 0 when there is nothing to resume.
+The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). From `chant/lifecycle` it finds each waiting wave, and each state migration wave 1 waits on, whose digest has an approval no apply has used. An approved migration resumes wave 1, which runs it. It also finds a wave whose approved choudoufu apply was killed, once that run is gone ([Stopped applies](/terragucci/reference/pipeline/#stopped-applies)). It writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply on GitHub and Forgejo, and retries the waiting apply job on GitLab. It exits 0 when there is nothing to resume.
 
 ## override
 

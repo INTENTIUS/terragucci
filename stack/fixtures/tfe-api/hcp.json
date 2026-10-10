@@ -1,0 +1,400 @@
+{
+ "tfe": {
+  "organizations/acme/workspaces": [
+   {
+    "id": "ws-dev-platform",
+    "type": "workspaces",
+    "attributes": {
+     "name": "dev-platform",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/dev/platform",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-dev-email",
+    "type": "workspaces",
+    "attributes": {
+     "name": "dev-email",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": true,
+     "working-directory": "envs/dev/email",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-dev-orders",
+    "type": "workspaces",
+    "attributes": {
+     "name": "dev-orders",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/dev/orders",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-dev-payments",
+    "type": "workspaces",
+    "attributes": {
+     "name": "dev-payments",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/dev/payments",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-dev-search",
+    "type": "workspaces",
+    "attributes": {
+     "name": "dev-search",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/dev/search",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-staging-platform",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-platform",
+     "terraform-version": "1.13.2",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/staging/platform",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-staging-email",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-email",
+     "terraform-version": "1.13.2",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/staging/email",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-staging-orders",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-orders",
+     "terraform-version": "1.13.2",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/staging/orders",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-staging-payments",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-payments",
+     "terraform-version": "1.13.2",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/staging/payments",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-staging-search",
+    "type": "workspaces",
+    "attributes": {
+     "name": "staging-search",
+     "terraform-version": "1.13.2",
+     "execution-mode": "agent",
+     "auto-apply": false,
+     "working-directory": "envs/staging/search",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-prod-orders",
+    "type": "workspaces",
+    "attributes": {
+     "name": "prod-orders",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/prod/orders",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-prod-orders-blue",
+    "type": "workspaces",
+    "attributes": {
+     "name": "prod-orders-blue",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "envs/prod/orders",
+     "vcs-repo": {
+      "identifier": "acme/shop",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-billing",
+    "type": "workspaces",
+    "attributes": {
+     "name": "billing",
+     "terraform-version": "1.13.1",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "working-directory": "",
+     "vcs-repo": {
+      "identifier": "acme/billing",
+      "branch": "main"
+     }
+    }
+   },
+   {
+    "id": "ws-scratch",
+    "type": "workspaces",
+    "attributes": {
+     "name": "scratch",
+     "terraform-version": "latest",
+     "execution-mode": "remote",
+     "auto-apply": false,
+     "vcs-repo": null
+    }
+   }
+  ],
+  "workspaces/ws-dev-platform/vars": [
+   {
+    "id": "var-1",
+    "type": "vars",
+    "attributes": {
+     "key": "region",
+     "value": "us-east-1",
+     "category": "terraform",
+     "sensitive": false,
+     "hcl": false
+    }
+   },
+   {
+    "id": "var-2",
+    "type": "vars",
+    "attributes": {
+     "key": "db_password",
+     "value": "never-copy-this",
+     "category": "terraform",
+     "sensitive": true,
+     "hcl": false
+    }
+   },
+   {
+    "id": "var-3",
+    "type": "vars",
+    "attributes": {
+     "key": "TEAM",
+     "value": "shop",
+     "category": "env",
+     "sensitive": false,
+     "hcl": false
+    }
+   }
+  ],
+  "workspaces/ws-dev-email/vars": [],
+  "workspaces/ws-dev-orders/vars": [],
+  "workspaces/ws-dev-payments/vars": [],
+  "workspaces/ws-dev-search/vars": [],
+  "workspaces/ws-staging-platform/vars": [
+   {
+    "id": "var-4",
+    "type": "vars",
+    "attributes": {
+     "key": "region",
+     "value": "us-east-1",
+     "category": "terraform",
+     "sensitive": false,
+     "hcl": false
+    }
+   },
+   {
+    "id": "var-5",
+    "type": "vars",
+    "attributes": {
+     "key": "TEAM",
+     "value": "shop",
+     "category": "env",
+     "sensitive": false,
+     "hcl": false
+    }
+   },
+   {
+    "id": "var-6",
+    "type": "vars",
+    "attributes": {
+     "key": "TFC_AWS_PROVIDER_AUTH",
+     "value": "true",
+     "category": "env",
+     "sensitive": false,
+     "hcl": false
+    }
+   }
+  ],
+  "workspaces/ws-staging-email/vars": [],
+  "workspaces/ws-staging-orders/vars": [],
+  "workspaces/ws-staging-payments/vars": [],
+  "workspaces/ws-staging-search/vars": [],
+  "workspaces/ws-prod-orders/vars": [],
+  "workspaces/ws-prod-orders-blue/vars": [],
+  "workspaces/ws-billing/vars": [],
+  "workspaces/ws-scratch/vars": [],
+  "workspaces/ws-dev-orders/varsets": [
+   {
+    "id": "varset-shared",
+    "type": "varsets",
+    "attributes": {
+     "name": "shared",
+     "global": false
+    }
+   }
+  ],
+  "varsets/varset-shared/relationships/vars": [
+   {
+    "id": "var-7",
+    "type": "vars",
+    "attributes": {
+     "key": "api_token",
+     "value": "never-copy-this",
+     "category": "terraform",
+     "sensitive": true,
+     "hcl": false
+    }
+   },
+   {
+    "id": "var-8",
+    "type": "vars",
+    "attributes": {
+     "key": "AWS_REGION",
+     "value": "us-east-1",
+     "category": "env",
+     "sensitive": false,
+     "hcl": false
+    }
+   }
+  ],
+  "workspaces/ws-staging-platform/run-triggers?filter[run-trigger][type]=inbound": [
+   {
+    "id": "rt-1",
+    "type": "run-triggers",
+    "attributes": {
+     "sourceable-name": "dev-orders",
+     "workspace-name": "staging-platform"
+    },
+    "relationships": {
+     "sourceable": {
+      "data": {
+       "id": "ws-dev-orders",
+       "type": "workspaces"
+      }
+     },
+     "workspace": {
+      "data": {
+       "id": "ws-staging-platform",
+       "type": "workspaces"
+      }
+     }
+    }
+   }
+  ],
+  "workspaces/ws-dev-orders/run-triggers?filter[run-trigger][type]=inbound": [
+   {
+    "id": "rt-2",
+    "type": "run-triggers",
+    "attributes": {
+     "sourceable-name": "dev-platform",
+     "workspace-name": "dev-orders"
+    },
+    "relationships": {
+     "sourceable": {
+      "data": {
+       "id": "ws-dev-platform",
+       "type": "workspaces"
+      }
+     },
+     "workspace": {
+      "data": {
+       "id": "ws-dev-orders",
+       "type": "workspaces"
+      }
+     }
+    }
+   }
+  ],
+  "workspaces/ws-dev-search/run-triggers?filter[run-trigger][type]=inbound": [
+   {
+    "id": "rt-3",
+    "type": "run-triggers",
+    "attributes": {
+     "sourceable-name": "billing",
+     "workspace-name": "dev-search"
+    },
+    "relationships": {
+     "sourceable": {
+      "data": {
+       "id": "ws-billing",
+       "type": "workspaces"
+      }
+     },
+     "workspace": {
+      "data": {
+       "id": "ws-dev-search",
+       "type": "workspaces"
+      }
+     }
+    }
+   }
+  ]
+ }
+}

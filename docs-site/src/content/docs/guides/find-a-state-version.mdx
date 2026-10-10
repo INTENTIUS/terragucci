@@ -1,10 +1,10 @@
 ---
 title: Find the state version an apply left
 description: Each apply wave records the version id of each root's state from your bucket's versioning, and the estate page lists them per root, so you know which version to go back to.
-claims: [state-versions, tg-state-versions, gl-state-versions]
+claims: [state-versions, tg-state-versions, gl-state-versions, gcs-state, azurerm-state]
 prompt: |
   Read https://intentius.io/terragucci/guides/find-a-state-version/.
-  Find the S3 buckets this repo's roots keep their state in, check whether each has versioning on, and write the commands that would turn it on as a file for me to review. Open a pull request.
+  Find the buckets and containers this repo's roots keep their state in, check whether each keeps versions, and write the commands that would turn it on as a file for me to review. Open a pull request.
   Do not change a bucket, a state file or a lock.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -23,25 +23,34 @@ After each `tf-apply` wave, the version id of each root's state, next to the run
 | the estate page | a State versions section, per project and root, newest first |
 | the [audit trail](/terragucci/reference/audit-trail/) | `detail.state_versions` on the wave's `apply` entry |
 
-terragucci reads only the state object's metadata, with an S3 `HEAD` request; it never copies or stores a state's contents. GitLab answers a state's serial only with the state itself, so on [GitLab-managed state](#gitlab-managed-state) terragucci reads the state and keeps only the serial.
+terragucci reads only the state object's metadata; it never copies or stores a state's contents. GitLab answers a state's serial only with the state itself, so on [GitLab-managed state](#gitlab-managed-state) terragucci reads the state and keeps only the serial.
 
 ## Prerequisites
 
 | You need | Why |
 |---|---|
-| Roots with an `s3` backend, on AWS S3 or an S3-compatible store, or on GitLab-managed state | the version id is S3's `x-amz-version-id`, or GitLab's serial |
+| Roots with an `s3`, `gcs` or `azurerm` backend that keeps versions, or on GitLab-managed state | the version id is the store's own (see below), or GitLab's serial |
 | [Reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) | `states.json` and the estate page live there |
 | The [estate page](/terragucci/guides/see-every-project/), to see the list | the page reads `states.json` |
 
 A Terragrunt unit is listed as a root is. Its working directory is in Terragrunt's cache, so terragucci reads its backend from its evaluated `remote_state` block (`terragrunt render --json`).
 
+Each backend names a version its own way:
+
+| Backend | Version id | Kept when |
+|---|---|---|
+| `s3` | `x-amz-version-id` | bucket versioning is on |
+| `gcs` | the object's generation | object versioning is on |
+| `azurerm` | `x-ms-version-id` | blob versioning is on |
+| `azurerm` without blob versioning | the time of a snapshot terragucci takes of the state blob after the apply | the backend sets `snapshot = true` |
+
 Other roots are listed with what terragucci knows:
 
 | Root | Listed as |
 |---|---|
-| a bucket with versioning off | versions are off: S3 keeps only the latest state |
+| a bucket or account that keeps no versions | versions are off: the store keeps only the latest state |
 | a `local`, `pg`, `kubernetes` or `consul` backend, or an `http` backend other than GitLab's | versions are off: each write replaces the state |
-| a backend that keeps versions terragucci does not read (`gcs`, `azurerm`, `remote`) | versions not read, naming why |
+| a backend that keeps versions terragucci does not read (`remote`) | versions not read, naming why |
 | a Terragrunt unit with no `remote_state` block that runs from Terragrunt's cache | versions not read, naming why |
 
 In `report.json` and `states.json`, `versioning` is `off` for the first two rows and `unknown` for the last two.
@@ -50,15 +59,17 @@ In `report.json` and `states.json`, `versioning` is `off` for the first two rows
 
 <Steps>
 
-1. Turn on versioning for the bucket that holds your state:
+1. Turn on versioning where your state is:
 
    ```bash
    aws s3api put-bucket-versioning --bucket acme-state --versioning-configuration Status=Enabled
+   gcloud storage buckets update gs://acme-state --versioning
+   az storage account blob-service-properties update --account-name acmestate --enable-versioning true
    ```
 
-   S3 then keeps each version of every state object until a lifecycle rule expires it. A rule that expires noncurrent versions after 90 days keeps the list short and the bill small.
+   The store then keeps each version of every state object until a lifecycle rule expires it. A rule that expires noncurrent versions after 90 days keeps the list short and the bill small.
 
-2. Check the apply job can read the state object's metadata. A `HEAD` request needs `s3:GetObject` on the state's key, which the apply role already holds for the backend. When the backend's configuration names static keys (`access_key`, `secret_key`), terragucci signs with those. A role the backend assumes itself (`assume_role`) is not assumed; if the job's own identity may not read the object, the root is listed with versions unknown and the reason.
+2. Check the apply job can read the state object's metadata, which the apply identity already can for the backend. terragucci uses the credentials the backend's configuration names (`access_key` and `secret_key` for S3; `access_token`, `credentials` or `impersonate_service_account` for GCS; `access_key` or `sas_token` for Azure), else the job's own. A role an S3 backend assumes itself (`assume_role`) is not assumed; if the job's own identity may not read the object, the root is listed with versions unknown and the reason. Reading whether a GCS bucket keeps versions needs `storage.buckets.get`; without it the generation is recorded as kept.
 
 3. Let a wave apply. Each root that applied, or had nothing to apply, gets a line in the log:
 
@@ -66,7 +77,7 @@ In `report.json` and `states.json`, `versioning` is `off` for the first two rows
    envs/dev/platform: state s3://acme-state/envs/dev/platform.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY
    ```
 
-   A bucket with versioning off prints `versions off` and why. A version that cannot be read never fails the wave.
+   A store that keeps no versions prints `versions off` and why. A version that cannot be read never fails the wave.
 
 4. Open the estate page. Run `terragucci estate` (or let its scheduled job run) and open the link it prints. The State versions section lists each root's versions, newest first, each linked to the report of the wave that wrote it; a root whose bucket keeps no versions says versions are off.
 
@@ -91,6 +102,14 @@ aws s3api get-object --bucket acme-state --key envs/dev/platform.tfstate \
   --version-id 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY restore.tfstate
 tofu -chdir=envs/dev/platform state push -force restore.tfstate
 tofu -chdir=envs/dev/platform plan
+```
+
+On GCS the version is a generation, and on Azure a version id or a snapshot. Fetch it, then push it as above:
+
+```bash
+gcloud storage cp "gs://acme-state/envs/dev/platform/default.tfstate#1791612469077717" restore.tfstate
+az storage blob download --account-name acmestate --container-name tfstate --name platform.tfstate \
+  --snapshot 2026-10-10T06:09:35.6000000Z --file restore.tfstate
 ```
 
 On GitLab-managed state, download the version by its serial with a token that can read the project's state:

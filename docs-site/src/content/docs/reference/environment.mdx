@@ -82,6 +82,23 @@ Set these on the plan job when `reports.bucket` is set, and in the environment `
 | `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` | an `az://` container without a key: the identity and token a job with `oidc.azure` gets |
 | `AZURE_AUTHORITY_HOST` | Entra ID's address for that token; `https://login.microsoftonline.com` when not set |
 
+## State
+
+What reads a root's state where it is (the version an apply records, `state export`, `unlock-state`, a migration) uses the credentials the backend would: those its configuration names, else these.
+
+| Variable | Meaning |
+|---|---|
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | `gcs`: a bearer token, as the backend's `access_token` |
+| `GOOGLE_BACKEND_CREDENTIALS`, `GOOGLE_CREDENTIALS` | `gcs`: a credentials file, or its JSON, as the backend's `credentials` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `gcs`: the credentials file when none of the above is set, which a job with `oidc.gcp` writes |
+| `GOOGLE_BACKEND_IMPERSONATE_SERVICE_ACCOUNT`, `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` | `gcs`: the service account to act as, as the backend's `impersonate_service_account` |
+| `GOOGLE_BACKEND_STORAGE_CUSTOM_ENDPOINT`, `GOOGLE_STORAGE_CUSTOM_ENDPOINT` | `gcs`: the JSON API's address, as the backend's `storage_custom_endpoint` |
+| `ARM_ACCESS_KEY`, `ARM_SAS_TOKEN` | `azurerm`: the account key or a SAS, as the backend's `access_key` and `sas_token` |
+| `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` | `azurerm` without a key or SAS: the identity a job with `oidc.azure` gets, which reads blobs through Entra ID |
+| `ARM_ENVIRONMENT`, `ARM_METADATA_HOSTNAME`, `ARM_METADATA_HOST` | `azurerm`: the cloud (`public`, `china`, `usgovernment`), or the host of its metadata, which names the storage suffix |
+| `ARM_SNAPSHOT` | `azurerm`: `true` as the backend's `snapshot = true` |
+| `AZURE_CLIENT_ID` | set to a root's client with `azure.roles`, when the job sets it |
+
 ## Secrets the config names
 
 | Config key | Default name | Holds |
@@ -164,13 +181,17 @@ oidc:
 | `gcp.workload_identity_provider` | `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
 | `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
 | `gcp.token_url` | the STS endpoint; `https://sts.googleapis.com/v1/token` when omitted |
+| `gcp.roles` | service accounts by root glob, `{ plan, apply }` each; a root no glob matches takes `gcp.plan_service_account` and `gcp.apply_service_account`. Plain roots only |
 | `azure.audience` | `api://AzureADTokenExchange` when omitted; `...USGov` or `...China` for those clouds |
 | `azure.tenant_id`, `azure.subscription_id` | the Entra ID tenant and the subscription the jobs work in |
 | `azure.plan_client_id`, `azure.apply_client_id` | the identities plan and apply sign in as |
+| `azure.roles` | client IDs by root glob, `{ plan, apply }` each; a root no glob matches takes `azure.plan_client_id` and `azure.apply_client_id`. Plain roots only |
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
 Under `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets each root's `AWS_ROLE_ARN` from it; the binary and steps assume that role with the job's token, as does the state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
+
+`gcp.roles` and `azure.roles` work the same way, through `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` and `TERRAGUCCI_ROOT_AZURE_CLIENTS`. A root's binary gets a copy of the job's credentials file that impersonates its service account, as `GOOGLE_APPLICATION_CREDENTIALS`, and its client as `ARM_CLIENT_ID`. Each client needs a federated credential for the same subjects as the job's.
 
 Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
@@ -236,6 +257,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_LOCK_STALE` |  | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), seconds after which a wave takes over the resources another run holds, whatever its forge says of that run; 7200 by default |
 | `TG_BACKEND_BOOTSTRAP` |  | Terragrunt repos, `tf-apply`: when the job sets it, the wave passes it to Terragrunt as it is, so `false` keeps the wave from creating or changing a bucket that `generate.disable_init: false` would bootstrap |
 | `TG_LOCK_POLL` |  | with choudoufu, seconds between a waiting wave's checks of the resources another run holds; 10 by default |
+| `TG_PROGRESS_SECONDS` |  | with choudoufu, seconds between an applying wave's reads of its estates' records for [its progress](/terragucci/concepts/waves-and-approvals/#progress); 5 by default |
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |

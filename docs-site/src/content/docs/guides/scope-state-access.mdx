@@ -1,7 +1,7 @@
 ---
 title: Keep each environment's roles to its own state
 description: Give each environment's roots a plan role and an apply role of their own, scoped to that environment's state keys, and let config check warn when a role reaches another environment's state.
-claims: [state-roles]
+claims: [state-roles, cloud-roles]
 prompt: |
   Read https://intentius.io/terragucci/guides/scope-state-access/.
   In this repo, add oidc.roles to terragucci.yml with one glob per environment the roots show, using placeholder role ARNs, and run `npx terragucci config check`.
@@ -80,6 +80,34 @@ Each root runs every command, steps included, with its environment's roles. In d
 5. Run `terragucci init` and merge the new pipeline. The plan and apply jobs fetch the token as before and carry the stage's roles; the stage sets `AWS_ROLE_ARN` for each root. A state migration's reads and writes, and the state version an apply records, use the root's role too.
 
 </Steps>
+
+## GCP and Azure
+
+`oidc.gcp.roles` gives a service account pair per glob, and `oidc.azure.roles` a client pair. A root no glob matches takes the job's own pair (`plan_service_account` and `apply_service_account`, `plan_client_id` and `apply_client_id`), which stay required.
+
+```yaml
+oidc:
+  gcp:
+    workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
+    plan_service_account: tg-plan@acme.iam.gserviceaccount.com
+    apply_service_account: tg-apply@acme.iam.gserviceaccount.com
+    roles:
+      "envs/prod/**": { plan: prod-plan@acme.iam.gserviceaccount.com, apply: prod-apply@acme.iam.gserviceaccount.com }
+  azure:
+    tenant_id: 7d2c0b4e-0000-4000-8000-00000000a2e1
+    subscription_id: 00000000-0000-4000-8000-000000000001
+    plan_client_id: client-plan
+    apply_client_id: client-apply
+    roles:
+      "envs/prod/**": { plan: client-prod-plan, apply: client-prod-apply }
+```
+
+| Cloud | Each root's binary gets | The identity needs |
+|---|---|---|
+| GCP | `GOOGLE_APPLICATION_CREDENTIALS`, a copy of the job's credentials file that impersonates the root's service account | Workload Identity User for the pool's principal, as the job's service accounts have |
+| Azure | `ARM_CLIENT_ID`, the root's client | a federated credential for the job's subjects |
+
+`config check` lists each service account with the `gcs` states its roots keep, and each client with the `azurerm` ones, and warns as it does for AWS roles. Grant each identity its environment's bucket prefix or container alone.
 
 ## Limits
 

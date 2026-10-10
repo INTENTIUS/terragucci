@@ -21,6 +21,8 @@ Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub rele
 | With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave waits only for a run changing one of its own resources | [Two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate) |
 | The choudoufu image runs choudoufu 0.24.0: a killed apply leaves records for the resources it finished | [Stock and choudoufu](/terragucci/concepts/locking-and-staleness/#stock-and-choudoufu) |
 | One page for every lock layer, from the backend's state lock to choudoufu, with the claims behind each by repo shape and forge | [Locking and staleness](/terragucci/concepts/locking-and-staleness/) |
+| A gated choudoufu wave whose approved apply was killed or failed applies the rest under the same approval, and the resume job finds a killed one | [Stopped applies](/terragucci/reference/pipeline/#stopped-applies) |
+| A choudoufu wave's run view shows each resource done, in flight or waiting while it applies, read from the estate's records | [Progress](/terragucci/concepts/waves-and-approvals/#progress) |
 
 ## Plans and waves
 
@@ -44,6 +46,7 @@ Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub rele
 | gcs and azurerm roots get state versions, `state export`, `unlock-state` and migrations, and `oidc.gcp.roles` and `oidc.azure.roles` give each environment its own identity | [GCP and Azure](/terragucci/guides/scope-state-access/#gcp-and-azure) |
 | A backend move reads an HCP Terraform, Scalr or OTF workspace over the TFE API, or an exported state file | [Workspaces](/terragucci/reference/migration-files/#workspaces) |
 | With choudoufu, which keeps per-resource state with no database to run, migration files retag resources between roots and adopt a root from a state file | [Estates](/terragucci/guides/move-resources-between-roots/#estates) |
+| Migrations move state to and from `pg`, `kubernetes`, `consul` and `http` backends, which keep no versions | [Unversioned backends](/terragucci/reference/migration-files/#unversioned-backends) |
 
 ## Repo shapes
 
@@ -95,6 +98,9 @@ Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub rele
 | What | Where |
 |---|---|
 | `terragucci import terrateam` writes `terragucci.yml` from a `.terrateam/config.yml` | [Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam) |
+| `terragucci import hcp`, `import otf` and `import scalr` write `terragucci.yml` from a platform's workspaces over its API | [Import the workspaces](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/#import-the-workspaces) |
+| `terragucci import spacelift` and `import env0` write `terragucci.yml` from their config files and admin Terraform | [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import) |
+| `terragucci import terragrunt-scale` keeps a Terragrunt Scale repo's plan and apply roles per environment | [Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale) |
 | Guides for HCP Terraform, Scalr and OTF, and for Spacelift and env zero | [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/), [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/) |
 | A Standards section: the open standards terragucci uses, and its tacos.guru answers | [Standards](/terragucci/standards/) |
 
@@ -104,6 +110,7 @@ Release `0.4.5` is on npm as `@intentius/terragucci@0.4.5`, and its [GitHub rele
 |---|---|
 | `unlock-state` on a choudoufu root under live markers says there is nothing to release | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
 | An Atmos pull request that changes a stack manifest locks the instances it reaches | [Pull requests](/terragucci/guides/use-atmos/#pull-requests) |
+| A CDK Terrain pull request in a repo that synthesizes its stacks locks every stack | [Pull request locks](/terragucci/concepts/locking-and-staleness/#pull-request-locks) |
 | On Forgejo, a pipeline with more than five levels of job dependencies plans | [Pipeline](/terragucci/reference/pipeline/) |
 | A pull request whose format fix was pushed gets its lock answer | [Plan locks](/terragucci/reference/pipeline/#plan-locks) |
 | A `live` block inside `terraform` makes a root | [Choose a binary](/terragucci/guides/use-a-binary/) |

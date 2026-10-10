@@ -2,7 +2,9 @@
  * The terragucci command.
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
- *   terragucci import atlantis|digger|terrateam [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
+ *   terragucci import atlantis|digger|terrateam|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
+ *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
+ *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -29,7 +31,7 @@
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
- *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
+ *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for, or an approved apply that was killed; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
@@ -88,6 +90,9 @@ import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { describeImport, importConfig, IMPORT_SOURCES, type ImportSource } from "./import";
+import { readScalr } from "./import/scalr";
+import { readTfe } from "./import/tfe";
+import { describeWorkspaceImport, importWorkspaces, PLATFORM_SOURCES, type PlatformSource } from "./import/workspaces";
 import { checkGenerated, describeGenerate, planGenerate } from "./generate";
 import { assertLinux, install, type Tool } from "./install";
 import { describeBinary, RootBinaries } from "./pins";
@@ -121,7 +126,9 @@ import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
-  terragucci import atlantis|digger|terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+  terragucci import atlantis|digger|terrateam|spacelift|env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+  terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
+  terragucci import hcp|otf|scalr [--hostname <host>] [--organization <org>] [--environment <env>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci generate [--check] [--dry-run] [--config <file>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -176,12 +183,15 @@ Docs: https://intentius.io/terragucci/`;
 
 /** `--approval`: one of APPROVALS, or undefined when not given. */
 /** The checkout's `waves.after`, for plain roots; undefined when there is none or the config cannot be read (the plan job says why). */
-async function wavesAfterAt(cwd: string): Promise<WavesAfter | undefined> {
+/** What the lock decisions read of the checkout's shape: `waves.after`, and whether a command writes the roots (`synth`). */
+async function lockShapeAt(cwd: string): Promise<{ after?: WavesAfter; synth?: true }> {
   try {
     const path = findConfig(cwd);
-    return path ? detectShape(cwd, resolveRepo(await loadConfig(path))).after : undefined;
+    if (!path) return {};
+    const shape = detectShape(cwd, resolveRepo(await loadConfig(path)));
+    return { ...(shape.after ? { after: shape.after } : {}), ...(shape.kind === "synth" ? { synth: true as const } : {}) };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -276,7 +286,29 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "import": {
         const [source, file, extra] = args;
-        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\` or \`terragucci import terrateam [.terrateam/config.yml]\``);
+        if (PLATFORM_SOURCES.includes(source as PlatformSource)) {
+          if (file !== undefined) throw new ConfigError(`import ${source} reads the platform's API, not a file: give --hostname${source === "scalr" ? "" : " and --organization"}`);
+          const forge = str(flags, "forge");
+          if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
+          const hostname = str(flags, "hostname") ?? (source === "hcp" ? "app.terraform.io" : undefined);
+          if (!hostname || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d+)?$/i.test(hostname)) throw new ConfigError(`import ${source} needs --hostname, the host name of ${source === "scalr" ? "the Scalr account, such as acme.scalr.io" : "the OTF server"}`);
+          const org = str(flags, "organization");
+          if (source !== "scalr" && !org) throw new ConfigError(`import ${source} needs --organization, the organization whose workspaces it reads`);
+          if (source === "scalr" && org) throw new ConfigError("import scalr reads the account the host names; --environment narrows it to one environment");
+          const environment = str(flags, "environment");
+          if (source !== "scalr" && environment) throw new ConfigError(`--environment is Scalr's; import ${source} reads one --organization`);
+          const repoFlag = str(flags, "repo");
+          if (repoFlag !== undefined && !/^[^/\s]+(\/[^/\s]+)+$/.test(repoFlag)) throw new ConfigError("--repo must be the repo as the VCS connection names it, owner/name");
+          const result = await importWorkspaces(cwd, () => (source === "scalr" ? readScalr(hostname, environment, process.env) : readTfe(source as "hcp" | "otf", hostname, org!, process.env)), {
+            ...(repoFlag ? { repo: repoFlag } : {}),
+            ...(forge ? { forge: forge as ForgeName } : {}),
+            force: flags.force === true,
+            dryRun: flags["dry-run"] === true,
+          });
+          console.log(describeWorkspaceImport(result));
+          return 0;
+        }
+        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\`, \`terragucci import terrateam [.terrateam/config.yml]\`, \`terragucci import terragrunt-scale [.gruntwork]\`, \`terragucci import spacelift [.spacelift/config.yml]\` or \`terragucci import env0 [env0-discovery.yml]\``);
         if (extra !== undefined) throw new ConfigError("import reads one file");
         const forge = str(flags, "forge");
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
@@ -593,12 +625,12 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("comment-apply's --forge is github, forgejo or gitlab");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment-apply's --when is merge or pull-request");
         const requires = requiresOf(str(flags, "requires"), "comment-apply");
-        // waves.after: a root it puts after a root the change reaches is locked with it.
-        const after = flags.terragrunt === true ? undefined : await wavesAfterAt(cwd);
+        // waves.after: a root it puts after a root the change reaches is locked with it. synth: a change can reach every root.
+        const { after, synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
         if (forge === "gitlab") {
           // GitLab: the mr-apply job of the pipeline the comments job started; the merge request, the note and the head come from its variables, read again from the API.
           if (when !== "pull-request") throw new ConfigError("comment-apply --forge gitlab is apply before merge's: pass --when pull-request");
-          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
           writeDecision(resolve(cwd, out), decision);
           if (decision.fail) {
             console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -607,7 +639,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
           return 0;
         }
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
+        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
         writeDecision(resolve(cwd, out), decision);
         if (decision.fail) {
           console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -623,7 +655,8 @@ export async function main(argv: string[]): Promise<number> {
         if (!layers) throw new ConfigError("pr-lock needs --layers <a,b;c>");
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("pr-lock's --forge is github or forgejo");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("pr-lock's --when is merge or pull-request");
-        const decision = await decidePlanLock({ layers: parseLayers(layers), forge, when, ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+        const { synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
+        const decision = await decidePlanLock({ layers: parseLayers(layers), forge, when, ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
         if (decision.fail) {
           console.error(`terragucci pr-lock: failed: ${decision.reason}`);
           return 1;
@@ -704,7 +737,7 @@ export async function main(argv: string[]): Promise<number> {
         if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
         if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
         else {
-          for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
+          for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : w.stopped ? `terragucci resume: the apply of wave ${w.wave}, approved by ${w.by} for ${w.digest}, stopped before it finished; the wave applies the rest` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
           console.log(step.kind === "apply" ? `terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides` : `terragucci resume: retried ${step.job} of pipeline ${step.pipeline}${step.url ? ` (${step.url})` : ""}; the waves after it follow`);
         }
         return 0;
@@ -870,13 +903,16 @@ export async function main(argv: string[]): Promise<number> {
           // The shape detection finds in the repo refuses what init would: the same table, worded for that shape.
           const shape = config.projects ? undefined : detectShape(repoDir, resolveRepo(config));
           if (shape) problems.push(...shape.problems("config"));
-          if (shape && problems.length === 0 && config.oidc?.roles && shape.kind === "atmos") {
+          // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients.
+          const oidc = config.oidc;
+          const clouds = !oidc ? [] : (["aws", "gcp", "azure"] as const).filter((c) => (c === "aws" ? oidc.roles : oidc[c]?.roles));
+          if (shape && problems.length === 0 && oidc && clouds.length > 0 && (shape.kind === "atmos" || shape.engine === "per-root")) {
             // An Atmos repo's roots are its instances, <stack>/<component>, so a glob such as prod/* gives a stack its roles.
-            const instances = atmosInstances(await describeStacks(repoDir));
-            access = stateAccess(repoDir, instances.map((i) => i.path), config.oidc, { ...instanceStates(instances), via: "!terraform.state" });
-            warnings = access.warnings;
-          } else if (shape && problems.length === 0 && config.oidc?.roles && shape.engine === "per-root") {
-            access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
+            const instances = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)) : undefined;
+            const roots = instances ? instances.map((i) => i.path) : findRoots(repoDir, config.roots);
+            const known = instances ? { ...instanceStates(instances), via: "!terraform.state" } : undefined;
+            const each = clouds.map((c) => stateAccess(repoDir, roots, oidc, known, c));
+            access = { roles: each.flatMap((a) => a.roles), warnings: each.flatMap((a) => a.warnings) };
             warnings = access.warnings;
           }
           // A state the roots' code does not address can't order a reader after its writer: say which.
@@ -901,7 +937,7 @@ export async function main(argv: string[]): Promise<number> {
           if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
           if (access) {
             console.log("state access:");
-            for (const r of access.roles) console.log(`  ${r.role} (${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
+            for (const r of access.roles) console.log(`  ${r.role} (${r.cloud ? `${r.cloud}, ` : ""}${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
           }
         } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
         if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);

@@ -14,7 +14,7 @@ packages/terragucci/src/forge.ts          ALL
 packages/terragucci/src/init.ts           ALL
 packages/terragucci/src/render.ts         ALL
 packages/terragucci/src/shape.ts          ALL
-packages/terragucci/src/refusals.ts       tg-refuse tg-zero-config cdktn-* atmos-* config-ts role-refused tg-generate generate waves-after
+packages/terragucci/src/refusals.ts       tg-refuse tg-zero-config cdktn-* atmos-* config-ts role-refused tg-generate generate waves-after cloud-roles
 packages/terragucci/src/images.ts         ALL
 packages/terragucci/src/image-digests.json ALL
 packages/terragucci/src/render-terragrunt.ts tg-* steward
@@ -33,13 +33,15 @@ packages/terragucci/src/render-review.ts  review-*
 packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply-rows.ts     apply-per-root cdf-rows-* apply-serial
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial apply-per-root cdf-rows-* pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init waves-after
+packages/terragucci/src/apply-rows.ts     apply-per-root cdf-rows-* apply-serial apply-stand-down
+packages/terragucci/src/apply.ts          cdf-resume boot waves publish-attest apply-serial apply-per-root cdf-rows-* pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init waves-after cdf-live-progress apply-stand-down cdf-concurrency*
+packages/terragucci/src/apply-progress.ts cdf-live-progress estate
+packages/terragucci/src/cdf-records.ts    cdf-live-progress
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate tg-generate
 packages/terragucci/src/state-address.ts  boot affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-* atmos-affected atmos-upstream-wait atmos-roles terramate-affected terramate-sharing state-versions migrate-split migrate-backend migrate-revert unlock-state state-export atmos-* waves-after
-packages/terragucci/src/detect.ts         boot affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-* atmos-affected atmos-upstream-wait atmos-roles terramate-affected terramate-sharing waves-after cdf-drift resource-blast
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-* apply-branches own-jobs-kept state-roles tg-cost-gate tg-steps-gate tg-wave-jobs tg-apply-branches apply-branches-drift tg-generate ephemeral-* atmos-version atmos-check runner-label pass-secrets waves-after
+packages/terragucci/src/detect.ts         boot affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-* atmos-affected atmos-upstream-wait atmos-roles terramate-affected terramate-sharing waves-after cdf-drift resource-blast cdf-live-progress
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-* apply-branches own-jobs-kept state-roles tg-cost-gate tg-steps-gate tg-wave-jobs tg-apply-branches apply-branches-drift tg-generate ephemeral-* atmos-version atmos-check runner-label pass-secrets waves-after cloud-roles
 packages/terragucci/src/synth.ts          cdktn-* atmos-*
 packages/terragucci/src/steps.ts          steps-* tg-steps-gate
 packages/terragucci/src/linked.ts         linked-* cdktn-linked
@@ -49,25 +51,25 @@ packages/terragucci/src/tg-preview-gate.ts tg-preview-gate tg-layers tg-gate-* t
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-* token-scrub plan-token-free check
 packages/terragucci/src/pins.ts           root-pins tg-root-pins pinned-install tf-terraform check zero-config note-* report
 packages/terragucci/src/install.ts        root-pins tg-root-pins tg-choudoufu pinned-install tf-terraform tg-terraform cdf-* cost-* atmos-* terramate-*
-packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release atmos-pr-apply-lock terramate-pr-apply-lock
+packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release atmos-pr-apply-lock terramate-pr-apply-lock cdktn-pr-apply-lock
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-mixed reconcile-parallelism estate-control audit-control provider-project
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-* behold-view query-sql
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export ephemeral-*
-packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-*
+packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-* gcs-state azurerm-state gcs-unlock azurerm-unlock blob-migrate cloud-roles
 packages/terragucci/src/gitlab-state.ts   state-versions unlock-state state-export ephemeral-* tg-ephemeral-pr
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr cdf-migrate cdf-adopt migrate-backend-tfe
+packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr cdf-migrate cdf-adopt migrate-backend-tfe blob-migrate migrate-backend-pg migrate-backend-k8s migrate-backend-consul migrate-backend-http
 packages/terragucci/src/migrate-estate.ts cdf-migrate cdf-adopt
-packages/terragucci/src/state-source.ts   migrate-backend-tfe
+packages/terragucci/src/state-source.ts   migrate-backend-tfe import-hcp import-scalr
 packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr tg-generate-init
 packages/terragucci/src/config-schema.ts   config-ts role-refused state-roles sealed-migrate atmos-roles atmos-refuse decide-backends import-terrateam
 packages/terragucci/src/terragucci.schema.json config-ts
 packages/terragucci/src/generate-config.ts generate reconcile tg-generate tg-generate-init
 packages/terragucci/src/notify.ts         notify-chat notify-webhook chat-*
 packages/terragucci/src/relay.ts          chat-approve*
-packages/terragucci/src/unlock.ts         unlock-state
-packages/terragucci/src/roles.ts          state-roles atmos-roles
-packages/terragucci/src/export.ts         state-export tg-state-export
+packages/terragucci/src/unlock.ts         unlock-state gcs-unlock azurerm-unlock
+packages/terragucci/src/roles.ts          state-roles atmos-roles cloud-roles
+packages/terragucci/src/export.ts         state-export tg-state-export gcs-state azurerm-state
 packages/terragucci/src/branch-checkouts.ts apply-branches-drift
 packages/terragucci/src/ephemeral.ts      ephemeral-* tg-ephemeral-pr cdktn-ephemeral
 packages/terragucci/src/notify.schema.json notify-webhook
@@ -76,7 +78,9 @@ packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-call
 # Approvals.
 packages/terragucci/src/approval.ts       sealed* ledger-default approval-* approve-command pr-review* signer-trust pending-expiry tg-sealed tg-gate-* waves refuse
 packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan resume-approve signer-trust pending-expiry tg-sealed tg-gate-* migrate-resume migrate-resume-never mcp-last-apply
-packages/terragucci/src/resume.ts         resume-* migrate-resume migrate-resume-never
+packages/terragucci/src/resume.ts         resume-* migrate-resume migrate-resume-never cdf-resume
+packages/terragucci/src/remainder.ts      cdf-resume
+packages/terragucci/src/records.ts        cdf-resume
 packages/terragucci/src/seal.ts           sealed* approval-at-base approve-command signer-trust tg-sealed
 packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate review-*
 
@@ -87,11 +91,17 @@ packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* drift-overdue
 packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent
 packages/terragucci/src/gitlab-ci.ts
-packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard waves-after atmos-pr-apply-lock terramate-pr-apply-lock
+packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard waves-after atmos-pr-apply-lock terramate-pr-apply-lock cdktn-pr-apply-lock tg-pr-apply-lock plan-lock* pr-lock
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard replan-dispatch
-packages/terragucci/src/import/guide.ts   import-atlantis import-terrateam comment-*
+packages/terragucci/src/import/guide.ts   import-atlantis import-terrateam import-tg-scale comment-*
 packages/terragucci/src/import/terrateam.ts import-terrateam
-packages/terragucci/src/import/          import-atlantis import-terrateam
+packages/terragucci/src/import/spacelift.ts import-spacelift
+packages/terragucci/src/import/env0.ts    import-env0
+packages/terragucci/src/import/platform.ts import-spacelift import-env0
+packages/terragucci/src/import/spacelift-env0-guide.ts import-spacelift import-env0
+packages/terragucci/src/import/hcl.ts     import-spacelift import-env0
+packages/terragucci/src/import/           import-atlantis import-terrateam import-spacelift import-env0 import-hcp import-scalr import-tg-scale
+packages/terragucci/src/import/terragrunt-scale.ts import-tg-scale
 
 # Reports and what reads them.
 packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics cost-policy review-policy
@@ -119,13 +129,13 @@ packages/terragucci/src/report/run-view.ts linked-states wave-jobs estate-graph 
 packages/terragucci/src/report/graph.ts   estate-graph linked-states tg-estate-graph resource-blast
 packages/terragucci/src/report/resource-blast.ts resource-blast
 packages/terragucci/src/report/highlight.ts highlight*
-packages/terragucci/src/report/azure-blob.ts blob-azure*
-packages/terragucci/src/report/gcs.ts     blob-gcs*
+packages/terragucci/src/report/azure-blob.ts blob-azure* azurerm-state azurerm-unlock blob-migrate cloud-roles
+packages/terragucci/src/report/gcs.ts     blob-gcs* gcs-state gcs-unlock blob-migrate cloud-roles
 packages/terragucci/src/report/cost.ts   cost-* tg-cost-gate
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tg-require-attested linked-* plan-no-lock sensitive-redacted provider-cache-once tip-moved state-roles state-export state-edges drift-agent mcp-last-apply tg-preview* tg-refuse tg-dependents tg-affected tg-steps-gate tg-cost-gate tg-state-versions tg-estate-graph apply-branches-drift atmos-* terramate-affected terramate-sharing waves-after cdf-drift query-sql resource-blast
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tg-require-attested linked-* plan-no-lock sensitive-redacted provider-cache-once tip-moved state-roles state-export state-edges drift-agent mcp-last-apply tg-preview* tg-refuse tg-dependents tg-affected tg-steps-gate tg-cost-gate tg-state-versions tg-estate-graph apply-branches-drift atmos-* terramate-affected terramate-sharing waves-after cdf-drift query-sql resource-blast cdf-live-progress
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue cdktn-tips cdktn-refused tip-moved tg-respond-fmt tg-drift-pr tg-drift-attribute cdf-drift
@@ -164,7 +174,8 @@ stack/fixtures/atmos-reads               atmos-upstream-wait
 stack/fixtures/terramate-stacks          terramate-waves terramate-affected terramate-stale terramate-pr-apply-lock
 stack/fixtures/terramate-sharing         terramate-sharing
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
-stack/fixtures/tfe-api                   migrate-backend-tfe
+stack/fixtures/tfe-api                   migrate-backend-tfe import-hcp import-scalr
+stack/fixtures/http-backend              migrate-backend-http
 stack/fixtures/linked-states              linked-*
 stack/fixtures/local-states               linked-plan-local
 stack/fixtures/resource-blast             resource-blast
