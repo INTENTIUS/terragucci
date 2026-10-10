@@ -17,11 +17,14 @@
 //   POST /hold?re=<regex>&markers=a,b   hold each PUT whose path matches, from
 //                                       now on, numbering arrivals from 1; the
 //                                       first marker found in a held body names it
-//        [&methods=POST,PUT] [&body=<regex>]
+//        [&methods=POST,PUT] [&target=<regex>]
 //                                       hold those methods instead of PUT alone,
-//                                       and only a request whose body matches
-//                                       (an AWS JSON call, such as SQS's)
-//   GET  /held                          [{seq, marker, path}] of the PUTs held so far
+//                                       and with target only an AWS JSON call
+//                                       whose X-Amz-Target matches (SQS's
+//                                       AmazonSQS.SetQueueAttributes). A new
+//                                       hold keeps holding what is held, and
+//                                       numbers on from it
+//   GET  /held                          [{seq, marker, path, sent}] of what was held so far
 //   POST /release?order=2,1             forward the held PUTs in that order, each
 //                                       answered before the next is sent
 //   POST /open                          stop holding, and forward what is held in
@@ -42,7 +45,7 @@ const alias = process.env.ALIAS ?? "";
 
 let hold = null;
 let methods = ["PUT"];
-let bodyRe = null;
+let targetRe = null;
 let markers = [];
 let held = [];
 let chain = Promise.resolve();
@@ -125,7 +128,7 @@ http
     const text = payload.toString("utf8");
     const event = { method: req.method, path: path.split("?")[0], target: String(req.headers["x-amz-target"] ?? ""), marker: markers.find((m) => text.includes(m)) ?? "-", arrived: Date.now() };
     events.push(event);
-    if (hold && methods.includes(req.method) && hold.test(path.split("?")[0]) && (!bodyRe || bodyRe.test(text))) {
+    if (hold && methods.includes(req.method) && hold.test(path.split("?")[0]) && (!targetRe || targetRe.test(event.target))) {
       const seq = held.length + 1;
       event.seq = seq;
       held.push({ seq, marker: event.marker, path, req, res, payload, sent: false, event });
@@ -146,11 +149,10 @@ http
       hold = new RegExp(url.searchParams.get("re") ?? "^$");
       markers = (url.searchParams.get("markers") ?? "").split(",").filter(Boolean);
       methods = (url.searchParams.get("methods") ?? "PUT").split(",").filter(Boolean);
-      bodyRe = url.searchParams.get("body") ? new RegExp(url.searchParams.get("body")) : null;
-      held = [];
-      return reply(200, { hold: hold.source, markers });
+      targetRe = url.searchParams.get("target") ? new RegExp(url.searchParams.get("target")) : null;
+      return reply(200, { hold: hold.source, markers, methods, target: targetRe?.source ?? null });
     }
-    if (req.method === "GET" && url.pathname === "/held") return reply(200, held.map(({ seq, marker, path }) => ({ seq, marker, path })));
+    if (req.method === "GET" && url.pathname === "/held") return reply(200, held.map(({ seq, marker, path, sent }) => ({ seq, marker, path, sent })));
     if (req.method === "POST" && url.pathname === "/release") {
       release((url.searchParams.get("order") ?? "").split(",").filter(Boolean).map(Number));
       return reply(200, { released: url.searchParams.get("order") });
