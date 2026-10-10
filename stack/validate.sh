@@ -32,6 +32,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A person starts it (stack/human-gate.sh).
+. "$HERE/human-gate.sh"; human_gate "a claim plain and under BREAK on a running profile of the shared stack"
 FORGE="${1:-forgejo}"
 CLAIM="${2:-apply}"
 BREAK="${BREAK:-}"
