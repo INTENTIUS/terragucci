@@ -1494,7 +1494,11 @@ gl_lock_mrs() { # dir project -> sets MR_A, MR_B and SID
   [ -n "$MR_A" ] && [ "$MR_A" != null ] && [ -n "$MR_B" ] && [ "$MR_B" != null ] || { log "the merge requests did not open"; return 1; }
   gl_wait "$2" "$sha_a" merge_request_event && [ "$PIPE_STATUS" = success ] || { log "!$MR_A's pipeline ended $PIPE_STATUS"; return 1; }
   gl_wait "$2" "$sha_b" merge_request_event && [ "$PIPE_STATUS" = success ] || { log "!$MR_B's pipeline ended $PIPE_STATUS"; return 1; }
-  SID="$(gl_schedule "$2" comments)" || return 1
+  # apply.requires is every requirement by default: smoke-reviewer, a Developer, approves both heads.
+  local reviewer
+  reviewer="$(gl_user smoke-reviewer "$2" 30)" || return 1
+  gl_approve "$2" "$MR_A" "$reviewer" && gl_approve "$2" "$MR_B" "$reviewer" || { log "smoke-reviewer's approvals failed"; return 1; }
+  SID="$(gl_schedule "$2" comments comments)" || return 1
 }
 
 # A note on a merge request, the comments schedule played, and the pipeline
