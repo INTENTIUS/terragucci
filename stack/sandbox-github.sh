@@ -1754,8 +1754,11 @@ EOF
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "prove needs Docker, for the roots' state"; fi
     # The merge phase sets the agent's and the merge token's secrets; find a
     # token that cannot before the first phase rather than in it.
-    gh api "repos/$REPO/actions/secrets/public-key" >/dev/null 2>&1 \
-      || fail "the token cannot read $REPO's Actions secrets; a fine-grained token needs Secrets read and write on it"
+    if ! err="$(gh api "repos/$REPO/actions/secrets/public-key" 2>&1 >/dev/null)"; then
+      log "GitHub answered: $err"
+      log "the token's permissions as GitHub reports them: $(gh api -i "repos/$REPO" 2>/dev/null | grep -i '^x-accepted-github-permissions\|^x-oauth-scopes\|^github-authentication-token-expiration' | tr -d '\r' | tr '\n' ' ')"
+      fail "the token cannot read $REPO's Actions secrets; a fine-grained token needs Secrets read and write on it"
+    fi
     started="$(date +%s)"
     : > "$WORK/verdicts"
     for phase in $phases; do
