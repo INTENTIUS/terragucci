@@ -223,13 +223,14 @@ describe("Atmos respond paths edit the component, or are refused", () => {
     return repo;
   };
 
-  it("tips propose lock files for the components git holds, never for the written instances", async () => {
+  it("tips propose lock files for the components git holds, never for the written instances, and a canary of instances", async () => {
     const repo = checkout();
     vi.stubEnv("TERRAGUCCI_ATMOS", stubAtmos());
     const r = await respond("tips", repo, { binary: "tofu" });
     const locks = r.proposals?.find((p) => p.branch === "terragucci/tip/lock-files");
     expect(locks?.title).toBe("Add .terraform.lock.hcl for 2 root(s)");
-    expect(r.text).not.toMatch(/dev\/vpc|prod\/app/);
+    // The canary names instances, the roots the waves run.
+    expect(r.proposals?.find((p) => p.branch === "terragucci/tip/canary")?.title).toBe("Add a canary wave: dev/app, dev/vpc");
   });
 
   it("the drift pull request and a rollout are refused in Atmos's words", async () => {

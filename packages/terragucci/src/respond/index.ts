@@ -174,10 +174,10 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   const shape = detectShape(repo, settings);
   const roots = () => findRoots(repo, settings.roots).filter((r) => !o.root || globMatch(o.root, r));
   // Where an edit to the roots belongs: an Atmos instance's component, which git holds, never the copy atmos write made.
-  const sources = async (): Promise<string[]> => {
-    if (shape.kind !== "atmos") return roots();
-    const found = await shape.discover();
-    return [...new Set(found.roots.map((r) => r.root).filter((r) => !o.root || globMatch(o.root, r)).map(shape.sourceOf))].sort();
+  const sources = async (): Promise<{ edit: string[]; waves?: string[] }> => {
+    if (shape.kind !== "atmos") return { edit: roots() };
+    const waves = (await shape.discover()).roots.map((r) => r.root).filter((r) => !o.root || globMatch(o.root, r));
+    return { edit: [...new Set(waves.map(shape.sourceOf))].sort(), waves };
   };
   const binary = () => o.binary ?? settings.binary ?? shape.binary(shape.kind === "terragrunt" ? [] : roots()).value;
   const need = (v: unknown, flag: string) => {
@@ -221,7 +221,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     if (!o.report && shape.kind === "synth" && roots().length === 0) throw new ConfigError(`respond tips found no roots: synth writes them, so run ${shape.prepare} first`);
     const tips = o.report
       ? { proposals: movedProposals(repo, reportRenames(resolve(repo, o.report)).filter((x) => !o.root || globMatch(o.root, x.root)), o.branch), left: [] as string[] }
-      : tipProposals(repo, await sources(), binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: shape.kind === "synth" });
+      : await sources().then((src) => tipProposals(repo, src.edit, binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: shape.kind === "synth", ...(src.waves ? { waveRoots: src.waves } : {}) }));
     const proposed = await propose(repo, settings, tips.proposals, { mode, env, fetch: o.fetch });
     r = { text: [...tips.left, ...proposed.map(said)].join("\n") || "no tip to fix", proposals: proposed };
   } else if (ev === "fmt") {
