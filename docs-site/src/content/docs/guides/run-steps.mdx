@@ -129,11 +129,11 @@ A change therefore cannot add, edit or remove a step that runs with its apply cr
 
 ## Run the jobs in your own image
 
-Build your own image `FROM` terragucci's when a step needs a tool it lacks, and set `image`:
+Build your own image `FROM` terragucci's when a step needs a tool it lacks, and set `image`. terragucci's images are Debian, so tools come from `apt-get`:
 
 ```dockerfile
 FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>
-RUN apk add --no-cache cosign
+RUN apt-get update && apt-get install -y --no-install-recommends jq
 ```
 
 ```yaml
