@@ -55,7 +55,7 @@ approved|chain|sealed comment-apply wave-report|record reply log|just example ap
 pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
 report|booted|report highlight|top root plan index|four tf-plan runs of the example with reports.bucket on floci; the report.html of the module bump with a destroy beside it, from its destroys through its groups, one root'"'"'s row, that root'"'"'s plan.txt, and the project'"'"'s report index
 drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
-see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves drift runs changes estate slos|just see-runs; seven of the dashboards
+see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves runs changes estate slos|just see-runs; the panels of six of the dashboards
 trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, sent to the observability profile; that run'"'"'s trace in Grafana'"'"'s Explore, found by the trace id in its report
 responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
 tips|booted|tips respond-tips|note report fix|just example change float, a tf-plan of it with reports.bucket on floci, and the respond-tips claim; the plan note'"'"'s tip line, the report'"'"'s Tips section, and the files of the pull request one tip opens (the pull request is closed afterwards)
@@ -214,10 +214,11 @@ shot() { # step, view, url, [shot.mjs flags...]
 job_shot() { # step, view, job page, job step to open, a log line in it (regex), [last line (regex)], [shot.mjs flags...]
   local step="$1" view="$2" url="$3" open="$4" focus="$5" last="${6:-}"
   shift $(( $# < 6 ? $# : 6 ))
+  local panel=(--style '.action-view-left { visibility: hidden; }' --expand "$open" --focus "$focus" --scroll '.action-view-right')
   if [ -n "$last" ]; then
-    shot "$step" "$view" "$url" --expand "$open" --focus "$focus" --scroll '.action-view-right' --until "$last" "$@"
+    shot "$step" "$view" "$url" "${panel[@]}" --until "$last" "$@"
   else
-    shot "$step" "$view" "$url" --expand "$open" --focus "$focus" --scroll '.action-view-right' --fit 1 "$@"
+    shot "$step" "$view" "$url" "${panel[@]}" --fit 1 "$@"
   fi
 }
 
@@ -376,7 +377,17 @@ note_ready() { # pull request number, [repo]
   sha="$(api "$URL/api/v1/repos/$repo/pulls/$1" | jq -r '.head.sha // empty')"
   [ -n "$sha" ] || { log "pull request $1 on $repo has no head"; return 1; }
   wait_run "$repo" "$sha" pull_request || return 1
-  jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -c '[.[] | {name, status}]')"
+  # A failed plan marks the run failed before plan-note, which runs after it
+  # either way, has finished: wait for plan-note itself.
+  local deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} ))
+  while :; do
+    jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -c '[.[] | {name, status}]')"
+    case "$(jq -r '.[] | select(.name == "plan-note") | .status' <<<"$jobs")" in
+      success|failure|cancelled|skipped|"") break ;;
+    esac
+    [ "$(date +%s)" -lt "$deadline" ] || break
+    sleep 3
+  done
   if [ "$(jq -r '.[] | select(.name == "plan-note") | .status' <<<"$jobs")" != success ]; then
     log "pull request $1's run $RUN_INDEX: plan-note did not pass ($jobs); open $RUN_URL"
     return 1
@@ -450,8 +461,14 @@ step_check() {
   local pr sha page; pr="$(pr_in_output)"
   sha="$(sed -n 's#.*pushed change/unformatted at \([0-9a-f]*\).*#\1#p' "$STAGE/last.out" | head -1)"
   run_cmd check "just example logs" "$HERE/example.sh" logs
-  # The fmt job's commit on the branch, with its status, in the pull request's commit list.
-  if [ -n "$pr" ]; then shot check pull "$FORGEJO/pulls/$pr" --scroll '.timeline-item.commits-list' --fit 1; fi
+  # The fmt job's commit on the branch, after the reader's, in the pull
+  # request's commit list: wait until the fmt job has pushed it.
+  if [ -n "$pr" ] && [ -z "$REPLAY" ]; then
+    local deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} ))
+    until [ -z "$sha" ] || [ "$(remote_head "$REPO" change/unformatted)" != "$(api "$URL/api/v1/repos/$REPO/git/commits/$sha" | jq -r '.sha // empty')" ] \
+      || [ "$(date +%s)" -ge "$deadline" ]; do sleep 3; done
+    shot check pull "$FORGEJO/pulls/$pr" --scroll '.timeline-item.commits-list' --match 'without running' --through 'style: tofu fmt'
+  fi
   # The check job fails on the commit the scenario pushed, and its "Commit the
   # formatting" step then pushes tofu fmt's fix to the branch. So the branch's
   # head is that later commit, whose check passes: look up the push run on the
@@ -485,7 +502,7 @@ step_wave_waiting() {
   run_cmd wave-waiting "just example change destroy" "$HERE/example.sh" change destroy
   local pr page; pr="$(pr_in_output)"
   # The note's destroys come first, then the waves table with wave 4 waiting.
-  if [ -n "$pr" ]; then note_shot wave-waiting note "$pr" --until 'When it applies|approval'; fi
+  if [ -n "$pr" ]; then note_shot wave-waiting note "$pr" --until 'waits for an approval'; fi
   run_cmd wave-waiting "just example merge destroy" "$HERE/example.sh" merge destroy
   # The run on main's new head: wave 4's job stopped with exit 3.
   page="$(job_page "$(run_on main)" '.status == "failure"')"
@@ -515,7 +532,7 @@ step_approved() {
   run="$(say "$REPO" "$pr" "/terragucci apply")"
   reply_shot approved reply "$FORGEJO/pulls/$pr" 'terragucci: applied wave'
   page="$(job_page "$run" '.name == "apply-comment"')"
-  if [ -n "$page" ]; then job_shot approved log "$page" "Apply a merged pull request" "approved by" "applied wave|Apply complete"; else log "approved: the comment's run has no apply-comment job"; fi
+  if [ -n "$page" ]; then job_shot approved log "$page" "Apply a merged pull request" "approved by" "wave 4 of 4 applied" --from "wave 4 of 4: set digest"; else log "approved: the comment's run has no apply-comment job"; fi
 }
 
 # Publish modules/service and open the first rollout wave. The scenario pins
@@ -616,7 +633,7 @@ step_report() {
   [ "$(fetch "$at/report.json" | jq '[.named[]? | select(.action == "delete" or .action == "replace")] | length')" -gt 0 ] \
     || { refuse report "the report at $at names no destroy"; return 0; }
   # From the destroys through the last group: what is named, and what is folded.
-  shot report top "$at/report.html" --scroll '#pinned, details.group' --through 'Group'
+  shot report top "$at/report.html" --scroll '#pinned, details.group' --through 'Group' --hide '.filters, #waves, #reads, h2:has(+ #waves), h3:has(+ #reads)'
   shot report root "$at/report.html" --scroll "details[id=\"root-$root\"]" --fit 1 --open "details[id=\"root-$root\"]::"
   if [ -n "$plan" ]; then shot report plan "$at/$plan" --scroll pre --fit 1; else refuse report "report.json names no plan for $root"; fi
   shot report index "$top/$project/index.html" --scroll table --fit 1
@@ -672,13 +689,15 @@ step_see_runs() {
   # The example only: the stack's Prometheus also holds the smoke claims' projects.
   forge
   # uid:view:first panel-last panel (grid item ids; the picture runs from one to the other)
-  for d in terragucci-pipeline-health:pipeline:2-6 terragucci-rollouts-waves:waves:2-3 terragucci-drift:drift:2-4 \
-    terragucci-runs:runs:8-10 terragucci-change-review:changes:2-9 terragucci-estate:estate:2-3 slo-terragucci-plan-time:slos:2-5; do
-    IFS=: read -r uid view panels <<<"$d"
+  # uid:view:first panel-last panel (grid item ids; the picture runs from one
+  # to the other):blank share allowed (a table of one row in a tall panel)
+  for d in terragucci-pipeline-health:pipeline:2-6:0.7 terragucci-rollouts-waves:waves:2-3:0.8 \
+    terragucci-runs:runs:8-10:0.7 terragucci-change-review:changes:2-9:0.7 terragucci-estate:estate:2-3:0.8 slo-terragucci-plan-time:slos:2-5:0.7; do
+    IFS=: read -r uid view panels blank <<<"$d"
     sel=""
     for p in ${panels%-*} ${panels#*-}; do sel="${sel:+$sel, }[data-griditem-key=\"grid-item-$p\"]"; done
     shot see-runs "$view" "$grafana/d/$uid?orgId=1&kiosk&from=$from&to=now&var-project=forgejo:3000/$REPO" \
-      --height 2400 --scroll "$sel" --through . --blank-max 0.7
+      --height 2400 --scroll "$sel" --through . --blank-max "$blank"
   done
 }
 
@@ -712,8 +731,12 @@ note_shot() { # step, view, pull request number, [shot.mjs flags...]
   [ -z "$REPLAY" ] || return 0
   note_ready "$pr" || { refuse "$step" "pull request $pr has no plan note to show"; return 0; }
   url="$(note_page "$pr")"
-  shot "$step" "$view" "${url%%#*}" --scroll "#${url#*#}" --fit 1 "$@"
+  shot "$step" "$view" "${url%%#*}" --scroll "#${url#*#}" --fit 1 --style "$NOTE_STYLE" "$@"
 }
+# Forgejo lets a wide table scroll inside the comment, which a picture cuts
+# off: the note's tables are laid out to the comment's width instead.
+NOTE_STYLE='.markup table { display: table !important; width: 100% !important; } .markup table code { white-space: normal !important; word-break: break-all; }'
+
 
 # Close a scenario's pull request on the example and delete its branch, so
 # the steps after it start from the example as committed.
@@ -871,7 +894,7 @@ step_statuses() {
   claim_run statuses comment-apply || return 0
   merged="$(api "$URL/api/v1/repos/$repo/pulls?state=closed&limit=50" | jq -r '.[] | select(.head.ref == "change" and .merged) | .number' | head -1)"
   if [ -n "$merged" ]; then
-    shot statuses reply "$URL/$repo/pulls/$merged" --scroll '.timeline-item.comment' --match 'wave 1 waits' --through 'terragucci: applied wave'
+    shot statuses reply "$URL/$repo/pulls/$merged" --scroll '.timeline-item.comment' --match 'wave 1 waits' --through 'applied: wave 1'
   else
     log "statuses: no merged pull request on $repo"
   fi
@@ -983,7 +1006,9 @@ step_reconcile() {
   pr="$(api "$URL/api/v1/repos/$repo/pulls?state=all&limit=50" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
   [ -n "$pr" ] || { log "reconcile: no pipeline pull request on $repo"; return 0; }
   body_shot reconcile pull "$URL/$repo/pulls/$pr"
-  diff_shot reconcile files "$URL/$repo/pulls/$pr/files"
+  # The pipeline file is long: its first screenful says what it is.
+  diff_shot reconcile files "$URL/$repo/pulls/$pr/files" --style '.diff-file-box .file-body { max-height: 900px; overflow: hidden; }'
+
 }
 
 # Terragrunt (tutorial/terragrunt, use-terragrunt): the Terragrunt example

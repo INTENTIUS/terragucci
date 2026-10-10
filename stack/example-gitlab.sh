@@ -249,7 +249,9 @@ held_lines() { # pipeline id
 # menus, so the page is the project's content alone. GITLAB_STYLE lets the
 # content take the sidebar's width.
 GITLAB_HIDE="${GITLAB_HIDE:-.super-sidebar, .super-sidebar-toggle, .broadcast-wrapper, .gl-broadcast-message, .alert-wrapper .gl-alert, .user-callout, .js-feature-highlight}"
-GITLAB_STYLE="${GITLAB_STYLE:-.page-with-super-sidebar { padding-left: 0 !important; } .top-bar-fixed { left: 0 !important; }}"
+# Sticky bars (the breadcrumb and the job log's toolbar) are made static, so
+# none paints over a clipped log line.
+GITLAB_STYLE="${GITLAB_STYLE:-.page-with-super-sidebar { padding-left: 0 !important; } .top-bar-fixed, .top-bar-container, .build-log-toolbar, .job-log-top-bar, [data-testid=job-log-top-bar], .gl-sticky, .issue-sticky-header, .sticky-header { position: static !important; left: 0 !important; }}"
 
 # A signed-in session for root with GitLab's color mode set to THEME, as
 # NAME=VALUE for shot.mjs --cookie. The session is kept in stack/.state while
@@ -629,11 +631,14 @@ OUT
     take() { # view path [shot.mjs flags...]
       local view="$1" path="$2" scheme
       shift 2
-      for scheme in light dark; do "$0" shot "$path" "$WORK/shots/$view-$scheme.png" "$scheme" "$@" >&2 || fail "no $scheme picture of $view"; done
+      for scheme in light dark; do
+        "$0" shot "$path" "$WORK/shots/$view-$scheme.png" "$scheme" "$@" >&2 || fail "no $scheme picture of $view"
+        node "$ROOT/scripts/png-compress.mjs" "$WORK/shots/$view-$scheme.png" >/dev/null || fail "cannot compress $view-$scheme.png"
+      done
     }
     # The setting the add-to page asks a GitLab reader to turn on.
     api -o /dev/null -X PUT "$P" --data-urlencode "only_allow_merge_if_pipeline_succeeds=true"
-    take required "/$REPO/-/settings/merge_requests" --scroll '.gl-form-checkbox, .form-check' --match 'Pipelines must succeed' --height 420
+    take required "/$REPO/-/settings/merge_requests" --scroll 'fieldset, .form-group, .gl-form-group' --match '^\s*Merge checks' --fit 1
 
     step change one-root || fail "change one-root failed"
     iid="$(forge_open_pr example change/one-root)"
@@ -647,7 +652,8 @@ OUT
     pipe="$(api "$P/pipelines?ref=change%2Funformatted&source=push&order_by=id&sort=asc" | jq -r '.[0].id // empty')"
     job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name == "check") | .id' | head -1)"
     [ -n "$job" ] || fail "no failed check job on change/unformatted"
-    take check "/$REPO/-/jobs/$job" --scroll '.js-line, .log-line' --match 'unformatted|owner' --height 860
+    take check "/$REPO/-/jobs/$job" --scroll '.job-log-line' --match '^\s*[0-9]*\s*envs/.*[.]tf\s*$' --through '^\s*[0-9]*\s*}\s*$' --margin 4
+
     log_lines "the check job of change/unformatted" "$job" '^envs/.*[.]tf$' 'Cleaning up|ERROR: Job failed' 1
 
     step change destroy || fail "change destroy failed"
@@ -655,21 +661,22 @@ OUT
     pipe="$(last_failed main)"
     job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name | startswith("apply-wave-")) | .id' | head -1)"
     [ -n "$job" ] || fail "no waiting wave on main after merge destroy"
-    take waiting "/$REPO/-/jobs/$job" --scroll '.js-line, .log-line' --match 'chant approve tf-apply' --height 860
+    take waiting "/$REPO/-/jobs/$job" --scroll '.job-log-line' --match 'wave [0-9]+ of [0-9]+:' --through 'chant approve tf-apply' --margin 4
+
     log_lines "the waiting apply job on main" "$job" '^wave [0-9]+ of [0-9]+:' 'chant approve tf-apply' 3
 
     # Drift comes last: the queue it deletes would be applied back by any later merge.
     step change drift || fail "change drift failed"
     issue="$(api "$P/issues?state=opened&order_by=created_at&sort=desc" | jq -r '.[0].iid // empty')"
     [ -n "$issue" ] || fail "the drift run opened no issue"
-    take drift "/$REPO/-/issues/$issue" --height 860
+    take drift "/$REPO/-/issues/$issue" --scroll '[data-testid=work-item-description], .work-item-description, .detail-page-description' --fit 1
 
     # Apply before merge changes main's pipeline, so it runs on a reset example.
     "$0" reset >&2 || fail "reset failed"
     step pr-apply || fail "pr-apply failed"
     iid="$(api "$P/merge_requests?state=merged&source_branch=change%2Fone-root&order_by=updated_at" | jq -r '.[0].iid // empty')"
     [ -n "$iid" ] || fail "no merged merge request from change/one-root"
-    take apply "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'applied wave' --height 420
+    take apply "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'applied wave' --fit 1
 
     # The hash tutorial-check computes, as every capture records it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"

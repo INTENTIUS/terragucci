@@ -57,8 +57,6 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
 
-<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
-
 The binary exports to a loopback receiver, OTLP over HTTP only, which forwards batches to your collector.
 
 ## Timings
@@ -187,8 +185,6 @@ The nine dashboards are the six below and one for each of the three SLOs.
 | Estate | roots per project, the binary and terragucci versions each runs, the delivery metrics `terragucci estate` sends, module pins and tips by rule |
 | Runs | the slowest roots, root applies and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
 | One per SLO | the SLI against its objective, the error budget left and the burn rates |
-
-<Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
 
 <Shot step="see-runs" view="changes" alt="The Change review dashboard for the example: the module bump's pull request changed 12 roots in 3 groups, and changes by action over the last hour, mostly no-ops and updates" />
 

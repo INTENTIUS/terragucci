@@ -3,13 +3,13 @@
   "source_hash": "c6909fe377b97186",
   "commands": [],
   "shots": {
-    "top-light": "1f8e4e57231c7807",
-    "top-dark": "7ed89a862d54a3fb",
-    "root-light": "c9280f90a80e8c3a",
-    "root-dark": "8105eb3bed71c693",
-    "plan-light": "0d29cb2b670d7640",
-    "plan-dark": "066e5ad961e03283",
-    "index-light": "539b22ff676a200f",
-    "index-dark": "fd7033d2de9c155e"
+    "top-light": "6e4ce9e3dc873b7c",
+    "top-dark": "4ce3fa269e616af8",
+    "root-light": "5a4f574fbea8fd5a",
+    "root-dark": "be8bb65defae8ae2",
+    "plan-light": "c7f048a4430431db",
+    "plan-dark": "bb959b74db3c990e",
+    "index-light": "0ce456cd29985762",
+    "index-dark": "3e489255ec88c9b4"
   }
 }

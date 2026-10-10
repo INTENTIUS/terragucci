@@ -86,8 +86,6 @@ terragucci respond rollout --mode apply
 
 An approval binds a wave's set digest, so a wave whose root plan changed after approval applies nothing. The diff reads `terragucci-report/approved` and `terragucci-report/current` and lists each root whose plan digest moved. Approve again only once the new plan is the one you want.
 
-<Shot step="wave-refused" view="log" alt="A refused wave's apply job in Forgejo: the approved digest beside the planned one, and the roots whose plans moved since the approval" optional />
-
 ### Apply failed
 
 Triage knows these provider error classes:

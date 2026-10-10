@@ -71,10 +71,6 @@ A waiting wave exits with code 3; its command is in the job log, the `terragucci
   </TabItem>
 </Tabs>
 
-The example below runs under `approval: sealed`, so its line carries a seal that `ledger` would leave out.
-
-<Shot step="approved" view="record" alt="The approval commit on chant/lifecycle in Forgejo, Gate resolution record: it appends one line to _gates/tf-apply.jsonl, a human approval of wave 4 resolved by terragucci-admin, binding the plan digest of the pending line above it and sealed with an ssh signature" />
-
 It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned, then restarts the waiting wave; `--dry-run` prints that command instead. If it could not restart the wave, re-run the job or comment `/terragucci apply` on the pull request (merged, or open with `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
 
 ## Approve by review
@@ -182,8 +178,6 @@ The wave waits again; the old line stays in history.
 When a wave's plans moved after an approval no run applied, it applies nothing and exits with code 4. The job names the moved roots; `terragucci respond wave-refused` prints what changed. Approve the new digest or revert. New plans after an applied approval wait for their own instead.
 
 A revert does not revive the old approval: the refused run recorded a newer pending fact, so the wave needs a fresh [`chant approve`](/terragucci/concepts/glossary/#chant). See [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/).
-
-<Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, and the roots whose plans moved" optional />
 
 ## Expiry
 
