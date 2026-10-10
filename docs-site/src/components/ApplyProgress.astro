@@ -1,0 +1,71 @@
+---
+// A choudoufu wave mid-apply, as its run view draws it: one bar of done, in
+// flight and waiting, then each resource. The statuses come from the
+// estate's records, read while the apply runs.
+const resources = [
+	{ address: 'random_password.db', status: 'done' },
+	{ address: 'terraform_data.seed', status: 'done' },
+	{ address: 'time_sleep.warm_up', status: 'in-flight' },
+	{ address: 'terraform_data.config', status: 'waiting' },
+];
+const text: Record<string, string> = { done: 'done', 'in-flight': 'in flight', waiting: 'waiting' };
+const count = (s: string) => resources.filter((r) => r.status === s).length;
+---
+<figure class="tg-progress not-content" aria-label="A wave mid-apply: two resources done, a slow one in flight, and the one that depends on it waiting">
+	<div class="bar">
+		{['done', 'in-flight', 'waiting'].map((s) => <span class={s} style={`flex: ${count(s)}`}></span>)}
+	</div>
+	<p>{count('done')} of {resources.length} resources done</p>
+	<ul>
+		{resources.map((r) => (
+			<li><span class={`dot ${r.status}`}></span><code>{r.address}</code> {text[r.status]}</li>
+		))}
+	</ul>
+</figure>
+
+<style>
+	.tg-progress {
+		margin: 1.5rem 0;
+		max-width: 28rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 6px;
+		padding: 0.75rem 1rem;
+	}
+	.bar {
+		display: flex;
+		height: 8px;
+		border-radius: 4px;
+		overflow: hidden;
+		background: var(--sl-color-gray-5);
+	}
+	.done {
+		background: #2e7d32;
+	}
+	.in-flight {
+		background: #c98a00;
+	}
+	.waiting {
+		background: var(--sl-color-gray-5);
+	}
+	p {
+		margin: 0.5rem 0 0.25rem;
+		font-size: 0.85rem;
+	}
+	ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-size: 0.85rem;
+	}
+	li {
+		margin: 0.15rem 0;
+	}
+	.dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		margin-right: 0.4rem;
+		outline: 1px solid var(--sl-color-gray-4);
+	}
+</style>
