@@ -47,10 +47,51 @@ backends:
 | Key | Holds |
 |---|---|
 | `backends[].root` | a root whose backend block, in the same change, names the new backend |
-| `backends[].from.backend` | `s3` or `local`: the backend the state is in now |
+| `backends[].from.backend` | where the state is now: `s3`, `local`, `remote`, `cloud` or `file` |
 | `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least |
 
-The job reads the state through the root with the old backend in an override file and writes it unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+For `s3` and `local`, the job reads the state through the root with the old backend in an override file. It writes the state unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+
+### Workspaces
+
+`remote` and `cloud` read a workspace's current state version over the TFE API, the protocol the `remote` backend and the `cloud` block use. HCP Terraform, Terraform Enterprise, Scalr, OTF and env zero's backend serve it.
+
+```yaml
+backends:
+  - root: envs/dev/platform
+    from:
+      backend: cloud
+      config:
+        hostname: app.terraform.io
+        organization: acme
+        workspaces:
+          name: platform-dev
+```
+
+| Key | Holds |
+|---|---|
+| `hostname` | the API's host; default `app.terraform.io`. The job finds the API through `https://<hostname>/.well-known/terraform.json` |
+| `organization` | the organization; for env zero, `<organization id>.<project id>` |
+| `workspaces.name` | the one workspace whose state moves; `prefix` and `tags` are refused |
+
+The token is the one Terraform and OpenTofu read for the host: `TF_TOKEN_<host>`, dots as `_` and dashes as `__` (`TF_TOKEN_app_terraform_io`), else `~/.terraform.d/credentials.tfrc.json`. A `token` key in the file is refused. Give the plan and apply jobs the variable as a CI secret.
+
+The digest covers the state version id (`sv-...`) and the state's digest. While it writes, the job holds the workspace's lock, checks that the current version is still the one approved, and unlocks it after. A workspace locked by someone else stops the move. The workspace keeps its versions.
+
+### State files
+
+`file` reads a state file the job can see, for state exported from a platform with no TFE API:
+
+```yaml
+backends:
+  - root: envs/dev/platform
+    from:
+      backend: file
+      config:
+        path: exported/platform.tfstate
+```
+
+`path` is relative to the repo, or absolute. The file must be a state of format version 4 with a lineage, a serial and resources. The digest covers its contents, so a file changed after the approval is refused. State holds secrets: put the file in place in the job, not in git.
 
 ## Revert
 
@@ -77,6 +118,17 @@ restores:
 
 The revert goes through the same proof, gate and lock as any migration, so revert the code of the migration in the same change. A backend move is put back with a backend move the other way. The command refuses a root on a local backend or a bucket that kept no version, since it has nothing to put back.
 
+## Estates
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu) as the binary, when every root a file names has a `live` block:
+
+| File | Change | Refused when |
+|---|---|---|
+| `moves` | `retag`: each resource's tags are rewritten by `choudoufu live-mv -from-estate`, run in `to` | the roots are one estate, an address is a module call, or `from`'s plan does not destroy the address |
+| `backends` | `adopt`: the state in `from` is read once and `choudoufu live-import` stamps each resource it verifies | the state is missing, or the `s3` backend takes no lock file |
+
+A file whose roots mix estates and roots with a state is refused, as is any other binary. An address with `count` or `for_each` moves each instance the source plan destroys.
+
 ## The new states
 
 A changed state keeps its lineage and gets the next serial. A root with no state gets a new one at serial 1. Its lineage is derived from the migration and the root, so the same migration planned twice gives the same digest.
@@ -89,11 +141,13 @@ The proof plan runs the root's own binary against its new state, through a `terr
 
 | Field | Holds |
 |---|---|
-| `name`, `file`, `file_digest`, `change` | the migration file, and its kind: `moves`, `backends` or `revert` |
+| `name`, `file`, `file_digest`, `change` | the migration file, and its kind: `moves`, `backends`, `revert`, or for estates `retag` or `adopt` |
+| `retags[]` | a retag: each instance's `address`, its roots `from` and `to`, `from_estate`, `to_estate`, the `live_id` of the resource, and the `followers` that move with it |
+| `stamps[]` | an adoption: each instance of the old state, its `status` as `live-import` verified it, and its `live_id` |
 | `moves`, `backends`, `revert` | what it does: the moves; each root and where its state was; the migration a revert puts back |
 | `digest` | what an approval binds |
 | `status` | `planned`, `proof-failed`, `waiting`, `refused`, `applied` or `failed` |
-| `roots[].root`, `backend`, `location` | each affected root and where its state is |
+| `roots[].root`, `backend`, `location` | each affected root and where its state is; for an estate, `estate` and `estate <name>` |
 | `roots[].before` | `version_id`, when the backend keeps versions, and `digest`, `null` for a root with no state |
 | `roots[].after` | the new state's `digest`, and its `version_id` once written |
 | `roots[].source` | a backend move: where the state was read from, its `version_id` and `digest` |

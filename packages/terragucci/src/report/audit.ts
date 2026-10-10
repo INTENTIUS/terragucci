@@ -272,7 +272,7 @@ function migrationEntries(project: string, changes: LedgerChange[], commitUrl: (
       digest: str(r.planDigest) ?? null,
       result: str(r.result) ?? "applied",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: MIGRATE_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
-      detail: drop({ roots: Array.isArray(r.roots) ? r.roots : undefined, file_digest: str(r.file_digest), error: str(r.error), commit: str(r.commit), run_id: str(r.runId) }),
+      detail: drop({ roots: Array.isArray(r.roots) ? r.roots : undefined, change: str(r.change), retags: Array.isArray(r.retags) ? r.retags : undefined, file_digest: str(r.file_digest), error: str(r.error), commit: str(r.commit), run_id: str(r.runId) }),
     });
   }
   return out;

@@ -151,7 +151,7 @@ describe("a backend move", () => {
 
   it("parses the root and the backend it moves from, and refuses one with no bucket or of another type", () => {
     expect(parseMigration("migrations/move-app.yml", file)).toMatchObject({ kind: "backends", backends: [{ root: "app", from: { backend: "s3", config: { bucket: "state", key: "old/app.tfstate" } } }] });
-    expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: gcs\n      config: {}\n")).toThrow(/from.backend must be s3 or local/);
+    expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: gcs\n      config: {}\n")).toThrow(/from.backend must be s3, local, remote, cloud, file/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: s3\n      config: { bucket: b }\n")).toThrow(/must name the bucket and key/);
     expect(() => parseMigration("migrations/x.yml", "moves: []\nbackends: []\n")).toThrow(/one kind of change/);
     expect(backendBlock("s3", { bucket: "b", key: "k", use_lockfile: true, endpoints: { s3: "http://x" }, nothing: null })).toBe('terraform {\n  backend "s3" {\n    bucket = "b"\n    key = "k"\n    use_lockfile = true\n    endpoints = { s3 = "http://x" }\n  }\n}\n');
@@ -276,5 +276,179 @@ describe("a revert", () => {
     w.put("state/one.tfstate", JSON.stringify(state("L1", 5, ["a"])));
     expect(await applyMigration(work, plan, { ...opts, now: T(1) })).toMatchObject({ status: "refused", moved: ["one"] });
     expect(w.locks.size).toBe(0);
+  });
+});
+
+/**
+ * A TFE API in memory, as HCP Terraform, Scalr and OTF serve it to the remote
+ * backend: discovery, a workspace by name, its current state version, the
+ * download and the lock actions. `base` is where discovery points (Scalr's
+ * is /api/tfe/v2/).
+ */
+function tfe(s3: S3Fetch, base = "/api/v2/") {
+  const versions: { id: string; body: string }[] = [];
+  let locked = false;
+  const calls: { method: string; path: string; auth?: string }[] = [];
+  const fetch: S3Fetch = async (url, init) => {
+    const u = new URL(url);
+    if (u.host !== "tfe.test") return s3(url, init);
+    calls.push({ method: init.method, path: u.pathname, ...(init.headers.authorization ? { auth: init.headers.authorization } : {}) });
+    const ok = (status: number, body: unknown = {}) => ({ ok: status < 300, status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) });
+    if (u.pathname === "/.well-known/terraform.json") return ok(200, { "tfe.v2": base });
+    if (init.headers.authorization !== "Bearer tok") return ok(401);
+    const p = u.pathname.slice(base.length - 1);
+    if (p === "/organizations/acme/workspaces/app-prod") return ok(200, { data: { id: "ws-1", attributes: { locked } } });
+    if (p === "/workspaces/ws-1/current-state-version") {
+      const last = versions.at(-1);
+      return last ? ok(200, { data: { id: last.id, attributes: { "hosted-state-download-url": `https://tfe.test/_archivist/${last.id}` } } }) : ok(404);
+    }
+    if (u.pathname.startsWith("/_archivist/")) return ok(200, versions.find((v) => v.id === u.pathname.slice(12))?.body ?? "");
+    if (p === "/workspaces/ws-1/actions/lock") {
+      if (locked) return ok(409);
+      locked = true;
+      return ok(200, { data: { id: "ws-1" } });
+    }
+    if (p === "/workspaces/ws-1/actions/unlock") {
+      locked = false;
+      return ok(200, { data: { id: "ws-1" } });
+    }
+    return ok(404);
+  };
+  return { versions, fetch, calls, isLocked: () => locked, lock: () => void (locked = true) };
+}
+
+describe("a backend move from a TFE-API workspace or a state file", () => {
+  const cloud = "backends:\n  - root: app\n    from:\n      backend: cloud\n      config:\n        hostname: tfe.test\n        organization: acme\n        workspaces:\n          name: app-prod\n";
+  const TENV = { ...ENV, TF_TOKEN_tfe_test: "tok" };
+
+  it("reads the config it needs and refuses a token, tags and a prefix", () => {
+    expect(parseMigration("migrations/m.yml", cloud)).toMatchObject({ backends: [{ root: "app", from: { backend: "cloud", config: { organization: "acme", workspaces: { name: "app-prod" } } } }] });
+    const bad = "backends:\n  - root: app\n    from:\n      backend: remote\n      config:\n        token: x\n        hostname: https://tfe.test\n        workspaces: { prefix: app- }\n";
+    let msg = "";
+    try {
+      parseMigration("migrations/m.yml", bad);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain("a token does not belong in the repo");
+    expect(msg).toContain("hostname must be a host name");
+    expect(msg).toContain("organization must name the organization");
+    expect(msg).toContain("workspaces.name must name the one workspace");
+    expect(msg).toContain("workspaces.prefix: a move reads one workspace");
+    expect(() => parseMigration("migrations/m.yml", "backends:\n  - root: app\n    from:\n      backend: file\n      config: {}\n")).toThrow(/path must name the state file/);
+  });
+
+  it("follows discovery to an API on another host with the token, and sends no token to a download elsewhere", async () => {
+    const { workspaceSource } = await import("../src/state-source");
+    const seen: { url: string; auth?: string }[] = [];
+    const fetch: S3Fetch = async (url, init) => {
+      seen.push({ url, ...(init.headers.authorization ? { auth: init.headers.authorization } : {}) });
+      const ok = (body: unknown) => ({ ok: true, status: 200, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) });
+      if (url.endsWith("/.well-known/terraform.json")) return ok({ "tfe.v2": "https://app.other.test/state.v2" });
+      if (url.endsWith("/workspaces/net")) return ok({ data: { id: "ws-9" } });
+      if (url.endsWith("/current-state-version")) return ok({ data: { id: "sv-9", attributes: { "hosted-state-download-url": "https://dl.test/blob" } } });
+      return ok(JSON.stringify(state("L", 1, ["a"])));
+    };
+    const got = await workspaceSource("remote", "other.test", "acme", "net", { TF_TOKEN_other_test: "tok" }, fetch).read();
+    expect(got?.version).toBe("sv-9");
+    expect(seen.map((c) => [c.url, c.auth ?? null])).toEqual([
+      ["https://other.test/.well-known/terraform.json", "Bearer tok"],
+      ["https://app.other.test/state.v2/organizations/acme/workspaces/net", "Bearer tok"],
+      ["https://app.other.test/state.v2/workspaces/ws-9/current-state-version", "Bearer tok"],
+      ["https://dl.test/blob", null],
+    ]);
+  });
+
+  it("names the variable Terraform reads a host's token from", async () => {
+    const { tokenVariable } = await import("../src/state-source");
+    expect(tokenVariable("app.terraform.io")).toBe("TF_TOKEN_app_terraform_io");
+    expect(tokenVariable("my-tfe.example.com")).toBe("TF_TOKEN_my__tfe_example_com");
+  });
+
+  it("moves a workspace's current state version to the bucket under the workspace lock, and records the version it read", async () => {
+    const w = world();
+    const t = tfe(w.fetch, "/api/tfe/v2/");
+    t.versions.push({ id: "sv-1", body: JSON.stringify(state("L", 2, ["a"])) }, { id: "sv-2", body: JSON.stringify(state("L", 3, ["a"])) });
+    const { work, origin } = repo(
+      { "app/main.tf": "", "app/want.json": JSON.stringify(["terraform_data.a"]), "app/backend.json": JSON.stringify({ type: "local", config: {} }) },
+      { "app/backend.json": s3("app.tfstate"), "migrations/move-app.yml": cloud },
+    );
+    const lines: string[] = [];
+    const opts = { binary: "tofu", exec: w.exec, fetch: t.fetch, env: TENV, log: (l: string) => void lines.push(l) };
+    const first = await runMigrations(work, { ...opts, now: T(1) });
+    expect(first.code).toBe(3);
+    expect(lines[0]).toContain("moving the state of app from its cloud workspace tfe.test/acme/app-prod");
+    expect(first.records[0]!.roots[0]).toMatchObject({ location: "s3://state/app.tfstate", source: { backend: "cloud", location: "cloud://tfe.test/acme/app-prod", version_id: "sv-2" } });
+    expect(t.calls.some((c) => c.path === "/api/tfe/v2/workspaces/ws-1/current-state-version")).toBe(true);
+    approve(work, "move-app", first.records[0]!.digest, T(2));
+    const second = await runMigrations(work, { ...opts, now: T(3) });
+    expect(second.code).toBe(0);
+    expect(JSON.parse(w.latest("state/app.tfstate")!.body)).toMatchObject({ lineage: "L", serial: 3 });
+    expect(t.calls.filter((c) => c.path.endsWith("/actions/lock") || c.path.endsWith("/actions/unlock")).map((c) => c.path.split("/").pop())).toEqual(["lock", "unlock"]);
+    expect(t.isLocked()).toBe(false);
+    expect(t.versions.length).toBe(2);
+    expect(JSON.parse(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`))).toMatchObject({ roots: [{ root: "app", source: "cloud://tfe.test/acme/app-prod", source_version: "sv-2" }] });
+  });
+
+  it("refuses when the workspace's state version changed after the approval, and when its workspace is locked", async () => {
+    const w = world();
+    const t = tfe(w.fetch);
+    t.versions.push({ id: "sv-1", body: JSON.stringify(state("L", 2, ["a"])) }, { id: "sv-2", body: JSON.stringify(state("L", 3, ["a"])) });
+    const { work } = repo(
+      { "app/main.tf": "", "app/want.json": JSON.stringify(["terraform_data.a"]), "app/backend.json": JSON.stringify({ type: "local", config: {} }) },
+      { "app/backend.json": s3("app.tfstate"), "migrations/move-app.yml": cloud },
+    );
+    const opts = { binary: "tofu", exec: w.exec, fetch: t.fetch, env: TENV, log: () => {} };
+    const first = await runMigrations(work, { ...opts, now: T(1) });
+    approve(work, "move-app", first.records[0]!.digest, T(2));
+    t.versions.pop();
+    const dropped = await runMigrations(work, { ...opts, now: T(3) });
+    expect(dropped.code).toBe(4);
+    expect(dropped.records[0]!.moved).toEqual(["app"]);
+    expect(w.latest("state/app.tfstate")).toBeUndefined();
+    expect(t.isLocked()).toBe(false);
+    // An approval is used once; the plan from sv-1 waits for its own.
+    const waits = await runMigrations(work, { ...opts, now: T(4) });
+    expect(waits.code).toBe(3);
+    approve(work, "move-app", waits.records[0]!.digest, T(5));
+    t.lock();
+    const locked = await runMigrations(work, { ...opts, now: T(6) });
+    expect(locked.code).toBe(1);
+    expect(locked.records[0]!.error).toContain("its workspace cloud://tfe.test/acme/app-prod is locked");
+  });
+
+  it("says which variable holds the token when the job has none", async () => {
+    const w = world();
+    const t = tfe(w.fetch);
+    t.versions.push({ id: "sv-1", body: JSON.stringify(state("L", 2, ["a"])) });
+    const { work } = repo(
+      { "app/main.tf": "", "app/want.json": JSON.stringify(["terraform_data.a"]), "app/backend.json": JSON.stringify({ type: "local", config: {} }) },
+      { "app/backend.json": s3("app.tfstate"), "migrations/move-app.yml": cloud },
+    );
+    const run = await runMigrations(work, { binary: "tofu", exec: w.exec, fetch: t.fetch, env: { ...ENV, HOME: tmp("tg-home-") }, log: () => {}, now: T(1) });
+    expect(run.code).toBe(1);
+    expect(run.records[0]!.error).toContain("set TF_TOKEN_tfe_test");
+  });
+
+  it("moves an exported state file, its digest bound by the approval", async () => {
+    const w = world();
+    const file = "backends:\n  - root: app\n    from:\n      backend: file\n      config:\n        path: exported/app.tfstate\n";
+    const { work } = repo(
+      { "app/main.tf": "", "app/want.json": JSON.stringify(["terraform_data.a"]), "app/backend.json": JSON.stringify({ type: "local", config: {} }) },
+      { "app/backend.json": s3("app.tfstate"), "migrations/move-app.yml": file },
+    );
+    write(work, { "exported/app.tfstate": JSON.stringify(state("L", 7, ["a"])) });
+    const opts = { binary: "tofu", exec: w.exec, fetch: w.fetch, env: ENV, log: () => {} };
+    const first = await runMigrations(work, { ...opts, now: T(1) });
+    expect(first.code).toBe(3);
+    expect(first.records[0]!.roots[0]!.source).toMatchObject({ backend: "file", location: "exported/app.tfstate" });
+    approve(work, "move-app", first.records[0]!.digest, T(2));
+    write(work, { "exported/app.tfstate": JSON.stringify(state("L", 8, ["a"])) });
+    expect((await runMigrations(work, { ...opts, now: T(3) })).code).toBe(4);
+    const waits = await runMigrations(work, { ...opts, now: T(4) });
+    expect(waits.code).toBe(3);
+    approve(work, "move-app", waits.records[0]!.digest, T(5));
+    expect((await runMigrations(work, { ...opts, now: T(6) })).code).toBe(0);
+    expect(JSON.parse(w.latest("state/app.tfstate")!.body)).toMatchObject({ serial: 8 });
   });
 });
