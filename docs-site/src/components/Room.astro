@@ -24,7 +24,7 @@ const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.len
 		</section>
 		<section>
 			<h2>Differs</h2>
-			{r.differs.length ? <ul>{r.differs.map((d) => <li>{d}</li>)}</ul> : <p>Nothing: it works as every other page describes.</p>}
+			{r.differs.length ? <ul>{r.differs.map((d) => <li>{d}</li>)}</ul> : <p>Nothing beyond what the other pages describe.</p>}
 			{elsewhere.map((x) => (
 				<>
 					<h3>On {x.label}</h3>
@@ -51,11 +51,11 @@ const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.len
 	<section class="read">
 		<h2>Then read</h2>
 		<dl>
-			<dt>To do a task</dt>
+			<dt>Tasks</dt>
 			<dd>{r.howto.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
-			<dt>To see why it works this way</dt>
+			<dt>Background</dt>
 			<dd>{r.explain.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
-			<dt>To look up a detail</dt>
+			<dt>Details</dt>
 			<dd>{r.reference.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
 		</dl>
 	</section>

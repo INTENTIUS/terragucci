@@ -19,8 +19,7 @@ const data = {
 // The first pick, rendered on the server so the panel reads the same without script.
 const first = data.shapes[0];
 ---
-<section class="tg-doors not-content" aria-labelledby="tg-doors-title">
-	<h2 id="tg-doors-title">Start from what you run</h2>
+<section class="tg-doors not-content" aria-label="Your setup">
 	<form class="pick" data-doors>
 		<label>Your repo
 			<select name="shape">{SHAPES.map((s) => <option value={s.id}>{s.label}</option>)}</select>
@@ -120,10 +119,6 @@ const first = data.shapes[0];
 		border: 1px solid var(--tg-rule);
 		border-radius: 0.75rem;
 		background: var(--tg-panel);
-	}
-	.tg-doors h2 {
-		margin: 0;
-		font-size: var(--sl-text-xl);
 	}
 	.pick {
 		display: grid;

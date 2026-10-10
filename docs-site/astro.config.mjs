@@ -75,7 +75,7 @@ export default defineConfig({
 				PageTitle: './src/components/PageTitle.astro',
 				Footer: './src/components/Footer.astro',
 			},
-			description: 'One workflow, one audit trail and one place to enforce policy for every Terraform and OpenTofu repo, Terragrunt, Atmos, Terramate and CDK Terrain included, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
+			description: 'One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],

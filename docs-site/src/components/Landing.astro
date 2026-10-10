@@ -18,12 +18,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const pillars = [
 	{
 		title: 'No server to host',
-		text: 'Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket.',
+		text: 'Every job runs in your CI. Plan reports and approvals stay in your git and your bucket, beside your state.',
 		links: [{ label: 'Components', href: '/concepts/how-it-works/#components' }],
 	},
 	{
 		title: 'GitHub, GitLab or Forgejo',
-		text: 'terragucci init writes the pipeline in your forge\'s own format: a GitHub or Forgejo workflow, or a .gitlab-ci.yml.',
+		text: 'terragucci init writes the pipeline in your forge\'s own format: a GitHub or Forgejo workflow, or a GitLab CI file.',
 		links: [{ label: 'Per forge', href: '/guides/add-to-a-repo/#per-forge' }],
 	},
 	{
@@ -36,7 +36,7 @@ const pillars = [
 	},
 	{
 		title: 'Tracing and metrics',
-		text: 'One OpenTelemetry trace per stage run, a span per root, and metrics with Grafana dashboards.',
+		text: 'One OpenTelemetry trace per stage run with a span per root, and Grafana dashboards for the metrics.',
 		links: [{ label: 'Send traces and metrics', href: '/guides/send-traces-and-metrics/' }],
 	},
 	{
@@ -66,20 +66,18 @@ const pillars = [
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
-		<Taco scale={4} class="hero-taco" />
+		<Taco scale={2} class="hero-taco" />
 		<p class="wordmark">TERRAGUCCI</p>
 
-		<h1 class="claim">One workflow, one audit trail and one place to enforce policy for every Terraform and OpenTofu repo, Terragrunt, Atmos, Terramate and CDK Terrain included, run in your own CI.</h1>
+		<h1 class="claim">One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI.</h1>
 
 		<p class="lede">
-			CI does this: plan, approve and apply hundreds of roots from pull requests, with a trace of every run. Each job runs in
-			your GitHub, GitLab or Forgejo CI and lands in your git and your bucket, with no account to create or platform to sign
-			in to. With policy on, OPA checks every plan in every repo against one pinned policy source, and <a href={`${base}/reference/audit-trail/`}>one audit trail</a> in your bucket records every approval, apply, override and refused wave.
+			CI does this: your own forge's CI plans each pull request and applies it once approved, with no account or server
+			to run. Terragrunt, Atmos, Terramate and CDK Terrain repos work as they are.
 		</p>
 
 		<p class="proof">
-			Every pipeline feature that runs on Forgejo is proven on a local Forgejo by a recorded claim, and the
-			per-forge claims list what is proven on GitHub and GitLab (<a href={`${base}/reference/validation/`}>validation</a>). Apache-2.0, nothing to buy.
+			Recorded checks show what is proven on each tool and forge (<a href={`${base}/reference/validation/`}>validation</a>). Apache-2.0.
 		</p>
 	</section>
 	<DoorPicker />
@@ -97,7 +95,7 @@ const pillars = [
 	</ul>
 ) : (
 	<section class="tg-landing tg-agent not-content">
-		<AgentPrompt text={setupPrompt} label="Optional: hand the setup to your coding agent" note="Or set up by hand: install terragucci and run init, as the getting started page shows." />
+		<AgentPrompt text={setupPrompt} label="Hand the setup to your coding agent" note="Or set up by hand: install terragucci and run init, as the getting started page shows." />
 	</section>
 )}
 
@@ -105,23 +103,18 @@ const pillars = [
 	.tg-landing {
 		display: grid;
 		justify-items: center;
-		gap: 2rem;
-		padding-block: clamp(3rem, 10vw, 6rem) clamp(1rem, 3vw, 2rem);
+		gap: 0.9rem;
+		padding-block: clamp(1.5rem, 4vw, 2.5rem) 1rem;
 		text-align: center;
 	}
-	.tg-landing :global(.hero-taco) {
-		margin-bottom: -1rem;
-	}
-	@media (min-width: 50rem) {
-		.tg-landing :global(.hero-taco img) {
-			width: 306px;
-		}
+	.tg-landing :global(.hero-taco img) {
+		width: 96px;
 	}
 	.wordmark {
 		margin: 0;
 		font-family: var(--tg-display);
 		font-weight: 600;
-		font-size: clamp(2.6rem, 9vw, 5.5rem);
+		font-size: clamp(1.6rem, 5vw, 2.4rem);
 		letter-spacing: 0.14em;
 		line-height: 1;
 		color: var(--sl-color-white);
@@ -133,7 +126,7 @@ const pillars = [
 		max-width: 46rem;
 		font-family: var(--tg-display);
 		font-weight: 500;
-		font-size: clamp(1.25rem, 3vw, 1.7rem);
+		font-size: clamp(1.15rem, 2.5vw, 1.45rem);
 		line-height: 1.3;
 		letter-spacing: -0.015em;
 		color: var(--sl-color-gray-2);

@@ -39,10 +39,10 @@ export const ASSUMED: Link[] = [
 
 /** What the site does not do, each with its reason. Shown on the home page and in the picker. */
 export const LIMITS: { label: string; why: string; href?: string }[] = [
-	{ label: 'Bitbucket and Azure DevOps', why: 'not supported: init writes pipelines for GitHub, GitLab and Forgejo only', href: '/standards/tacos-guru/' },
-	{ label: 'Accounts, sign-in and roles of its own', why: 'none: your forge decides who signs in, merges and approves, and your cloud IAM decides what each job reaches', href: '/standards/access-and-identity/' },
-	{ label: 'A hosted web UI', why: 'none: runs show on your forge\'s run pages, in the report and on the estate page in your bucket', href: '/guides/see-every-project/' },
-	{ label: 'A server or database to run', why: 'none: every job runs in your CI and writes to your git and your bucket', href: '/concepts/how-it-works/#components' },
+	{ label: 'Bitbucket and Azure DevOps', why: 'init writes pipelines for GitHub, GitLab and Forgejo only.', href: '/standards/tacos-guru/' },
+	{ label: 'Accounts, sign-in and roles of its own', why: 'Your forge decides who signs in and approves, and your cloud IAM decides what each job reaches.', href: '/standards/access-and-identity/' },
+	{ label: 'A hosted web UI', why: 'Runs show on your forge\'s run pages and on the estate page in your bucket.', href: '/guides/see-every-project/' },
+	{ label: 'A server or database to run', why: 'Every job runs in your CI and writes to your git and your bucket.', href: '/concepts/how-it-works/#components' },
 ];
 
 export const SHAPES: { id: string; label: string; room: string }[] = [
@@ -64,7 +64,7 @@ export const BINARIES: { id: string; label: string; differs: string[]; href: str
 	{
 		id: 'choudoufu',
 		label: 'choudoufu',
-		differs: ['Applies to different resources of one estate run at the same time, and a killed apply leaves no lock to release.'],
+		differs: ['A killed apply leaves no state lock to release, and there is no lock table to run.'],
 		href: '/rooms/choudoufu/',
 	},
 ];
@@ -108,7 +108,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'plain-roots',
 		title: 'Terraform or OpenTofu roots',
-		lede: 'Directories of .tf files, each with its own state, on Terraform or OpenTofu.',
+		lede: 'Directories of .tf files with their own state.',
 		column: 'OpenTofu',
 		works: [
 			'init finds every root and writes the pipeline for your forge',
@@ -134,7 +134,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'terragrunt',
 		title: 'Terragrunt',
-		lede: 'A Terragrunt repo, with units, explicit stacks or Terragrunt Scale.',
+		lede: 'A Terragrunt repo of units or explicit stacks, or one on Terragrunt Scale.',
 		column: 'Terragrunt',
 		works: [
 			'Each unit is a root, and dependency order decides the waves',
@@ -142,7 +142,7 @@ export const ROOMS: Room[] = [
 			'terragucci import terragrunt-scale reads Gruntwork Pipelines\' environments and roles',
 		],
 		differs: [
-			'roots is refused: leave units out with terragrunt.exclude.',
+			'roots is refused; terragrunt.exclude leaves units out.',
 			'A step after init is refused, since Terragrunt inits each unit inside the plan.',
 			'CDK Terrain in a Terragrunt repo is not supported.',
 		],
@@ -181,11 +181,11 @@ export const ROOMS: Room[] = [
 		column: 'Terramate',
 		works: [
 			'Each stack is a root, in the order its after and before give',
-			'A pull request plans the stacks it changes and the ones ordered after them',
+			'Only the stacks a change reaches, and those ordered after them, are planned',
 			'Stale generated code fails the check',
 		],
 		differs: [
-			'Terramate\'s watch files, scripts, wants and wanted_by, and Terramate Cloud are not read.',
+			'Terramate Cloud and Terramate scripts are not read, and neither are watch files or wants and wanted_by.',
 			'A drift pull request, rollouts and generate are refused, since their edits would land in code terramate generate owns.',
 		],
 		first: { label: 'Use Terramate', href: '/guides/use-terramate/' },
@@ -204,8 +204,8 @@ export const ROOMS: Room[] = [
 			'A stack that reads another\'s state plans on that stack\'s planned outputs',
 		],
 		differs: [
-			'The stacks are the app\'s output, so a drift pull request, rollouts and generate are config errors; drift is reported in the issue instead.',
-			'Not supported in a Terragrunt repo.',
+			'The stacks are the app\'s output, so terragucci never edits them: drift goes to the issue, and rollouts and generate are config errors.',
+			'A Terragrunt repo takes no synth, so the two do not mix.',
 		],
 		first: { label: 'Plan CDK Terrain stacks', href: '/guides/plan-cdk-terrain-stacks/' },
 		howto: [{ label: 'Plan CDK Terrain stacks', href: '/guides/plan-cdk-terrain-stacks/' }],
@@ -224,7 +224,7 @@ export const ROOMS: Room[] = [
 		],
 		differs: [
 			'terragucci does not read a root\'s required_version as a choudoufu release.',
-			'Record history needs s3:ListBucketVersions on the record store bucket; a local or kubernetes record store keeps none.',
+			'Record history needs the ListBucketVersions permission on the record store bucket; a local or kubernetes record store keeps none.',
 		],
 		first: { label: 'Choose your binary: choudoufu', href: '/guides/use-a-binary/#choudoufu' },
 		howto: [
@@ -237,14 +237,14 @@ export const ROOMS: Room[] = [
 	{
 		id: 'security',
 		title: 'Security review',
-		lede: 'What each job can reach, who can approve, and the record every change leaves.',
+		lede: 'What each job can reach and who can approve, with the record every change leaves.',
 		works: [
 			'Plan and apply use separate roles, and the plan job never gets the apply role',
 			'A gated wave whose plans moved after the approval applies nothing and names both digests',
-			'Every approval, apply, override and refused wave is recorded in your bucket',
+			'The audit trail in your bucket records every approval, apply and override',
 		],
 		differs: [
-			'terragucci has no accounts: sign-in and permissions are your forge\'s, and what a job reaches is your cloud IAM.',
+			'terragucci has no accounts; access and identity maps each action to the forge or IAM setting that decides it.',
 		],
 		first: { label: 'The threat model', href: '/reference/threat-model/' },
 		howto: [
@@ -269,7 +269,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'evaluate',
 		title: 'Evaluating terragucci',
-		lede: 'What it does, what it proves, and what it leaves to your forge and your cloud.',
+		lede: 'What terragucci does and proves, and what it leaves to your forge and your cloud.',
 		works: [
 			'Apache-2.0, with nothing to buy and no server to host',
 			'Every pipeline feature that runs on Forgejo is proven by a recorded check, listed by tool and forge',
@@ -290,10 +290,10 @@ export const ROOMS: Room[] = [
 	{
 		id: 'many-repos',
 		title: 'Many repos',
-		lede: 'One place for the settings, policy and module versions of every repo.',
+		lede: 'One place that keeps every repo\'s settings and policy alike.',
 		works: [
 			'A control repo holds the shared settings and opens a pull request in each repo that changes',
-			'One estate page lists every project, its roots and its last applies',
+			'One estate page lists every project with its roots and last applies',
 			'A new module version rolls out to every repo that pins it, a wave of pull requests at a time',
 		],
 		differs: [],
@@ -316,7 +316,7 @@ export const ROOMS: Room[] = [
 			'A read-only MCP server over the estate, the audit trail and the delivery metrics, running no model',
 			'Four opt-in features run a model, each off until you set it up with a model API key',
 		],
-		differs: ['The agent comment and drift fixes run on GitHub and Forgejo only; on GitLab the review runs through the comments schedule.'],
+		differs: ['On GitLab the agent comment and drift fixes are refused, and the review runs through the comments schedule.'],
 		first: { label: 'Set up with a coding agent', href: '/getting-started/agents/' },
 		howto: [
 			{ label: 'Have an agent change a pull request', href: '/guides/agent-change-a-pull-request/' },
