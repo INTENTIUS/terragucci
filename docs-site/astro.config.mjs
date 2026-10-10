@@ -139,7 +139,10 @@ export default defineConfig({
 						{
 							label: 'Policy and audit',
 							items: [
-								/* HOWTO-SECURITY */
+								{ label: 'Write a policy', slug: 'guides/write-a-policy' },
+								{ label: 'Read the audit trail', slug: 'guides/read-the-audit-trail' },
+								{ label: 'Lock roots to a pull request', slug: 'guides/lock-roots' },
+								{ label: 'Keep secrets out of plan notes and logs', slug: 'guides/keep-secrets-out-of-notes' },
 								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 							],
 						},
@@ -154,7 +157,7 @@ export default defineConfig({
 								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
 								{ label: 'Query the estate with SQL', slug: 'guides/query-with-sql' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
-								/* HOWTO-WATCH */
+								{ label: 'Watch a choudoufu wave apply', slug: 'guides/watch-a-choudoufu-wave' },
 							],
 						},
 						{
@@ -211,6 +214,7 @@ export default defineConfig({
 						{ label: 'Webhook event schema', slug: 'reference/notify-event' },
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
 						{ label: 'Migration files', slug: 'reference/migration-files' },
+						{ label: 'State backends', slug: 'reference/state-backends' },
 						{ label: 'Delivery metrics', slug: 'reference/delivery-metrics' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },

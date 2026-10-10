@@ -31,7 +31,7 @@ export const ASSUMED: Link[] = [
 	{ label: 'Short-lived cloud credentials through OIDC, one role for plan and one for apply', href: '/guides/add-to-a-repo/' },
 	{ label: 'Policy checks on every plan', href: '/guides/write-a-policy/' },
 	{ label: 'An audit trail of every approval, apply and override, in your bucket', href: '/guides/read-the-audit-trail/' },
-	{ label: 'Secrets kept out of plan notes and logs', href: '/reference/threat-model/' },
+	{ label: 'Secrets kept out of plan notes and logs', href: '/guides/keep-secrets-out-of-notes/' },
 	{ label: 'Your state backend, as it is', href: '/reference/state-backends/' },
 	{ label: 'Your own runners', href: '/guides/add-to-a-repo/' },
 	{ label: 'Sign-in and permissions from your forge', href: '/standards/access-and-identity/' },
@@ -250,6 +250,8 @@ export const ROOMS: Room[] = [
 		howto: [
 			{ label: 'Write a policy', href: '/guides/write-a-policy/' },
 			{ label: 'Read the audit trail', href: '/guides/read-the-audit-trail/' },
+			{ label: 'Lock roots to a pull request', href: '/guides/lock-roots/' },
+			{ label: 'Keep secrets out of plan notes and logs', href: '/guides/keep-secrets-out-of-notes/' },
 			{ label: 'Keep each environment\'s roles to its own state', href: '/guides/scope-state-access/' },
 			{ label: 'Approvals runbook', href: '/guides/approvals-runbook/' },
 		],
