@@ -2,7 +2,7 @@
 # out first. Each takes its rev from the values here.
 
 unit "base" {
-  source = "${get_repo_root()}/catalog/units/base"
+  source = "../../catalog/units/base"
   path   = "base"
 
   values = {
@@ -11,7 +11,7 @@ unit "base" {
 }
 
 unit "top" {
-  source = "${get_repo_root()}/catalog/units/top"
+  source = "../../catalog/units/top"
   path   = "top"
 
   values = {
