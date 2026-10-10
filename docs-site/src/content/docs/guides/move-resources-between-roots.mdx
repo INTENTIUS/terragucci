@@ -1,7 +1,7 @@
 ---
 title: Move resources between roots
 description: Split a root in two, merge two roots, or hand a resource to another root, with a migration file in the pull request, proved with no change, approved by digest and written under the state lock.
-claims: [migrate-split, migrate-resume, migrate-backend, migrate-backend-tfe, migrate-revert, cdktn-migrate, tg-migrate-split, cdf-migrate, cdf-adopt]
+claims: [migrate-split, migrate-resume, migrate-backend, migrate-backend-tfe, migrate-revert, cdktn-migrate, tg-migrate-split, cdf-migrate, cdf-adopt, blob-migrate]
 prompt: |
   Read https://intentius.io/terragucci/guides/move-resources-between-roots/.
   In this repo, move the resource blocks I name from their root to the root I name, write the migration file the page describes for that move, and open a pull request.
@@ -20,7 +20,7 @@ A resource moves between two roots' states through the same gate as an apply, an
 | the pull request's plan job | terragucci | builds each affected root's new state in the job, plans every root against it, requires no change, and prints the digest |
 | the apply job's wave 1, after the merge | terragucci | proves the move again and waits for an approval of that digest; no wave plans until it applies |
 | `terragucci approve`, which runs `chant approve tf-migrate <name> --plan <digest>` with [chant](/terragucci/concepts/glossary/#chant) | you | approves that digest and nothing else |
-| wave 1 again, started by `terragucci approve` or the resume job | terragucci | takes each state's lock file, refuses if a state moved since the plan, writes the new states, plans every root again and requires no change, and records each state's version id before and after |
+| wave 1 again, started by `terragucci approve` or the resume job | terragucci | takes each state's lock, refuses if a state moved since the plan, writes the new states, plans every root again and requires no change, and records each state's version id before and after |
 
 The digest covers the file plus each root's state version and digest before the move and its new state's digest. A state written by anyone after the approval changes the digest, and wave 1 refuses with exit 4, naming the root.
 
@@ -31,9 +31,16 @@ State contents stay in your backend and the job's temporary directory. The recor
 | You need | Why |
 |---|---|
 | Terraform or OpenTofu roots, CDK Terrain stacks, whose roots are `cdktf.out/stacks/<stack>` holding `cdk.tf.json`, or Terragrunt units | a unit is prepared by Terragrunt (`terragrunt run -- init`), and the job then reads and writes its state in the directory Terragrunt runs it in, with the inputs Terragrunt gives it; a move can go between two units, or between a unit and a plain root |
-| An `s3` backend with `use_lockfile = true`, or a `local` backend, in every root the move touches | the job holds the S3 lock file while it writes; a root whose code has a `cloud` block, or another backend, is refused; a backend move reads from a workspace or a state file |
-| Bucket versioning on, for S3 | each version id before is the version to go back to; see [Find the state version an apply left](/terragucci/guides/find-a-state-version/) |
-| An apply identity that can write the state objects and their `.tflock` files | the same rights `use_lockfile` already needs |
+| An `s3` backend with `use_lockfile = true`, a `gcs` or `azurerm` backend, or a `local` backend, in every root the move touches | the job holds each state's lock while it writes; a root whose code has a `cloud` block, or another backend, is refused; a backend move reads from a workspace or a state file |
+| Versions kept: S3 bucket versioning, GCS object versioning, Azure blob versioning or `snapshot = true` | each version id before is the version to go back to; see [Find the state version an apply left](/terragucci/guides/find-a-state-version/) |
+| An apply identity that can write the states and take their locks | the rights the backend already needs |
+
+Each backend's lock is taken as the backend takes it:
+
+| Backend | Lock | Who writes the new state |
+|---|---|---|
+| `s3`, `gcs` | the lock object beside the state | the binary, with `state push -lock=false` while the job holds the lock |
+| `azurerm` | a lease on the state blob | the job, under its lease, which keeps the binary out; a snapshot first when the backend sets `snapshot = true` |
 | A pipeline `terragucci init` wrote after the first migration file was added | on GitHub under `gate: never`, the apply jobs get `contents: write` to record the migration's gate on `chant/lifecycle` only then; `config check` and the plan job refuse a repo whose pipeline lacks it |
 
 ## Steps
@@ -143,11 +150,11 @@ This writes `migrations/split-queues-revert.yml` from the record of `split-queue
 
 | Root | After the revert |
 |---|---|
-| one whose state the migration changed | the version it recorded before, read from the bucket by its id, with the root's lineage and the next serial |
+| one whose state the migration changed | the version it recorded before, read by its id, with the root's lineage and the next serial |
 | one that had no state before | an empty state |
 | one whose state moved past the version the migration left | refused: putting the older version back would undo that later change too |
 
-A revert needs S3 bucket versioning on: a root with no version recorded before, or a local backend, has nothing to put back. A backend move is put back with a backend move the other way.
+A revert needs versions kept: a root with no version recorded before, or a local backend, has nothing to put back. An azurerm state with no blob versions is named by the snapshots the migration took before and after its write. A backend move is put back with a backend move the other way.
 
 ## Records
 
