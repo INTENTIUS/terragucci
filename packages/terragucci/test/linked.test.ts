@@ -91,6 +91,23 @@ describe("a linked plan's rewrite", () => {
     expect(existsSync(join(dir, LINKED_FILE))).toBe(false);
   });
 
+  it("rewrites a root in Terraform's JSON syntax, as CDK Terrain synthesizes it, and puts it back", () => {
+    const json = JSON.stringify({
+      data: { terraform_remote_state: { net: { backend: "s3", config: { bucket: "s", key: "net.tfstate" } } } },
+      resource: { terraform_data: { name: { input: "${data.terraform_remote_state.net.outputs.name}" }, stamp: { input: "stamp-${data.terraform_remote_state.net.outputs.stamp}" } } },
+    }, null, 2);
+    const dir = write(tmp(), { "cdk.tf.json": json });
+    const linked = linkRoot(dir, [{ name: "net", upstream: "net", outputs: plannedOutputs(netPlan)!.outputs }]);
+    const during = JSON.parse(readFileSync(join(dir, "cdk.tf.json"), "utf-8"));
+    expect(during.resource.terraform_data.name.input).toBe("${local.terragucci_linked_net.outputs.name}");
+    expect(during.resource.terraform_data.stamp.input).toBe("stamp-${local.terragucci_linked_net.outputs.stamp}");
+    expect(readFileSync(join(dir, LINKED_FILE), "utf-8")).toContain('"name" = "net-2"');
+    expect(linked.reads).toEqual([{ upstream: "net", data: "net", outputs: "planned", unknown: ["stamp"] }]);
+    linked.restore();
+    expect(readFileSync(join(dir, "cdk.tf.json"), "utf-8")).toBe(json);
+    expect(existsSync(join(dir, LINKED_FILE))).toBe(false);
+  });
+
   it("refuses a root that already has the linked file, changing nothing", () => {
     const dir = write(tmp(), { "main.tf": "x = data.terraform_remote_state.net.outputs.name\n", [LINKED_FILE]: "# mine\n" });
     expect(() => linkRoot(dir, [{ name: "net", upstream: "net", outputs: new Map() }])).toThrow(/already in the root/);
@@ -107,6 +124,23 @@ describe("a linked plan's rewrite", () => {
       { name: "net", upstream: "net", repeated: false },
       { name: "many", upstream: "net", repeated: true },
     ]);
+  });
+
+  it("reads the backend and the remote state blocks of a root in Terraform's JSON syntax, blocks or lists of them", () => {
+    const stack = (key: string, data?: unknown) => JSON.stringify({ terraform: { backend: { s3: { bucket: "s", key } } }, ...(data ? { data } : {}) });
+    const dir = write(tmp(), {
+      "cdktf.out/stacks/net/cdk.tf.json": stack("net.tfstate"),
+      "cdktf.out/stacks/app/cdk.tf.json": stack("app.tfstate", { terraform_remote_state: { net: { backend: "s3", config: { bucket: "s", key: "net.tfstate" } }, many: [{ backend: "s3", for_each: "${toset([])}", config: { bucket: "s", key: "net.tfstate" } }], other: { backend: "s3", config: { bucket: "s", key: "elsewhere.tfstate" } } } }),
+      "hcl/main.tf": backend("hcl.tfstate") + reads("app", "app.tfstate"),
+    });
+    const all = ["cdktf.out/stacks/app", "cdktf.out/stacks/net", "hcl"];
+    const got = remoteStateReads(dir, all);
+    expect(got.get("cdktf.out/stacks/app")).toEqual([
+      { name: "net", upstream: "cdktf.out/stacks/net", repeated: false },
+      { name: "many", upstream: "cdktf.out/stacks/net", repeated: true },
+    ]);
+    // An HCL root reads a JSON root's state, as the JSON root's backend names it.
+    expect(got.get("hcl")).toEqual([{ name: "app", upstream: "cdktf.out/stacks/app", repeated: false }]);
   });
 });
 

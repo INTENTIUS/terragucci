@@ -123,7 +123,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
     if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
   }
 }
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, EPHEMERAL_NOT_SYNTH, EPHEMERAL_NOT_TERRAGRUNT } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -298,9 +298,10 @@ export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
  * The job runs the default branch's workflow (pull_request_target) on its
  * checkout, and `terragucci ephemeral` checks the head out apart.
  */
-export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined): string {
+export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
   return [
     ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
+    ...(prelude ? [prelude] : []),
     'if [ "${TG_ACTION:-}" = closed ]; then',
     '  terragucci ephemeral down --pr "$TG_PR" --reason closed',
     "else",
@@ -315,18 +316,19 @@ export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined
  * first. GitLab starts no pipeline when a merge request closes, so the sweep
  * destroys a closed merge request's copy.
  */
-export function gitlabEphemeralScript(oidc: OidcSettings | undefined): string {
+export function gitlabEphemeralScript(oidc: OidcSettings | undefined, prelude?: string): string {
   return [
     gitlabPushRemote,
     'git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"',
     ...cloudScripts("gitlab", oidc, "apply", "terragucci-ephemeral"),
+    ...(prelude ? [prelude] : []),
     'terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/${CI_DEFAULT_BRANCH}"',
   ].join("\n");
 }
 
 /** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
-export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined): string {
-  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), "terragucci ephemeral sweep"].join("\n");
+export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, prelude?: string): string {
+  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), "terragucci ephemeral sweep"].join("\n");
 }
 
 /** The cron for `apply.resume`'s minutes. */
@@ -1767,8 +1769,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (applyBranches && input.applyWhen === "pull-request") throw new RenderError(`apply.branches: ${BRANCHES_NOT_PR_APPLY}`);
   const branchNames = applyBranches ? Object.keys(applyBranches) : [];
   const ephemeral = input.ephemeral;
-  if (ephemeral && tg) throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_TERRAGRUNT}`);
-  if (ephemeral && input.synth) throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_SYNTH}`);
+  // ephemeral in a Terragrunt repo: the jobs prepare units through Terragrunt, with the caches and the apply roles every apply job has.
+  const ephemeralPrelude = ephemeral && tg ? [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") : undefined;
   if (ephemeral && forge === "gitlab" && input.gitlabToken === "protected") throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_PROTECTED}`);
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
@@ -2136,7 +2138,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
         resource_group: "terragucci-ephemeral-$CI_MERGE_REQUEST_IID",
         ...idTokens,
-        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc))),
+        script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, ephemeralPrelude))),
       } as never) as never);
       jobs.set("ephemeral-sweep", new GitLabJob({
         stage: "apply",
@@ -2145,7 +2147,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "ephemeral"` })],
         resource_group: "terragucci-ephemeral-sweep",
         ...idTokens,
-        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc))),
+        script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, ephemeralPrelude))),
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
@@ -2445,7 +2447,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...openid(needsToken),
       concurrency: { group: "terragucci-ephemeral-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": false },
       env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_ACTION: "${{ github.event.action }}", ...headersEnv },
-      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc) }), false, true),
+      steps: steps(new Step({ name: "Apply the pull request's copy of the ephemeral roots, or destroy it once it closes", shell: "bash", run: ephemeralScript(forge, oidc, ephemeralPrelude) }), false, true),
     } as never) as never);
   }
   // apply.branches: a push to a named branch runs the waves too, for that branch's roots.

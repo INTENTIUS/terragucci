@@ -32,7 +32,8 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { ConfigError, type ResolvedSettings } from "./config";
+import { ConfigError, SYNTH_GENERATE, type ResolvedSettings } from "./config";
+import { KEY_ATTRIBUTE, SUFFIX_READ } from "./ephemeral";
 import { findRoots, globMatch } from "./detect";
 import { IDENT, isMap, overlayLevel, type GenerateLevel, type GenerateSettings } from "./generate-config";
 import { versionGlobs } from "./pins";
@@ -258,9 +259,11 @@ export function generateRoots(repo: string, settings: ResolvedSettings): string[
 
 /**
  * What generate would write, file by file, without writing it. Throws a
- * ConfigError for a Terragrunt repo and for settings that cannot be written.
+ * ConfigError with synth, whose app sets what generate would write, and for
+ * settings that cannot be written.
  */
 export function planGenerate(repo: string, settings: ResolvedSettings): GeneratePlan {
+  if (settings.synth && settings.generate) throw new ConfigError(`generate: ${SYNTH_GENERATE}`);
   if (detectTerragrunt(repo)) return planTerragrunt(repo, settings);
   const gen = settings.generate ?? {};
   const roots = settings.generate ? generateRoots(repo, settings) : [];
@@ -364,7 +367,7 @@ export function renderTerragrunt(units: Map<string, RootSettings>): string | und
   const attr = (k: string, v: string): string => `      ${k.padEnd(width)} = ${v}`;
   const entries = [...rendered].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([u, r]) => {
     const lines = [`    ${hclString(u)} = {`];
-    if (r.s.backend) lines.push(attr("backend", hclString(r.s.backend.type)), attr("config", hclValue(r.s.backend.config)));
+    if (r.s.backend) lines.push(attr("backend", hclString(r.s.backend.type)), attr("config", backendConfig(r.s.backend)));
     for (const k of ["providers", "versions"] as const) {
       if (!keys.includes(k)) continue;
       const f = r.files[k];
@@ -395,6 +398,24 @@ export function renderTerragrunt(units: Map<string, RootSettings>): string | und
     out.push("", `generate "terragucci_${k}" {`, `  path      = "${GENERATED_FILES[k]}"`, '  if_exists = "overwrite_terragrunt"', `  disable   = local.terragucci_unit.${k} == ""`, `  contents  = local.terragucci_unit.${k}`, "}");
   }
   return out.join("\n") + "\n";
+}
+
+/**
+ * A unit's backend config as terragucci.hcl gives it: the attribute that holds
+ * the state key (`key`, gcs's `prefix`, local's `path`) reads
+ * TERRAGUCCI_EPHEMERAL_SUFFIX, which is empty but in an ephemeral copy's run,
+ * where it is `-pr-<n>`, before a closing `.tfstate` or at the end. So the
+ * key is the one terragucci.yml gives everywhere else, and every unit can be
+ * copied per pull request (ephemeral.ts).
+ */
+function backendConfig(backend: NonNullable<RootSettings["backend"]>): string {
+  const attribute = KEY_ATTRIBUTE[backend.type];
+  const key = attribute ? backend.config[attribute] : undefined;
+  if (typeof key !== "string") return hclValue(backend.config);
+  const marker = "\u0000terragucci-suffix\u0000";
+  const k = key.replace(/\/+$/, "");
+  const marked = /\.tfstate$/.test(k) ? k.replace(/\.tfstate$/, `${marker}.tfstate`) : `${k}${marker}`;
+  return hclValue({ ...backend.config, [attribute!]: marked }).replace(marker, () => `\${${SUFFIX_READ}}`);
 }
 
 /** generate in a Terragrunt repo: terragucci.hcl, and why a unit or another file would keep it from taking effect. */
