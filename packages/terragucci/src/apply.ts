@@ -116,7 +116,7 @@ import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from ".
 import { binaryText, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
-import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
+import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -661,9 +661,9 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const dir = join(repo, root);
   // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
   // An Atmos instance names its workspace (./atmos.ts): it plans and applies there, not in default.
-  const env = workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir);
-  const planFile = join(work, `${i}.tfplan`);
   const expected = binaries.expected(root);
+  const env = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir), dir, expected.name);
+  const planFile = join(work, `${i}.tfplan`);
   const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
   let resolved: RootBinary;
   try {
@@ -675,7 +675,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
   if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
   const base = { ...failed, binary, bin };
-  const stepEnv = ws ? { ...ws, env: workspaceEnv(rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir) } : undefined;
+  const stepEnv = ws ? { ...ws, env: rootCacheEnv(workspaceEnv(rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir), dir, expected.name) } : undefined;
   let stepError = await rootSteps(repo, base, stepEnv, "before-init");
   if (stepError) return { ...base, error: stepError };
   const wsInit = workspaceInit(env, dir);
