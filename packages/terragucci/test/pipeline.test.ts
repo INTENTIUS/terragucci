@@ -915,8 +915,23 @@ describe("the agent comment", () => {
     expect(doc.jobs.agent["timeout-minutes"]).toBe(30);
   });
 
-  it("gitlab: refused, since a merge request note starts no pipeline", () => {
-    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent })).toThrow(/GitLab starts none for a merge request note/);
+  it("gitlab: needs comments, whose job starts the agent's pipeline on the default branch", () => {
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent })).toThrow(/agent\.comment on GitLab needs comments: <cron>/);
+    const yml = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent, comments: "*/5 * * * *" }).content;
+    const doc = parseYAML(yml) as any;
+    expect(doc.comments.script[0]).toContain("--agent on");
+    expect(doc.agent.rules).toEqual([{ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TERRAGUCCI_AGENT_MR" }]);
+    expect(doc.agent.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
+    expect(doc.agent.script[0]).toContain("terragucci comment --forge gitlab --agent run");
+    // The agent's command runs with a cleared environment: the job's variables, GITLAB_TOKEN among them, never reach it.
+    expect(doc.agent.script[0]).toMatch(/env -i PATH="\$\{PATH:-\}" .* ANTHROPIC_API_KEY="\$\{ANTHROPIC_API_KEY:-\}" bash -c 'npx -y @anthropic-ai\/claude-code@/);
+    expect(doc.agent.artifacts.paths).toEqual(["terragucci-agent/"]);
+    expect(doc["agent-push"].needs).toEqual(["agent"]);
+    expect(doc["agent-push"].variables).toEqual({ TG_TOKEN: "$AGENT_FORGE_TOKEN" });
+    expect(doc["agent-push"].script[0]).toContain("terragucci comment --forge gitlab --agent push --change terragucci-agent");
+    // The pipeline the comments job starts runs the agent's jobs alone.
+    expect(doc["apply-wave-1"].rules[0].if).toContain("$TERRAGUCCI_AGENT_MR == null");
+    expect(doc.check.rules[0].if).toContain("$TERRAGUCCI_AGENT_MR == null");
   });
 
   it("an agent that fails in the step's own shell still writes its exit code and the patch, so the push job can say it stopped", async () => {
@@ -1852,12 +1867,35 @@ describe("a wave split across jobs (waves.jobs)", () => {
     expect(early.jobs["apply-wave-2"].steps.map((x: { run?: string }) => x.run ?? "").join("\n")).toContain("--terragrunt --rest");
   });
 
-  it("is refused on GitLab and with apply.when: pull-request, by config check and by init", () => {
-    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2 })).toThrow(/waves\.jobs: a wave splits across jobs on GitHub and Forgejo/);
+  it("on GitLab: the wave's job decides and keeps its decision, the shares take it through needs, and every apply job holds the pipeline's shared lock in place of the resource group", () => {
+    const doc = parseYAML(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2 }).content) as any;
+    const applies = Object.keys(doc).filter((k) => k.startsWith("apply-"));
+    expect(applies).toEqual(["apply-wave-1", "apply-wave-2", "apply-wave-2-share-1", "apply-wave-2-share-2", "apply-done"]);
+    for (const k of applies) expect(doc[k].resource_group, k).toBeUndefined();
+    expect(doc["apply-wave-2"].artifacts.paths).toContain("terragucci-wave/");
+    expect(doc["apply-wave-2"].script[0]).toContain("--shares 2");
+    expect(doc["apply-wave-2-share-1"].needs).toEqual(["apply-wave-2"]);
+    expect(doc["apply-wave-2-share-1"].script[0]).toContain("--shares 2 --share 1");
+    expect(doc["apply-wave-2-share-1"].script[0]).toContain('hold_prefix="refs/tags/terragucci-apply-hold-${CI_PIPELINE_ID}-"');
+    // The lock's tags go up with the project's token: the remote is set before the lock is taken.
+    const body = doc["apply-wave-2-share-1"].script[0] as string;
+    expect(body.indexOf("git remote set-url origin")).toBeGreaterThan(-1);
+    expect(body.indexOf("git remote set-url origin")).toBeLessThan(body.indexOf("lock_ref="));
+    expect(doc["apply-done"].needs).toEqual([{ job: "apply-wave-2-share-1", artifacts: false }, { job: "apply-wave-2-share-2", artifacts: false }]);
+    expect(doc["apply-done"].script[0]).toContain('tg status terragucci/apply success "6 roots in 2 groups applied"');
+    // Without waves.jobs nothing changes: one resource group.
+    const plain = parseYAML(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {} }).content) as any;
+    expect(plain["apply-wave-2"].resource_group).toBe("terragucci-apply");
+    // `tg alive` asks GitLab for the pipeline.
+    expect(forgeApi("gitlab")).toContain('call("GET", repo + "/pipelines/" + a[0])');
+    expect(forgeApi("forgejo")).toContain('call("GET", repo + "/actions/runs/" + a[0])');
+  });
+
+  it("is refused with apply.when: pull-request, by config check and by init", () => {
     expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, applyWhen: "pull-request" })).toThrow(/waves\.jobs: apply\.when: pull-request/);
     expect(() => validateConfig({ waves: { jobs: 0 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
     expect(() => validateConfig({ waves: { jobs: 1.5 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
-    expect(() => validateConfig({ forge: "gitlab", waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a wave splits across jobs on GitHub and Forgejo");
+    expect(validateConfig({ forge: "gitlab", waves: { jobs: 3 } }, "t")).toEqual({ forge: "gitlab", waves: { jobs: 3 } });
     expect(() => validateConfig({ apply: { when: "pull-request" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: apply.when: pull-request");
     expect(validateConfig({ terragrunt: { version: "1.1.6" }, waves: { jobs: 3 } }, "t")).toEqual({ terragrunt: { version: "1.1.6" }, waves: { jobs: 3 } });
     expect(() => validateConfig({ terragrunt: { version: "1.1.6" }, roots: ["live/*"] }, "t")).toThrow("config.roots: a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude");
