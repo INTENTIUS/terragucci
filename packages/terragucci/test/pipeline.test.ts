@@ -132,7 +132,7 @@ describe("the check job", () => {
 });
 
 describe("apply concurrency", () => {
-  const cdf = (forge: ForgeName): string => renderPipeline({ forge, binary: "choudoufu", version: "0.23.0", image: "img:1", layers, env: {}, oidc: OIDC }).content;
+  const cdf = (forge: ForgeName): string => renderPipeline({ forge, binary: "choudoufu", version: "0.24.0", image: "img:1", layers, env: {}, oidc: OIDC }).content;
 
   it.each(FORGES)("%s: no apply job waits for another run's: two roots apply at once, and the backend's state lock keeps one root's applies apart", (forge) => {
     for (const text of [render(forge, OIDC), cdf(forge)]) {
@@ -189,7 +189,7 @@ describe("apply concurrency", () => {
   });
 
   it("choudoufu: a wave holds the resources it changes on chant/lifecycle, so its job may push there", () => {
-    const doc = body(renderPipeline({ forge: "github", binary: "choudoufu", version: "0.23.0", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
+    const doc = body(renderPipeline({ forge: "github", binary: "choudoufu", version: "0.24.0", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
     for (const job of ["apply-wave-1", "apply-wave-2", "apply-comment"]) expect(doc.jobs[job].permissions.contents, job).toBe("write");
     const tofu = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
     expect(tofu.jobs["apply-wave-1"].permissions.contents).toBe("read");
