@@ -19,7 +19,7 @@ import {
   rewriteSources,
   writeInstances,
 } from "../src/atmos";
-import { workspaceEnv, WORKSPACE_FILE } from "../src/backend";
+import { workspaceEnv, workspaceInit, WORKSPACE_FILE } from "../src/backend";
 import { applyWave } from "../src/apply";
 import { ROOTS_NOT_ATMOS } from "../src/config";
 import { init } from "../src/init";
@@ -188,6 +188,16 @@ describe("workspaceEnv", () => {
     const plain = { A: "1" };
     expect(workspaceEnv(plain, tmp())).toBe(plain);
   });
+
+  it("inits in default and then selects the root's workspace, creating it, with TF_WORKSPACE unset", () => {
+    const dir = write(tmp(), { [WORKSPACE_FILE]: "prod\n" });
+    expect(workspaceInit({ TF_WORKSPACE: "prod", A: "1" }, dir)).toEqual({
+      init: { TF_WORKSPACE: "default", A: "1" },
+      select: ["workspace", "select", "-or-create=true", "prod"],
+      selectEnv: { A: "1" },
+    });
+    expect(workspaceInit({ A: "1" }, tmp())).toBeUndefined();
+  });
 });
 
 describe("init in an Atmos repo", () => {
@@ -242,7 +252,9 @@ describe.skipIf(!hasTofu)("two instances of one component, applied with the real
       "atmos.yaml": "base_path: .\n",
       "components/terraform/vpc/main.tf": 'variable "stage" {\n  type = string\n}\n\nresource "terraform_data" "vpc" {\n  input = var.stage\n}\n',
     });
-    const local = (s: string): Obj => instance(s, "vpc", { backend_type: "local", backend: {} });
+    // One workspace directory for both, as an S3 bucket is: the second instance's init sees the first's workspace.
+    const shared = join(dir, "states");
+    const local = (s: string): Obj => instance(s, "vpc", { backend_type: "local", backend: { path: join(shared, "terraform.tfstate"), workspace_dir: shared } });
     writeInstances(work, atmosInstances({ dev: { components: { terraform: { vpc: local("dev") } } }, prod: { components: { terraform: { vpc: local("prod") } } } }));
     git(work, "init", "-q", "-b", "main");
     git(work, "add", "-A");
@@ -251,13 +263,13 @@ describe.skipIf(!hasTofu)("two instances of one component, applied with the real
     const env = { ...process.env, TF_IN_AUTOMATION: "1", TF_WORKSPACE: "default" };
     expect(await applyWave(work, { wave: 1, layers: [["dev/vpc", "prod/vpc"]], binary: "tofu", gate: "never", env })).toBe(0);
     for (const s of ["dev", "prod"]) {
-      const state = join(work, `${s}/vpc/terraform.tfstate.d/${s}/terraform.tfstate`);
+      const state = join(shared, s, "terraform.tfstate");
       expect(existsSync(state), state).toBe(true);
       expect(JSON.parse(readFileSync(state, "utf-8")).resources[0].instances[0].attributes.input.value).toBe(s);
-      expect(existsSync(join(work, `${s}/vpc/terraform.tfstate`))).toBe(false);
       const plan = execFileSync("tofu", [`-chdir=${join(work, s, "vpc")}`, "plan", "-detailed-exitcode", "-input=false", "-no-color"], { env: { ...process.env, TF_WORKSPACE: s }, encoding: "utf-8" });
       expect(plan).toContain("No changes.");
     }
+    expect(existsSync(join(shared, "terraform.tfstate"))).toBe(false);
     expect(out.mock.calls.flat().join("\n")).toMatch(/applied dev\/vpc/);
   });
 });
