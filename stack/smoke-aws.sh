@@ -459,7 +459,7 @@ smoke_aws_runner_up() { # name of the run, for its log
     "$URL/api/v1/admin/actions/runners")" || return 1
   uuid="$(jq -r '.uuid' <<<"$reg")"; token="$(jq -r '.token' <<<"$reg")"
   [ -n "$uuid" ] && [ "$uuid" != null ] || { sa_log "Forgejo registered no runner"; return 1; }
-  docker run -d --name "$SA_RUNNER_CONTAINER" --network terragucci --user 0:0 \
+  docker run -d --name "$SA_RUNNER_CONTAINER" --network "${TG_NETWORK:-terragucci}" --user 0:0 \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$SA_CACHE_VOLUME:/cache" \
     --tmpfs /data -w /data "$image" \
     sh -c 'while [ ! -s /data/config.yml ]; do sleep 1; done; exec forgejo-runner daemon -c /data/config.yml' >/dev/null || return 1
