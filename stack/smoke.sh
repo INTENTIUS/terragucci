@@ -745,6 +745,8 @@ gated_repo() { # name [fixture] [approval] -> a fresh repo $USER/<name>, the fix
   # an approval counts only when its seal verifies against the signers file at
   # base. Without it (ledger, the default) any approval of the digest counts.
   [ -z "$approval" ] || echo "approval: $approval" >> "$work/tree/terragucci.yml"
+  # Terramate finds its project root by git, as in any checkout a user runs init in.
+  [ ! -f "$work/tree/terramate.tm.hcl" ] || git -C "$work/tree" init -q -b main
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
   bin_pipeline "$work/tree/.forgejo/workflows/terragucci.yml" || return 1
   # The approver's key goes in the signers file; an agent's never does.
