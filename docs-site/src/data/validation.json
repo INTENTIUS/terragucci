@@ -171,7 +171,7 @@
     {
       "forge": "github.com",
       "claim": "apply-serial",
-      "says": "two merges pushed back to back apply in the order they arrived, the older run applies nothing beside the newer one except a wave that stands down for it, none is cancelled, and each commit ends with a terragucci/apply success",
+      "says": "two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and applies nothing beside it, none is cancelled, and each commit ends with a terragucci/apply success",
       "verdict": "pass",
       "break": null
     },
