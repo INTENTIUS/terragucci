@@ -131,10 +131,17 @@ export function blastLines(report: Report, name: (root: string) => string = (r) 
   const unit = report.roots.some((r) => r.terragrunt !== undefined);
   const what = unit ? "unit" : "root";
   const reads = (n: number): string => (unit ? (n === 1 ? "depends on" : "depend on") : n === 1 ? "reads" : "read");
-  let t = `**Blast radius:** ${plural(b.roots.length, what)} ${b.roots.length === 1 ? "changes" : "change"} (${b.roots.slice(0, 10).map(code).join(", ")}${b.roots.length > 10 ? `, and ${b.roots.length - 10} more` : ""}), and ${plural(b.downstream.length, what)} downstream ${reads(b.downstream.length)} ${unit ? "them" : "their state"}:\n\n`;
+  // A plain root that waves.after puts after another follows it without reading its state.
+  const after = new Map(unit ? [] : report.roots.filter((r) => r.dependencies?.length).map((r) => [r.path, new Set(r.dependencies)]));
+  const follows = (d: { root: string; reads: string[] }): string[] => d.reads.filter((u) => after.get(d.root)?.has(u) && !(report.roots.find((r) => r.path === d.root)?.reads ?? []).some((x) => x.upstream === u));
+  const ordered = b.downstream.some((d) => follows(d).length > 0);
+  let t = `**Blast radius:** ${plural(b.roots.length, what)} ${b.roots.length === 1 ? "changes" : "change"} (${b.roots.slice(0, 10).map(code).join(", ")}${b.roots.length > 10 ? `, and ${b.roots.length - 10} more` : ""}), and ${plural(b.downstream.length, what)} downstream ${reads(b.downstream.length)} ${unit ? "them" : ordered ? `their state or ${b.downstream.length === 1 ? "applies" : "apply"} after them` : "their state"}:\n\n`;
   for (const d of b.downstream.slice(0, BLAST_LISTED)) {
     const who = d.planned ? name(d.root) : code(d.root);
-    t += `- ${who}${d.wave !== undefined ? ` (wave ${d.wave})` : ""} ${reads(1)} ${d.reads.map(code).join(", ")}${d.planned ? "" : "; not planned in this run"}\n`;
+    const later = follows(d);
+    const read = d.reads.filter((u) => !later.includes(u));
+    const how = [...(read.length ? [`${reads(1)} ${read.map(code).join(", ")}`] : []), ...(later.length ? [`applies after ${later.map(code).join(", ")}`] : [])].join(" and ");
+    t += `- ${who}${d.wave !== undefined ? ` (wave ${d.wave})` : ""} ${how}${d.planned ? "" : "; not planned in this run"}\n`;
   }
   if (b.downstream.length > BLAST_LISTED) t += `- and ${b.downstream.length - BLAST_LISTED} more in the report's JSON\n`;
   return t;

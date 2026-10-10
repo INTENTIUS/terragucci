@@ -376,8 +376,11 @@ export interface ProjectSettings {
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
   locks?: Locks;
-  /** `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots or units spread across (GitHub and Forgejo). */
-  waves?: { canary?: string[]; jobs?: number };
+  /**
+   * `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots or units spread across (GitHub and Forgejo).
+   * `after`: plain roots only, for a root or glob the roots or globs it applies after, beside the order its `terraform_remote_state` reads give.
+   */
+  waves?: { canary?: string[]; jobs?: number; after?: Record<string, string[]> };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
   /**
@@ -763,6 +766,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
     else {
       stringList(s.waves.canary, `${where}.waves.canary`, problems);
+      const after = s.waves.after;
+      if (after !== undefined) {
+        if (!isObject(after)) problems.push(`${where}.waves.after must map a root or glob to the roots or globs it applies after`);
+        else for (const [k, v] of Object.entries(after)) {
+          if (!(Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x !== ""))) problems.push(`${where}.waves.after.${k} must be a list of roots or globs`);
+        }
+      }
       const jobs = s.waves.jobs;
       if (jobs !== undefined && !(Number.isInteger(jobs) && (jobs as number) >= 1)) problems.push(`${where}.waves.jobs must be a whole number of 1 or more`);
       else if (typeof jobs === "number" && jobs > 1) {

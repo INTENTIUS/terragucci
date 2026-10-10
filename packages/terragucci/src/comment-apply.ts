@@ -47,7 +47,7 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
-import { rootDependencies } from "./detect";
+import { rootOrder, type WavesAfter } from "./detect";
 import type { Fetch } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
 import { literalDependencies } from "./terragrunt";
@@ -91,6 +91,8 @@ export interface ApplyCommentOptions {
   wait?: (ms: number) => Promise<void>;
   /** A Terragrunt repo: the layers are its waves of units, and the locks are on the units a pull request reaches (reachedUnits). */
   terragrunt?: boolean;
+  /** `waves.after` of plain roots: a root it puts after a reached root is reached too. */
+  after?: WavesAfter;
   /** The decision made again once the apply lock is held (Forgejo): it does not repeat the note on a lock of every unit. */
   again?: boolean;
 }
@@ -258,16 +260,17 @@ const validBranch = (b: unknown): b is string => typeof b === "string" && BRANCH
 /**
  * The roots a change from `from` to `to` reaches: the roots whose files it
  * changes (chant's path rules, as the plan stage reads them), and every root
- * that reads the state of one of those, followed through. Every root when
+ * that reads the state of one of those or that `waves.after` puts after one,
+ * followed through. Every root when
  * git cannot diff the range.
  */
-export function reachedRoots(repo: string, git: Git, from: string, to: string, layers: string[][]): string[] {
+export function reachedRoots(repo: string, git: Git, from: string, to: string, layers: string[][], after?: WavesAfter): string[] {
   const all = layers.flat();
   const diff = git(["diff", "--name-only", "--no-renames", `${from}...${to}`]);
   if (diff.status !== 0) return [...all].sort();
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   const selected = new Set(changedRoots(repo, Object.fromEntries(all.map((r) => [r, { dir: r }])), files));
-  const deps = rootDependencies(repo, all);
+  const deps = rootOrder(repo, all, after);
   for (let grew = true; grew; ) {
     grew = false;
     for (const [root, reads] of deps) {
@@ -424,7 +427,7 @@ async function openHead(i: OpenInput): Promise<OpenHead | ApplyCommentDecision> 
  */
 async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[]; every?: string } | ApplyCommentDecision> {
   const repo = i.repo ?? process.cwd();
-  const reach = i.terragrunt ? reachedUnits(i.git, h.remote, h.sha, i.layers) : { units: reachedRoots(repo, i.git, h.remote, h.sha, i.layers) };
+  const reach = i.terragrunt ? reachedUnits(i.git, h.remote, h.sha, i.layers) : { units: reachedRoots(repo, i.git, h.remote, h.sha, i.layers, i.after) };
   const roots = reach.units;
   let locked;
   try {
@@ -561,7 +564,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
       }
       return stop(`pull request ${number} moved since this event; its next run locks the new head`);
     }
-    const reach = o.terragrunt ? reachedUnits(git, remote, sha, o.layers) : { units: reachedRoots(repoDir, git, remote, sha, o.layers) };
+    const reach = o.terragrunt ? reachedUnits(git, remote, sha, o.layers) : { units: reachedRoots(repoDir, git, remote, sha, o.layers, o.after) };
     const author = typeof pr?.user?.login === "string" && LOGIN.test(pr.user.login) ? pr.user.login : "its author";
     let locked;
     try {

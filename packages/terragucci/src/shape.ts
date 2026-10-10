@@ -22,7 +22,7 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { ATMOS_MARKER, ATMOS_WRITE, atmosEdges, atmosInstances, describeStacks, detectAtmos, instanceStates, instanceWaves, type AtmosInstance } from "./atmos";
 import { rootWorkspace, workspaceEnv, workspaceInit } from "./backend";
 import { ConfigError, type Binary, type ResolvedSettings } from "./config";
-import { applyLayers, detectBinary, findRootsWithReasons, rootDependencies, rootStates, type Detected, type RootReason, type StateAddress } from "./detect";
+import { applyLayers, detectBinary, explicitOrder, findRootsWithReasons, rootDependencies, rootOrder, rootStates, type Detected, type WavesAfter, type RootReason, type StateAddress } from "./detect";
 import { refusal, shapeProblems, type Feature, type ShapeKind } from "./refusals";
 import { terragruntStepsRefusal } from "./steps";
 import { detectTerragrunt, discoverUnits, unitWaves, type TerragruntDetection } from "./terragrunt";
@@ -77,6 +77,8 @@ export interface Shape {
   rootsInGit: boolean;
   /** A Terragrunt repo's detection: its marker and its explicit stacks. */
   terragrunt?: TerragruntDetection;
+  /** `waves.after`, for plain roots and a synth's: the order it adds to the reads. The other shapes refuse it. */
+  after?: WavesAfter;
   /** The roots, their waves and edges. Throws ConfigError when there is none. */
   discover(options?: DiscoverOptions): Promise<Discovered>;
   /** The binary the roots run when nothing names one: a version file, `.tofu` files in the code, the path. */
@@ -133,6 +135,7 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
   const kind: ShapeKind = atmos ? "atmos" : tg ? "terragrunt" : terramate ? "terramate" : synth ? "synth" : "roots";
   const reason = atmos ?? tg?.reason ?? terramate ?? (synth ? `synth: ${synth}` : "roots");
   const canary = settings.waves?.canary;
+  const plainAfter = (kind === "roots" || kind === "synth") && settings.waves?.after && Object.keys(settings.waves.after).length ? settings.waves.after : undefined;
   let instances: AtmosInstance[] | undefined;
 
   const sourceOf = (root: string): string => {
@@ -194,7 +197,11 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
     }
     const paths = roots.map((r) => r.root);
     const reads = rootDependencies(repo, paths);
-    return { roots, layers: applyLayers(repo, paths), reads, order: reads, notes: [] };
+    // waves.after adds order the reads do not give: a root applies after the roots it names, and plans when they change.
+    const after = plainAfter;
+    const order = after ? rootOrder(repo, paths, after) : reads;
+    const explicit = explicitOrder(after, paths);
+    return { roots, layers: applyLayers(repo, paths, after), reads, order, notes: explicit.size ? [`waves.after orders ${[...explicit].map(([r, ups]) => `${r} after ${[...ups].sort().join(", ")}`).join("; ")}`] : [] };
   };
 
   const binary = (roots: readonly string[] = []): Detected<Binary> => {
@@ -235,6 +242,7 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
     rootsInGit: kind !== "synth" && kind !== "atmos",
     ...(kind === "atmos" ? { prepare: ATMOS_WRITE } : kind === "terramate" ? { prepare: TERRAMATE_GENERATE } : synth && kind === "synth" ? { prepare: synth } : {}),
     ...(tg && kind === "terragrunt" ? { terragrunt: tg } : {}),
+    ...(plainAfter ? { after: plainAfter } : {}),
     discover,
     binary,
     rootEnv: (root, env) => workspaceEnv(env, join(repo, root)),

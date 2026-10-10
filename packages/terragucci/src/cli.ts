@@ -79,7 +79,7 @@ import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
-import { detectForge, findRoots } from "./detect";
+import { detectForge, findRoots, type WavesAfter } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { terramateWrite } from "./terramate";
 import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
@@ -171,6 +171,16 @@ init, reconcile, plan, stage, rollout, respond and config check take --json: one
 Docs: https://intentius.io/terragucci/`;
 
 /** `--approval`: one of APPROVALS, or undefined when not given. */
+/** The checkout's `waves.after`, for plain roots; undefined when there is none or the config cannot be read (the plan job says why). */
+async function wavesAfterAt(cwd: string): Promise<WavesAfter | undefined> {
+  try {
+    const path = findConfig(cwd);
+    return path ? detectShape(cwd, resolveRepo(await loadConfig(path))).after : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function approvalFlag(v: string | undefined): Approval | undefined {
   if (v !== undefined && !(APPROVALS as readonly string[]).includes(v)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
   return v as Approval | undefined;
@@ -579,10 +589,12 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("comment-apply's --forge is github, forgejo or gitlab");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment-apply's --when is merge or pull-request");
         const requires = requiresOf(str(flags, "requires"), "comment-apply");
+        // waves.after: a root it puts after a root the change reaches is locked with it.
+        const after = flags.terragrunt === true ? undefined : await wavesAfterAt(cwd);
         if (forge === "gitlab") {
           // GitLab: the mr-apply job of the pipeline the comments job started; the merge request, the note and the head come from its variables, read again from the API.
           if (when !== "pull-request") throw new ConfigError("comment-apply --forge gitlab is apply before merge's: pass --when pull-request");
-          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
           writeDecision(resolve(cwd, out), decision);
           if (decision.fail) {
             console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -591,7 +603,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
           return 0;
         }
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
+        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
         writeDecision(resolve(cwd, out), decision);
         if (decision.fail) {
           console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
