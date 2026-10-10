@@ -1,7 +1,7 @@
 ---
 title: Turn on drift checks
 description: Plan every root on a schedule and get a grouped report of what changed outside Terraform.
-claims: [drift, drift-overdue, drift-close, respond-drift, comment-plan, waves, apply-branches-drift]
+claims: [drift, cdf-drift, drift-overdue, drift-close, respond-drift, comment-plan, waves, apply-branches-drift]
 prompt: |
   Read https://intentius.io/terragucci/guides/turn-on-drift-checks/.
   Add a `drift:` cron to terragucci.yml, run `npx terragucci config check --json`
@@ -71,7 +71,7 @@ A scheduled `tf-drift` run that plans every root, and one issue that groups what
 
 4. Wait for the first run, or start one.
 
-   `terragucci stage tf-drift` plans each root with `-refresh-only`, comparing state with real objects. Only an object changed or deleted outside Terraform counts as drift, and a merged but unapplied change does not.
+   `terragucci stage tf-drift` plans each root with `-refresh-only`, comparing state with real objects. Only an object changed or deleted outside Terraform counts as drift, and a merged but unapplied change does not. A [choudoufu](/terragucci/concepts/glossary/#choudoufu) root under live resource markers plans in full instead ([below](#live-roots)).
 
 5. Read the issue.
 
@@ -133,6 +133,18 @@ apply.branches: envs/prod/app plans from release at 3f9a1c2e, the branch that ap
 ```
 
 A provider, backend or version the branch sets differently is the one the check uses, so a difference between the two branches is never reported as drift. A root whose branch cannot be fetched fails its check with the reason; it is never checked against the default branch instead. In a Terragrunt repo, a branch's units plan with one `run --all` in that branch's checkout.
+
+## Live roots
+
+A choudoufu root under live resource markers keeps no state to refresh: every plan of it reads the live system, and choudoufu refuses `-refresh-only` there. `tf-drift` plans such a root in full, and each change the plan would make is drift, read from the live side:
+
+| The plan would | The issue says |
+|---|---|
+| change an attribute | the attribute changed |
+| create a resource | it no longer exists |
+| destroy a resource | it exists outside the code |
+
+A change merged to the default branch but not applied yet also shows here, since the plan cannot tell it from a change made outside choudoufu. The rest of the drift job is the same: one issue, `respond.drift` and attribution.
 
 ## Next
 

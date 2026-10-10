@@ -1,0 +1,2 @@
+generate:
+  backend: { s3: { tags: { a: null } } }

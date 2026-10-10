@@ -1,0 +1,4 @@
+defaults:
+  url: https://forgejo.example.com/acme/infra
+projects:
+  github.com/acme/infra: {}

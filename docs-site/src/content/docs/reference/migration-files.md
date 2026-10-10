@@ -47,10 +47,51 @@ backends:
 | Key | Holds |
 |---|---|
 | `backends[].root` | a root whose backend block, in the same change, names the new backend |
-| `backends[].from.backend` | `s3` or `local`: the backend the state is in now |
+| `backends[].from.backend` | where the state is now: `s3`, `local`, `remote`, `cloud` or `file` |
 | `backends[].from.config` | that backend's settings, as its block gave them; for `s3`, `bucket` and `key` at least |
 
-The job reads the state through the root with the old backend in an override file and writes it unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+For `s3` and `local`, the job reads the state through the root with the old backend in an override file. It writes the state unchanged to the backend the root's code names. The new backend must hold no state for the root. The old state stays where it was; delete it once the move is verified.
+
+### Workspaces
+
+`remote` and `cloud` read a workspace's current state version over the TFE API, the protocol the `remote` backend and the `cloud` block use. HCP Terraform, Terraform Enterprise, Scalr, OTF and env zero's backend serve it.
+
+```yaml
+backends:
+  - root: envs/dev/platform
+    from:
+      backend: cloud
+      config:
+        hostname: app.terraform.io
+        organization: acme
+        workspaces:
+          name: platform-dev
+```
+
+| Key | Holds |
+|---|---|
+| `hostname` | the API's host; default `app.terraform.io`. The job finds the API through `https://<hostname>/.well-known/terraform.json` |
+| `organization` | the organization; for env zero, `<organization id>.<project id>` |
+| `workspaces.name` | the one workspace whose state moves; `prefix` and `tags` are refused |
+
+The token is the one Terraform and OpenTofu read for the host: `TF_TOKEN_<host>`, dots as `_` and dashes as `__` (`TF_TOKEN_app_terraform_io`), else `~/.terraform.d/credentials.tfrc.json`. A `token` key in the file is refused. Give the plan and apply jobs the variable as a CI secret.
+
+The digest covers the state version id (`sv-...`) and the state's digest. While it writes, the job holds the workspace's lock, checks that the current version is still the one approved, and unlocks it after. A workspace locked by someone else stops the move. The workspace keeps its versions.
+
+### State files
+
+`file` reads a state file the job can see, for state exported from a platform with no TFE API:
+
+```yaml
+backends:
+  - root: envs/dev/platform
+    from:
+      backend: file
+      config:
+        path: exported/platform.tfstate
+```
+
+`path` is relative to the repo, or absolute. The file must be a state of format version 4 with a lineage, a serial and resources. The digest covers its contents, so a file changed after the approval is refused. State holds secrets: put the file in place in the job, not in git.
 
 ## Revert
 

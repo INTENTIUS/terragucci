@@ -1,0 +1,2917 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/terragucci.schema.json",
+  "title": "terragucci.yml",
+  "description": "One repo's settings, or a control repo's defaults and projects. https://intentius.io/terragucci/reference/config/",
+  "type": [
+    "object",
+    "null"
+  ],
+  "properties": {
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Globs of root directories. Detected when absent."
+    },
+    "binary": {
+      "enum": [
+        "terraform",
+        "tofu",
+        "choudoufu"
+      ],
+      "description": "The binary the pipeline runs. Detected when absent."
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$"
+          }
+        }
+      ],
+      "description": "The binary's release, or a map of root glob to release."
+    },
+    "generate": {
+      "$ref": "#/$defs/generate",
+      "description": "Backend, provider and version files terragucci generate writes for each plain root."
+    },
+    "forge": {
+      "enum": [
+        "github",
+        "gitlab",
+        "forgejo"
+      ],
+      "description": "The forge, for a host terragucci cannot name."
+    },
+    "url": {
+      "type": "string",
+      "description": "Where the project lives, for a forge not on https or the default port."
+    },
+    "gate": {
+      "enum": [
+        "always",
+        "on-destroy",
+        "never"
+      ],
+      "description": "When a wave waits for an approval."
+    },
+    "approval": {
+      "enum": [
+        "ledger",
+        "pr-review",
+        "sealed"
+      ],
+      "description": "What counts as a waiting wave's approval."
+    },
+    "apply": {
+      "type": "object",
+      "properties": {
+        "when": {
+          "enum": [
+            "merge",
+            "pull-request"
+          ]
+        },
+        "merge": {
+          "enum": [
+            "manual",
+            "auto"
+          ]
+        },
+        "merge_token_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "requires": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "approved",
+              "mergeable",
+              "undiverged",
+              "checks"
+            ]
+          }
+        },
+        "resume": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 60
+        },
+        "branches": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[^\\s,;=']+$"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "When a change applies."
+    },
+    "locks": {
+      "enum": [
+        "apply",
+        "plan"
+      ],
+      "description": "When a pull request takes its root locks."
+    },
+    "waves": {
+      "type": "object",
+      "properties": {
+        "canary": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "jobs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "after": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "description": "The canary wave, the jobs one wave spreads across, and extra apply order."
+    },
+    "drift": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "const": false
+        }
+      ],
+      "description": "A cron schedule for tf-drift, or false."
+    },
+    "synth": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "The command that writes the roots before any job reads them."
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "run": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "before": {
+            "enum": [
+              "init",
+              "plan",
+              "apply",
+              "drift"
+            ]
+          },
+          "after": {
+            "enum": [
+              "init",
+              "plan",
+              "apply",
+              "drift"
+            ]
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "on_failure": {
+            "enum": [
+              "fail",
+              "approve"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "run"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "before"
+            ]
+          },
+          {
+            "required": [
+              "after"
+            ]
+          }
+        ],
+        "if": {
+          "properties": {
+            "on_failure": {
+              "const": "approve"
+            }
+          },
+          "required": [
+            "on_failure"
+          ]
+        },
+        "then": {
+          "properties": {
+            "before": {
+              "enum": [
+                "init",
+                "plan"
+              ]
+            },
+            "after": {
+              "enum": [
+                "init",
+                "plan"
+              ]
+            }
+          }
+        }
+      },
+      "description": "Commands run before or after a root's init, plan, apply and drift."
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^[^\\s]+$",
+      "description": "The image every job runs in, built FROM terragucci's."
+    },
+    "notify": {
+      "type": "object",
+      "properties": {
+        "slack": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "teams": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "webhook": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "webhook_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "relay": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "dependentRequired": {
+        "webhook": [
+          "webhook_key"
+        ],
+        "webhook_key": [
+          "webhook"
+        ]
+      },
+      "if": {
+        "required": [
+          "relay"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "slack"
+            ]
+          },
+          {
+            "required": [
+              "teams"
+            ]
+          }
+        ]
+      },
+      "description": "The secrets holding Slack, Teams or webhook addresses, and the relay's name."
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "const": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key_secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "command": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "approve_above": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "Cost estimates per root in the plan note."
+    },
+    "comments": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "const": false
+        }
+      ],
+      "description": "GitLab only: the cron of the comments schedule, or false."
+    },
+    "rollouts": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        {
+          "const": false
+        }
+      ],
+      "description": "A cron schedule for the job that opens each rollout's next wave, or false."
+    },
+    "gitlab": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "enum": [
+            "unprotected",
+            "protected"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "GitLab only: how the project keeps its forge token."
+    },
+    "runtime": {
+      "enum": [
+        "forge"
+      ],
+      "description": "Where the stages run."
+    },
+    "reports": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "type": "string"
+        },
+        "endpoint": {},
+        "prefix": {},
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[^\\s?#]+$"
+        },
+        "role": {
+          "type": "string",
+          "pattern": "^arn:aws[\\w-]*:iam::\\d{12}:role/\\S+$"
+        }
+      },
+      "required": [
+        "bucket"
+      ],
+      "description": "A bucket for plan reports: s3://, gs:// or az://."
+    },
+    "token_env": {
+      "type": "string",
+      "description": "The environment variable holding the forge token."
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Environment variables every job gets. Values only, never secrets."
+    },
+    "runner": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[^\\s,]+$"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[^\\s,]+$"
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "group": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "labels": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[^\\s,]+$"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "group"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "not": {
+            "required": [
+              "group"
+            ]
+          },
+          "propertyNames": {
+            "enum": [
+              "default",
+              "plan",
+              "apply",
+              "drift"
+            ]
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[^\\s,]+$"
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\s,]+$"
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "group": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "labels": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\s,]+$"
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "group"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "description": "The runner each job runs on: a label, a list of labels, a GitHub runner group, or one per stage."
+    },
+    "pass": {
+      "type": "object",
+      "properties": {
+        "secrets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!(?:[Gg][Ii][Tt][Hh][Uu][Bb]_|[Gg][Ii][Tt][Ee][Aa]_|[Ff][Oo][Rr][Gg][Ee][Jj][Oo]_|[Tt][Gg]_|[Tt][Ee][Rr][Rr][Aa][Gg][Uu][Cc][Cc][Ii]_))(?!(?:TF_IN_AUTOMATION|TF_INPUT)$)[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "vars": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!(?:[Gg][Ii][Tt][Hh][Uu][Bb]_|[Gg][Ii][Tt][Ee][Aa]_|[Ff][Oo][Rr][Gg][Ee][Jj][Oo]_|[Tt][Gg]_|[Tt][Ee][Rr][Rr][Aa][Gg][Uu][Cc][Cc][Ii]_))(?!(?:TF_IN_AUTOMATION|TF_INPUT)$)[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Names of CI secrets and variables the plan, apply and drift jobs get."
+    },
+    "telemetry": {
+      "type": "object",
+      "properties": {
+        "headers_secret": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "trace_url": {
+          "type": "string",
+          "pattern": "^https?://\\S*\\{trace_id\\}\\S*$"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "The secret holding OTLP headers, and a trace link with {trace_id}."
+    },
+    "tips": {
+      "type": "boolean",
+      "description": "Tips in the plan note."
+    },
+    "modules": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "publish": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+              }
+            }
+          ]
+        },
+        "attest": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "require": {
+          "const": "attested"
+        },
+        "trusted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "pattern": "^(oci://[^/]+/.+|(git::)?(https?|ssh)://.+)$"
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ledger": {
+                "type": "string",
+                "pattern": "^(https?|ssh|file)://."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "key",
+              "ledger"
+            ]
+          }
+        },
+        "test": {
+          "type": "boolean"
+        },
+        "registry": {
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string"
+            },
+            "dir": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$))"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://[^/\\s?#]+/?$"
+            },
+            "namespace": {
+              "type": "string",
+              "pattern": "^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$"
+            },
+            "namespaces": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^[^/]"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$"
+              }
+            },
+            "system": {
+              "type": "string",
+              "pattern": "^[0-9a-z]{1,64}$"
+            },
+            "download": {
+              "enum": [
+                "tarball",
+                "git-tags",
+                "oci"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "url",
+            "namespace"
+          ],
+          "oneOf": [
+            {
+              "required": [
+                "bucket"
+              ]
+            },
+            {
+              "required": [
+                "dir"
+              ]
+            }
+          ],
+          "dependentRequired": {
+            "endpoint": [
+              "bucket"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Module publishing, attestation and the module registry."
+    },
+    "oidc": {
+      "type": "object",
+      "properties": {
+        "plan_role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apply_role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audience": {
+          "type": "string"
+        },
+        "roles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "plan": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "plan",
+              "apply"
+            ]
+          }
+        },
+        "gcp": {
+          "type": "object",
+          "properties": {
+            "workload_identity_provider": {
+              "type": "string",
+              "pattern": "^projects\\/[0-9]+\\/locations\\/global\\/workloadIdentityPools\\/[^/\\s]+\\/providers\\/[^/\\s]+$"
+            },
+            "plan_service_account": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$"
+            },
+            "apply_service_account": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$"
+            },
+            "token_url": {
+              "type": "string",
+              "pattern": "^https://[^\\s/]+/\\S*$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "workload_identity_provider",
+            "plan_service_account",
+            "apply_service_account"
+          ]
+        },
+        "azure": {
+          "type": "object",
+          "properties": {
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subscription_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "plan_client_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "apply_client_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "tenant_id",
+            "subscription_id",
+            "plan_client_id",
+            "apply_client_id"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "dependentRequired": {
+        "plan_role": [
+          "apply_role"
+        ],
+        "apply_role": [
+          "plan_role"
+        ]
+      },
+      "if": {
+        "required": [
+          "audience"
+        ],
+        "not": {
+          "required": [
+            "roles"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "plan_role",
+          "apply_role"
+        ]
+      },
+      "description": "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply."
+    },
+    "parallelism": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "How many roots of one dependency layer plan at once."
+    },
+    "terragrunt": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$"
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parallelism": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dependents": {
+          "enum": [
+            "follow",
+            "plan"
+          ]
+        },
+        "credentials": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "plan": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "plan",
+              "apply"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Terragrunt settings."
+    },
+    "atmos": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Atmos settings."
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "enum": [
+            "conftest",
+            "opa"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$))"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^git\\+(https?|file)://.*@"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$"
+        },
+        "input": {
+          "enum": [
+            "plan",
+            "hcp"
+          ]
+        },
+        "override": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Policy checks over each plan."
+    },
+    "atlantis_comments": {
+      "type": "boolean",
+      "description": "Read atlantis plan and atlantis apply comments as terragucci's."
+    },
+    "respond": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "enum": [
+            "summary"
+          ]
+        },
+        "wave-refused": {
+          "enum": [
+            "diff",
+            "off"
+          ]
+        },
+        "apply-failed": {
+          "enum": [
+            "triage",
+            "off"
+          ]
+        },
+        "drift": {
+          "enum": [
+            "pull-request",
+            "attribute",
+            "off"
+          ]
+        },
+        "tips": {
+          "enum": [
+            "pull-request",
+            "off"
+          ]
+        },
+        "fmt": {
+          "enum": [
+            "commit",
+            "off"
+          ]
+        },
+        "publish": {
+          "enum": [
+            "notes",
+            "off"
+          ]
+        },
+        "rollout": {
+          "enum": [
+            "next-wave",
+            "off"
+          ]
+        },
+        "version-bump": {
+          "enum": [
+            "off",
+            "suggest"
+          ]
+        },
+        "description": {
+          "enum": [
+            "off",
+            "check"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "The response to each pipeline event."
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "via": {
+          "enum": [
+            "forge"
+          ]
+        },
+        "token_env": {
+          "type": "string",
+          "minLength": 1
+        },
+        "comment": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "max_turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "max_turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "via",
+        "token_env"
+      ],
+      "description": "The coding agent behind /terragucci agent and the drift agent."
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string",
+          "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+        },
+        "key_secret": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "instructions": {
+          "type": "string",
+          "pattern": "^(?:\\./)?(?!/)[A-Za-z0-9_./-]+$"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "maxProperties": 0
+        },
+        {
+          "required": [
+            "agent"
+          ]
+        }
+      ],
+      "description": "A model's review of each pull request's intent against its plan."
+    },
+    "decide": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "enum": [
+            "laya",
+            "von",
+            "decider",
+            "jev"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[^/\\s]+"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![\\s\\S]*(?:^|[-_.])(?:latest|preview)$)"
+        },
+        "token_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "thresholds": {
+          "type": "object",
+          "properties": {
+            "noul": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "choice": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "score": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "backend"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "backend": {
+                "const": "jev"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "token_env"
+            ]
+          },
+          "else": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend": {
+                "const": "laya"
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "model"
+            ]
+          }
+        }
+      ],
+      "description": "The typed-decision service."
+    },
+    "audit_region": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[a-z]+)+-\\d+$",
+      "description": "The AWS region whose CloudTrail drift attribution reads."
+    },
+    "dashboards": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dir": {
+              "type": "string",
+              "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$))[^\\r\\n]+$"
+            },
+            "prometheus": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]+$"
+            },
+            "tempo": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]+$"
+            },
+            "folder": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]+$"
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]+$"
+            },
+            "drift_age": {
+              "type": "string",
+              "pattern": "^(\\d+(ms|s|m|h|d|w|y))+$"
+            },
+            "wave_wait": {
+              "type": "string",
+              "pattern": "^(\\d+(ms|s|m|h|d|w|y))+$"
+            },
+            "schedule": {
+              "type": "string",
+              "pattern": "^(\\d+(ms|s|m|h|d|w|y))+$"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "Dashboards and alert rules written next to the pipeline."
+    },
+    "own_jobs": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$)).*\\.ya?ml$"
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1
+          }
+        }
+      ],
+      "description": "Jobs of your own, in the forge's syntax, or the path of a YAML file holding them."
+    },
+    "ephemeral": {
+      "type": "object",
+      "properties": {
+        "roots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\s,;=']+$"
+          }
+        },
+        "ttl": {
+          "type": "string",
+          "pattern": "^[1-9]\\d*[mhd]$"
+        },
+        "sweep": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 60
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "roots"
+      ],
+      "description": "Roots each pull request gets a copy of."
+    },
+    "defaults": {
+      "$ref": "#/$defs/project",
+      "not": {
+        "required": [
+          "url"
+        ]
+      },
+      "description": "Settings every project takes, under its own."
+    },
+    "projects": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?:https?://)?[^/]+(?:/[^/]+){2,}/*$"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/project"
+          }
+        ]
+      },
+      "description": "<host>/<owner>/<name> to that project's settings."
+    }
+  },
+  "additionalProperties": false,
+  "dependentRequired": {
+    "defaults": [
+      "projects"
+    ]
+  },
+  "if": {
+    "required": [
+      "projects"
+    ]
+  },
+  "then": {
+    "propertyNames": {
+      "enum": [
+        "defaults",
+        "projects"
+      ]
+    }
+  },
+  "$defs": {
+    "project": {
+      "type": "object",
+      "properties": {
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Globs of root directories. Detected when absent."
+        },
+        "binary": {
+          "enum": [
+            "terraform",
+            "tofu",
+            "choudoufu"
+          ],
+          "description": "The binary the pipeline runs. Detected when absent."
+        },
+        "version": {
+          "type": "string",
+          "description": "The binary's release."
+        },
+        "generate": {
+          "$ref": "#/$defs/generate",
+          "description": "Backend, provider and version files terragucci generate writes for each plain root."
+        },
+        "forge": {
+          "enum": [
+            "github",
+            "gitlab",
+            "forgejo"
+          ],
+          "description": "The forge, for a host terragucci cannot name."
+        },
+        "url": {
+          "type": "string",
+          "description": "Where the project lives, for a forge not on https or the default port."
+        },
+        "gate": {
+          "enum": [
+            "always",
+            "on-destroy",
+            "never"
+          ],
+          "description": "When a wave waits for an approval."
+        },
+        "approval": {
+          "enum": [
+            "ledger",
+            "pr-review",
+            "sealed"
+          ],
+          "description": "What counts as a waiting wave's approval."
+        },
+        "apply": {
+          "type": "object",
+          "properties": {
+            "when": {
+              "enum": [
+                "merge",
+                "pull-request"
+              ]
+            },
+            "merge": {
+              "enum": [
+                "manual",
+                "auto"
+              ]
+            },
+            "merge_token_env": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "requires": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "approved",
+                  "mergeable",
+                  "undiverged",
+                  "checks"
+                ]
+              }
+            },
+            "resume": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 60
+            },
+            "branches": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\s,;=']+$"
+                }
+              }
+            }
+          },
+          "additionalProperties": false,
+          "description": "When a change applies."
+        },
+        "locks": {
+          "enum": [
+            "apply",
+            "plan"
+          ],
+          "description": "When a pull request takes its root locks."
+        },
+        "waves": {
+          "type": "object",
+          "properties": {
+            "canary": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "jobs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "after": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "description": "The canary wave, the jobs one wave spreads across, and extra apply order."
+        },
+        "drift": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ],
+          "description": "A cron schedule for tf-drift, or false."
+        },
+        "synth": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The command that writes the roots before any job reads them."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "run": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "before": {
+                "enum": [
+                  "init",
+                  "plan",
+                  "apply",
+                  "drift"
+                ]
+              },
+              "after": {
+                "enum": [
+                  "init",
+                  "plan",
+                  "apply",
+                  "drift"
+                ]
+              },
+              "roots": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "on_failure": {
+                "enum": [
+                  "fail",
+                  "approve"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "run"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "before"
+                ]
+              },
+              {
+                "required": [
+                  "after"
+                ]
+              }
+            ],
+            "if": {
+              "properties": {
+                "on_failure": {
+                  "const": "approve"
+                }
+              },
+              "required": [
+                "on_failure"
+              ]
+            },
+            "then": {
+              "properties": {
+                "before": {
+                  "enum": [
+                    "init",
+                    "plan"
+                  ]
+                },
+                "after": {
+                  "enum": [
+                    "init",
+                    "plan"
+                  ]
+                }
+              }
+            }
+          },
+          "description": "Commands run before or after a root's init, plan, apply and drift."
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[^\\s]+$",
+          "description": "The image every job runs in, built FROM terragucci's."
+        },
+        "notify": {
+          "type": "object",
+          "properties": {
+            "slack": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "teams": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "webhook": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "webhook_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "relay": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "dependentRequired": {
+            "webhook": [
+              "webhook_key"
+            ],
+            "webhook_key": [
+              "webhook"
+            ]
+          },
+          "if": {
+            "required": [
+              "relay"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "slack"
+                ]
+              },
+              {
+                "required": [
+                  "teams"
+                ]
+              }
+            ]
+          },
+          "description": "The secrets holding Slack, Teams or webhook addresses, and the relay's name."
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "const": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "command": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "approve_above": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "Cost estimates per root in the plan note."
+        },
+        "comments": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ],
+          "description": "GitLab only: the cron of the comments schedule, or false."
+        },
+        "rollouts": {
+          "const": false,
+          "description": "A single repo's key; a control repo runs terragucci respond rollout itself."
+        },
+        "gitlab": {
+          "type": "object",
+          "properties": {
+            "token": {
+              "enum": [
+                "unprotected",
+                "protected"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "description": "GitLab only: how the project keeps its forge token."
+        },
+        "runtime": {
+          "enum": [
+            "forge"
+          ],
+          "description": "Where the stages run."
+        },
+        "reports": {
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string"
+            },
+            "endpoint": {},
+            "prefix": {},
+            "url": {
+              "type": "string",
+              "pattern": "^https?://[^\\s?#]+$"
+            },
+            "role": {
+              "type": "string",
+              "pattern": "^arn:aws[\\w-]*:iam::\\d{12}:role/\\S+$"
+            }
+          },
+          "required": [
+            "bucket"
+          ],
+          "description": "A bucket for plan reports: s3://, gs:// or az://."
+        },
+        "token_env": {
+          "type": "string",
+          "description": "The environment variable holding the forge token."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables every job gets. Values only, never secrets."
+        },
+        "runner": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[^\\s,]+$"
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[^\\s,]+$"
+                  }
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "group": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    },
+                    "labels": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[^\\s,]+$"
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "group"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "not": {
+                "required": [
+                  "group"
+                ]
+              },
+              "propertyNames": {
+                "enum": [
+                  "default",
+                  "plan",
+                  "apply",
+                  "drift"
+                ]
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\s,]+$"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\s,]+$"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "group": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      "labels": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[^\\s,]+$"
+                        }
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "group"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "description": "The runner each job runs on: a label, a list of labels, a GitHub runner group, or one per stage."
+        },
+        "pass": {
+          "type": "object",
+          "properties": {
+            "secrets": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^(?!(?:[Gg][Ii][Tt][Hh][Uu][Bb]_|[Gg][Ii][Tt][Ee][Aa]_|[Ff][Oo][Rr][Gg][Ee][Jj][Oo]_|[Tt][Gg]_|[Tt][Ee][Rr][Rr][Aa][Gg][Uu][Cc][Cc][Ii]_))(?!(?:TF_IN_AUTOMATION|TF_INPUT)$)[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            },
+            "vars": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^(?!(?:[Gg][Ii][Tt][Hh][Uu][Bb]_|[Gg][Ii][Tt][Ee][Aa]_|[Ff][Oo][Rr][Gg][Ee][Jj][Oo]_|[Tt][Gg]_|[Tt][Ee][Rr][Rr][Aa][Gg][Uu][Cc][Cc][Ii]_))(?!(?:TF_IN_AUTOMATION|TF_INPUT)$)[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "description": "Names of CI secrets and variables the plan, apply and drift jobs get."
+        },
+        "telemetry": {
+          "type": "object",
+          "properties": {
+            "headers_secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "trace_url": {
+              "type": "string",
+              "pattern": "^https?://\\S*\\{trace_id\\}\\S*$"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "description": "The secret holding OTLP headers, and a trace link with {trace_id}."
+        },
+        "tips": {
+          "type": "boolean",
+          "description": "Tips in the plan note."
+        },
+        "modules": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "publish": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                  }
+                }
+              ]
+            },
+            "attest": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "require": {
+              "const": "attested"
+            },
+            "trusted": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "pattern": "^(oci://[^/]+/.+|(git::)?(https?|ssh)://.+)$"
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "ledger": {
+                    "type": "string",
+                    "pattern": "^(https?|ssh|file)://."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "source",
+                  "key",
+                  "ledger"
+                ]
+              }
+            },
+            "test": {
+              "type": "boolean"
+            },
+            "registry": {
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "type": "string"
+                },
+                "dir": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$))"
+                },
+                "endpoint": {
+                  "type": "string"
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string",
+                  "pattern": "^https://[^/\\s?#]+/?$"
+                },
+                "namespace": {
+                  "type": "string",
+                  "pattern": "^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$"
+                },
+                "namespaces": {
+                  "type": "object",
+                  "propertyNames": {
+                    "pattern": "^[^/]"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$"
+                  }
+                },
+                "system": {
+                  "type": "string",
+                  "pattern": "^[0-9a-z]{1,64}$"
+                },
+                "download": {
+                  "enum": [
+                    "tarball",
+                    "git-tags",
+                    "oci"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "url",
+                "namespace"
+              ],
+              "oneOf": [
+                {
+                  "required": [
+                    "bucket"
+                  ]
+                },
+                {
+                  "required": [
+                    "dir"
+                  ]
+                }
+              ],
+              "dependentRequired": {
+                "endpoint": [
+                  "bucket"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "description": "Module publishing, attestation and the module registry."
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "plan_role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "apply_role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "audience": {
+              "type": "string"
+            },
+            "roles": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "plan": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apply": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan",
+                  "apply"
+                ]
+              }
+            },
+            "gcp": {
+              "type": "object",
+              "properties": {
+                "workload_identity_provider": {
+                  "type": "string",
+                  "pattern": "^projects\\/[0-9]+\\/locations\\/global\\/workloadIdentityPools\\/[^/\\s]+\\/providers\\/[^/\\s]+$"
+                },
+                "plan_service_account": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+@[^@\\s]+$"
+                },
+                "apply_service_account": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+@[^@\\s]+$"
+                },
+                "token_url": {
+                  "type": "string",
+                  "pattern": "^https://[^\\s/]+/\\S*$"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "workload_identity_provider",
+                "plan_service_account",
+                "apply_service_account"
+              ]
+            },
+            "azure": {
+              "type": "object",
+              "properties": {
+                "tenant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subscription_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "plan_client_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "apply_client_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "audience": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tenant_id",
+                "subscription_id",
+                "plan_client_id",
+                "apply_client_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "dependentRequired": {
+            "plan_role": [
+              "apply_role"
+            ],
+            "apply_role": [
+              "plan_role"
+            ]
+          },
+          "if": {
+            "required": [
+              "audience"
+            ],
+            "not": {
+              "required": [
+                "roles"
+              ]
+            }
+          },
+          "then": {
+            "required": [
+              "plan_role",
+              "apply_role"
+            ]
+          },
+          "description": "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply."
+        },
+        "parallelism": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many roots of one dependency layer plan at once."
+        },
+        "terragrunt": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$"
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parallelism": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "dependents": {
+              "enum": [
+                "follow",
+                "plan"
+              ]
+            },
+            "credentials": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "plan": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apply": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan",
+                  "apply"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "description": "Terragrunt settings."
+        },
+        "atmos": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Atmos settings."
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "engine": {
+              "enum": [
+                "conftest",
+                "opa"
+              ]
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$))"
+            },
+            "source": {
+              "type": "string",
+              "pattern": "^git\\+(https?|file)://.*@"
+            },
+            "namespace": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$"
+            },
+            "input": {
+              "enum": [
+                "plan",
+                "hcp"
+              ]
+            },
+            "override": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "description": "Policy checks over each plan."
+        },
+        "atlantis_comments": {
+          "type": "boolean",
+          "description": "Read atlantis plan and atlantis apply comments as terragucci's."
+        },
+        "respond": {
+          "type": "object",
+          "properties": {
+            "plan": {
+              "enum": [
+                "summary"
+              ]
+            },
+            "wave-refused": {
+              "enum": [
+                "diff",
+                "off"
+              ]
+            },
+            "apply-failed": {
+              "enum": [
+                "triage",
+                "off"
+              ]
+            },
+            "drift": {
+              "enum": [
+                "pull-request",
+                "attribute",
+                "off"
+              ]
+            },
+            "tips": {
+              "enum": [
+                "pull-request",
+                "off"
+              ]
+            },
+            "fmt": {
+              "enum": [
+                "commit",
+                "off"
+              ]
+            },
+            "publish": {
+              "enum": [
+                "notes",
+                "off"
+              ]
+            },
+            "rollout": {
+              "enum": [
+                "next-wave",
+                "off"
+              ]
+            },
+            "version-bump": {
+              "enum": [
+                "off",
+                "suggest"
+              ]
+            },
+            "description": {
+              "enum": [
+                "off",
+                "check"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "description": "The response to each pipeline event."
+        },
+        "agent": {
+          "type": "object",
+          "properties": {
+            "via": {
+              "enum": [
+                "forge"
+              ]
+            },
+            "token_env": {
+              "type": "string",
+              "minLength": 1
+            },
+            "comment": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                    },
+                    "key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "max_turns": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "drift": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                    },
+                    "key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "max_turns": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "via",
+            "token_env"
+          ],
+          "description": "The coding agent behind /terragucci agent and the drift agent."
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "agent": {
+              "type": "boolean"
+            },
+            "command": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+            },
+            "key_secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "instructions": {
+              "type": "string",
+              "pattern": "^(?:\\./)?(?!/)[A-Za-z0-9_./-]+$"
+            },
+            "timeout": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "maxProperties": 0
+            },
+            {
+              "required": [
+                "agent"
+              ]
+            }
+          ],
+          "description": "A model's review of each pull request's intent against its plan."
+        },
+        "decide": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "laya",
+                "von",
+                "decider",
+                "jev"
+              ]
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https?://[^/\\s]+"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?![\\s\\S]*(?:^|[-_.])(?:latest|preview)$)"
+            },
+            "token_env": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "thresholds": {
+              "type": "object",
+              "properties": {
+                "noul": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                },
+                "choice": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                },
+                "score": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "backend"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "backend": {
+                    "const": "jev"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "token_env"
+                ]
+              },
+              "else": {
+                "required": [
+                  "url"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "backend": {
+                    "const": "laya"
+                  }
+                }
+              },
+              "else": {
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          ],
+          "description": "The typed-decision service."
+        },
+        "audit_region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(-[a-z]+)+-\\d+$",
+          "description": "The AWS region whose CloudTrail drift attribution reads."
+        },
+        "dashboards": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "dir": {
+                  "type": "string",
+                  "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$))[^\\r\\n]+$"
+                },
+                "prometheus": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]+$"
+                },
+                "tempo": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]+$"
+                },
+                "folder": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]+$"
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]+$"
+                },
+                "drift_age": {
+                  "type": "string",
+                  "pattern": "^(\\d+(ms|s|m|h|d|w|y))+$"
+                },
+                "wave_wait": {
+                  "type": "string",
+                  "pattern": "^(\\d+(ms|s|m|h|d|w|y))+$"
+                },
+                "schedule": {
+                  "type": "string",
+                  "pattern": "^(\\d+(ms|s|m|h|d|w|y))+$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "Dashboards and alert rules written next to the pipeline."
+        },
+        "own_jobs": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!/)(?!(?:.*/)?\\.\\.(?:/|$)).*\\.ya?ml$"
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "minProperties": 1
+              }
+            }
+          ],
+          "description": "Jobs of your own, in the forge's syntax, or the path of a YAML file holding them."
+        },
+        "ephemeral": {
+          "type": "object",
+          "properties": {
+            "roots": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^[^\\s,;=']+$"
+              }
+            },
+            "ttl": {
+              "type": "string",
+              "pattern": "^[1-9]\\d*[mhd]$"
+            },
+            "sweep": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 60
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "roots"
+          ],
+          "description": "Roots each pull request gets a copy of."
+        }
+      },
+      "additionalProperties": false
+    },
+    "generate": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 1,
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/hcl_value"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "providers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)?$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/hcl_value"
+                    }
+                  ]
+                },
+                "not": {
+                  "required": [
+                    "alias"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required_version": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "disable_init": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dirs": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/generate_level"
+              }
+            ]
+          }
+        },
+        "roots": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/generate_level"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "generate_level": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 1,
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/hcl_value"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "providers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)?$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/hcl_value"
+                    }
+                  ]
+                },
+                "not": {
+                  "required": [
+                    "alias"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required_version": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "disable_init": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "hcl_value": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hcl_value"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/hcl_value"
+          }
+        }
+      ]
+    }
+  }
+}

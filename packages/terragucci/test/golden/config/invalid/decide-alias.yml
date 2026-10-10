@@ -1,0 +1,4 @@
+decide:
+  backend: von
+  url: http://von
+  model: von-latest

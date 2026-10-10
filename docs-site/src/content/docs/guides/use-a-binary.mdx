@@ -1,7 +1,7 @@
 ---
 title: Choose choudoufu, Terraform, OpenTofu or Terragrunt
 description: Pick the binary your roots run with, and see what each one gives the pipeline.
-claims: [check-diagnostics, cdf-rows-overlap, cdf-rows-wait, cdf-rows-takeover, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, cdf-migrate, cdf-adopt, pinned-install, root-pins, tf-terraform, tg-terraform, tg-root-pins, tg-choudoufu]
+claims: [check-diagnostics, cdf-drift, cdf-rows-overlap, cdf-rows-wait, cdf-rows-takeover, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, root-pins, tf-terraform, tg-terraform, tg-root-pins, tg-choudoufu, cdf-migrate, cdf-adopt]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-a-binary/.
   Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
@@ -14,7 +14,7 @@ import TabFromHash from '../../../components/TabFromHash.astro';
 
 ## Binary features
 
-Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu, the OpenTofu fork from the team behind terragucci, adds [eleven features](#choudoufu) on top of OpenTofu's.
+Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu, the OpenTofu fork from the team behind terragucci, adds [twelve features](#choudoufu) on top of OpenTofu's.
 
 | | choudoufu | Terraform | OpenTofu | Terragrunt |
 |---|---|---|---|---|
@@ -70,10 +70,11 @@ On [choudoufu](https://github.com/INTENTIUS/choudoufu), the stages add:
 | One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-and-staleness/#one-backend-for-all-your-estates) |
 | A resource moved to another estate by rewriting its tags, or a state adopted into an estate, through a migration approved by digest | [Estates](/terragucci/guides/move-resources-between-roots/#estates) |
 | A root that reads another estate's outputs through `data "terraform_estate_outputs"` applies after the root whose `live` block owns that estate | the layers `init --dry-run` counts, and each wave's apply order |
+| Drift checks on roots under live resource markers: each plan reads the live system, so `tf-drift` plans the root in full and reports what the plan would change back as drift | [the drift issue](/terragucci/guides/turn-on-drift-checks/#live-roots) |
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
-A `live-check` refusal fails `tf-check` and names its rule in the log. `drift` is a config error when a root keeps its resources under live resource markers. A drift check is a refresh-only plan, which choudoufu refuses there; each plan of such a root already reads the live system. terragucci does not read a root's `required_version` as a choudoufu release.
+A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
 </TabItem>
 <TabItem label="Terraform">
 
