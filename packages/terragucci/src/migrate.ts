@@ -1291,7 +1291,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
   if (!plan.estate) for (const r of result.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
   if (result.status !== "applied") {
-    log(`${label}: ${result.error}; the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`);
+    log(`${label}: ${result.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);
     return { code: EXIT.failed, record: result };
   }
   log(`${label} applied`);

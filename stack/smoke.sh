@@ -14534,6 +14534,17 @@ cdf_migrate_planned() { # work bundle layers
   jq '[.roots[].changes[]?] | length' "$1/wave/terragucci-report/report.json" 2>/dev/null || echo failed
 }
 
+# The resources a plain choudoufu plan of a root in $1/wave would create, for
+# a log line when a claim's next plan is not clean (tf-plan refuses to plan
+# while a migration's last run failed).
+cdf_root_creates() { # work root
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$1/wave:/repo" -w "/repo/$2" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 -e TF_IN_AUTOMATION=1 \
+    --entrypoint sh "$(image_tag choudoufu)" -c 'choudoufu init -input=false -no-color >/dev/null 2>&1; choudoufu plan -input=false -no-color 2>&1' 2>/dev/null \
+    | sed -n 's/^  # \(.*\) will be created$/\1/p' | tr '\n' ' '
+  clean_mounted "$1/wave" "$(image_tag choudoufu)"
+}
+
 claim_cdf_migrate() {
   # Estate <stamp>-mono (root mono) holds the queues jobs and keep, applied
   # by wave 1; root team is estate <stamp>-team, with no resources. A commit
@@ -14555,7 +14566,7 @@ claim_cdf_migrate() {
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/terragucci.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t);' 'void 0;' \
+    break_bundle "$work/terragucci.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log);' 'void 0;' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     bundle="$work/terragucci.mjs"
   fi
@@ -14593,7 +14604,7 @@ claim_cdf_migrate() {
     got="$(cdf_queue_estate "$prefix-keep")"
     [ "$got" = "$mono" ] || { log "the keep queue carries tofu-estate '$got', not $mono"; rc=1; }
     got="$(cdf_migrate_planned "$work" "$bundle" mono,team)"
-    [ "$got" = 0 ] || { log "the next plan of mono and team shows $got change(s), not none: $(grep -E 'will be created|will be destroyed' "$work/plan-after.log" | head -4)"; rc=1; }
+    [ "$got" = 0 ] || { log "the next plan of mono and team shows $got change(s), not none; a plan of team would create: $(cdf_root_creates "$work" team)"; rc=1; }
     done="$(git --git-dir="$work/origin.git" show "chant/lifecycle:_gates/tf-migrate/done.jsonl" 2>/dev/null | grep '"gate":"carve-jobs"' | tail -1)"
     jq -c '{result, change, retags}' <<<"$done" >&2 || true
     [ "$(jq -r '[.result, .change, .retags[0].address, .retags[0].from_estate, .retags[0].to_estate] | join(" ")' <<<"$done" 2>/dev/null)" = "applied retag aws_sqs_queue.jobs $mono $team" ] \
@@ -14666,7 +14677,7 @@ claim_cdf_adopt() {
       [ "$(cdf_queue_estate "$prefix-$got")" = "$estate" ] || { log "queue $got carries tofu-estate '$(cdf_queue_estate "$prefix-$got")', not $estate"; rc=1; }
     done
     got="$(cdf_migrate_planned "$work" "$bundle" app)"
-    [ "$got" = 0 ] || { log "the next plan of app shows $got change(s), not none: $(grep -E 'will be created' "$work/plan-after.log" | head -4)"; rc=1; }
+    [ "$got" = 0 ] || { log "the next plan of app shows $got change(s), not none; a plan of app would create: $(cdf_root_creates "$work" app)"; rc=1; }
     [ "$(current_version "$bucket" app.tfstate)" = "$was" ] || { log "app.tfstate is not the version it was"; rc=1; }
     record="$(cat "$work/wave/terragucci-report/migrations/adopt-app.json" 2>/dev/null)"
     jq -c '{status, change, roots: [.roots[] | {root, location, source}]}' <<<"$record" >&2 || true

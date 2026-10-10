@@ -133,10 +133,11 @@ async function liveMv(exec: BinaryExec, binary: string, place: Place, fromEstate
 }
 
 /** Rewrite one resource's markers, and check the binary says it wrote them on the resource the plan found. */
-async function writeRetag(exec: BinaryExec, binary: string, place: Place, t: Retag): Promise<void> {
+async function writeRetag(exec: BinaryExec, binary: string, place: Place, t: Retag, log: (line: string) => void): Promise<void> {
   const doc = await liveMv(exec, binary, place, t.from_estate, t.address, false);
   if (doc.written !== true) throw new ConfigError(`live-mv wrote nothing on ${t.address}`);
   if (doc.resource?.live_id !== t.live_id) throw new ConfigError(`live-mv rewrote ${doc.resource?.live_id ?? "an unnamed resource"} for ${t.address}, not ${t.live_id}`);
+  log(`${t.address}: retagged from estate ${t.from_estate} to estate ${t.to_estate}`);
 }
 
 // ── live-import ──────────────────────────────────────────────────────────
@@ -361,12 +362,11 @@ export async function applyEstateMigration(plan: PlannedMigration, options: Migr
       const done: string[] = [];
       for (const t of e.retags) {
         try {
-          await writeRetag(exec, options.binary, plan.places.get(t.to)!, t);
+          await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log);
         } catch (err) {
           return { ...record, status: "failed", error: `${(err as Error).message}${done.length ? `; already retagged: ${done.join(", ")}` : "; nothing was retagged"}` };
         }
         done.push(t.address);
-        log(`${t.address}: retagged from estate ${t.from_estate} to estate ${t.to_estate}`);
       }
     } else {
       const moved: string[] = [];
