@@ -30,7 +30,7 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
-import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
+import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
@@ -467,7 +467,7 @@ type Unpreviewed = PreviewBlock & { wave: number };
  * earlier layer of the run plans on that plan's outputs (../tg-preview.ts),
  * when every value it reads is known. One that reads a value known only once
  * its upstream applies is not planned: it is named with the value and the
- * wave that settles it. With `dependents: plan`, the dependents of the
+ * wave that settles it. With `dependents: plan` (the default), the dependents of the
  * changed units are previewed the same way, in their own layers, marked
  * provisional, so no digest or group of real plans takes them.
  *
@@ -1375,9 +1375,10 @@ async function runTerragruntStage(
   // Each unit's plan sends its spans here through the TG_TF_PATH wrapper, for its per-resource timings.
   await observer.collectSpans(log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
-  // Each layer: the units it plans, and with dependents: plan the dependents it previews.
+  // Each layer: the units it plans, and the dependents it previews (dependents: plan, the default; follow opts out).
   const selected = new Set(waves.flat());
-  const previewing = new Set(!drift && settings.terragrunt?.dependents === "plan" ? preview : []);
+  // shape: Terragrunt's dependents default
+  const previewing = new Set(!drift && (settings.terragrunt?.dependents ?? DEFAULT_DEPENDENTS) === "plan" ? preview : []);
   const layers = full
     .map((w, i) => ({ number: i + 1, roots: w.filter((u) => selected.has(u)), preview: w.filter((u) => previewing.has(u)) }))
     .filter((l) => l.roots.length > 0 || l.preview.length > 0);

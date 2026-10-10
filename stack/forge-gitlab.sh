@@ -11,9 +11,9 @@ PIPELINE_FILE=.gitlab/terragucci.yml
 
 forge_load() {
   if [ -z "${TERRAGUCCI_GITLAB_TOKEN:-}" ]; then
-    [ -f "$HERE/.state/gitlab.env" ] || fail "no stack/.state/gitlab.env; run 'just stack-up gitlab' first"
+    [ -f "${TG_STATE:-$HERE/.state}/gitlab.env" ] || fail "no stack/.state/gitlab.env; run 'just stack-up gitlab' first"
     # shellcheck disable=SC1091
-    . "$HERE/.state/gitlab.env"
+    . "${TG_STATE:-$HERE/.state}/gitlab.env"
   fi
   URL="$TERRAGUCCI_GITLAB_URL"; TOKEN="$TERRAGUCCI_GITLAB_TOKEN"; USER="$TERRAGUCCI_GITLAB_USER"; FLOCI="$TERRAGUCCI_FLOCI_URL"
   REPO="$TERRAGUCCI_GITLAB_REPO"

@@ -157,6 +157,12 @@ const DEVELOPER = 30;
  * when the job applies an open merge request before it merges.
  */
 export async function gitlabReviews(f: ForgeCalls, sha: string, env: NodeJS.ProcessEnv = {}): Promise<{ pr: ReviewedPull; by: string[]; changes: string[]; note?: NoteWaves; own?: string } | undefined> {
+  const mr = await gitlabMergeRequestOf(f, sha, env);
+  return mr ? gitlabApprovals(f, mr) : undefined;
+}
+
+/** The merge request a wave answers to on GitLab: `TG_PR`'s when the job names one, else the merged one whose merge (or squash) commit is `sha`. */
+export async function gitlabMergeRequestOf(f: ForgeCalls, sha: string, env: NodeJS.ProcessEnv = {}): Promise<any | undefined> {
   const named = (env.TG_PR ?? "").trim();
   let mr: any;
   if (/^\d+$/.test(named)) mr = await f.get(`${f.repo}/merge_requests/${named}`);
@@ -164,8 +170,7 @@ export async function gitlabReviews(f: ForgeCalls, sha: string, env: NodeJS.Proc
     const list = await f.get(`${f.repo}/repository/commits/${sha}/merge_requests`);
     mr = (Array.isArray(list) ? list : []).find((m: any) => m?.state === "merged" && (m?.merge_commit_sha === sha || m?.squash_commit_sha === sha));
   }
-  if (!mr || !Number.isInteger(mr.iid)) return undefined;
-  return gitlabApprovals(f, mr);
+  return mr && Number.isInteger(mr.iid) ? mr : undefined;
 }
 
 /**
