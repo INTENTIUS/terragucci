@@ -13,6 +13,8 @@ packages/terragucci/src/envelope.ts       ALL
 packages/terragucci/src/forge.ts          ALL
 packages/terragucci/src/init.ts           ALL
 packages/terragucci/src/render.ts         ALL
+packages/terragucci/src/shape.ts          ALL
+packages/terragucci/src/refusals.ts       tg-refuse tg-zero-config cdktn-* atmos-* config-ts role-refused tg-generate generate
 packages/terragucci/src/images.ts         ALL
 packages/terragucci/src/image-digests.json ALL
 packages/terragucci/src/render-terragrunt.ts tg-* steward

@@ -22,8 +22,6 @@ import {
   BUILT_IN,
   PROJECT_FILE_KEYS,
   resolveRepo,
-  ROOTS_NOT_ATMOS,
-  ROOTS_NOT_TERRAGRUNT,
   responseTo,
   type Approval,
   type Binary,
@@ -31,8 +29,8 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { applyLayers, detectBinary, detectForge, detectVersion, driftRefusal, findRootsWithReasons, liveRoots, type RootReason } from "./detect";
-import { terragruntStepsRefusal } from "./steps";
+import { detectBinary, detectForge, detectVersion, driftRefusal, liveRoots, type RootReason } from "./detect";
+import { BINARY, detectShape, refuseProblems } from "./shape";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -44,8 +42,8 @@ import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, ty
 import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
-import { ATMOS_VERSION, ATMOS_WRITE, atmosInstances, describeStacks, detectAtmos, instanceWaves } from "./atmos";
-import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
+import { ATMOS_VERSION } from "./atmos";
+import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 
 export interface InitOptions {
@@ -153,14 +151,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const settings: ResolvedSettings = options.settings ?? resolveRepo(configPath ? await loadConfig(configPath) : {});
 
   const notes: string[] = [];
-  const detectedTg = detectTerragrunt(repo);
-  if (settings.terragrunt && !detectedTg) {
-    throw new ConfigError("terragucci.yml has a terragrunt block, but the repo has no root.hcl, terragrunt.hcl or terragrunt.stack.hcl");
-  }
-  const tgMode = detectedTg !== undefined;
-  const detectedAtmos = detectAtmos(repo);
-  if (settings.atmos && !detectedAtmos) throw new ConfigError("terragucci.yml has an atmos block, but the repo has no atmos.yaml at its root");
-  if (detectedAtmos && tgMode) throw new ConfigError(`the repo has ${detectedAtmos} and ${detectedTg!.reason}; terragucci runs an Atmos repo or a Terragrunt repo, not both`);
+  // The repo's shape decides everything below, and its refusals come first, as config check gives them.
+  const shape = detectShape(repo, settings);
+  refuseProblems(shape);
+  const tgMode = shape.kind === "terragrunt";
 
   // In Terragrunt mode the binary is what Terragrunt calls, and the units carry no .tf files to read it from.
   const detectedBinary = detectBinary(repo, []);
@@ -170,73 +164,44 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       ? { value: options.binary, reason: "--binary" }
       : detectedBinary;
 
-  let rootReasons: RootReason[];
-  let layers: string[][];
+  const found = await shape.discover({
+    binary: binary.value,
+    ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}),
+    ...(options.atmos ? { atmos: options.atmos } : {}),
+  });
+  notes.push(...found.notes);
+  const rootReasons: RootReason[] = found.roots;
+  const layers: string[][] = found.layers;
   let terragrunt: TerragruntFound | undefined;
   let atmos: AtmosFound | undefined;
-  if (detectedAtmos) {
-    // An instance is a root: the stacks say which, so the plain rule (a backend or a provider block) is off.
-    if (settings.roots) throw new ConfigError(ROOTS_NOT_ATMOS);
-    if (settings.synth) throw new ConfigError(`synth is for roots a command writes; an Atmos repo's jobs write its instances with ${ATMOS_WRITE}, so remove synth`);
-    const instances = atmosInstances(await describeStacks(repo, options.atmos ? { atmos: options.atmos } : {}));
-    if (instances.length === 0) throw new ConfigError(`found no Atmos instances (${detectedAtmos} turned Atmos mode on): atmos describe stacks lists no Terraform component that is neither abstract nor disabled`);
-    rootReasons = instances.map((i) => ({ root: i.path, reason: `atmos describe stacks: ${i.componentPath} in workspace ${i.workspace}` }));
-    layers = instanceWaves(instances, settings.waves?.canary);
-    atmos = { reason: detectedAtmos, version: settings.atmos?.version ?? ATMOS_VERSION };
-  } else if (detectedTg) {
-    // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
+  if (shape.kind === "atmos") {
+    atmos = { reason: shape.reason, version: settings.atmos?.version ?? ATMOS_VERSION };
+  } else if (shape.terragrunt) {
     const tgSettings = settings.terragrunt ?? {};
-    if (settings.roots) throw new ConfigError(ROOTS_NOT_TERRAGRUNT);
-    if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
-    const stepsRefused = terragruntStepsRefusal(settings.steps);
-    if (stepsRefused) throw new ConfigError(stepsRefused);
-    const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
-    notes.push(...found.notes);
-    if (found.units.length === 0) {
-      throw new ConfigError(`found no Terragrunt units (${detectedTg.reason} turned Terragrunt mode on): no directory outside catalog/ holds a terragrunt.hcl`);
-    }
-    if (detectedTg.stacks.length > 0) {
-      notes.push(`explicit stacks: ${detectedTg.stacks.join(", ")}; terragrunt stack generate wrote their units, and every job generates them again before discovery`);
-    }
-    rootReasons = found.units.map((u) => ({ root: u.path, reason: found.source === "terragrunt find" ? "terragrunt find" : "terragrunt.hcl" }));
-    try {
-      layers = unitWaves(found.units, settings.waves?.canary);
-    } catch (e) {
-      throw new ConfigError((e as Error).message);
+    if (shape.terragrunt.stacks.length > 0) {
+      notes.push(`explicit stacks: ${shape.terragrunt.stacks.join(", ")}; terragrunt stack generate wrote their units, and every job generates them again before discovery`);
     }
     const pinnedTg = pinnedTerragrunt(repo);
     terragrunt = {
-      reason: detectedTg.reason,
+      reason: shape.reason,
       version: tgSettings.version
         ? { value: tgSettings.version, reason: "terragucci.yml" }
         : pinnedTg
           ? { value: pinnedTg, reason: "terragrunt_version_constraint" }
           : { value: TOOL_VERSIONS.terragrunt, reason: "the image" },
       parallelism: parallelism(repo, tgSettings),
-      source: found.source,
-      stacks: detectedTg.stacks,
+      source: found.source ?? "terragrunt.hcl files",
+      stacks: shape.terragrunt.stacks,
     };
-  } else {
-    rootReasons = findRootsWithReasons(repo, settings.roots);
-    if (rootReasons.length === 0) {
-      throw new ConfigError(
-        (settings.roots
-          ? `no directory matches roots ${JSON.stringify(settings.roots)}`
-          : "found no roots: no directory has Terraform files with a backend or a provider block") +
-          // The pipeline names the roots init finds, so a synthesized root must be on disk when init runs.
-          (settings.synth ? `; run the synth command (${settings.synth}) first, then init` : ""),
-      );
-    }
-    layers = applyLayers(repo, rootReasons.map((r) => r.root));
   }
   const roots = rootReasons.map((r) => r.root);
-  // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
-  if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
+  // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu, and an Atmos instance's are its component's.
+  if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, shape.binary(roots));
 
   const noDrift = settings.drift && !tgMode ? driftRefusal(binary.value, liveRoots(repo, roots)) : undefined;
   if (noDrift) throw new ConfigError(noDrift);
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
-  const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
+  const pinned = tgMode || !BINARY[binary.value].releaseInRequiredVersion ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.
   const fileTool = tgMode ? undefined : pinnedTool(binary.value);
   const versionFile = fileTool ? join(repo, VERSION_FILES[fileTool]) : undefined;
@@ -294,7 +259,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       version: terragrunt.version.value,
       parallelism: terragrunt.parallelism.value,
       exclude: settings.terragrunt?.exclude ?? [],
-      ...(detectedTg && detectTerragrunt(repo)!.stacks.length > 0 ? { stacks: true } : {}),
+      ...(shape.terragrunt && shape.terragrunt.stacks.length > 0 ? { stacks: true } : {}),
       ...(settings.generate ? { generate: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
       installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
@@ -328,9 +293,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(rollouts ? { rollouts } : {}),
-    ...(settings.synth ? { synth: settings.synth } : {}),
-    // An Atmos repo's jobs install Atmos and write the instances before they read them.
-    ...(atmos ? { synth: ATMOS_WRITE, atmos: { version: atmos.version } } : {}),
+    // Every job runs the shape's prepare before it reads the roots; an Atmos repo's jobs install Atmos for it.
+    ...(shape.prepare ? { synth: shape.prepare } : {}),
+    ...(atmos ? { atmos: { version: atmos.version } } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
     ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command, ...(settings.cost !== true && settings.cost.approve_above !== undefined ? { approveAbove: true } : {}) } } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
