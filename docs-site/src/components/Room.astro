@@ -3,6 +3,7 @@
 // count on, what differs and the first step, then the pages to read in order:
 // how-to, explanation, reference. A room for a repo shape also lists what
 // differs on each binary and forge, since the shape works on all of them.
+import CoverageGrid from './CoverageGrid.astro';
 import { ASSUMED, BINARIES, FORGES, SHAPES, room } from '../data/rooms';
 
 interface Props {
@@ -12,13 +13,7 @@ const r = room(Astro.props.id);
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const href = (h: string) => `${base}${h}`;
 const isShape = SHAPES.some((s) => s.room === r.id);
-const elsewhere = isShape
-	? [
-			...BINARIES.flatMap((b) => b.differs.map((d) => `On ${b.label}: ${d}`)),
-			...FORGES.flatMap((f) => f.differs.map((d) => `On ${f.label}: ${d}`)),
-		]
-	: [];
-const differs = [...r.differs, ...elsewhere];
+const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.length) : [];
 ---
 <div class="tg-room not-content">
 	<p class="lede">{r.lede}</p>
@@ -29,13 +24,25 @@ const differs = [...r.differs, ...elsewhere];
 		</section>
 		<section>
 			<h2>Differs</h2>
-			{differs.length ? <ul>{differs.map((d) => <li>{d}</li>)}</ul> : <p>Nothing: it works as every other page describes.</p>}
+			{r.differs.length ? <ul>{r.differs.map((d) => <li>{d}</li>)}</ul> : <p>Nothing: it works as every other page describes.</p>}
+			{elsewhere.map((x) => (
+				<>
+					<h3>On {x.label}</h3>
+					<ul>{x.differs.map((d) => <li>{d}</li>)}</ul>
+				</>
+			))}
 		</section>
 		<section class="first">
 			<h2>First step</h2>
 			<p><a href={href(r.first.href)}>{r.first.label}</a></p>
 		</section>
 	</div>
+	{r.column && (
+		<section>
+			<h2>Proof</h2>
+			<CoverageGrid column={r.column} />
+		</section>
+	)}
 	<slot />
 	<section>
 		<h2>You can count on</h2>
@@ -81,6 +88,11 @@ const differs = [...r.differs, ...elsewhere];
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--sl-color-gray-3);
+	}
+	h3 {
+		margin: 1rem 0 0.35rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-2);
 	}
 	ul {
 		margin: 0;

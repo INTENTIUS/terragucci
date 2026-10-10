@@ -1,11 +1,12 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the taco, the wordmark, the
-// tagline, the one-sentence position, the proof line and the eight highlights, in the order the site leads with;
+// tagline, the one-sentence position, the proof line, the door picker and the eight highlights, in the order the site leads with;
 // index.mdx follows it with the plan note. `part="agent"` is the prompt to hand
 // a coding agent, last on the page: the setup prompt from src/prompts.ts, which
 // the agents page and the README carry too. The tagline is the one the README
 // and the site description use.
 import AgentPrompt from './AgentPrompt.astro';
+import DoorPicker from './DoorPicker.astro';
 import Taco from './Taco.astro';
 import { setupPrompt } from '../prompts';
 
@@ -81,6 +82,7 @@ const pillars = [
 			per-forge claims list what is proven on GitHub and GitLab (<a href={`${base}/reference/validation/`}>validation</a>). Apache-2.0, nothing to buy.
 		</p>
 	</section>
+	<DoorPicker />
 	<ul class="tg-pillars not-content">
 		{pillars.map((p) => (
 			<li>

@@ -107,7 +107,7 @@ export default defineConfig({
 						{ label: 'Atlantis, OpenTaco or Terrateam', slug: 'guides/coming-from-atlantis-or-opentaco' },
 						{ label: 'HCP Terraform, Scalr or OTF', slug: 'guides/coming-from-hcp-terraform-scalr-or-otf' },
 						{ label: 'Spacelift or env zero', slug: 'guides/coming-from-spacelift-or-env-zero' },
-						{ label: 'Terragrunt Scale', link: '/terragucci/guides/use-terragrunt/#terragrunt-scale' },
+						{ label: 'Terragrunt Scale', link: '/guides/use-terragrunt/#terragrunt-scale' },
 					],
 				},
 				{
