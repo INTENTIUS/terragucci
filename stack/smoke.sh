@@ -6751,8 +6751,8 @@ atmos_host() { # -> the path of the host's atmos at the pinned release
   if [ ! -x "$dir/atmos" ]; then
     mkdir -p "$dir" || return 1
     curl -fsSL -o "$dir/$file.$$" "https://github.com/cloudposse/atmos/releases/download/v$v/$file" || return 1
-    curl -fsSL -o "$dir/SHA256SUMS.$$" "https://github.com/cloudposse/atmos/releases/download/v$v/atmos_${v}_SHA256SUMS" || return 1
-    [ "$(grep " \*\?$file\$" "$dir/SHA256SUMS.$$" | cut -d' ' -f1)" = "$(shasum -a 256 "$dir/$file.$$" | cut -d' ' -f1)" ] \
+    curl -fsSL -o "$dir/SHA256SUMS" "https://github.com/cloudposse/atmos/releases/download/v$v/atmos_${v}_SHA256SUMS" || return 1
+    [ "$(grep " \*\?$file\$" "$dir/SHA256SUMS" | cut -d' ' -f1)" = "$(shasum -a 256 "$dir/$file.$$" | cut -d' ' -f1)" ] \
       || { echo "[smoke atmos] $file does not match the release's SHA256SUMS" >&2; return 1; }
     chmod +x "$dir/$file.$$" && mv "$dir/$file.$$" "$dir/atmos" || return 1
   fi
@@ -6774,7 +6774,7 @@ atmos_fill() { # tree, bucket -> the fixture's catalog names the bucket
 
 atmos_applied() { # bucket -> the instances with state in it, <workspace>/<component>, space-separated; a state in the default workspace as default/<key>
   curl -fsS "$FLOCI/$1?list-type=2" | grep -o '<Key>[^<]*\.tfstate</Key>' | sed -E 's#</?Key>##g' \
-    | sed -E 's#^([^/]+)/([^/]+)/terraform\.tfstate$#\2/\1#; t; s#^#default/#' | sort | tr '\n' ' '
+    | awk -F/ 'NF == 3 && $3 == "terraform.tfstate" { print $2 "/" $1; next } { print "default/" $0 }' | sort | tr '\n' ' '
 }
 
 claim_atmos_waves() {
@@ -6844,9 +6844,11 @@ claim_atmos_workspace() {
   # the stack being the workspace Atmos names), none under the default
   # workspace's key, each holding its own stage; and a tf-plan of all four
   # afterwards must find no change in any.
-  # BREAK: a bundle whose workspaceEnv sets no TF_WORKSPACE, so every instance
+  # BREAK: a bundle whose rootWorkspace reads no workspace, so every instance
   # runs in default and the two instances of a component share one state.
   log() { echo "[smoke atmos-workspace] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=atmos-workspace layers code=0 rc=0 applied s c got r
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
@@ -6854,7 +6856,7 @@ claim_atmos_workspace() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
-    break_bundle "$bundle" backend.ts 'return ws ? { ...env, TF_WORKSPACE: ws } : env;' 'return env;' \
+    break_bundle "$bundle" backend.ts '  return ws || undefined;' '  return undefined;' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   atmos_bucket "$bucket"

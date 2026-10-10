@@ -15,7 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { rootRoleEnv } from "../roles";
-import { workspaceEnv } from "../backend";
+import { workspaceEnv, workspaceInit } from "../backend";
 import { effectiveSynth } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
@@ -312,8 +312,10 @@ export function stateIsEmpty(binary: string, dir: string, env: NodeJS.ProcessEnv
 
 /** `stateIsEmpty` without blocking, its init taking its turn with the roots' inits. */
 export async function stateIsEmptyAsync(binary: string, dir: string, env: NodeJS.ProcessEnv, initTurn: Turn = (fn) => fn()): Promise<boolean | undefined> {
-  const init = await initTurn(() => spawnAsync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], env));
+  const wsInit = workspaceInit(env, dir);
+  const init = await initTurn(() => spawnAsync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], wsInit?.init ?? env));
   if (init.status !== 0) return undefined;
+  if (wsInit && (await spawnAsync(binary, [`-chdir=${dir}`, ...wsInit.select], wsInit.selectEnv)).status !== 0) return undefined;
   const pull = await spawnAsync(binary, [`-chdir=${dir}`, "state", "pull"], env);
   if (pull.status !== 0) return undefined;
   return emptyStateText(pull.stdout);
@@ -1039,8 +1041,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
     // The root's own role, when `oidc.roles` names one (../roles.ts).
     // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
     const rootEnv = workspaceEnv(rootRoleEnv(binEnv, root), dir);
-    const run = (...args: string[]) =>
-      observer.commandAsync(timing, path, args, rootEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    const runIn = (env: NodeJS.ProcessEnv, ...args: string[]) =>
+      observer.commandAsync(timing, path, args, env, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    const run = (...args: string[]) => runIn(rootEnv, ...args);
     const ran: ReportStep[] = [];
     const holds: string[] = [];
     /** Run one moment's steps; the error when one failed the root. */
@@ -1077,8 +1080,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
       let stepError = await step("before-init");
       if (stepError) return failed(stepError, `${root}: a step before init failed`);
-      const init = await initTurn(() => run("init", "-input=false", "-no-color"));
+      const wsInit = workspaceInit(rootEnv, dir);
+      const init = await initTurn(() => (wsInit ? runIn(wsInit.init, "init", "-input=false", "-no-color") : run("init", "-input=false", "-no-color")));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      if (wsInit) {
+        const sel = await runIn(wsInit.selectEnv, ...wsInit.select);
+        if (sel.status !== 0) return failed(`workspace select failed:\n${tail(sel.stderr || sel.stdout)}`, `${root}: workspace select failed`);
+      }
       for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
       stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);

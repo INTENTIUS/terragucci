@@ -120,7 +120,7 @@ import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { stateVersion, workspaceEnv } from "./backend";
+import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
@@ -618,8 +618,13 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const stepEnv = ws ? { ...ws, env: workspaceEnv(rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir) } : undefined;
   let stepError = await rootSteps(repo, base, stepEnv, "before-init");
   if (stepError) return { ...base, error: stepError };
-  const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
+  const wsInit = workspaceInit(env, dir);
+  const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], wsInit?.init ?? env, dir));
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
+  if (wsInit) {
+    const sel = await timed(observer, timing, binary, wsInit.select, wsInit.selectEnv, dir);
+    if (sel.code !== 0) return { ...base, error: `workspace select failed\n${sel.out}` };
+  }
   stepError = (await rootSteps(repo, base, stepEnv, "after-init")) ?? (await rootSteps(repo, base, stepEnv, "before-plan"));
   if (stepError) return { ...base, error: stepError };
   const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
