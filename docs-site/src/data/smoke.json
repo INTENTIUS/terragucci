@@ -473,6 +473,14 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "import-terrateam",
+      "says": "terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "b3147603"
+    },
+    {
       "claim": "comment-atlantis",
       "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
       "needs": null,
