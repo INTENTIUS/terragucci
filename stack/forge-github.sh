@@ -73,6 +73,14 @@ forge_run() { # name branch sha [source: unused here; act runs a push event]
   git clone -q "${URL/#http:\/\//http://oauth2:${TOKEN}@}/$USER/$name.git" "$dir" 2>/dev/null
   git -C "$dir" checkout -q "$sha"
   git -C "$dir" remote set-url origin "http://mock-github:8188/$USER/$name.git"
+  # On GitHub, actions/checkout leaves the job's token in the clone's git
+  # config (persist-credentials), so a job that checks out with the default
+  # pushes to chant/lifecycle: the ledger, the lock tags, a choudoufu wave's
+  # rows. act checks out by copying this tree, so the clone carries the same
+  # header the action writes. A job whose checkout sets persist-credentials:
+  # false gets it here too; act cannot tell the two apart.
+  git -C "$dir" config "http.http://mock-github:8188/.extraheader" \
+    "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
   # act's workflow schema does not know concurrency's `queue` (GitHub's since
   # 2026-05), and act runs one job at a time anyway, so its copy drops the line.
   grep -v '^ *queue: max$' "$dir/$PIPELINE_FILE" > "$dir.workflow.yml"
