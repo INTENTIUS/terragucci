@@ -53,6 +53,18 @@ gitlab_boot() {
   for i in $(seq 1 12); do glapi -o /dev/null "$GL_URL/api/v4/version" 2>/dev/null && break; sleep 5; done
   glapi -o /dev/null "$GL_URL/api/v4/version" || die "the token does not authenticate"
   log "GitLab $(glapi "$GL_URL/api/v4/version" | jq -r .version)"
+  # The claims force-push main over a seed commit, so no project's default
+  # branch is protected. Unprotecting each project after its first push is
+  # not enough: until Sidekiq has processed that push, GitLab still counts the
+  # repository as empty, and an empty repository's default branch is treated
+  # as protected whatever the project's protected branches say. Developers can
+  # push and merge and force pushes are allowed: GitLab's "not protected".
+  glapi -o /dev/null -X PUT -H 'content-type: application/json' "$GL_URL/api/v4/application/settings" \
+    -d '{"default_branch_protection_defaults":{"allowed_to_push":[{"access_level":30}],"allowed_to_merge":[{"access_level":30}],"allow_force_push":true,"developer_can_initial_push":false}}' \
+    || die "could not turn off default branch protection"
+  glapi "$GL_URL/api/v4/application/settings" | jq -e '.default_branch_protection_defaults.allow_force_push == true' >/dev/null \
+    || die "default branch protection is still on"
+  log "default branches are not protected"
 
   runner_online() { glapi "$GL_URL/api/v4/runners/all?status=online" | jq -e --arg d "$GL_RUNNER" 'map(select(.description == $d)) | length > 0' >/dev/null 2>&1; }
   if runner_online; then
