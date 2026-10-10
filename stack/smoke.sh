@@ -207,6 +207,7 @@ steward|tf-apply runs as a turn on a fountain steward, started by the forge job,
 policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
+import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
 comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
 dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
@@ -425,7 +426,9 @@ cdktn-generate|with synth set init and terragucci generate refuse a generate key
 cdktn-linked|a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown|
 image|with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies|
 env|with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state|
-local-plan|terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0|'
+local-plan|terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0|
+runner-label|with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one|
+pass-secrets|with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state|'
 
 # The core claims, which SMOKE_BINARY=terraform and SMOKE_BINARY=choudoufu run
 # on that binary, each a row of its own in smoke.json.
@@ -4390,6 +4393,99 @@ YAML
   [ "$got" = "$want" ] || { log "the pipeline planned $got, not the Atlantis projects $want"; rc=1; }
   drop_work "$work"; drop_work "$tree"
   [ $rc = 0 ] && log "the imported pipeline planned the six Atlantis projects and nothing else"
+  return $rc
+}
+
+claim_import_terrateam() {
+  # The example as a Terrateam repo would have it: a .terrateam/config.yml
+  # with the layered-runs shape (staging after dev's platform and orders, prod
+  # after staging's platform), a plan hook, a scoped workflow step that passes
+  # a flag, apply requirements and access control. `terragucci import
+  # terrateam` writes terragucci.yml from it and names what it cannot map;
+  # `config check` passes; and `init --dry-run` finds the example's 15 roots
+  # and cuts them into the waves the dependencies ask for, as far as one
+  # canary set carries them: dev's platform, dev's orders, the other
+  # platforms, the rest. BREAK: the written waves block, the dependency
+  # mapping, is dropped before init, so the roots apply in their two read
+  # layers and staging no longer waits for dev.
+  log() { echo "[smoke import-terrateam] $*" >&2; }
+  local tree out rc=0 got roots canary
+  local want="envs/dev/platform|envs/dev/orders|envs/prod/platform,envs/staging/platform|envs/dev/email,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search"
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  mkdir -p "$tree/.terrateam"
+  cat > "$tree/.terrateam/config.yml" <<'YAML'
+engine:
+  name: tofu
+  version: 1.13.1
+when_modified:
+  file_patterns: ["${DIR}/*.tf", "modules/**/*.tf"]
+apply_requirements:
+  checks:
+    - tag_query: ""
+      approved:
+        enabled: true
+        any_of: ["team:platform"]
+      merge_conflicts:
+        enabled: true
+      status_checks:
+        enabled: true
+dirs:
+  modules/**:
+    when_modified:
+      file_patterns: []
+  envs/dev/**:
+    tags: [dev]
+  envs/staging/**:
+    tags: [staging]
+    when_modified:
+      depends_on: "dir:envs/dev/platform or dir:envs/dev/orders"
+  envs/prod/**:
+    tags: [prod]
+    when_modified:
+      depends_on: "dir:envs/staging/platform"
+hooks:
+  plan:
+    pre:
+      - type: env
+        name: TF_VAR_team
+        cmd: ["echo", "shop"]
+workflows:
+  - tag_query: "dir:envs/prod/payments"
+    plan:
+      - type: init
+      - type: plan
+        extra_args: ["-lock=false"]
+      - type: run
+        cmd: ["tofu", "show", "-no-color", "$TERRATEAM_PLAN_FILE"]
+access_control:
+  policies:
+    - tag_query: "prod"
+      apply: ["team:sre"]
+YAML
+  # The example's own terragucci.yml gives way to the imported one.
+  out="$(cd "$tree" && "$TERRAGUCCI" import terrateam --force --forge forgejo 2>&1)" || { log "import failed: $out"; return 1; }
+  grep -q '^  dirs.envs/prod/\*\*.when_modified.depends_on (Order): envs/prod/platform after envs/staging/platform is not kept' <<<"$out" \
+    || { log "the import did not name the dependency one canary set cannot keep"; rc=1; }
+  grep -q '^  access_control.policies (Access control): ' <<<"$out" || { log "the import did not name access_control as not mapped"; rc=1; }
+  grep -q '^  workflows\[0\].plan\[1\].extra_args (Flags at run time)' <<<"$out" || { log "the import did not name the flag a step passes"; rc=1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^waves:/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; return 1; }
+  out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; return 1; }
+  roots="$(jq -r '[.results.roots[].path] | sort | join(",")' <<<"$out")"
+  [ "$roots" = "$(cd "$tree" && find envs -mindepth 2 -maxdepth 2 -type d | sort | paste -sd, -)" ] || { log "init found the roots $roots, not the example's"; rc=1; }
+  # The waves the pipeline applies: its plan layers, the canary's first, as the generated tf-apply step passes them.
+  canary="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out" | grep -o -- "--canary '[^']*'" | head -1 | sed -E "s/--canary '([^']*)'/\1/")"
+  log "the pipeline's canary: ${canary:-none}"
+  got="$(jq -r --arg c "$canary" '($c | split(",") | map(select(. != ""))) as $c
+    | .results.layers as $l
+    | ([$l[] | map(select(. as $r | $c | index($r)))] + [$l[] | map(select(. as $r | $c | index($r) | not))])
+    | map(select(length > 0) | sort | join(",")) | join("|")' <<<"$out")"
+  [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves depends_on asks for, $want"; rc=1; }
+  drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline applies dev's platform, then dev's orders, then the other platforms, then the rest"
   return $rc
 }
 
@@ -8774,7 +8870,7 @@ HCL
   git -C "$work/behold-drift" init -q -b main
   git -C "$work/behold-drift" add -A && git -C "$work/behold-drift" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke behold-view"
   in_image() { # the command
-    run_copied --rm --network terragucci -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -17929,6 +18025,165 @@ claim_env() {
   return $rc
 }
 
+# The runner-label claim's runner: a second forgejo-runner beside the stack's,
+# on its network, that serves LABELLED_LABEL alone. A container of its own, so
+# the stack's runner is never reconfigured or restarted; it stays up after the
+# claim, and the next run reuses it while Forgejo lists it online.
+LABELLED_LABEL=terragucci-labelled
+labelled_runner() { # -> prints the uuid of a runner online that serves LABELLED_LABEL alone, starting one when there is none
+  local name="${TG_PROJECT:-terragucci}-runner-labelled" uuid reg token stale i
+  uuid="$(api "$URL/api/v1/admin/actions/runners" | jq -r --arg n "$name" 'map(select(.name == $n and .status != "offline")) | .[0].uuid // empty')"
+  if [ -n "$uuid" ] && [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = true ]; then echo "$uuid"; return 0; fi
+  for stale in $(api "$URL/api/v1/admin/actions/runners" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id'); do
+    api -o /dev/null -X DELETE "$URL/api/v1/admin/actions/runners/$stale" || true
+  done
+  reg="$(jq -n --arg n "$name" '{name: $n, description: "terragucci stack, the runner-label claim"}' \
+    | api -H 'content-type: application/json' -X POST -d @- "$URL/api/v1/admin/actions/runners")" || { log "Forgejo did not register $name"; return 1; }
+  uuid="$(jq -r '.uuid // empty' <<<"$reg")"; token="$(jq -r '.token // empty' <<<"$reg")"
+  [ -n "$uuid" ] && [ -n "$token" ] || { log "registering $name returned no uuid"; return 1; }
+  if ! docker inspect "$name" >/dev/null 2>&1; then
+    docker run -d -q --name "$name" --user 0:0 --network "$TG_NETWORK" --restart unless-stopped \
+      -v /var/run/docker.sock:/var/run/docker.sock -v "$name-data:/data" -w /data \
+      data.forgejo.org/forgejo/runner:13.2.0 \
+      sh -c 'while [ ! -s /data/config.yml ]; do sleep 1; done; exec forgejo-runner daemon -c /data/config.yml' >/dev/null || { log "could not start $name"; return 1; }
+  else
+    docker start "$name" >/dev/null || { log "could not start $name"; return 1; }
+  fi
+  # The stack runner's config (bootstrap.sh) with one label: the job container's network, cache volume and floci's keys.
+  docker exec -i "$name" sh -c 'cat > /data/config.yml.new && mv /data/config.yml.new /data/config.yml' <<EOF || { log "could not write the config of $name"; return 1; }
+log:
+  level: info
+  job_level: info
+runner:
+  file: /data/.runner
+  capacity: 2
+  timeout: 30m
+  shutdown_timeout: 0s
+  fetch_interval: 2s
+  report_interval: 1s
+  envs:
+    TOFU_INSTALL_DIR: /cache/bin
+    TF_PLUGIN_CACHE_DIR: /cache
+    AWS_ENDPOINT_URL: http://floci:4566
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    AWS_REGION: us-east-1
+  labels:
+    - "$LABELLED_LABEL:docker://public.ecr.aws/docker/library/node:22-bookworm"
+cache:
+  enabled: false
+container:
+  network: $TG_NETWORK
+  privileged: false
+  options: "-v $JOB_CACHE_VOLUME:/cache"
+  valid_volumes:
+    - $JOB_CACHE_VOLUME
+  docker_host: "-"
+  force_pull: false
+server:
+  connections:
+    forgejo:
+      url: http://forgejo:3000/
+      uuid: $uuid
+      token: $token
+EOF
+  # Its own container, started on the old credentials when it ran before.
+  docker restart "$name" >/dev/null || { log "could not restart $name"; return 1; }
+  for i in $(seq 1 60); do
+    api "$URL/api/v1/admin/actions/runners" | jq -e --arg u "$uuid" 'map(select(.uuid == $u and .status != "offline")) | length > 0' >/dev/null 2>&1 && { echo "$uuid"; return 0; }
+    sleep 2
+  done
+  docker logs --tail 30 "$name" >&2 2>&1 || true
+  log "$name did not come online"
+  return 1
+}
+
+job_runner() { # repo, run id, job name -> the uuid of the runner that ran the job, from its log's first line
+  local id text
+  id="$(api "$URL/api/v1/repos/$1/actions/runs/$2/jobs" | jq -r --arg n "$3" 'map(select(.name == $n)) | .[0].id // empty' || true)"
+  [ -n "$id" ] || return 0
+  text="$(api "$URL/api/v1/repos/$1/actions/jobs/$id/logs" 2>/dev/null || true)"
+  sed -nE '1,5s/.*Runner ([0-9a-f-]{36}) .*/\1/p' <<<"$text" | sed -n 1p
+}
+
+claim_runner_label() {
+  # A one-root repo whose terragucci.yml sets runner.apply to a label that
+  # only a second Forgejo runner serves (labelled_runner). init writes that
+  # label as the runs-on of the apply jobs and leaves the others on the
+  # default; the push to main runs check on the stack's runner and
+  # apply-wave-1 on the labelled one, and app applies.
+  # BREAK: terragucci.yml sets no runner, so init renders the default label
+  # and apply-wave-1 runs on the stack's runner.
+  log() { echo "[smoke runner-label] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/runner-label" cfg="" uuid sha applied checked rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  uuid="$(labelled_runner)" || { drop_work "$work"; return 1; }
+  log "runner $uuid serves $LABELLED_LABEL alone"
+  [ -n "${BREAK:-}" ] || cfg="$(printf 'runner:\n  apply: %s' "$LABELLED_LABEL")"
+  one_root_repo runner-label <<<"$cfg" || { drop_work "$work"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    grep -qx "    runs-on: $LABELLED_LABEL" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init did not write runs-on: $LABELLED_LABEL"; rc=1; }
+    grep -qx "    runs-on: docker" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "no job is left on the default label"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "runner-label: one root")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    [ $rc = 0 ] && [ "$RUN_STATUS" != success ] && { print_logs "$repo" "$RUN_ID" >&2; log "the push ended $RUN_STATUS"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    applied="$(job_runner "$repo" "$RUN_ID" apply-wave-1)"
+    checked="$(job_runner "$repo" "$RUN_ID" check)"
+    log "check ran on ${checked:-no runner}, apply-wave-1 on ${applied:-no runner}"
+    [ "$applied" = "$uuid" ] || { log "apply-wave-1 did not run on the runner that serves $LABELLED_LABEL"; rc=1; }
+    [ -n "$checked" ] && [ "$checked" != "$uuid" ] || { log "check did not run on the stack's runner"; rc=1; }
+    [ "$(pr_state_input runner-label app)" = unset ] || { log "app has no state from the apply"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "apply-wave-1 ran on the runner serving $LABELLED_LABEL, and check on the stack's"
+  return $rc
+}
+
+claim_pass_secrets() {
+  # A one-root repo whose root reads var.greeting and var.place, with a repo
+  # secret TF_VAR_greeting and a repo variable TF_VAR_place, both named under
+  # pass in terragucci.yml. init writes the names, never the values, into the
+  # jobs that plan and apply; the push to main applies app, and its state
+  # holds both values. Forgejo keeps each name in capitals, and the job reads
+  # it as the root spells it.
+  # BREAK: terragucci.yml has no pass, so app applies with both defaults.
+  log() { echo "[smoke pass-secrets] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pass-secrets" word="secret-$STAMP" place="var-$STAMP" cfg="" sha got wf rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  [ -n "${BREAK:-}" ] || cfg="$(printf 'pass:\n  secrets: [TF_VAR_greeting]\n  vars: [TF_VAR_place]')"
+  one_root_repo pass-secrets <<<"$cfg" || { drop_work "$work"; return 1; }
+  perl -0pi -e 's/  input = var\.greeting\n/  input = "\${var.greeting}\@\${var.place}"\n/; s/\z/\nvariable "place" {\n  type    = string\n  default = "unset"\n}\n/' "$work/tree/app/main.tf"
+  grep -qF 'input = "${var.greeting}@${var.place}"' "$work/tree/app/main.tf" || { log "the root does not read var.place"; drop_work "$work"; return 1; }
+  jq -n --arg d "$word" '{data: $d}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/TF_VAR_greeting" \
+    || { log "could not set the TF_VAR_greeting secret"; drop_work "$work"; return 1; }
+  jq -n --arg v "$place" '{value: $v}' | api -o /dev/null -H 'content-type: application/json' -X POST -d @- "$URL/api/v1/repos/$repo/actions/variables/TF_VAR_place" \
+    || { log "could not set the TF_VAR_place variable"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -z "${BREAK:-}" ]; then
+    grep -qF "TF_VAR_greeting: '\${{ secrets.TF_VAR_greeting }}'" "$wf" && grep -qF "TF_VAR_place: '\${{ vars.TF_VAR_place }}'" "$wf" || { log "init did not write both names into the pipeline"; rc=1; }
+  fi
+  grep -qF -e "$word" -e "$place" "$wf" && { log "a value is in the pipeline"; rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "pass-secrets: one root")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    [ $rc = 0 ] && [ "$RUN_STATUS" != success ] && { print_logs "$repo" "$RUN_ID" >&2; log "the push ended $RUN_STATUS"; rc=1; }
+  fi
+  got="$(pr_state_input pass-secrets app)"
+  log "app's state holds ${got:-nothing}"
+  [ $rc = 0 ] && { [ "$got" = "$word@$place" ] || { log "app does not hold the secret's and the variable's values"; rc=1; }; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the secret and the variable reached the apply job by name: app holds both values"
+  return $rc
+}
+
 claim_local_plan() {
   # terragucci plan, run as on a laptop: in a copy of the example with the
   # one-root change (dev orders keeps jobs for seven days), from the tofu CI
@@ -18705,6 +18960,7 @@ steward         ex! runner fountain! weight=950
 comment-plan    runner self! weight=150
 comment-atlantis runner self! weight=150
 import-atlantis ex after=boot weight=150
+import-terrateam weight=30
 lock-wait       otel! self! weight=150
 dash-pipeline   ex otel after=boot weight=120
 dash-changes    ex otel after=boot weight=120
@@ -18920,6 +19176,8 @@ cdktn-generate       weight=60
 cdktn-linked         self! weight=90
 image                runner self! weight=150
 env                  runner self! weight=150
+runner-label         runner self! weight=150
+pass-secrets         runner self! weight=150
 local-plan           ex after=boot weight=90
 '
 

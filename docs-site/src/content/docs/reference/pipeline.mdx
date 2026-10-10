@@ -174,6 +174,19 @@ With `approval: pr-review` (GitHub and Forgejo) the pipeline also posts `terragu
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
 
+## Runners
+
+[`runner`](/terragucci/reference/config/#runners) places each job by its stage:
+
+| Stage | Jobs |
+|---|---|
+| `plan` | plan, re-plan |
+| `apply` | every `apply-` job (the waves, their shares, `apply-comment`), `confirm`, `resume`, `ephemeral`, the ephemeral sweep, and on GitLab `mr-apply` |
+| `drift` | drift |
+| `default` | every other job: check, the note jobs, `fmt`, `tips`, `version-bump`, `publish`, the rollout, comments, agent and review jobs |
+
+A job whose stage `runner` leaves out runs on `default`, and with no `default` keeps the forge's: `ubuntu-latest` on GitHub, `docker` on Forgejo, any untagged runner on GitLab. Jobs from `own_jobs` keep the runner they name.
+
 ## Credentials
 
 Set `oidc` and jobs trade the forge's identity token for cloud credentials, so CI holds no long-lived keys. Each cloud takes one identity for plan and one for apply; one identity for both is rejected.

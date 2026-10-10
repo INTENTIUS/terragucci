@@ -473,6 +473,14 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "import-terrateam",
+      "says": "terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "b3147603"
+    },
+    {
       "claim": "comment-atlantis",
       "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
       "needs": null,
@@ -2358,6 +2366,22 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "4db5e993"
+    },
+    {
+      "claim": "runner-label",
+      "says": "with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a3582cb7"
+    },
+    {
+      "claim": "pass-secrets",
+      "says": "with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a3582cb7"
     },
     {
       "claim": "mr-widget",

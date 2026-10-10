@@ -1,0 +1,235 @@
+---
+title: Coming from HCP Terraform, Scalr or OTF
+description: Each HCP Terraform, Scalr and OTF workspace concept, the terragucci key or job that does the same work, how to move a workspace's state into your own bucket by hand, and what has no equivalent.
+claims: [pass-secrets, runner-label]
+prompt: |
+  Read https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/.
+  List each root with a `cloud` block or a `remote` backend, the workspace it names, and whether another workspace runs the same directory. Propose a directory per workspace where one directory serves several.
+  Write terragucci.yml for what the concepts table maps: `version`, `env` for values that are not secret, `policy` with `input: hcp` for an OPA policy set, `steps` for run tasks. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml and the generated pipeline.
+  List the sensitive variables I must recreate as CI secrets, add their names under `pass`, and list each Sentinel policy that needs a Rego rewrite.
+  Do not change a `cloud` or `backend` block, do not run `init -migrate-state`, `state pull` or `state push`, and do not create secrets: a person moves the state.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Result
+
+Each workspace becomes a root with its own state in your bucket. The jobs `init` writes run in your forge's CI; there is no account and no server, and every record lands in your git and bucket.
+
+## Concepts
+
+| HCP Terraform, Scalr, OTF | terragucci |
+|---|---|
+| Workspace | a [root](/terragucci/concepts/glossary/#root): one directory, one state. terragucci runs no CLI workspaces |
+| Several workspaces on one working directory | a directory per workspace, each with its backend key and `terraform.tfvars`, calling a shared module |
+| Workspace state | a key in your S3 bucket, moved [by hand](#state-move) |
+| Terraform variables | `terraform.tfvars` in the root, committed |
+| Environment variables, variable sets | [`env`](/terragucci/reference/config/#keys) for values; CI secrets named under [`pass`](#variables) for the rest |
+| Dynamic provider credentials | [`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc): a plan role and an apply role per cloud |
+| Terraform version per workspace | [`version`](/terragucci/reference/config/#a-version-per-root) per root glob, or the root's `.terraform-version` |
+| VCS-driven runs, trigger patterns | the [generated pipeline](/terragucci/getting-started/): a pull request plans the roots its files reach |
+| Speculative plan | the plan note and `terragucci/plan` status on the pull request |
+| Confirm and apply, auto-apply | [`gate`](/terragucci/reference/stages/#gate-policy): `always`, `on-destroy` (default) or `never`, then [approve a wave](/terragucci/guides/approve-a-wave/) |
+| Run triggers, `tfe_outputs` | [waves](/terragucci/concepts/waves-and-approvals/#linked-roots): a root that reads another through `terraform_remote_state` applies in a later wave |
+| Sentinel policy set | [`policy`](/terragucci/reference/policy/) in Rego, rewritten by hand |
+| OPA policy set | `policy.input: hcp` with `engine: opa`; `policies.hcl` [runs as is](/terragucci/reference/policy/#hcp-terraform-policy-sets) |
+| Soft-mandatory override | [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a person `policy.override` lists |
+| Run tasks | [`steps`](/terragucci/guides/run-steps/) after `plan`, with `on_failure: fail` or `approve` |
+| Workspace lock | [root locks](/terragucci/reference/config/#plan-locks) and the backend's lock file |
+| Agents, remote execution | jobs on your CI's runners, your own ones by label with [`runner`](/terragucci/guides/add-to-a-repo/#self-hosted-runners) |
+| Health assessments | [`drift`](/terragucci/guides/turn-on-drift-checks/), a cron schedule |
+| Cost estimation | [`cost`](/terragucci/guides/estimate-cost/) with Infracost |
+| Notifications | [`notify`](/terragucci/guides/notify-a-chat-channel/): Slack, Teams or a signed webhook |
+| Private registry | [a module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) in your bucket |
+| Ephemeral workspaces | [ephemeral environments](/terragucci/guides/ephemeral-environments/) per pull request, with a TTL |
+| Teams and permissions | your forge's permissions and cloud IAM ([access and identity](/terragucci/standards/access-and-identity/)) |
+| Run history | the [report](/terragucci/guides/keep-reports-in-a-bucket/) per run and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+
+## Steps
+
+<Steps>
+
+1. Give each workspace a directory. Where several share one working directory, put the code in a module that each root calls:
+
+   ```text
+   modules/network/        the shared code
+   envs/dev/network/       main.tf calls the module; backend.tf; terraform.tfvars
+   envs/prod/network/      the same, with prod's key and values
+   ```
+
+2. Move each workspace's state into the bucket ([state move](#state-move)), one root at a time, before its backend change merges.
+
+3. Copy the variables ([variables](#variables)).
+
+4. Port the policies ([policies](#policies)) and run tasks ([run tasks](#run-tasks)).
+
+5. Write the pipeline and open a pull request:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+   The plan note on that pull request should show no change for each moved root.
+
+6. Disconnect each moved workspace from its repository and lock it, so nothing runs against the old state.
+
+</Steps>
+
+## State move
+
+terragucci's own [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) reads only `s3` and `local` sources, so a workspace's state comes out by hand, with Terraform or OpenTofu (`tofu` in place of `terraform`). Neither binary migrates straight out of a `cloud` block, so the block becomes a `remote` backend first.
+
+<Steps>
+
+1. Stop new runs on the workspace: disconnect its repository and cancel queued runs.
+
+2. Replace the root's `cloud` block with a `remote` backend that names the same workspace:
+
+   ```hcl
+   terraform {
+     backend "remote" {
+       hostname     = "app.terraform.io"
+       organization = "acme"
+       workspaces {
+         name = "prod-network"
+       }
+     }
+   }
+   ```
+
+   | Platform | `hostname` |
+   |---|---|
+   | HCP Terraform | `app.terraform.io`, or your Terraform Enterprise host |
+   | Scalr | `<account>.scalr.io` |
+   | OTF | your OTF host |
+
+   ```bash
+   terraform login app.terraform.io
+   terraform init -reconfigure
+   ```
+
+3. Replace the `remote` backend with the bucket, and migrate:
+
+   ```hcl
+   terraform {
+     backend "s3" {
+       bucket       = "acme-state"
+       key          = "envs/prod/network.tfstate"
+       region       = "us-east-1"
+       use_lockfile = true
+     }
+   }
+   ```
+
+   ```bash
+   terraform init -migrate-state
+   ```
+
+   Answer `yes` to copy the state.
+
+4. Check the copy:
+
+   ```bash
+   terraform plan
+   ```
+
+   It should report no changes. Commit the `s3` block; the old state stays on the platform until you delete the workspace.
+
+</Steps>
+
+## Variables
+
+| Variable on the platform | Where it goes |
+|---|---|
+| Terraform variable, not sensitive | `terraform.tfvars` in the root |
+| Environment variable, not sensitive | `env` in `terragucci.yml`, which every job gets |
+| Variable set, not sensitive | `env`, or the same values in each root's `terraform.tfvars` |
+| Cloud credentials | `oidc` roles; no static keys |
+| Sensitive value | see the tabs |
+
+Sensitive values cannot be read back from the platform; copy them from where they came from.
+
+<Tabs>
+<TabItem label="GitLab">
+
+A masked CI/CD variable named `TF_VAR_<name>` reaches every job, and `TF_` variables pass to the binary as set.
+
+</TabItem>
+<TabItem label="GitHub and Forgejo">
+
+Create a repository secret named as the variable, such as `TF_VAR_db_password`, and list it under [`pass`](/terragucci/reference/config/#secrets-and-variables); the jobs that plan, apply and check drift get it under that name. A repository variable goes under `vars`.
+
+```yaml
+pass:
+  secrets: [TF_VAR_db_password]
+```
+
+</TabItem>
+</Tabs>
+
+## Policies
+
+<Tabs>
+<TabItem label="OPA policy set">
+
+Copy the set's Rego and `policies.hcl` into the repo, or point `policy.source` at its repo:
+
+```yaml
+policy:
+  engine: opa
+  path: policies
+  input: hcp
+```
+
+`input.plan` and `input.run` carry HCP Terraform's field names; [the run fields](/terragucci/reference/policy/#the-run-fields) lists what each holds.
+
+</TabItem>
+<TabItem label="Sentinel">
+
+terragucci does not run Sentinel. Rewrite each policy in Rego over the plan JSON (`input: plan`), with a `deny` rule per check ([writing a policy](/terragucci/reference/policy/#writing-a-policy)). A soft-mandatory policy becomes a denial that a person in `policy.override` can let through; an advisory one becomes a `warn` rule.
+
+</TabItem>
+<TabItem label="Scalr">
+
+terragucci has no input mode shaped as Scalr's OPA input. Point each policy's paths at the plan JSON (`input: plan`) or at HCP's shape (`input: hcp`), and test it on a plan.
+
+</TabItem>
+</Tabs>
+
+## Run tasks
+
+A run task posts the plan to a service and waits for a pass or fail. A step runs a command in the job instead, with the plan file in `TG_PLAN_FILE`:
+
+```yaml
+steps:
+  - name: scan
+    run: ./scripts/scan.sh "$TG_PLAN_FILE"
+    after: plan
+    on_failure: approve
+```
+
+| Run task enforcement | Step |
+|---|---|
+| Mandatory | `on_failure: fail`, the default: the root fails |
+| Advisory | `on_failure: approve`: the wave waits at its gate for a person |
+
+## Limits
+
+| On the platform | In terragucci today |
+|---|---|
+| State move | by hand, as above; no importer reads a workspace or its state over the platform's API |
+| Workspace settings | no importer; `terragucci.yml` is written by hand or by an agent from this page |
+| Sentinel | not run; each policy is rewritten in Rego |
+| HCP Terraform Stacks | no equivalent; a Stack's components become roots ordered by `terraform_remote_state` |
+| No-code provisioning, workspace UI | none; changes come through pull requests |
+| Sensitive variables | not exported by the platform; recreated from their source |
+| Roots still on a `cloud` block | planned, but [migrations](/terragucci/guides/move-resources-between-roots/), [export](/terragucci/guides/export-a-state-version/), [state versions](/terragucci/guides/find-a-state-version/) and [ephemeral copies](/terragucci/guides/ephemeral-environments/) refuse them; on remote execution the job's `oidc` roles do not reach the run |
+| Run history | stays on the platform |
+
+## Next
+
+- [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) for the forge settings.
+- [Scope state access](/terragucci/guides/scope-state-access/) to give each environment's role only its keys.
+- [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/) for env zero's remote backend, which moves the same way.
