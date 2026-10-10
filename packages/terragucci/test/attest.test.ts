@@ -63,7 +63,7 @@ describe("modules.attest config", () => {
     };
     expect(problems({ publish: "git-tags", attest: true })).toBe("");
     expect(problems({ publish: "git-tags", attest: { key: "keys/modules.pub" } })).toBe("");
-    expect(problems({ attest: true })).toContain("so set config.modules.publish too");
+    expect(problems({ attest: true })).toContain("so set config.modules.publish or config.modules.registry too");
     expect(problems({ publish: "git-tags", attest: "yes" })).toContain("must be true or a map with key");
     expect(problems({ publish: "git-tags", attest: { key: "" } })).toContain("path of the public key");
     expect(problems({ publish: "git-tags", atest: true })).toContain("config.modules.atest is not a setting");

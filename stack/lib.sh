@@ -12,7 +12,9 @@
 #                              prints the sha. TG_FIXED_DATE=1 pins the commit
 #                              dates so the same tree always gets the same sha.
 #   wait_run REPO SHA [EVENT]  wait for the Actions run on SHA (the newest one,
-#                              or the one EVENT started); sets RUN_ID,
+#                              or the one EVENT started; WAIT_WORKFLOW=<file>
+#                              only that workflow's, WAIT_TRIGGER=<event> only
+#                              the runs of that `on:` event); sets RUN_ID,
 #                              RUN_INDEX, RUN_STATUS and RUN_URL
 #   print_logs REPO RUN_ID     every job's log tail, for a run that went wrong
 #
@@ -148,9 +150,10 @@ wait_run() { # repo, sha, [event]
   local repo="$1" sha="$2" event="${3:-}" deadline=$(( $(date +%s) + TIMEOUT )) run="" status=""
   while :; do
     # A branch with a pull request has two runs on its head: the push run and
-    # the pull_request run, in whichever order Forgejo queued them.
+    # the pull_request run, in whichever order Forgejo queued them. Forgejo
+    # lists a pull_request_target run as event pull_request too.
     run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" \
-      | jq -c --arg e "$event" '[.workflow_runs[] | select($e == "" or .event == $e)][0] // empty')"
+      | jq -c --arg e "$event" --arg w "${WAIT_WORKFLOW:-}" --arg t "${WAIT_TRIGGER:-}" '[.workflow_runs[] | select(($e == "" or .event == $e) and ($w == "" or .workflow_id == $w) and ($t == "" or .trigger_event == $t))][0] // empty')"
     if [ -n "$run" ]; then
       status="$(echo "$run" | jq -r '.status')"
       case "$status" in

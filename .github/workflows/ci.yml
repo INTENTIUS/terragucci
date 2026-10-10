@@ -63,6 +63,13 @@ jobs:
           just --version
       - name: Install
         run: npm ci
+      - name: Pull Docker Hub images through a mirror
+        run: |
+          conf=/etc/docker/daemon.json
+          { sudo cat "$conf" 2>/dev/null || echo '{}'; } | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$conf"
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
       - name: Start the aws profile
         run: just stack-up aws
       - name: Run the aws claims
@@ -89,6 +96,13 @@ jobs:
           just --version
       - name: Install
         run: npm ci
+      - name: Pull Docker Hub images through a mirror
+        run: |
+          conf=/etc/docker/daemon.json
+          { sudo cat "$conf" 2>/dev/null || echo '{}'; } | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$conf"
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
       - name: Start the forgejo profile
         run: just stack-up forgejo
       - name: Run the forgejo claims
@@ -115,6 +129,13 @@ jobs:
           just --version
       - name: Install
         run: npm ci
+      - name: Pull Docker Hub images through a mirror
+        run: |
+          conf=/etc/docker/daemon.json
+          { sudo cat "$conf" 2>/dev/null || echo '{}'; } | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$conf"
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
       - name: Install act
         run: |
           arch=$(uname -m); [ "$arch" = aarch64 ] && arch=arm64

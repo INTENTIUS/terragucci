@@ -1,7 +1,7 @@
 ---
 title: Estimate the cost of a change
 description: Put the monthly cost change of each root, and the total, in the plan note, from Infracost on your own key.
-claims: [cost-estimate, cost-gate, cost-policy]
+claims: [cost-estimate, cost-gate, cost-policy, tg-cost-gate]
 prompt: |
   Read https://intentius.io/terragucci/guides/estimate-cost/.
   Add `cost: true` to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.
@@ -13,7 +13,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
-A cost table in each pull request's plan note, with a row per root the change reaches and a total row. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
+A cost table in each pull request's plan note, with a row per root the change reaches (a unit, in a Terragrunt repo) and a total row. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
 
 ```text
 Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
@@ -30,7 +30,6 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 |---|---|
 | The [pipeline](/terragucci/getting-started/) | `init` adds the key and the install step to the plan jobs |
 | An Infracost API key | Infracost prices each resource through its pricing API, on your key |
-| Plain roots | a Terragrunt repo plans its units with one `run --all`, and `init` refuses `cost` there |
 
 ## Steps
 
@@ -96,6 +95,8 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 | `roots/<root>/cost.json` | Infracost's own output for the root, beside its `plan.json` |
 
 An estimate that fails never fails the plan. A wave's report keeps its own estimate the same way, with the wave's change under `waves[].cost`.
+
+In a Terragrunt repo the estimator reads each unit's saved plan, the one the wave's `run --all` wrote, and a unit is priced, held and named as a root is.
 
 ## Hold a wave over an amount
 

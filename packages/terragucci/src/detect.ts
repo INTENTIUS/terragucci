@@ -205,7 +205,7 @@ export function hostOfRemote(remote: string): string | undefined {
 
 // ── order ────────────────────────────────────────────────────────────────────
 
-interface StateRef {
+export interface StateRef {
   bucket?: string;
   key: string;
 }
@@ -229,7 +229,8 @@ function attr(body: string, name: string): string | undefined {
   return body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
 }
 
-function stateOf(repo: string, root: string): { own?: StateRef; reads: RemoteRead[] } {
+/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code. */
+export function stateOf(repo: string, root: string): { own?: StateRef; reads: RemoteRead[] } {
   let own: StateRef | undefined;
   const reads: RemoteRead[] = [];
   for (const f of tfFiles(join(repo, root))) {
@@ -266,6 +267,34 @@ export function remoteStateReads(repo: string, roots: string[]): Map<string, { n
   }
   return out;
 }
+
+/** Where one state is, as a backend block or a `terraform_remote_state` block names it: its bucket, when it names one, and its key. */
+export interface StateAddress {
+  bucket?: string;
+  key: string;
+}
+
+/**
+ * Each root's own state, as its backend block names it, and its
+ * `terraform_remote_state` reads of a state no root among `roots` holds: a
+ * state another project's root may hold, which the estate page matches
+ * across projects.
+ */
+export function rootStates(repo: string, roots: string[]): Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }> {
+  const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
+  const held = [...states.values()].flatMap((s) => (s.own ? [s.own] : []));
+  const out = new Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }>();
+  for (const [root, { own, reads }] of states) {
+    const external = reads
+      .filter((r) => !held.some((o) => o !== own && sameState(o, r)))
+      .map((r) => ({ data: r.name, ...(r.bucket !== undefined ? { bucket: r.bucket } : {}), key: r.key }));
+    out.set(root, { ...(own ? { state: { ...(own.bucket !== undefined ? { bucket: own.bucket } : {}), key: own.key } } : {}), external });
+  }
+  return out;
+}
+
+/** Two addresses name one state: the same key, and the same bucket where both name one. */
+export const sameState = (a: StateAddress, b: StateAddress): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
 
 /** For each root, the roots whose state it reads through `terraform_remote_state`. */
 export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
