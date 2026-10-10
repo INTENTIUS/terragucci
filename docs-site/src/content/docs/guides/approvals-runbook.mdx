@@ -70,7 +70,7 @@ A waiting wave exits with code 3; its command is in the job log, the `terragucci
   </TabItem>
 </Tabs>
 
-It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned, then restarts the waiting wave; `--dry-run` prints that command instead. If it could not restart the wave, re-run the job or comment `/terragucci apply` on the pull request (merged, or open with `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
+It runs `chant approve tf-apply wave-2 --plan <digest>` for the planned digest and restarts the waiting wave (`--dry-run` prints the command instead). If the restart fails, re-run the job. Commenting `/terragucci apply` on the pull request also works (an open one needs `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
 
 ## Approve by review
 
@@ -81,14 +81,14 @@ Under `approval: pr-review`, approve the pull request on its head before it merg
     Files changed > Review changes > Approve, with write access.
   </TabItem>
   <TabItem label="GitLab">
-    Approve the merge request after its last push, as a Developer or higher. An approval before a push counts for nothing.
+    As a Developer or higher, approve the merge request after its last push. An approval before a push counts for nothing.
   </TabItem>
   <TabItem label="Forgejo">
     Files changed > Review > Approve, as an official reviewer.
   </TabItem>
 </Tabs>
 
-On GitHub and Forgejo, `terragucci/approval` on the head then turns success. A wave whose plans moved after the review exits 4 with the `chant approve` command for the new digest. The ledger line it records for a review carries `"via": "pr-review"`, the pull request, its head and the reviewers.
+On GitHub and Forgejo, `terragucci/approval` on the head then turns success. A wave whose plans moved after the review exits 4 with the `chant approve` command for the new digest. A review's ledger line carries `"via": "pr-review"` beside the pull request and its head and reviewers.
 
 ## Override a policy denial
 
@@ -174,7 +174,7 @@ The wave waits again; the old line stays in history.
 
 ## Recover from a refusal
 
-When a wave's plans moved after an approval no run applied, it applies nothing and exits with code 4. The job names the moved roots; `terragucci respond wave-refused` prints what changed. Approve the new digest or revert. New plans after an applied approval wait for their own instead.
+A wave whose plans moved after an unapplied approval applies nothing and exits 4. The job names the moved roots; `terragucci respond wave-refused` prints what changed. Approve the new digest or revert. New plans after an applied approval wait for their own instead.
 
 A revert does not revive the old approval: the refused run recorded a newer pending fact, so the wave needs a fresh [`chant approve`](/terragucci/concepts/glossary/#chant). See [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/).
 

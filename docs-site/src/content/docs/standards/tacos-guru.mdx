@@ -6,11 +6,11 @@ claims: [cdktn-synth, cdktn-affected, root-pins, pinned-install, boot, image, li
 
 import TacosCriteria from '../../../components/TacosCriteria.astro';
 
-Comparing Terraform automation platforms means holding each one to the same list. [tacos.guru](https://tacos.guru) keeps such a list, and this page answers it for terragucci, one criterion at a time, each answer backed by a smoke claim that passes and also fails when broken on purpose.
+[tacos.guru](https://tacos.guru) holds Terraform automation platforms to one list of criteria. This page answers that list for terragucci, with each answer proven by a passing smoke claim on the [validation](/terragucci/reference/validation/) page.
 
 tacos.guru has not scored terragucci, and this page claims no score from it.
 
-Two blocks carry no claim. RBAC and SSO, dashed, stay with your forge, which already decides who signs in, merges and approves ([Access and identity](/terragucci/standards/access-and-identity/)). Pricing, outlined, has nothing to prove: terragucci is Apache-2.0 and runs in your CI. Hover or tap a block for its criterion.
+Two blocks carry no claim. The dashed one, RBAC and SSO, stays with your forge, which already decides who signs in and who may approve a merge ([Access and identity](/terragucci/standards/access-and-identity/)). Pricing, outlined, has nothing to prove: terragucci is Apache-2.0 and runs in your CI. Hover or tap a block for its criterion.
 
 <TacosCriteria />
 
@@ -47,7 +47,7 @@ A 3 below is what tacos.guru's description of the criterion asks for. The terrag
 | 5 | Linked-state orchestration | 5 | linked states deployed as one unit: a DAG, real unknowns across states, ordered applies, progress and gates | waves order the applies, each behind its gate; a root plans on its upstream's planned outputs, unknown where unknown, and plans again once the upstream applies; the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) shows each wave's state ([linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)). `linked-plan`, `linked-states`, `waves` |
 | 6 | Drift detection | 4 | scheduled, per stack, with remediation | a scheduled run per root opens and closes the drift issue, and turns drift on a literal into a pull request ([guide](/terragucci/guides/turn-on-drift-checks/)). `drift`, `drift-close`, `respond-drift` |
 | 7 | Cloud credentials (OIDC) | 4 | short-lived cloud credentials per stack, no static keys | each job trades the forge's OIDC token for a plan or apply role, per root glob with `oidc.roles`, on AWS, GCP and Azure ([credentials](/terragucci/reference/pipeline/#credentials)). `forgejo-oidc`, `report-oidc`, `oidc-clouds` |
-| 8 | Pricing suitability | 4 | a low monthly cost at the calculator's inputs | Apache-2.0, with no licence fee and nothing hosted; you pay for your CI minutes and your bucket |
+| 8 | Pricing suitability | 4 | a low monthly cost at the calculator's inputs | Apache-2.0, with no license fee and nothing hosted; you pay for your CI minutes and your bucket |
 | 9 | Repo scaffolding & codegen | 4 | backend, provider and workspace boilerplate from one declarative source | `terragucci generate` writes each root's backend, provider and version files from repo, glob and root settings, and `tf-check` refuses a hand edit ([guide](/terragucci/guides/generate-root-files/)). `generate` |
 | 10 | State governance & RBAC | 4 | state access isolated per environment, fine-grained roles, export, cross-state tracking | a role per environment scoped to its state keys ([guide](/terragucci/guides/scope-state-access/)), an approved and audited [export](/terragucci/guides/export-a-state-version/), [cross-state edges](/terragucci/guides/track-cross-state-edges/), [state versions](/terragucci/guides/find-a-state-version/) and [migrations](/terragucci/guides/move-resources-between-roots/). `state-roles`, `state-export`, `state-edges`, `state-versions`, `migrate-split` |
 | 11 | Migration from Atlantis | 3 | a documented path, `atlantis.yaml` import or comment compatibility | `terragucci import atlantis` and `import digger` write `terragucci.yml`, and `atlantis plan` and `atlantis apply` comments work behind a setting ([guide](/terragucci/guides/coming-from-atlantis-or-opentaco/)). `import-atlantis`, `comment-atlantis` |
@@ -62,7 +62,7 @@ A 3 below is what tacos.guru's description of the criterion asks for. The terrag
 | 20 | Visualizations / graphs | 2 | resource and dependency graphs, deployment views | the estate page draws roots by wave with cross-project edges; the run view shows blast radius and a timeline ([guide](/terragucci/guides/see-every-project/)). `estate-graph` |
 | 21 | AI: agentic ops & MCP | 2 | an MCP server, state context, agents that act on drift | [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/) serves the estate read-only, and the [drift agent](/terragucci/guides/agent-fix-drift/) opens a pull request that plans like any other. `mcp-last-apply`, `drift-agent` |
 | 22 | Ephemeral environments | 1 | short-lived environments with a TTL | a copy of the named roots per pull request, destroyed through a planned destroy on close or when its TTL passes ([guide](/terragucci/guides/ephemeral-environments/)). `ephemeral-pr`, `ephemeral-ttl` |
-| 23 | Terraform provider | 1 | manage the platform through Terraform | the terragucci provider owns a control repo's projects and defaults, and plans show each change ([guide](/terragucci/guides/manage-the-control-repo-with-terraform/)). You build it from the repository; its publication to the OpenTofu and Terraform registries is pending ([#659](https://github.com/INTENTIUS/terragucci/issues/659)). `provider-project` |
+| 23 | Terraform provider | 1 | manage the platform through Terraform | the terragucci provider owns a [control repo](/terragucci/concepts/control-repo/)'s projects and defaults, and plans show each change ([guide](/terragucci/guides/manage-the-control-repo-with-terraform/)). You build it from the repository; its publication to the OpenTofu and Terraform registries is pending ([#659](https://github.com/INTENTIUS/terragucci/issues/659)). `provider-project` |
 | 24 | Multi-cloud support | 1 | clouds beyond AWS | OIDC to AWS, GCP and Azure, and reports in S3, GCS or Azure Blob Storage ([guide](/terragucci/guides/keep-reports-in-a-bucket/)). `oidc-clouds`, `blob-gcs`, `blob-azure` |
 
 ## Gates
@@ -77,6 +77,6 @@ A 3 below is what tacos.guru's description of the criterion asks for. The terrag
 
 ## Next
 
-- [Access and identity](/terragucci/standards/access-and-identity/): who decides each action, in place of accounts and roles.
+- [Access and identity](/terragucci/standards/access-and-identity/): the forge and cloud permissions that stand in for accounts and roles.
 - [Standards](/terragucci/standards/): the open standards terragucci reads and writes.
 - [Validation](/terragucci/reference/validation/): every claim named here, with its result.

@@ -1,0 +1,122 @@
+---
+// A control repo's defaults reaching three projects on three forges: reconcile opens a pull request
+// (a merge request on GitLab) in each project that changes and none in a project already current;
+// each team merges its own, and the project's own pipeline plans and applies.
+const projects = [
+	{ x: 0, name: 'acme/infra', forge: 'GitHub', opened: 'pull request' },
+	{ x: 124, name: 'acme/network', forge: 'GitLab', opened: 'merge request' },
+	{ x: 248, name: 'acme/edge', forge: 'Forgejo', opened: undefined },
+];
+const w = 112;
+---
+<figure class="tg-control-repo not-content">
+	<svg viewBox="0 0 360 372" role="img" aria-labelledby="tg-cr-title tg-cr-desc">
+		<title id="tg-cr-title">A control repo and its projects</title>
+		<desc id="tg-cr-desc">
+			The control repo holds one terragucci.yml with defaults and three projects.
+			reconcile previews each project, then with --mode apply opens a pull request in the GitHub project and a merge request in the GitLab project, whose pipelines would change, and nothing in the Forgejo project, which is current.
+			Each team reviews and merges its own request, and each project's own pipeline checks, plans and applies, with its state and approvals in that project.
+		</desc>
+		<defs>
+			<marker id="tg-cr-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+				<path d="M0,0 L8,4 L0,8 z" class="head" />
+			</marker>
+		</defs>
+
+		<rect class="box control" x="0" y="0" width="360" height="72" rx="6" />
+		<text class="strong" x="12" y="20">control repo</text>
+		<text class="small mono" x="12" y="40">terragucci.yml</text>
+		<text class="small" x="112" y="40">defaults: every project</text>
+		<text class="small" x="112" y="58">projects: three repos, three forges</text>
+
+		<line class="flow" x1="180" y1="72" x2="180" y2="104" marker-end="url(#tg-cr-arrow)" />
+		<text class="small mono" x="190" y="92">reconcile</text>
+		<text class="small muted" x="12" y="92">preview, then --mode apply</text>
+
+		<line class="bracket" x1={w / 2} y1="108" x2={248 + w / 2} y2="108" />
+		{projects.map((p) => (
+			<g>
+				<line class="flow" x1={p.x + w / 2} y1="108" x2={p.x + w / 2} y2="126" marker-end="url(#tg-cr-arrow)" />
+				<rect class={p.opened ? 'box' : 'box idle'} x={p.x} y="130" width={w} height="54" rx="6" />
+				<text class="strong" x={p.x + 10} y="149">{p.name}</text>
+				<text class="tiny muted" x={p.x + 10} y="164">{p.forge}</text>
+				<text class={p.opened ? 'small accent' : 'small muted'} x={p.x + 10} y="178">{p.opened ?? 'already current'}</text>
+
+				<line class={p.opened ? 'flow' : 'flow dashed'} x1={p.x + w / 2} y1="184" x2={p.x + w / 2} y2="208" marker-end="url(#tg-cr-arrow)" />
+				<rect class={p.opened ? 'box' : 'box idle'} x={p.x} y="212" width={w} height="40" rx="6" />
+				<text class="small" x={p.x + 10} y="230">{p.opened ? 'the team reviews' : 'nothing to merge'}</text>
+				<text class="small" x={p.x + 10} y="244">{p.opened ? 'and merges' : ''}</text>
+
+				<line class="flow" x1={p.x + w / 2} y1="252" x2={p.x + w / 2} y2="276" marker-end="url(#tg-cr-arrow)" />
+				<rect class="box" x={p.x} y="280" width={w} height="56" rx="6" />
+				<text class="strong" x={p.x + 10} y="298">own pipeline</text>
+				<text class="small" x={p.x + 10} y="314">check, plan,</text>
+				<text class="small" x={p.x + 10} y="328">waves, apply</text>
+			</g>
+		))}
+
+		<text class="small muted" x="0" y="362">state, approvals and applies stay in each project</text>
+	</svg>
+</figure>
+
+<style>
+	.tg-control-repo {
+		margin: 1.5rem 0;
+	}
+	svg {
+		display: block;
+		width: 100%;
+		max-width: 30rem;
+		height: auto;
+		font-family: var(--sl-font);
+	}
+	text {
+		font-size: 12px;
+		fill: var(--sl-color-gray-1);
+	}
+	.strong {
+		font-weight: 600;
+		fill: var(--sl-color-white);
+	}
+	.small {
+		font-size: 11px;
+	}
+	.tiny {
+		font-size: 10px;
+	}
+	.mono {
+		font-family: var(--sl-font-mono);
+	}
+	.muted {
+		fill: var(--sl-color-gray-3);
+	}
+	.accent {
+		fill: var(--tg-accent);
+	}
+	.box {
+		fill: var(--tg-panel);
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1;
+	}
+	.box.control {
+		stroke: var(--tg-accent);
+	}
+	.box.idle {
+		fill: none;
+		stroke-dasharray: 4 3;
+	}
+	.flow {
+		stroke: var(--sl-color-gray-3);
+		stroke-width: 1.5;
+	}
+	.flow.dashed {
+		stroke-dasharray: 3 3;
+	}
+	.head {
+		fill: var(--sl-color-gray-3);
+	}
+	.bracket {
+		stroke: var(--sl-color-gray-3);
+		stroke-width: 1.5;
+	}
+</style>

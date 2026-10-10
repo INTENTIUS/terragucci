@@ -9,7 +9,7 @@ prompt: |
 
 import Shot from '../../../components/Shot.astro';
 
-Each stage run sends one trace and its metrics over OTLP to your collector or any backend with an OTLP endpoint, and sends nothing until an endpoint is set.
+Nothing is sent until an endpoint is set; any backend with an OTLP endpoint works.
 
 ## Turning it on
 
@@ -57,6 +57,8 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
 
+<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" />
+
 The binary exports to a loopback receiver, OTLP over HTTP only, which forwards batches to your collector.
 
 ## Timings
@@ -65,13 +67,13 @@ With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([se
 
 ### Report contents
 
-Every `tf-plan`, `tf-drift` and `tf-apply` wave report lists where the time went, with or without an endpoint:
+Each plan, drift and wave report lists where the time went, even without an endpoint:
 
-- the slowest roots, with each root's wall time, its plan's and, in a wave, its apply's;
-- in each root, the slowest resource instances and their refresh time;
-- the slowest provider calls, and the resource each was for;
+- roots by wall time, slowest first, with each one's plan time and, in a wave, its apply time;
+- the slowest resource instances in each root, with their refresh time;
+- the time of each provider call, with the resource it was for;
 - provider start-up;
-- state lock waits, from [choudoufu](#state-lock-waits) on a backend that locks.
+- waits for a state lock, from [choudoufu](#state-lock-waits) on a backend that locks.
 
 Past a span budget (`CHOUDOUFU_TRACE_DETAIL`, `CHOUDOUFU_TRACE_SPAN_BUDGET`) choudoufu sums timings by resource type or provider method, and the report says so.
 
@@ -93,7 +95,7 @@ choudoufu adds two more:
 
 ### State lock waits
 
-With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait is a `State lock wait` span with its attempts, listed in the report and carried by `terragucci_lock_wait_seconds`. An estate with a record store takes no lock, so it shows no waits ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
+On a root whose backend locks (S3 with `use_lockfile`, say), choudoufu ([set it up](/terragucci/guides/use-a-binary/#choudoufu)) records each wait as a `State lock wait` span with its attempts. It shows in the report and in `terragucci_lock_wait_seconds`. An estate with a record store takes no lock, so it shows no waits ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 | Run | State lock wait |
 |---|---|
@@ -108,7 +110,7 @@ The HTML report shows them under "Where the time went", and `report.json` carrie
 
 ### Exported metrics
 
-A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. Every metric is a gauge with `project` and `stage` labels, plus those below.
+A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. All are gauges with `project` and `stage` labels, plus those below.
 
 ### Metric table
 
@@ -145,9 +147,9 @@ The stage span's `terragucci.result` is `success` or `failure` for a plan or dri
 
 ### Resource attributes
 
-The metrics' resource carries only `terragucci.project` and `service.version`; the trace's adds `vcs.ref.head.revision` and `cicd.pipeline.run.url.full`.
+Metrics carry only `terragucci.project` and `service.version` as resource attributes, and spans also carry `vcs.ref.head.revision` and `cicd.pipeline.run.url.full`.
 
-## From a trace to its report
+## Trace links
 
 `report.json` records the run's trace id as `run.trace_id`, and the HTML report shows it. Set `telemetry.trace_url` to a link with `{trace_id}` in it and the report links the trace instead:
 
@@ -156,13 +158,13 @@ telemetry:
   trace_url: "https://grafana.example.com/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22{trace_id}%22%7D%5D%7D"
 ```
 
-With [`reports.url`](/terragucci/reference/report/#report-storage) set, the stage span carries the run's `report.html` address as `terragucci.report.url`.
+The stage span carries the run's `report.html` address as `terragucci.report.url` when [`reports.url`](/terragucci/reference/report/#report-storage) is set.
 
 ## Dashboards and alerts
 
 ### Generated files
 
-With `dashboards: true`, `init` and `reconcile` write Grafana dashboards and alert rules, and `init` leaves files it did not write alone.
+With `dashboards: true`, `init` and `reconcile` write Grafana dashboards and alert rules; `init` leaves files it did not write alone.
 
 ```
 observability/terragucci/
@@ -174,7 +176,7 @@ observability/terragucci/
 
 ### Dashboards
 
-The nine dashboards are the six below and one for each of the three SLOs.
+`init` writes nine dashboards, the six below and one for each of the three SLOs.
 
 | Dashboard | Shows |
 |---|---|
@@ -213,7 +215,7 @@ The SLOs, over 28 days: plans finish within ten minutes 95% of the time, wave ap
 | `path` | `/var/lib/grafana/dashboards/terragucci` | where Grafana finds the dashboard files |
 | `drift_age`, `wave_wait`, `schedule` | `1d`, `4h`, `2d` | the alert thresholds |
 
-Mount `grafana/provisioning/` under `/etc/grafana/provisioning/`, `grafana/dashboards/` at `path`, and add `prometheus/terragucci.rules.yml` to `rule_files`. Page from the alerting file or the `ErrorBudgetBurn` alerts, not both.
+Mount `grafana/provisioning/` under `/etc/grafana/provisioning/` and `grafana/dashboards/` at `path`. Add `prometheus/terragucci.rules.yml` to `rule_files`. Page from the alerting file or the `ErrorBudgetBurn` alerts, not both.
 
 ### Span metrics
 

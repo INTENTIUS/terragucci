@@ -8,7 +8,7 @@ import ScaleChart from '../../../components/ScaleChart.astro';
 import ScaleRuns from '../../../components/ScaleRuns.astro';
 import ScaleFlow from '../../../components/ScaleFlow.astro';
 
-Can one team plan, review, gate and apply about 10,000 resources across a dozen repos through the CI jobs terragucci generates? The bench asks it with no server and one modest runner.
+The bench operates about 10,000 resources in a dozen repos through the CI jobs terragucci generates. It uses no server and one modest runner.
 
 <ScaleLine lead />
 
@@ -36,7 +36,7 @@ A run passes only when every phase succeeds and the state files hold every resou
 Each timed phase starts at its first push or merge and ends when its last run does.
 
 1. Setup: the bench builds the estate and pushes each repo with no pipeline.
-2. Reconcile: `reconcile --mode apply` in the control repo opens a pipeline pull request in every repo it lists, and each is checked and planned.
+2. Reconcile: `reconcile --mode apply` in the [control repo](/terragucci/concepts/control-repo/) opens a pipeline pull request in every repo it lists, and each is checked and planned.
 3. Create: the bench merges them, and each repo's waves apply its platform root first, then the roots that read its state.
 4. Plan: a pull request in each repo changes `modules/estate`, which every root calls, so each repo gets one plan note covering all its roots.
 5. Change: the bench merges those, and the waves apply the new tags.

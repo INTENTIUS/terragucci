@@ -6,7 +6,7 @@ prompt: setup
 
 Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only four opt-in features [run a model](/terragucci/#opt-in-coding-agent).
 
-Run your coding agent in a repository of Terraform, OpenTofu or Terragrunt roots and paste it the prompt above.
+Give the prompt above to an agent working in a repository of Terraform, OpenTofu or Terragrunt roots.
 
 ## Agent inputs
 
@@ -35,10 +35,10 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Rules for the agent
 
-- To set terragucci up or change its config, run it from the shell with `--json` and parse the envelope ([JSON output](/terragucci/reference/cli-json/)).
-- To read what terragucci already wrote, connect to `terragucci mcp` when the user has added it ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
+- Set terragucci up or change its config from the shell with `--json`, and parse the envelope ([JSON output](/terragucci/reference/cli-json/)).
+- Read what terragucci already wrote through `terragucci mcp`, when the user has added it ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
 - Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
-- Approvals belong to people. Print the `chant approve` command for a waiting wave but never run it. Over MCP or ACP, chant refuses to resolve a wave's gate.
+- Approvals belong to people. Print the `chant approve` command for a waiting wave but never run it; chant refuses to resolve a wave's gate over MCP or ACP.
 - [Responses to pipeline events](/terragucci/reference/responses/) need no model.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
 

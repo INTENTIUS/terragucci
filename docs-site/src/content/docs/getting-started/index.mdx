@@ -81,7 +81,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
    | [binary](/terragucci/guides/use-a-binary/) | `tofu` or `terraform` and its version; Terragrunt runs it underneath | `--binary` |
    | forge | the `origin` remote | `--forge` |
 
-   With a `terragucci.yml`, run `npx terragucci config check` first: it names the approval mode, and any key it does not know along with the keys it accepts. On the example:
+   If you have a `terragucci.yml`, run `npx terragucci config check` first. It names the approval mode and any unknown key, with the keys it accepts. The example's output:
 
    <Captured step="config" />
 
@@ -146,7 +146,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
    </TabItem>
    <TabItem label="Forgejo">
 
-   Each run brings its own token, so there is nothing to add.
+   Each run brings its own token, so no secret is needed.
 
    </TabItem>
    </Tabs>
@@ -209,5 +209,5 @@ With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a
 
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/) when a change destroys something.
 - [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) to find changes made outside Terraform.
-- [Govern many repos from one place](/terragucci/guides/govern-many-repos/) once one repo works.
+- [Govern many repos from one place](/terragucci/guides/govern-many-repos/) with a [control repo](/terragucci/concepts/control-repo/) once one repo works.
 - [Threat model](/terragucci/reference/threat-model/) for what the jobs can reach and the branch protection they rely on.

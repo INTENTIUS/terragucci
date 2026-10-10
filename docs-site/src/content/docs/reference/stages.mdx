@@ -18,7 +18,12 @@ Every stage takes the root directories and the binary.
 
 ## Exit codes
 
-Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 while a wave waits for approval, 4 when its plans changed after an approval no run applied, and nothing applied.
+Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes). Two belong to waves:
+
+| Code | Means |
+|---|---|
+| 3 | a wave waits for approval |
+| 4 | a wave's plans changed after an approval no run applied, so nothing applied |
 
 ## Check
 
@@ -54,7 +59,7 @@ Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 whi
 :::tip[A live check before any plan]
 Every pull request learns, before any plan and with no cloud credentials, whether each resource can carry the tag that identifies it.
 
-<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci; <a href="/terragucci/guides/use-a-binary/#choudoufu">set it up</a>.</small>
+<small>The <a href="/terragucci/guides/use-a-binary/#choudoufu">choudoufu binary</a> (the OpenTofu fork from the team behind terragucci) runs this check.</small>
 :::
 
 | Order | Command | A difference |
@@ -66,7 +71,7 @@ Every pull request learns, before any plan and with no cloud credentials, whethe
   </TabItem>
 </Tabs>
 
-A failed validate prints:
+A failed validate prints the file, line and error:
 
 ```text
 error: envs/dev/orders/main.tf:12:3-12:8: Unsupported argument
@@ -83,7 +88,7 @@ refused: envs/prod/app/backend.tf differs from what terragucci generate writes f
 FAILED generate: 1 generated file out of line with terragucci.yml; run terragucci generate and commit what it writes
 ```
 
-With [`policy`](/terragucci/reference/policy/) set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target. The log is kept as `terragucci-check/report.md`.
+When [`policy`](/terragucci/reference/policy/) is set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target. The log is kept as `terragucci-check/report.md`.
 
 ## Drift
 
@@ -120,11 +125,11 @@ A schedule can stop with no error: GitHub turns a scheduled workflow off after 6
 
 <Steps>
 
-1. It asks the forge when the drift job last ran, from its schedule or by hand.
+1. The plan job asks the forge when the drift job last ran (scheduled or by hand).
 
-2. It counts how often the cron has come round since then, or since the pipeline file was added if the job never ran.
+2. It counts how often the cron has come round since then (or since the pipeline file was added, if the job never ran).
 
-3. At two or more, the job log and the plan note say the drift checks are overdue and what to do.
+3. At two or more, the job log and plan note warn that the drift checks are overdue and say what to do.
 
 </Steps>
 
@@ -138,13 +143,21 @@ A forge that does not answer leaves a line in the log, and the plan goes on.
 
 ## Gated waves
 
-A wave the [gate policy](#gate-policy) holds waits for an approval bound to its set digest; under the default `on-destroy` only a wave that destroys or replaces waits. A changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
+A wave the [gate policy](#gate-policy) holds waits for an approval bound to its set digest, and a changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
 
-A waiting wave prints its set digest and approval command and exits 3; a wave whose plans changed since approval applies nothing and exits 4.
+A waiting wave prints its set digest and approval command.
 
 ## State migrations
 
-A file in `migrations/` moves resources between roots' states. `stage tf-plan` proves the first migration that has not applied, since a later one plans against the states it writes: every affected root plans with no change against its new state. The job fails when one would change. Wave 1 of `stage tf-apply` proves it again before it plans its roots and waits on the gate `tf-migrate <name>`, with the same exit codes as a wave: 3 while it waits, 4 when a state moved since the approval, 1 when it cannot be proved or written. Approved, it writes the new states under each state's lock and records each version before and after. See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
+A file in `migrations/` moves resources between roots' states. `stage tf-plan` proves the first migration not yet applied (a later one plans against the states it writes): every affected root must plan with no change against its new state, or the job fails. Wave 1 of `stage tf-apply` proves it again before planning its roots and waits on the gate `tf-migrate <name>`. An approval lets it write the new states under each state's lock and record each version before and after.
+
+| Exit code | Means |
+|---|---|
+| 3 | the migration waits on its gate |
+| 4 | a state moved since the approval |
+| 1 | the migration cannot be proved or written |
+
+See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
 
 ## Rolling out a module version
 
@@ -163,7 +176,7 @@ terragucci rollout modules/network 1.4.0 --mode apply
 terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-No version means the newest published tag; `--from` picks between disagreeing pins. Each run takes one step; `--mode apply` opens pull requests with `token_env` and never applies, merges or writes a default branch. With [`rollouts`](/terragucci/reference/config/) set, a scheduled job takes the next step for you.
+No version means the newest published tag; `--from` picks between disagreeing pins. Each run takes one step; `--mode apply` opens pull requests with `token_env`; it never applies or merges and never writes a default branch. With [`rollouts`](/terragucci/reference/config/) set, a scheduled job takes the next step for you.
 
 | Exit code | Meaning |
 |---|---|
@@ -205,7 +218,7 @@ The `publish` job runs after `apply` on the default branch and alone gets the [r
 
 ### Version bump rules
 
-A changed module is published at the version these rules give; [Responses](/terragucci/reference/responses/#version-bump) and [Publish your modules](/terragucci/guides/publish-modules/) link here.
+A changed module is published at the version these rules give, which the [version-bump response](/terragucci/reference/responses/#version-bump) also uses.
 
 | Commit or file | Bump |
 |---|---|
@@ -218,7 +231,7 @@ A changed module is published at the version these rules give; [Responses](/terr
 
 ## The grouped summary
 
-`tf-plan` and `tf-drift` group identical changes and name every destroy, replacement and refusal. See [the plan report](/terragucci/reference/report/).
+The plan and drift stages group identical changes and name each destroy, replacement or refusal. See [the plan report](/terragucci/reference/report/).
 
 ## Gate policy
 
@@ -230,4 +243,4 @@ A changed module is published at the version these rules give; [Responses](/terr
 | `on-destroy` | the wave's plans destroy or replace something |
 | `never` | never; only pull request review and default-branch protection stand before the apply |
 
-A waiting wave exits with code 3 and prints the approval command. Run it, then run the stage again.
+Run the approval command a waiting wave prints and run the stage again.

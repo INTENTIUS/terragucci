@@ -29,7 +29,7 @@ A consumer goes stale when a change reaches the producer and not the consumer: i
 | a `terraform_remote_state` block whose backend's `bucket` and `key` name another root's state | the code of both roots, as it orders the apply waves |
 | a Terragrunt unit's `dependency` or `dependencies` block | the unit's `terragrunt.hcl` |
 
-Each report lists a root's `terraform_remote_state` reads as `roots[].reads`, and a unit's dependencies as `roots[].dependencies`. Each upload keeps them in the project's `edges.json` beside the newest run that planned each root and the newest apply wave that changed it. The reads follow the newest plan or apply of the default branch. A pull request's plan or a drift check moves the consumer's last plan forward but never changes its reads. Nothing reads a state or an output's value.
+A report lists a root's `terraform_remote_state` reads as `roots[].reads` and a unit's dependencies as `roots[].dependencies`. Every upload keeps them in the project's `edges.json` beside each root's newest plan run and newest apply wave that changed it. The reads follow the newest plan or apply of the default branch. A pull request's plan or a drift check moves the consumer's last plan forward but never changes its reads. Nothing reads a state or an output's value.
 
 ## Steps
 
@@ -37,7 +37,7 @@ Each report lists a root's `terraform_remote_state` reads as `roots[].reads`, an
 
 1. Keep [reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/). From then on, each run's upload writes `edges.json`.
 
-2. Run `terragucci estate` (its scheduled job also runs it) and open the link it prints. The Cross-state edges section lists each consumer and the states it reads.
+2. Run `terragucci estate` (its scheduled job also runs it) and open the link it prints.
 
 3. For a stale edge, plan the consumer again: `/terragucci plan <root>` on a pull request, or a drift check of the default branch. When the plan changes something, the producer's new outputs reach the consumer through a change you review.
 

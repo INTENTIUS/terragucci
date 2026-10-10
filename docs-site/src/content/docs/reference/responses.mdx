@@ -25,9 +25,9 @@ Every event has a default response that needs no model. No response runs a codin
 | module changed with no conventional commit | none; `tf-publish` proposes a patch | `suggest`: a suggested bump in a release pull request, from the typed-decision service |
 | pull request opened or updated | none | `check`: a typed decision flags a description that leaves out what the plan destroys or replaces |
 
-## Choosing a response
+## Settings
 
-Set a response per event under `respond` in `terragucci.yml`. A key you leave out keeps its default.
+Set a response per event under `respond` in `terragucci.yml`; a key you leave out keeps its default.
 
 ```yaml
 respond:
@@ -49,7 +49,7 @@ respond:
 | `version-bump` | `suggest`, `off` | `off` |
 | `description` | `off`, `check` | `off` |
 
-## Running a response
+## Commands
 
 Each response is a command that dry-runs by default; `--mode apply` opens the pull request or pushes the commit.
 
@@ -68,7 +68,7 @@ terragucci respond rollout modules/network 1.4.0 --mode apply
 terragucci respond rollout --mode apply
 ```
 
-`respond rollout` with no module continues every rollout in flight, found from their pull requests' `terragucci/rollout/` branches. Without `rollouts` set, nothing opens the next wave until someone runs it.
+With no module, `respond rollout` finds the rollouts in flight from their pull requests' `terragucci/rollout/` branches and continues each. Without `rollouts` set, nothing opens the next wave until someone runs it.
 
 | A rollout's newest wave | `respond rollout` |
 |---|---|
@@ -115,11 +115,11 @@ Other changes are only reported:
 | never set in the root | it comes from a default |
 | on a resource deleted outside Terraform | the next apply makes it again |
 
-In a Terragrunt repo a unit's resources are in the module its `terraform.source` names, and what differs between units is their `inputs`. Where the module sets the drifted attribute to `var.<name>` and the unit's own `terragrunt.hcl` sets `<name>` to a literal in `inputs`, the pull request writes the live value there, so only that unit changes. A literal in the module is reported, since every unit calling the module shares it, and so is a module from outside the repo. The drift job plans again only the units its report shows drifted. `--import` names a root's files, so it is refused in a Terragrunt repo.
+In a Terragrunt repo a unit's resources are in the module its `terraform.source` names, and what differs between units is their `inputs`. Where the module sets the drifted attribute to `var.<name>` and the unit's own `terragrunt.hcl` sets `<name>` to a literal in `inputs`, the pull request writes the live value there, so only that unit changes. A literal in the module is only reported, since every unit calling the module shares it. The same goes for a module from outside the repo. The drift job plans again only the units its report shows drifted. `--import` names a root's files, so it is refused in a Terragrunt repo.
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
+Under [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
 
-For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14.1 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
+For a resource the state lacks, pass `--import <address>=<id>`. From Terraform `1.14.1`, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
 <Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
 
@@ -145,7 +145,7 @@ With `respond.drift: attribute`, each drifted attribute goes through three steps
 | roots or Terragrunt units | `terragucci stage tf-drift` lists who changed each attribute in the drift issue, under its root or unit |
 | `decide.token_env` | received on GitHub and Forgejo |
 
-Where the step cannot run, it says so and step 3 follows.
+If step 2 cannot run, it says so and step 3 follows.
 
 <Shot step="drift-attribute" view="issue" alt="A drift issue in Forgejo whose Who changed it list puts the queue's visibility_timeout_seconds down to a person: SetQueueAttributes by alice, from the audit log" />
 
@@ -161,7 +161,7 @@ Nothing here applies or merges.
 
 ### Description check
 
-With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the service whether the title and description fit the plan. The flag never blocks a merge and changes no gate.
+When `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block) are set, the plan job asks the service whether the title and description fit the plan. The flag never blocks a merge and changes no gate.
 
 | Outcome | The note | `intent.json` |
 |---|---|---|
@@ -181,13 +181,13 @@ terragucci respond description --report terragucci-report --title "retag email" 
 | no canary | adds `waves.canary` |
 | a rename (`--report`) | adds a `moved` block for each resource the plan destroys and creates with the same configuration ([terragucci-moved](/terragucci/reference/tips/#terragucci-moved)), after the new block, in a pull request into `--branch` |
 
-With `--report`, `tips` reads the plans of a `stage tf-plan` report and proposes only the `moved` blocks; run it in a checkout of the branch that renamed the resources, after its plan. The generated tips job runs without it, after the applies, from the default branch.
+`tips --report` reads the plans of a `stage tf-plan` report and proposes only the `moved` blocks; run it in a checkout of the branch that renamed the resources, after its plan. The generated tips job runs on the default branch after the applies, without `--report`.
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
+Under [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 
-`fmt` runs on request and pushes one commit to the pull request's branch, and refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. In the generated pipeline the `fmt` job runs it after a failed check, so the check job holds no token that pushes.
+`fmt` runs on request and pushes one commit to the pull request's branch, and refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. The generated pipeline's `fmt` job runs it after a failed check, so the check job holds no token that pushes.
 
 <Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
@@ -195,7 +195,7 @@ Release notes cover the commits that touched a module between its last two tags,
 
 ### Version bump
 
-The bump comes from the [version bump rules](/terragucci/reference/stages/#version-bump-rules). With `version-bump: suggest` and no conventional commit since the last release, the typed-decision service picks it; this needs [`decide`](/terragucci/reference/config/).
+The bump comes from the [version bump rules](/terragucci/reference/stages/#version-bump-rules). Under `version-bump: suggest`, the typed-decision service picks the bump when no conventional commit landed since the last release; this needs [`decide`](/terragucci/reference/config/).
 
 | Where | What |
 |---|---|

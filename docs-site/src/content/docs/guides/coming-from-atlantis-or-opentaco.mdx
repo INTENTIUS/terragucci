@@ -12,7 +12,7 @@ prompt: |
 
 ## Result
 
-Each Atlantis and OpenTaco command and setting sits beside the terragucci comment, key or job that does the same work. terragucci has no server and no account: `init` writes jobs that run in your forge's CI and write to your git and bucket.
+A `terragucci.yml` that matches your Atlantis or OpenTaco setup, and jobs `init` writes for your forge's CI. There is no server and no account; the jobs write to your git and bucket.
 
 ## Import the settings
 
@@ -22,13 +22,20 @@ npx terragucci import digger     # reads digger.yml
 npx terragucci init
 ```
 
-[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below, and prints each setting under its row: written as a key, done with no key, not mapped and why, or [left out on purpose](#left-out-on-purpose) with the rule and what to do instead. The projects' directories become `roots`, so the generated pipeline plans the same projects. `--dry-run` prints it all and writes nothing.
+[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below and prints each setting as one of:
 
-Atlantis and OpenTaco apply before merge, so the import writes `apply.when: pull-request`, with `apply.requires` from the projects' `apply_requirements`. `--apply-when merge` keeps terragucci's default. On GitLab it keeps `apply.when: merge` and says why: applying before merge there needs [`comments:` and a merge token](/terragucci/reference/config/#apply-before-merge-on-gitlab).
+- written as a key
+- done with no key
+- not mapped, and why
+- [left out on purpose](#left-out-on-purpose), with the rule and what to do instead
+
+The projects' directories become `roots`, so the generated pipeline plans the same projects. `--dry-run` prints it all and writes nothing.
+
+Atlantis and OpenTaco apply before merge, so the import writes `apply.when: pull-request` and takes `apply.requires` from the projects' `apply_requirements`. `--apply-when merge` keeps terragucci's default. On GitLab it keeps `apply.when: merge` and says why: applying before merge there needs [`comments:` and a merge token](/terragucci/reference/config/#apply-before-merge-on-gitlab).
 
 ## Comment commands
 
-Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note, so there [`comments:`](/terragucci/guides/re-plan-from-a-comment/) adds a scheduled job that answers `/terragucci plan` and `/terragucci apply` on its next run, and `/terragucci lock` and `/terragucci unlock` when `apply.when: pull-request` is set.
+Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note, so there [`comments:`](/terragucci/guides/re-plan-from-a-comment/) adds a scheduled job that answers `/terragucci plan` and `/terragucci apply` on its next run. With `apply.when: pull-request` it also answers `/terragucci lock` and `/terragucci unlock`.
 
 | To do this | Atlantis | OpenTaco | terragucci |
 |---|---|---|---|
@@ -48,7 +55,7 @@ Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merg
 
 With [`atlantis_comments: true`](/terragucci/reference/config/#keys), `atlantis plan`, `atlantis plan -d <dir>` and `atlantis apply` work as the `/terragucci` comments. The alias changes only the words. `atlantis apply` on an open pull request is still refused unless `apply.when: pull-request` is set and its requirements pass. `-p`, `-w`, `--` and `atlantis apply -d` are refused with the reason from the tables here.
 
-A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply that a comment never runs it. [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) lists what each command accepts.
+A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply that a comment never runs it. What each command accepts is under [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms).
 
 ## Settings
 
@@ -72,7 +79,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Policy | conftest, set in the server's config; a workflow's `policy_check`; a project's `custom_policy_check` | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides |
 | Custom steps | `workflows` | `workflows` | none: the jobs are generated; `env` sets variables every job gets, which an import writes from the workflows' `env` steps that set a fixed value |
 | Cloud credentials | the server's environment | `aws-role-to-assume` in your workflow, or a project's `aws_role_to_assume`, over OIDC | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
-| Many repos | the server's repo config | | a control repo's `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
+| Many repos | the server's repo config | | a [control repo](/terragucci/concepts/control-repo/)'s `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
 | Terragrunt | a custom workflow, or terragrunt-atlantis-config | `generate_projects` with Terragrunt parsing, or a project's `terragrunt` | detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/)) |
 | Drift | drift webhooks | drift detection | `drift`, a cron schedule |
 

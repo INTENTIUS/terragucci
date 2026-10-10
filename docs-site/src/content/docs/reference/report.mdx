@@ -10,7 +10,7 @@ prompt: |
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report, a JSON document from which everything a person reads is rendered.
+Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one JSON report, the source of everything a person reads.
 
 ## Running it
 
@@ -23,7 +23,7 @@ The plan job writes the report for every pull request and merge request. Its not
     <Shot step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
   </TabItem>
   <TabItem label="GitLab">
-    Kept with the job's artifacts and linked from the note as the HTML report. The merge-request widget reads `gitlab-terraform.json`.
+    The job's artifacts hold the HTML report, and the note links it. The merge-request widget reads `gitlab-terraform.json`.
 
     <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
   </TabItem>
@@ -36,7 +36,7 @@ The plan job writes the report for every pull request and merge request. Its not
 
 With [a served bucket](#report-storage) the copy there is linked instead.
 
-Run the stage yourself from the repo:
+Run it locally from the repo:
 
 ```bash
 npx terragucci stage tf-plan
@@ -61,8 +61,10 @@ It writes to `terragucci-report/`.
 | `roots/<root>/plan.txt` | the root's full plan, as the binary printed it, with every value the plan marks sensitive masked |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 | `roots/<root>/cost.json` | with `cost` set, the estimator's output for the root |
+| `issue.md` | `tf-drift` only: the drift issue's body ([Drift](/terragucci/reference/stages/#drift)) |
+| `issue.json` | `tf-drift` only: what the run did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address |
 
-[CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the drift issue's body, and `issue.json`, what the run did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address; see [Drift](/terragucci/reference/stages/#drift).
+The stage still writes the report when a root refuses to plan, and exits 1. [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags.
 
 ## Reviewer view
 
@@ -93,7 +95,7 @@ The note comments the plan back to the pull request, grouped. A group of two roo
 | Group | the diff of its first root (or instance) as the binary printed it: each attribute that changes with its value before and after, nested blocks, `(known after apply)`; once per group, then the roots that make the same change |
 | Values that differ | the attributes whose values differ between the group's roots, by name |
 | Each root's plan | the root's whole plan in a collapsed block, with its `Plan:` line as the title and a link to its `plan.txt` |
-| Diff colours | each line's `+`, `-`, `~` or `-/+` moved to the first column, so the forge colours additions and removals |
+| Diff colors | each line's `+`, `-`, `~` or `-/+` moved to the first column, so the forge colors additions and removals |
 
 A Terragrunt unit's plan is kept as JSON only, so its group shows the attribute names.
 
@@ -156,7 +158,7 @@ A change to one of these that only touches tags stays folded.
 
 ## Back to the full plan
 
-Every root's full plan is kept beside the report, as printed and as JSON, and the HTML report links each group, root and named change to its plan and job.
+Each root's full plan is kept beside the report as printed and as JSON. The HTML report links every group, root and named change to its plan and job.
 
 <Shot step="report" view="root" alt="One root's row in the HTML report, envs/prod/payments, with its links to plan, plan.json and the job" optional />
 
@@ -164,7 +166,7 @@ The plan link opens the root's plan as the binary printed it:
 
 <Shot step="report" view="plan" alt="The full plan text of envs/prod/payments, opened from the report" optional />
 
-The header names the commit and the job, and the pull request when there is one. With `telemetry.trace_url` set, the trace id opens the trace; see [Traces and metrics](/terragucci/reference/observability/#from-a-trace-to-its-report). Destroys, replacements and refusals, then outlier roots, are never folded. The HTML report is one file that makes no network calls.
+The header names the commit and the job, and the pull request when there is one. With `telemetry.trace_url` set, the trace id opens the trace; see [Traces and metrics](/terragucci/reference/observability/#trace-links). The HTML report is one file that makes no network calls.
 
 ## Script access
 
@@ -180,7 +182,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 ## Sensitive values
 
-`show -json` prints sensitive values in plain text; before a plan is kept, each becomes `(sensitive, redacted by terragucci)`, and the report page counts them.
+`show -json` prints sensitive values in plain text. terragucci redacts each one before a plan is kept, and the report page counts them.
 
 | Value | In the report |
 |---|---|
@@ -195,7 +197,7 @@ Digests are taken before redaction, so an approval binds the plan as planned.
 
 ## Report storage
 
-By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep reports longer, name a bucket in `terragucci.yml`, then run `npx terragucci init` again.
+By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep them longer, name a bucket in `terragucci.yml` and rerun `npx terragucci init`.
 
 | `reports.bucket` | Store | API |
 |---|---|---|
@@ -254,7 +256,7 @@ With `tips` on, the default, the report ends with advice on how your roots are s
 
 ## The report index
 
-Every upload rewrites `index.html` and `index.json`.
+Each upload rewrites the two index files, `index.html` and `index.json`.
 
 | Item | Value |
 |---|---|

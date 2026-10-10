@@ -49,7 +49,7 @@ With `--json`, these commands print only one JSON object on stdout.
 
 ## reconcile
 
-`results.mode` is `dry-run` or `apply`. `results.projects` has one entry per project:
+`results` holds `mode` (`dry-run` or `apply`) and `projects`, with these fields per project:
 
 | Field | Holds |
 |---|---|
@@ -125,7 +125,7 @@ On every exit but a usage error, `stage tf-apply` writes its wave's outcome to t
 
 ## rollout
 
-`results` is the rollout as the run left it.
+`results` holds the state the run left the rollout in.
 
 | Field | Holds |
 |---|---|

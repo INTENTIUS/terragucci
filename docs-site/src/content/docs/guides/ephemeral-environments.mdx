@@ -13,7 +13,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-A reviewer wants to try a change before it merges. With `ephemeral` set, each open pull request gets an environment of its own: the roots you name, applied from its head under state keys nothing else uses.
+With `ephemeral` set, each open pull request gets an environment of its own to try the change in before it merges: the roots you name, applied from its head under state keys nothing else uses.
 
 | When | What terragucci does |
 |---|---|
@@ -55,19 +55,26 @@ The state key is the root's own with `-pr-<n>` added: `envs/preview/app/terrafor
 
 ## The gate
 
-The environment waits at gate `pr-<n>` of op `tf-ephemeral` under the `gate` your waves use. With `always`, any change waits; with `on-destroy`, a change that destroys or replaces something waits. The job prints the command that approves it:
+The environment waits at gate `pr-<n>` of op `tf-ephemeral` under the `gate` your waves use:
+
+| `gate` | Waits on |
+|---|---|
+| `always` | any change |
+| `on-destroy` | a change that destroys or replaces something |
+
+The job prints the command that approves it:
 
 ```bash
 chant approve tf-ephemeral pr-12 --plan jcs1-sha256:6d2b...
 ```
 
-Once someone runs it, the next push or a re-run of the job applies. Under `approval: sealed` only a sealed approval counts.
+The next push or a re-run of the job then applies it. Under `approval: sealed` only a sealed approval counts.
 
 No gate holds a destroy. Closing the pull request is the decision, and so is the TTL the default branch set. The destroy still plans first, and its record carries that plan's digest.
 
 ## The TTL
 
-An environment expires `ttl` after the last apply that changed it, so a pull request that keeps getting pushes keeps it. The sweep runs every `sweep` minutes on the default branch. It destroys each environment whose TTL passed, and each one whose pull request the forge reports closed. A destroy that fails leaves the environment live, flagged on the estate page, for the next sweep to try again.
+An environment expires `ttl` after the last apply that changed it, so a pull request that keeps getting pushes keeps it. Every `sweep` minutes, a run on the default branch destroys each environment whose TTL passed, and each one whose pull request the forge reports closed. A failed destroy leaves the environment live and flagged on the estate page; the next sweep tries again.
 
 ## Per forge
 
@@ -89,7 +96,7 @@ Forks never get one. On GitLab the job needs the project token, so `ephemeral` w
 | a root in HCP Terraform (a `cloud` block), or on another backend | no: the job fails with a config error naming the root |
 | a Terragrunt unit whose key does not read the suffix | no: the job fails with a config error naming the file, before anything plans |
 
-terragucci never selects a CLI workspace. The environment's key sits in the backend block's own attribute (`key`, or `prefix` on `gcs`), so its lock file and a listing of the bucket name it plainly.
+terragucci never selects a CLI workspace. The suffix goes in the backend block's own key attribute (`prefix` on `gcs`), so the environment's lock file and a bucket listing show it plainly.
 
 ## Terragrunt units
 
@@ -107,7 +114,7 @@ remote_state {
 
 The `ephemeral` job sets it to `-pr-<n>` and prepares each unit with `terragrunt run -- init`, so `live/preview/app/terraform.tfstate` becomes `live/preview/app/terraform-pr-12.tfstate`. A `dependency` block reads its upstream's environment too, since the upstream's key takes the same suffix. The units apply in the order their dependencies give, and are destroyed in reverse.
 
-Before anything plans, the job reads the backend Terragrunt initialised each unit with. A key without the suffix stops the job with a config error, so an environment never plans, applies or destroys at a unit's own key:
+Before anything plans, the job reads the backend Terragrunt initialised each unit with. A key without the suffix stops the job with a config error, so no environment ever runs against a unit's own state:
 
 ```text
 terragucci: live/preview/app: its s3 backend's key is live/preview/app/terraform.tfstate with TERRAGUCCI_EPHEMERAL_SUFFIX set, which is the unit's own state, so its copy is refused; make the remote_state block's key read the suffix, ...
@@ -117,7 +124,7 @@ The `terragucci.hcl` that [`generate`](/terragucci/guides/generate-root-files/#i
 
 ## Synthesized roots
 
-With `synth`, git holds no roots to copy. The `ephemeral` job runs the synth command in the pull request's checkout first, as every other job does, then copies the stacks `roots` names, such as `cdktf.out/stacks/preview`. The destroy runs it again on the commit the environment was applied from. A stack's copy takes the suffix on the key its backend construct gives, so give the stack a backend that keeps its state outside the job, such as `S3Backend`: CDK Terrain's default local state lives in the job's checkout and is gone when the job ends.
+With `synth`, git holds no roots to copy. The `ephemeral` job runs the synth command in the pull request's checkout first, as every other job does, then copies the stacks `roots` names, such as `cdktf.out/stacks/preview`. The destroy runs it again on the commit the environment was applied from. A stack's copy takes the suffix on the key its backend construct gives, so give the stack a backend that keeps its state outside the job (`S3Backend`, for one). CDK Terrain's default local state lives in the job's checkout and is gone when the job ends.
 
 A synth command that fails stops the job, and nothing applies.
 
