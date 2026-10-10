@@ -45,7 +45,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's.
 | `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | `github.token`: statuses and pull requests write, only in the step that reads the comment, before the head is checked out | plan role |
 | `replan-note` | after `replan` | as `plan-note` | as `plan-note` | none |
 | `apply-wave-<k>` | a push to the default branch | merged code | `github.token`, `contents: write` | apply role |
-| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code; outside the apply concurrency group, under the run's shared lock tag | `github.token`, `contents: write` | apply role |
+| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | `github.token`, `contents: write` | apply role |
 | `apply-done` | with `waves.jobs`, after the last wave's share jobs | none | `github.token`, `statuses: write` | none |
 | `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | `github.token`, `contents: write` | apply role |
 | `pr-merge` | `apply.merge: auto` | none of the change's | the merge token | none |
@@ -111,7 +111,7 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own, dropped from the step that runs the change's code | plan role |
 | `replan-note` | after `replan` | as `plan-note` | the run's own | none |
 | `apply-wave-<k>` | a push to the default branch | merged code | the run's own | apply role |
-| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code; outside the apply concurrency group, under the run's shared lock tag | the run's own | apply role |
+| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | the run's own | apply role |
 | `apply-done` | with `waves.jobs`, after the last wave's share jobs | none | the run's own | none |
 | `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | the run's own | apply role |
 | `pr-merge` | `apply.merge: auto` | none of the change's | the merge token, required | none |

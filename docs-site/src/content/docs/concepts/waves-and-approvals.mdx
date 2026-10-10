@@ -142,9 +142,9 @@ In a Terragrunt repo the wave's job plans every unit with one `run --all`, and e
 
 `init` refuses the key on GitLab and under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
 
-## One apply at a time
+## Applies side by side
 
-A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).
+Two pushes that change different roots apply at the same time, and a root's own applies take turns at its state lock; with [choudoufu](/terragucci/concepts/glossary/#choudoufu), waves wait only for a run changing one of their resources. A wave a newer push superseded stands down. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#applies-side-by-side).
 
 ## Next
 

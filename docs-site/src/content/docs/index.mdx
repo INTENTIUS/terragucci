@@ -80,7 +80,7 @@ With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu
 | How long a wave waited for a state lock, and how many tries it took | [State lock waits](/terragucci/reference/observability/#state-lock-waits) |
 | Which provider calls were slow, and the resource each was for | [What the report lists](/terragucci/reference/observability/#report-contents) |
 | Timings summed by resource type, so a large estate's report stays readable | [What the report lists](/terragucci/reference/observability/#report-contents) |
-| A killed apply that leaves no lock to release; applies that meet outside the pipeline settle per resource, one winner named | [Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/) |
+| Changes to different resources of one estate apply at the same time; an overlapping change waits, or is refused, before it reaches the cloud; a killed apply leaves nothing to release | [Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/) |
 | A role scoped to one estate by an IAM condition on the `tofu-estate` tag, refused on another estate's resources | [Live resource markers](/terragucci/concepts/locking-and-staleness/#live-resource-markers) |
 
 ## Pull request automation

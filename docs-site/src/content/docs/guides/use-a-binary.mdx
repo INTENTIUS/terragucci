@@ -1,7 +1,7 @@
 ---
 title: Choose choudoufu, Terraform, OpenTofu or Terragrunt
 description: Pick the binary your roots run with, and see what each one gives the pipeline.
-claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, root-pins, tf-terraform, tg-terraform, tg-root-pins, tg-choudoufu]
+claims: [check-diagnostics, cdf-rows-overlap, cdf-rows-wait, cdf-rows-takeover, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, root-pins, tf-terraform, tg-terraform, tg-root-pins, tg-choudoufu]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-a-binary/.
   Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
@@ -65,7 +65,7 @@ binary: choudoufu
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
 | Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#report-contents) |
 | Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#report-contents) |
-| A killed apply leaves no lock to release. The pipeline still applies one change at a time; applies that meet outside it settle per resource, and two on one record leave one winner, named | [Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/) |
+| Two applies of one estate that change different resources run at the same time; one that changes a resource another is applying waits for it, or, from a comment, is refused, before it reaches the cloud. A killed apply leaves nothing to release, and the next one refuses a plan it made stale | [Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/) |
 | A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-and-staleness/#live-resource-markers) |
 | One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-and-staleness/#one-backend-for-all-your-estates) |
 | A root that reads another estate's outputs through `data "terraform_estate_outputs"` applies after the root whose `live` block owns that estate | the layers `init --dry-run` counts, and each wave's apply order |

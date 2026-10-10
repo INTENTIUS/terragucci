@@ -6,22 +6,23 @@ description: Apply order, comment refusals, commit statuses, stale plan notes an
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-## One apply at a time
+## Applies side by side
 
-Pushes apply one at a time in the order they arrived; none cancels another.
+Two pushes that change different roots apply at the same time; none cancels another (`apply-per-root`). A root's own applies take turns at its backend's state lock, each waiting up to `-lock-timeout` (5 minutes unless `TF_CLI_ARGS` sets one), so keep a backend that locks: an S3 backend with `use_lockfile` or a DynamoDB table. With [choudoufu](/terragucci/concepts/glossary/#choudoufu) a wave waits only for a run changing one of its own resources ([two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate)).
 
-| Forge | Apply jobs wait in |
+| Forge | Apply jobs |
 |---|---|
-| GitHub | one concurrency group with `queue: max`; check that your GitHub Enterprise Server supports it |
-| GitLab | a resource group |
-| Forgejo | a named group, plus a lock on the remote that a waiter takes over once the holder's run ends or its lease is two hours old |
+| GitHub | in no concurrency group |
+| GitLab | in no resource group |
+| Forgejo | each push to the default branch runs in a group of its own commit, so a later push neither cancels nor waits for an earlier one; other branches' runs, and each pull request's comments, still wait in a group of their own |
 
-On Forgejo 16.0.5 and earlier, a run waiting in the group can stay waiting with the runner idle after the run ahead of it ends, when that run's last job was skipped or the run was cancelled before any job started. Forgejo hands the waiting job out once any other job in the instance ends, or once forgejo-runner restarts.
+On Forgejo 16.0.5 and earlier, a run waiting in a group can stay waiting with the runner idle after the run ahead of it ends, when that run's last job was skipped or the run was cancelled before any job started. Forgejo hands the waiting job out once any other job in the instance ends, or once forgejo-runner restarts.
 
 | Rule | What happens |
 |---|---|
-| [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | on GitHub and Forgejo every apply job takes the lock on the remote, held by the run rather than by one job, so a wave's share jobs apply side by side outside the concurrency group while another push's apply waits; on GitHub the apply a comment starts and the resume job take it too |
-| Stand-down | a wave whose commit is no longer the branch tip stands down, on GitHub and Forgejo |
+| [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | a wave's share jobs apply side by side, beside any other run's apply |
+| Stand-down | a push's wave whose commit is no longer the branch tip stands down: at the start of its job on GitHub and Forgejo, and on every forge again once its gate let it through, before it applies. The newer push applies the whole tree |
+| Another run's resources | with choudoufu, a push's wave waits for a run applying a resource it changes, then plans again; the apply a comment starts is refused and its reply names that run |
 | Pull request locks | none under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks), from a pull request's first plan; under `apply.when: pull-request`, an applying pull request or one a writer comments `/terragucci lock` on locks the roots it reaches (in a Terragrunt repo, the units) |
 | Parallelism | `tf-plan`, `tf-drift` and `tf-apply` plan and apply a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise, and 16 units for Terragrunt's `run --all` on other backends |
 | State lock | `tf-plan` and `tf-drift` plan with `-lock=false`, so a pull request plan or a drift run never waits for an apply that holds a root's lock, and never holds one up |
