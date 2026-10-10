@@ -17,11 +17,25 @@
 //   POST /hold?re=<regex>&markers=a,b   hold each PUT whose path matches, from
 //                                       now on, numbering arrivals from 1; the
 //                                       first marker found in a held body names it
-//   GET  /held                          [{seq, marker, path}] of the PUTs held so far
+//        [&methods=POST,PUT] [&target=<regex>]
+//                                       hold those methods instead of PUT alone,
+//                                       and with target only an AWS JSON call
+//                                       whose X-Amz-Target matches (SQS's
+//                                       AmazonSQS.SetQueueAttributes). A new
+//                                       hold keeps holding what is held, and
+//                                       numbers on from it
+//   GET  /held                          [{seq, marker, path, sent}] of what was held so far
 //   POST /release?order=2,1             forward the held PUTs in that order, each
 //                                       answered before the next is sent
 //   POST /open                          stop holding, and forward what is held in
 //                                       arrival order
+//   POST /drop?seq=3                    answer that held request 503 and never
+//                                       forward it (the request of a run that
+//                                       was killed while it was held)
+//   GET  /events                        [{seq, method, path, target, marker,
+//                                       arrived, answered, status}] of every
+//                                       request, times in epoch milliseconds,
+//                                       target the X-Amz-Target of a JSON call
 //   GET  /log                           one line per request: method, path, status,
 //                                       and for a PUT its If-Match or If-None-Match
 import http from "node:http";
@@ -30,10 +44,13 @@ const [upHost, upPort] = (process.env.UPSTREAM ?? "floci:4566").split(":");
 const alias = process.env.ALIAS ?? "";
 
 let hold = null;
+let methods = ["PUT"];
+let targetRe = null;
 let markers = [];
 let held = [];
 let chain = Promise.resolve();
 const lines = [];
+const events = [];
 
 const body = (req) =>
   new Promise((resolve) => {
@@ -60,7 +77,7 @@ function precondition(req) {
   return "no-precondition";
 }
 
-function forward(req, res, path, payload) {
+function forward(req, res, path, payload, event) {
   return new Promise((resolve) => {
     const headers = { ...req.headers, host: `${upHost}:${upPort}`, "content-length": String(payload.length) };
     delete headers.connection;
@@ -78,6 +95,7 @@ function forward(req, res, path, payload) {
         res.writeHead(r.statusCode ?? 502, h);
         res.end(req.method === "HEAD" ? undefined : data);
         lines.push(`${req.method} ${path.split("?")[0]} ${r.statusCode}${req.method === "PUT" ? ` ${precondition(req)}` : ""}`);
+        if (event) Object.assign(event, { answered: Date.now(), status: r.statusCode });
         resolve();
       });
     });
@@ -98,7 +116,7 @@ function release(order) {
       const h = held.find((x) => x.seq === seq && !x.sent);
       if (!h) continue;
       h.sent = true;
-      await forward(h.req, h.res, h.path, h.payload);
+      await forward(h.req, h.res, h.path, h.payload, h.event);
     }
   });
 }
@@ -107,12 +125,16 @@ http
   .createServer(async (req, res) => {
     const payload = await body(req);
     const path = target(req);
-    if (req.method === "PUT" && hold && hold.test(path.split("?")[0])) {
-      const text = payload.toString("utf8");
-      held.push({ seq: held.length + 1, marker: markers.find((m) => text.includes(m)) ?? "-", path, req, res, payload, sent: false });
+    const text = payload.toString("utf8");
+    const event = { method: req.method, path: path.split("?")[0], target: String(req.headers["x-amz-target"] ?? ""), marker: markers.find((m) => text.includes(m)) ?? "-", arrived: Date.now() };
+    events.push(event);
+    if (hold && methods.includes(req.method) && hold.test(path.split("?")[0]) && (!targetRe || targetRe.test(event.target))) {
+      const seq = held.length + 1;
+      event.seq = seq;
+      held.push({ seq, marker: event.marker, path, req, res, payload, sent: false, event });
       return;
     }
-    await forward(req, res, path, payload);
+    await forward(req, res, path, payload, event);
   })
   .listen(4566);
 
@@ -126,10 +148,11 @@ http
     if (req.method === "POST" && url.pathname === "/hold") {
       hold = new RegExp(url.searchParams.get("re") ?? "^$");
       markers = (url.searchParams.get("markers") ?? "").split(",").filter(Boolean);
-      held = [];
-      return reply(200, { hold: hold.source, markers });
+      methods = (url.searchParams.get("methods") ?? "PUT").split(",").filter(Boolean);
+      targetRe = url.searchParams.get("target") ? new RegExp(url.searchParams.get("target")) : null;
+      return reply(200, { hold: hold.source, markers, methods, target: targetRe?.source ?? null });
     }
-    if (req.method === "GET" && url.pathname === "/held") return reply(200, held.map(({ seq, marker, path }) => ({ seq, marker, path })));
+    if (req.method === "GET" && url.pathname === "/held") return reply(200, held.map(({ seq, marker, path, sent }) => ({ seq, marker, path, sent })));
     if (req.method === "POST" && url.pathname === "/release") {
       release((url.searchParams.get("order") ?? "").split(",").filter(Boolean).map(Number));
       return reply(200, { released: url.searchParams.get("order") });
@@ -139,6 +162,21 @@ http
       release(held.map((h) => h.seq));
       return reply(200, { open: true });
     }
+    if (req.method === "POST" && url.pathname === "/drop") {
+      const h = held.find((x) => x.seq === Number(url.searchParams.get("seq")) && !x.sent);
+      if (h) {
+        h.sent = true;
+        Object.assign(h.event, { answered: Date.now(), status: 503, dropped: true });
+        try {
+          h.res.writeHead(503);
+          h.res.end("dropped");
+        } catch {
+          // The caller is gone.
+        }
+      }
+      return reply(200, { dropped: Boolean(h) });
+    }
+    if (req.method === "GET" && url.pathname === "/events") return reply(200, events);
     if (req.method === "GET" && url.pathname === "/log") return reply(200, lines.join("\n") + "\n", "text/plain");
     reply(404, { error: `no ${req.method} ${url.pathname}` });
   })

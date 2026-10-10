@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { createServer, type IncomingMessage } from "node:http";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
@@ -11,6 +11,21 @@ import { agentRunScript } from "../src/render-agent";
 import { applyScript, AWS_CLI, forgejoSkipLevels, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
+
+// A describe that tests the repo-wide scope (one apply at a time, by group, resource group or lock tag) sets it here.
+const scope = vi.hoisted(() => ({ value: undefined as undefined | "repo" | "root" | "resource" }));
+vi.mock("../src/apply-rows", async (orig) => {
+  const m = await orig<typeof import("../src/apply-rows")>();
+  return { ...m, applyScope: (binary: string) => scope.value ?? m.applyScope(binary) };
+});
+const repoWide = (): void => {
+  beforeEach(() => {
+    scope.value = "repo";
+  });
+  afterEach(() => {
+    scope.value = undefined;
+  });
+};
 
 const OIDC = { plan_role: "arn:aws:iam::111:role/plan-ro", apply_role: "arn:aws:iam::111:role/apply-rw" };
 const layers = [["network"], ["app", "cache"]];
@@ -117,6 +132,73 @@ describe("the check job", () => {
 });
 
 describe("apply concurrency", () => {
+  const cdf = (forge: ForgeName): string => renderPipeline({ forge, binary: "choudoufu", version: "0.23.0", image: "img:1", layers, env: {}, oidc: OIDC }).content;
+
+  it.each(FORGES)("%s: no apply job waits for another run's: two roots apply at once, and the backend's state lock keeps one root's applies apart", (forge) => {
+    for (const text of [render(forge, OIDC), cdf(forge)]) {
+      const doc = body(text);
+      const jobs = forge === "gitlab" ? doc : doc.jobs;
+      for (const [name, job] of Object.entries(jobs as Record<string, any>)) {
+        if (!/^apply-|^mr-apply$/.test(name)) continue;
+        expect(job.concurrency, name).toBeUndefined();
+        expect(job.resource_group, name).toBeUndefined();
+      }
+      expect(text).not.toContain("terragucci-apply-lock");
+      expect(text).not.toContain("terragucci-apply-hold");
+    }
+  });
+
+  it("forgejo: each push to the default branch runs in a group of its own commit, so a later push neither cancels nor waits for an earlier one", () => {
+    const group = body(render("forgejo")).concurrency;
+    expect(group["cancel-in-progress"]).toBe(false);
+    expect(group.group).toContain("github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && format('{0}-{1}', github.ref, github.sha) || github.ref }}");
+    // Comments and dispatches keep their pull request's group, and another branch's pushes wait for each other as before.
+    expect(group.group).toMatch(/^terragucci-\$\{\{ github\.event_name == 'issue_comment' && format\('comment-\{0\}'/);
+  });
+
+  it.each(FORGES)("%s: a push's wave stands down for a newer push once it may apply, and says the newer push superseded it", (forge) => {
+    for (const wave of [1, 2]) {
+      const script = applyScript("tofu", layers, forge, undefined, { wave });
+      expect(script).toMatch(/terragucci stage tf-apply [^\n]* --stand-down/);
+      expect(script).toContain('6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;');
+      // GitHub and Forgejo also stand down before the stage, when the branch moved before the job started.
+      if (forge !== "gitlab") expect(script.indexOf("standing down")).toBeLessThan(script.indexOf("terragucci stage tf-apply"));
+    }
+    expect(commentApplyScript("tofu", layers, "github", OIDC)).not.toContain("--stand-down");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the waves a comment starts refuse what another run is applying, and the reply names that run", (forge) => {
+    const script = commentApplyScript("choudoufu", layers, forge, OIDC);
+    expect(script).toMatch(/terragucci stage tf-apply --wave "\$wave" [^\n]* --on-held refuse/);
+    expect(script).toContain("another run is applying what it changes");
+    expect(script).toContain("exit 5 ;;");
+    // It decides once: nothing it waits for can move the tip under it.
+    expect(script.match(/terragucci comment-apply /g)).toHaveLength(1);
+    expect(gitlabApplyScript("choudoufu", layers, OIDC, { when: "pull-request" })).toContain("--on-held refuse");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: a wave split across jobs holds its run's shared lock, but no concurrency group, and the comment's apply takes no lock tag", (forge) => {
+    const doc = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["net"], ["a", "b", "c", "d", "e"]], env: {}, waveJobs: 2 } as never).content);
+    for (const j of ["apply-wave-1", "apply-wave-2", "apply-wave-2-share-1", "apply-wave-2-share-2"]) {
+      const run = doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+      expect(run, j).toContain(`hold_ref="\${hold_prefix}${j}"`);
+      expect(run, j).toContain("--stand-down");
+      expect(doc.jobs[j].concurrency, j).toBeUndefined();
+    }
+    expect(JSON.stringify(doc.jobs["apply-comment"].steps)).not.toContain("terragucci-apply-lock");
+  });
+
+  it("choudoufu: a wave holds the resources it changes on chant/lifecycle, so its job may push there", () => {
+    const doc = body(renderPipeline({ forge: "github", binary: "choudoufu", version: "0.23.0", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
+    for (const job of ["apply-wave-1", "apply-wave-2", "apply-comment"]) expect(doc.jobs[job].permissions.contents, job).toBe("write");
+    const tofu = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
+    expect(tofu.jobs["apply-wave-1"].permissions.contents).toBe("read");
+    expect(applyScript("choudoufu", layers, "gitlab", undefined, { wave: 1, gate: "never" })).toContain("git remote set-url");
+  });
+});
+
+describe("apply concurrency with a repo-wide scope", () => {
+  repoWide();
   const GROUP = "terragucci-apply-${{ github.repository }}";
 
   it.each(["github", "forgejo"] as const)("%s: one apply per project, a waiting push is not cancelled", (forge) => {
@@ -257,12 +339,11 @@ describe("the comment trigger", () => {
     if (forge === "forgejo") expect(doc.concurrency.group).toContain("(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '') && format('comment-{0}', github.event.inputs.pr)");
   });
 
-  it.each(["github", "forgejo"] as const)("%s: `/terragucci apply` starts the apply-comment job, with the apply role, under the apply lock", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: `/terragucci apply` starts the apply-comment job, with the apply role, beside any other apply", (forge) => {
     const doc = body(render(forge, OIDC));
     const job = doc.jobs["apply-comment"];
     expect(job.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')");
-    expect(job.concurrency).toEqual(doc.jobs["apply-wave-1"].concurrency);
-    expect(job.concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false, ...(forge === "github" ? { queue: "max" } : {}) });
+    expect(job.concurrency).toBeUndefined();
     const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toContain(OIDC.apply_role);
     expect(run).not.toContain(OIDC.plan_role);
@@ -282,11 +363,11 @@ describe("the comment trigger", () => {
     const job = doc.jobs["apply-comment"];
     expect(job.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')");
     expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci apply')");
-    expect(job.concurrency).toEqual(doc.jobs["apply-wave-1"].concurrency);
+    expect(job.concurrency).toBeUndefined();
     const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toMatch(/terragucci comment-apply --layers 'live\/dev\/a;live\/prod\/a,live\/prod\/b'( --forge forgejo)? --out /);
     expect(run).not.toContain("--canary");
-    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/dev/a;live/prod/a,live/prod/b\' --binary tofu --gate always --terragrunt $rest');
+    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/dev/a;live/prod/a,live/prod/b\' --binary tofu --gate always --on-held refuse --terragrunt $rest');
     // A comment that asks for every wave runs the last with --rest, so the waves past the pipeline's jobs apply too.
     expect(run).toContain('rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi');
     expect(run).not.toContain("-auto-approve");
@@ -316,7 +397,11 @@ describe("the comment trigger", () => {
     expect(script.split("\n")[0]).toBe(READS_EXIT);
   });
 
-  it("forgejo: the apply-comment script takes the lock tag without standing down for the tip, and decides again once it holds it", () => {
+  it("forgejo, with a repo-wide scope: the apply-comment script takes the lock tag without standing down for the tip, and decides again once it holds it", () => {
+    scope.value = "repo";
+    onTestFinished(() => {
+      scope.value = undefined;
+    });
     const script = commentApplyScript("tofu", layers, "forgejo", OIDC);
     const at = (s: string): number => script.indexOf(s);
     expect(script).toContain("refs/tags/terragucci-apply-lock");
@@ -597,7 +682,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
     const manual = commentApplyScript("tofu", layers, "github", OIDC, { when: "pull-request" });
     expect(manual).toContain('if [ "$TG_OPEN" = 1 ]; then what="the head"; tf_base="--base origin/$TG_BASE"; fi');
     expect(manual).toContain('terragucci stage tf-apply --wave "$wave" --layers');
-    expect(manual).toMatch(/--gate on-destroy \$tf_base/);
+    expect(manual).toMatch(/--gate on-destroy --on-held refuse \$tf_base/);
     // The responses read the base's settings on an open pull request, and carry no flag after a merge.
     expect(manual).toContain('terragucci respond wave-refused --wave "$wave" --approved terragucci-report/approved --current terragucci-report/current $tf_base || true');
     expect(manual).toContain('terragucci respond apply-failed --log "$log" $tf_base || true');
@@ -620,7 +705,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
     const gl = (extra: Partial<Parameters<typeof renderPipeline>[0]> = {}): Record<string, any> =>
       body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, comments: "*/5 * * * *", applyWhen: "pull-request", applyMergeTokenEnv: "MERGE_TOKEN", ...extra }).content);
 
-    it("the push after the merge confirms; the apply pipeline runs mr-apply alone, from the default branch, under the apply group", () => {
+    it("the push after the merge confirms; the apply pipeline runs mr-apply alone, from the default branch, beside any other apply", () => {
       const doc = gl();
       expect(doc["apply-wave-1"]).toBeUndefined();
       expect(doc.confirm.rules[0].if).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_MR == null');
@@ -629,7 +714,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       expect(doc.check.rules[0].if).toBe('$CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_MR == null');
       const job = doc["mr-apply"];
       expect(job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TERRAGUCCI_MR' }]);
-      expect(job.resource_group).toBe("terragucci-apply");
+      expect(job.resource_group).toBeUndefined();
       expect(job.variables.GIT_DEPTH).toBe("0");
       expect(job.environment).toBeUndefined();
       expect(JSON.stringify(job)).not.toContain("MERGE_TOKEN");
@@ -638,7 +723,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       // The decision comes before the apply role.
       expect(run.indexOf("terragucci comment-apply")).toBeLessThan(run.indexOf(OIDC.apply_role));
       expect(run).toContain('tf_base="--base origin/$TG_BASE"');
-      expect(run).toMatch(/--gate on-destroy \$tf_base/);
+      expect(run).toMatch(/--gate on-destroy --on-held refuse \$tf_base/);
       // No status on the head: a failed one would fail the merge request's own pipeline.
       expect(run).not.toContain("tg status");
       expect(run).toContain("Merge it when you are ready");
@@ -717,10 +802,9 @@ describe("apply before merge (apply.when: pull-request)", () => {
     expect(doc.jobs["pr-merge"]).toBeDefined();
     const run = doc.jobs["apply-comment"].steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toContain("--when pull-request --terragrunt --out terragucci-comment.json");
-    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/canary/one;live/fleet/two\' --binary tofu --gate always --terragrunt $tf_base $rest');
-    // Forgejo decides again once it holds the apply lock, and says nothing twice.
-    if (forge === "forgejo") expect(run).toContain("--terragrunt --again --out");
-    else expect(run).not.toContain("--again");
+    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/canary/one;live/fleet/two\' --binary tofu --gate always --on-held refuse --terragrunt $tf_base $rest');
+    // It decides once: no apply lock to wait for, so nothing to decide again.
+    expect(run).not.toContain("--again");
     const confirm = doc.jobs.confirm.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
     expect(confirm).toContain("--terragrunt");
     expect(confirm).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
@@ -1659,7 +1743,7 @@ describe("a Terragrunt wave in the step's own shell", () => {
       expect(r.status, r.out).toBe(1);
       const calls = readFileSync(log, "utf-8").trim().split("\n");
       expect(calls[0]).toBe("prelude");
-      expect(calls.find((c) => c.startsWith("terragucci stage tf-apply"))).toBe("terragucci stage tf-apply --wave 1 --layers live/a;live/b --binary tofu --gate on-destroy --terragrunt");
+      expect(calls.find((c) => c.startsWith("terragucci stage tf-apply"))).toBe("terragucci stage tf-apply --wave 1 --layers live/a;live/b --binary tofu --gate on-destroy --stand-down --terragrunt");
       expect(calls.some((c) => c.startsWith("terragucci respond apply-failed --log "))).toBe(true);
       const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
       expect(s.at(-1)).toEqual(["failure", "an apply failed"]);
@@ -1673,9 +1757,9 @@ describe("a Terragrunt wave in the step's own shell", () => {
     expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply-wave"))).toEqual(["apply-wave-1", "apply-wave-2"]);
     expect(doc.jobs["apply-wave-2"].needs).toBe("apply-wave-1");
     const run = (j: string): string => doc.jobs[j].steps.map((st: { run?: string }) => st.run ?? "").join("\n");
-    expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt 2>&1");
+    expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --stand-down --terragrunt 2>&1");
     // The last job also runs any wave the repo has past the jobs, and a refusal names the wave that stopped.
-    expect(run("apply-wave-2")).toContain("terragucci stage tf-apply --wave 2 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt --rest");
+    expect(run("apply-wave-2")).toContain("terragucci stage tf-apply --wave 2 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --stand-down --terragrunt --rest");
     expect(run("apply-wave-2")).toContain('tg status terragucci/apply success "every wave of units applied"');
     expect(run("apply-wave-1")).not.toContain("-auto-approve");
     // A waiting wave records its plan on chant/lifecycle. Forgejo ignores permissions:, so GitHub's job carries them.
@@ -1803,7 +1887,8 @@ describe("apply.branches", () => {
   });
 });
 
-describe("a wave split across jobs (waves.jobs)", () => {
+describe("a wave split across jobs (waves.jobs), with a repo-wide scope", () => {
+  repoWide();
   const wide = [["net"], ["a", "b", "c", "d", "e"]];
   const pipeline = (forge: ForgeName, extra: Record<string, unknown> = {}) =>
     body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, ...extra } as never).content);
@@ -1989,7 +2074,8 @@ describe("a wave split across jobs (waves.jobs)", () => {
   });
 });
 
-describe("two concurrent pushes to main on forgejo", () => {
+describe("two concurrent pushes to main on forgejo, with a repo-wide scope", () => {
+  repoWide();
   it("apply one after the other", async () => {
     const origin = tmp("tg-origin-");
     git(origin, "init", "-q", "--bare");

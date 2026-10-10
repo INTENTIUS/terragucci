@@ -272,6 +272,10 @@ pr-review-status|with approval: pr-review terragucci/approval on the head of a p
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
+apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
+cdf-rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
+cdf-rows-wait|with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value|
+cdf-rows-takeover|with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call|
 resume-approve|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
 resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
 approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
@@ -7433,9 +7437,9 @@ claim_atmos_workspace() {
 # swapped, tagged under a suffix of its own. The claim exports that suffix, so
 # push_tree points the pushed pipeline at it and the forge's jobs run the
 # broken code. The tag follows the bundle, so a rerun reuses the image.
-break_image() { # bundle -> prints the image suffix (-t<12 hex>)
+break_image() { # bundle [image, default tofu] -> prints the image suffix (-t<12 hex>)
   local base tag suffix ctx
-  base="$(image_tag tofu)"
+  base="$(image_tag "${2:-tofu}")"
   docker image inspect "$base" >/dev/null 2>&1 || { echo "[smoke] no CI image $base" >&2; return 1; }
   suffix="-t$(shasum -a 256 "$1" | cut -c1-12)"
   tag="$(perl -pe 's/-t[0-9a-f]{12}$//' <<<"$base")$suffix"
@@ -9348,6 +9352,495 @@ claim_cdf_iam() {
   docker rm -f "$name" >/dev/null 2>&1 || true
   drop_work "$work"
   [ $rc = 0 ] && log "a role granted estate a by its tofu-estate tag applied estate a, and floci refused its CreateTags on the instance of estate b, which kept its name"
+  return $rc
+}
+
+# ── applies kept apart per root, and with choudoufu per resource ──────────
+# Every binary but choudoufu applies per root: no apply job waits for
+# another run's, and the backend's state lock keeps one root's applies apart.
+# A choudoufu wave holds the resources its plans change, on chant/lifecycle
+# (_locks/apply-rows.json), from before its apply to its end. These claims
+# run on the Forgejo stack, choudoufu's on a record store bucket on floci
+# behind the hold proxy (cdf_proxy_up), which holds the calls a claim names.
+
+# A new repo $USER/<name> with Actions on, and nothing under per-root/ or the marks in floci.
+rows_repo() { # name
+  local repo="$USER/$1" n
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
+  for n in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$repo")" = 404 ] && break; sleep 1; done
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "{\"name\":\"$1\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos" || return 1
+  for n in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$repo")" = 200 ] && break; sleep 1; done
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+}
+
+# The newest run on a commit, once Forgejo lists it: its id.
+rows_run_id() { # repo sha
+  local i id=""
+  for i in $(seq 1 60); do
+    id="$(api "$URL/api/v1/repos/$1/actions/runs?head_sha=$2" | jq -r '.workflow_runs[0].id // empty')"
+    [ -n "$id" ] && break
+    sleep 2
+  done
+  echo "$id"
+}
+
+rows_run_status() { api "$URL/api/v1/repos/$1/actions/runs/$2" 2>/dev/null | jq -r '.status // empty'; }
+
+# Kill the job containers of a run that are running: what a runner that died does to an apply.
+rows_kill_run() { # repo run
+  local job task
+  for job in $(api "$URL/api/v1/repos/$1/actions/runs/$2/jobs" 2>/dev/null | jq -r '.[] | select(.status == "running") | .task_id'); do
+    for task in $(docker ps -q --filter "name=FORGEJO-ACTIONS-TASK-${job}_"); do docker kill "$task" >/dev/null 2>&1 || true; done
+  done
+}
+
+# How many calls the proxy holds that it has not let through.
+rows_held() { curl -fsS "$CDF_CTL/held" 2>/dev/null | jq '[.[] | select(.sent | not)] | length' 2>/dev/null || echo 0; }
+
+# The rows file on the repo's chant/lifecycle, as JSON; {} when there is none.
+rows_file() { # repo
+  file_at "$1" chant/lifecycle chant/lifecycle _locks/apply-rows.json 2>/dev/null || echo '{}'
+}
+
+# Every log line of a run's jobs that matches the regex.
+rows_log() { # repo run regex
+  run_logs "$1" "$2" | grep -E "$3" || true
+}
+
+claim_apply_per_root() {
+  # A repo of two roots, one and two, each a terraform_data whose local-exec
+  # writes a mark to floci when its apply starts and another when it ends;
+  # waves.canary puts one in wave 1 and two in wave 2, gate: never. The first
+  # push changes two, whose apply then waits for a go mark. Once it has
+  # started, a second push changes one. Its wave 1 must start applying one
+  # while two's apply is still going: one's start mark lands between two's
+  # start and end marks. The claim then writes the go mark, and both runs
+  # must apply.
+  # BREAK: the pipeline is rendered with the repo-wide scope (applyScope
+  # returns repo): one apply in the repo at a time, the lock tag on Forgejo,
+  # so one's apply starts only after two's ended.
+  log() { echo "[smoke apply-per-root] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local name=per-root repo="$USER/per-root" work bucket=shop-terraform-state sha1 sha2 run1 run2 i marks k cli="$TERRAGUCCI" s1 s2 rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "repo";' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    cli="$work/break.mjs"
+  fi
+  rows_repo "$name" || { log "could not make $repo"; drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  for k in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=per-root" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$k" || true
+  done
+  mkdir -p "$work/tree"
+  for k in one two; do
+    mkdir -p "$work/tree/$k"
+    cat >"$work/tree/$k/main.tf" <<TF
+terraform {
+  backend "s3" {
+    bucket         = "$bucket"
+    key            = "per-root/$k.tfstate"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+# Marks this root's apply in floci; two's second apply waits for the claim's go mark.
+resource "terraform_data" "slow" {
+  triggers_replace = file("\${path.module}/rev.txt")
+  provisioner "local-exec" {
+    command = <<-SH
+      mark() { node -e "fetch(process.env.AWS_ENDPOINT_URL + '/$bucket/per-root-marks/' + Date.now() + '-$k-' + process.argv[1], { method: 'PUT', body: 'x' })" "\$1"; }
+      mark start
+      if [ "$k" = two ] && [ "\$(cat rev.txt)" = 2 ]; then
+        node -e "(async () => { for (let i = 0; i < 300; i++) { if ((await fetch(process.env.AWS_ENDPOINT_URL + '/$bucket/per-root-go')).ok) return; await new Promise((r) => setTimeout(r, 1000)); } })()"
+      else
+        sleep 5
+      fi
+      mark end
+    SH
+  }
+}
+TF
+    echo 1 >"$work/tree/$k/rev.txt"
+  done
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\nwaves:\n  canary:\n    - one\n' >"$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$cli" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -q 'terragucci-apply-lock' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "the BREAK pipeline holds no lock tag, so BREAK proves nothing"; drop_work "$work"; return 0; }
+  else
+    ! grep -qE 'terragucci-apply-lock|group: terragucci-apply-' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "the pipeline still serializes its apply jobs"; rc=1; }
+  fi
+  sha1="$(push_tree "$work/tree" "$repo" main "per-root: both roots")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha1" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" | tail -40 >&2; log "the first apply of both roots ended $RUN_STATUS"; drop_work "$work"; return 1; }
+  for k in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=per-root-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$k" || true; done
+  marks_now() { curl -fsS "$FLOCI/$bucket?list-type=2&prefix=per-root-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g; s#.*/[0-9]*-##' | tr '\n' ' '; }
+  # 1. The first push changes two; its apply starts and waits.
+  echo 2 >"$work/tree/two/rev.txt"
+  sha1="$(push_tree "$work/tree" "$repo" main "per-root: two changes")" || { drop_work "$work"; return 1; }
+  run1="$(rows_run_id "$repo" "$sha1")"
+  for i in $(seq 1 150); do case " $(marks_now)" in *" two-start "*) break ;; esac; sleep 2; done
+  case " $(marks_now)" in *" two-start "*) ;; *) log "two's apply never started (run ${run1:-none}: $(rows_run_status "$repo" "${run1:-0}"))"; curl -fsS -o /dev/null -X PUT --data x "$FLOCI/$bucket/per-root-go" || true; drop_work "$work"; return 1 ;; esac
+  log "two is applying in run $run1"
+  # 2. The second push changes one, while two is still applying.
+  echo 2 >"$work/tree/one/rev.txt"
+  sha2="$(push_tree "$work/tree" "$repo" main "per-root: one changes")" || { curl -fsS -o /dev/null -X PUT --data x "$FLOCI/$bucket/per-root-go" || true; drop_work "$work"; return 1; }
+  run2="$(rows_run_id "$repo" "$sha2")"
+  for i in $(seq 1 120); do case " $(marks_now)" in *" one-start "*) break ;; esac; sleep 2; done
+  log "marks before the go: $(marks_now)"
+  curl -fsS -o /dev/null -X PUT --data x "$FLOCI/$bucket/per-root-go" || { log "could not write the go mark"; rc=1; }
+  wait_run "$repo" "$sha1" || rc=1; s1="$RUN_STATUS"
+  wait_run "$repo" "$sha2" || rc=1; s2="$RUN_STATUS"
+  marks="$(marks_now)"
+  log "marks in key order: $marks; run $run1 $s1, run $run2 $s2"
+  [ "$s1" = success ] || { print_logs "$repo" "$run1" | tail -30 >&2; log "the first push's run ended $s1"; rc=1; }
+  [ "$s2" = success ] || { print_logs "$repo" "$run2" | tail -30 >&2; log "the second push's run ended $s2"; rc=1; }
+  # Keys sort by millisecond, so the listing is the order they happened in.
+  case "$marks" in
+    "two-start one-start one-end two-end "|"two-start one-start two-end one-end ") ;;
+    *) log "one did not start applying while two was applying: the applies ran one after the other"; rc=1 ;;
+  esac
+  drop_work "$work"
+  [ $rc = 0 ] && log "the second push applied one while the first was still applying two, and both runs applied"
+  return $rc
+}
+
+# A choudoufu estate in one root, estate/: a live block naming the estate and
+# the record store bucket, and the resources given.
+rows_estate() { # dir estate resources-hcl
+  mkdir -p "$1/estate"
+  cat >"$1/estate/main.tf" <<HCL
+terraform {
+  live {
+    estate = "$2"
+
+    record_store "s3" {
+      bucket = "$CDF_RECORDS"
+    }
+
+    retry {
+      max_attempts = 1
+    }
+  }
+}
+$3
+HCL
+  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$1/.gitignore"
+}
+
+rows_data() { # left right -> two terraform_data
+  printf 'resource "terraform_data" "left" {\n  input = "%s"\n}\n\nresource "terraform_data" "right" {\n  input = "%s"\n}\n' "$1" "$2"
+}
+
+# An SQS queue, whose visibility timeout the provider reads back from the API.
+rows_queue() { # name seconds
+  cat <<HCL
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+}
+
+provider "aws" {
+  region                      = "us-east-1"
+  skip_credentials_validation = true
+  skip_requesting_account_id  = true
+  skip_metadata_api_check     = true
+}
+
+resource "aws_sqs_queue" "q" {
+  name                       = "$1"
+  visibility_timeout_seconds = $2
+}
+HCL
+}
+
+# The queue's visibility timeout in floci.
+rows_visibility() { # queue
+  local url
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$1\"}" | jq -r '.QueueUrl // empty')" || return 0
+  [ -n "$url" ] || return 0
+  sqs GetQueueAttributes "{\"QueueUrl\":\"$url\",\"AttributeNames\":[\"VisibilityTimeout\"]}" | jq -r '.Attributes.VisibilityTimeout // empty'
+}
+
+claim_cdf_rows_overlap() {
+  # A repo of one choudoufu estate on the Forgejo stack, two terraform_data,
+  # left and right, applied at left-0 and right-0; gate: never. The proxy
+  # holds every record write of the estate. A first push sets left to
+  # left-1; its wave holds left and reaches its record write. A second push
+  # sets right to right-2 and leaves left as the estate holds it, so its plan
+  # changes right alone: its wave must hold right beside the first wave and
+  # reach its own record write while the first is still held. Both writes are
+  # then let through, both runs must apply, the records hold left-1 and
+  # right-2, neither wave waited, and no row is left held.
+  # BREAK: the pipeline is rendered with the repo-wide scope, so the second
+  # push's wave waits for the lock tag the first holds and never reaches its
+  # write while the first is held.
+  log() { echo "[smoke cdf-rows-overlap] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local name=cdf-rows-overlap repo="$USER/cdf-rows-overlap" work estate sha1 sha2 run1 run2 i held=0 cli="$TERRAGUCCI" s1 s2 values ev rc=0
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "repo";' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    cli="$work/break.mjs"
+  fi
+  estate="smoke-rows-overlap-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_repo "$name" || { log "could not make $repo"; cdf_down "$work"; return 1; }
+  mkdir -p "$work/tree"
+  rows_estate "$work/tree" "$estate" "$(rows_data left-0 right-0)"
+  printf 'forge: forgejo\nbinary: choudoufu\ngate: never\nenv:\n  AWS_ENDPOINT_URL_S3: http://%s:4566\n' "$CDF_ALIAS" >"$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$cli" init >/dev/null) || { log "init failed"; cdf_down "$work"; return 1; }
+  sha1="$(push_tree "$work/tree" "$repo" main "cdf-rows-overlap: left-0 right-0")" || { cdf_down "$work"; return 1; }
+  wait_run "$repo" "$sha1" || { cdf_down "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" | tail -40 >&2; log "the first apply ended $RUN_STATUS"; cdf_down "$work"; return 1; }
+  values="$(cdf_values "$estate")"
+  [ "$values" = "left-0 right-0" ] || { log "after the first apply the estate holds '$values', not left-0 and right-0"; cdf_down "$work"; return 1; }
+  cdf_hold "^/$CDF_RECORDS/tofu-records/$estate/terraform_data/" left-1,right-2 || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
+  # 1. The first push changes left, and its wave reaches its record write.
+  rows_estate "$work/tree" "$estate" "$(rows_data left-1 right-0)"
+  sha1="$(push_tree "$work/tree" "$repo" main "cdf-rows-overlap: left-1")" || { cdf_down "$work"; return 1; }
+  run1="$(rows_run_id "$repo" "$sha1")"
+  for i in $(seq 1 150); do [ "$(rows_held)" -ge 1 ] && break; sleep 2; done
+  [ "$(rows_held)" -ge 1 ] || { log "the first push's wave never reached its record write (run ${run1:-none}: $(rows_run_status "$repo" "${run1:-0}"))"; curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true; cdf_down "$work"; return 1; }
+  log "run $run1 holds left and its record write is held"
+  # 2. The second push changes right alone, while the first is still applying.
+  rows_estate "$work/tree" "$estate" "$(rows_data left-0 right-2)"
+  sha2="$(push_tree "$work/tree" "$repo" main "cdf-rows-overlap: right-2")" || { curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true; cdf_down "$work"; return 1; }
+  run2="$(rows_run_id "$repo" "$sha2")"
+  for i in $(seq 1 120); do
+    held="$(rows_held)"
+    [ "$held" -ge 2 ] && break
+    case "$(rows_run_status "$repo" "${run2:-0}")" in success|failure|cancelled|skipped) break ;; esac
+    sleep 2
+  done
+  log "record writes held while both runs were applying: $(curl -fsS "$CDF_CTL/held" | jq -c '[.[] | {seq, marker}]')"
+  [ "$held" -ge 2 ] || { log "only $held write reached the store while the other was in flight: the second wave waited for the first"; rc=1; }
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || true
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+  wait_run "$repo" "$sha1" || rc=1; s1="$RUN_STATUS"
+  wait_run "$repo" "$sha2" || rc=1; s2="$RUN_STATUS"
+  if [ $rc = 0 ]; then
+    [ "$s1" = success ] || { print_logs "$repo" "$run1" | tail -30 >&2; log "the first push's run ended $s1"; rc=1; }
+    [ "$s2" = success ] || { print_logs "$repo" "$run2" | tail -30 >&2; log "the second push's run ended $s2"; rc=1; }
+    values="$(cdf_values "$estate")"
+    [ "$values" = "left-1 right-2" ] || { log "the estate holds '$values', not left-1 and right-2"; rc=1; }
+    # Overlap in time: both writes arrived before either was answered.
+    ev="$(curl -fsS "$CDF_CTL/events" | jq -c '[.[] | select(.seq != null)] | {arrived: (map(.arrived) | max), answered: (map(.answered) | min)}')"
+    log "the held writes: last arrived and first answered (epoch ms): $ev"
+    [ "$(jq '.arrived < .answered' <<<"$ev")" = true ] || { log "the second write arrived after the first was answered"; rc=1; }
+    [ -n "$(rows_log "$repo" "$run2" 'holding the resource its plans change')" ] || { log "the second push's wave did not say it held the resource it changes"; rc=1; }
+    [ -z "$(rows_log "$repo" "$run2" 'waiting for it')" ] || { log "the second push's wave waited for the first"; rc=1; }
+    [ "$(rows_file "$repo" | jq '(.rows // {}) | length')" = 0 ] || { log "rows are still held: $(rows_file "$repo" | jq -c .rows)"; rc=1; }
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "the second push's wave held right and reached its record write while the first still held left and its write; both applied, the estate holds $values, and no row is left held"
+  return $rc
+}
+
+claim_cdf_rows_wait() {
+  # One choudoufu estate of one SQS queue on floci, visibility timeout 30,
+  # applied. Two checkouts of a Forgejo repo set it to 411 and 422; each runs
+  # tf-apply wave 1 in the choudoufu CI image, with every AWS call through
+  # the proxy and its rows on the repo's chant/lifecycle. The proxy holds
+  # SetQueueAttributes. a starts, and its call is held while its wave holds
+  # the queue. b starts: it must wait for a's run, and make no
+  # SetQueueAttributes call while a's is held, as the proxy's request log
+  # shows. a's call is then let through: b must plan again once a let go, and
+  # its call must arrive after a's was answered. Both apply, and the queue
+  # ends at b's 422.
+  # BREAK: the waves hold no rows (applyScope returns root), so b's call
+  # reaches the API while a's is held.
+  log() { echo "[smoke cdf-rows-wait] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local name=cdf-rows-wait repo="$USER/cdf-rows-wait" work estate queue bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" inner host i side held got ev rc=0
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/terragucci.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "root";' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    bundle="$work/terragucci.mjs"
+  fi
+  estate="smoke-rows-wait-$(date +%s)-$$"
+  queue="tgs-rows-wait-$(date +%s)-$$"
+  inner="http://${USER}:${TOKEN}@forgejo:3000/$repo.git"
+  host="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  rows_wave() { # side log
+    run_copied --rm --name "$CDF_ALIAS-$1" --network "${TG_NETWORK:-terragucci}" -v "$work/$1:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_LOCK_POLL=2 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$(image_tag choudoufu)" terragucci stage tf-apply --wave 1 --layers estate --binary choudoufu --gate never >"$2" 2>&1
+  }
+  rows_commit() { git -C "$1" add -A && git -C "$1" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "$2"; }
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_repo "$name" || { log "could not make $repo"; cdf_down "$work"; return 1; }
+  mkdir -p "$work/tree"
+  rows_estate "$work/tree" "$estate" "$(rows_queue "$queue" 30)"
+  push_tree "$work/tree" "$repo" main "cdf-rows-wait: the queue at 30" >/dev/null || { cdf_down "$work"; return 1; }
+  for side in a b; do
+    git clone -q "$host" "$work/$side" && git -C "$work/$side" remote set-url origin "$inner" || { log "could not clone $repo"; cdf_down "$work"; return 1; }
+  done
+  if ! rows_wave a "$work/seed.log"; then log "the first apply of the queue failed"; tail -20 "$work/seed.log" >&2; cdf_down "$work"; return 1; fi
+  clean_mounted "$work/a"
+  [ "$(rows_visibility "$queue")" = 30 ] || { log "after the first apply the queue's visibility timeout is '$(rows_visibility "$queue")', not 30"; cdf_down "$work"; return 1; }
+  rows_estate "$work/a" "$estate" "$(rows_queue "$queue" 411)"; rows_commit "$work/a" "a: 411"
+  rows_estate "$work/b" "$estate" "$(rows_queue "$queue" 422)"; rows_commit "$work/b" "b: 422"
+  curl -fsS -o /dev/null -X POST -G "$CDF_CTL/hold" --data-urlencode 're=^/$' --data-urlencode methods=POST \
+    --data-urlencode 'target=SetQueueAttributes' --data-urlencode 'markers="411","422"' || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
+  # 1. a holds the queue, and its call is held.
+  ( rows_wave a "$work/a.log" && echo 0 >"$work/a.rc" || echo $? >"$work/a.rc" ) >/dev/null 2>&1 &
+  for i in $(seq 1 120); do [ "$(rows_held)" -ge 1 ] && break; [ -s "$work/a.rc" ] && break; sleep 2; done
+  [ "$(rows_held)" -ge 1 ] || { log "a's SetQueueAttributes never arrived"; tail -20 "$work/a.log" >&2; curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true; wait; cdf_down "$work"; return 1; }
+  log "a's SetQueueAttributes is held"
+  # 2. b waits for a's run, and calls nothing while a's call is held.
+  ( rows_wave b "$work/b.log" && echo 0 >"$work/b.rc" || echo $? >"$work/b.rc" ) >/dev/null 2>&1 &
+  for i in $(seq 1 120); do
+    grep -q 'waiting for it' "$work/b.log" 2>/dev/null && break
+    [ "$(rows_held)" -ge 2 ] && break
+    [ -s "$work/b.rc" ] && break
+    sleep 2
+  done
+  sleep 4
+  held="$(rows_held)"
+  log "b: $(grep -m1 -E 'waiting for it|holding the' "$work/b.log" 2>/dev/null | cut -c1-200); calls held: $held"
+  [ "$held" = 1 ] || { log "b's SetQueueAttributes reached the API while a's was held"; rc=1; }
+  grep -q 'waiting for it' "$work/b.log" || { log "b did not wait for a's run"; rc=1; }
+  # 3. a's call goes through; b plans again and applies after it.
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1" || true
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+  for i in $(seq 1 240); do [ -s "$work/a.rc" ] && [ -s "$work/b.rc" ] && break; sleep 2; done
+  for side in a b; do [ -s "$work/$side.rc" ] || { docker rm -f "$CDF_ALIAS-$side" >/dev/null 2>&1 || true; echo 124 >"$work/$side.rc"; }; done
+  wait
+  for side in a b; do
+    [ "$(cat "$work/$side.rc")" = 0 ] || { log "the wave in checkout $side did not apply (exit $(cat "$work/$side.rc"))"; tail -20 "$work/$side.log" >&2; rc=1; }
+  done
+  ev="$(curl -fsS "$CDF_CTL/events" | jq -c '[.[] | select(.target | test("SetQueueAttributes"))] | map({marker, arrived, answered, status})')"
+  log "SetQueueAttributes calls: $ev"
+  if [ $rc = 0 ]; then
+    [ "$(jq '[.[] | select(.marker == "\"411\"")] | length' <<<"$ev")" = 1 ] || { log "a made other than one SetQueueAttributes call"; rc=1; }
+    [ "$(jq '([.[] | select(.marker == "\"422\"")][0].arrived) >= ([.[] | select(.marker == "\"411\"")][0].answered)' <<<"$ev")" = true ] \
+      || { log "b's SetQueueAttributes arrived before a's was answered"; rc=1; }
+    grep -q 'planning again' "$work/b.log" || { log "b did not plan again once a let go"; rc=1; }
+    got="$(rows_visibility "$queue")"
+    [ "$got" = 422 ] || { log "the queue's visibility timeout is '$got', not b's 422"; rc=1; }
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "b waited while a's SetQueueAttributes was held and called nothing; once a let go it planned again, its call came after a's, and the queue holds 422"
+  return $rc
+}
+
+claim_cdf_rows_takeover() {
+  # A repo of one choudoufu estate of one SQS queue on the Forgejo stack,
+  # visibility timeout 30, applied; gate: never, TG_LOCK_POLL 3. The proxy
+  # holds SetQueueAttributes. A first push sets 411: its wave holds the queue
+  # and its call is held. A second push sets 422: its wave plans against 30
+  # and waits for the first run. The proxy then holds the first run's next
+  # call too and lets its SetQueueAttributes through, so 411 lands, and the
+  # first run's job is killed while it still holds the queue. Nobody unlocks
+  # anything. The second run must take the row over from the run that is
+  # gone, and the apply's re-read must refuse its plan, which 411 made stale
+  # ("The approved plan no longer matches the live system"), before any
+  # SetQueueAttributes of its own: the queue stays at 411. No row is left held.
+  # BREAK: the waves never find a holder gone (forgeLiveness answers alive),
+  # so the second run waits on and the claim catches it never taking over.
+  log() { echo "[smoke cdf-rows-takeover] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local name=cdf-rows-takeover repo="$USER/cdf-rows-takeover" work estate queue sha1 sha2 run1 run2 i s1 s2 ev seq log2 got rc=0 suffix="${TG_IMAGE_SUFFIX:-}"
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply-rows.ts 'return ["success", "failure", "cancelled", "skipped", "completed"].includes(status) ? "dead" : "alive";' 'return "alive";' \
+      && suffix="$(break_image "$work/break.mjs" choudoufu)" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  estate="smoke-rows-takeover-$(date +%s)-$$"
+  queue="tgs-rows-takeover-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_repo "$name" || { log "could not make $repo"; cdf_down "$work"; return 1; }
+  mkdir -p "$work/tree"
+  rows_estate "$work/tree" "$estate" "$(rows_queue "$queue" 30)"
+  printf 'forge: forgejo\nbinary: choudoufu\ngate: never\nenv:\n  AWS_ENDPOINT_URL_S3: http://%s:4566\n  AWS_ENDPOINT_URL_SQS: http://%s:4566\n  TG_LOCK_POLL: "3"\n' "$CDF_ALIAS" "$CDF_ALIAS" >"$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; cdf_down "$work"; return 1; }
+  ends() { case "$(rows_run_status "$repo" "$1")" in success|failure|cancelled|skipped) return 0 ;; esac; return 1; }
+  cleanup() { curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true; for r in "$@"; do [ -n "$r" ] && rows_kill_run "$repo" "$r"; done; cdf_down "$work"; }
+  sha1="$(TG_IMAGE_SUFFIX="$suffix" push_tree "$work/tree" "$repo" main "cdf-rows-takeover: the queue at 30")" || { cdf_down "$work"; return 1; }
+  wait_run "$repo" "$sha1" || { cdf_down "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" | tail -40 >&2; log "the first apply ended $RUN_STATUS"; cdf_down "$work"; return 1; }
+  [ "$(rows_visibility "$queue")" = 30 ] || { log "after the first apply the queue's visibility timeout is '$(rows_visibility "$queue")', not 30"; cdf_down "$work"; return 1; }
+  curl -fsS -o /dev/null -X POST -G "$CDF_CTL/hold" --data-urlencode 're=^/$' --data-urlencode methods=POST \
+    --data-urlencode 'target=SetQueueAttributes' --data-urlencode 'markers="411","422"' || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
+  # 1. The first push holds the queue, and its call is held.
+  rows_estate "$work/tree" "$estate" "$(rows_queue "$queue" 411)"
+  sha1="$(TG_IMAGE_SUFFIX="$suffix" push_tree "$work/tree" "$repo" main "cdf-rows-takeover: 411")" || { cleanup; return 1; }
+  run1="$(rows_run_id "$repo" "$sha1")"
+  for i in $(seq 1 150); do [ "$(rows_held)" -ge 1 ] && break; ends "${run1:-0}" && break; sleep 2; done
+  [ "$(rows_held)" -ge 1 ] || { log "the first run's SetQueueAttributes never arrived (run ${run1:-none}: $(rows_run_status "$repo" "${run1:-0}"))"; cleanup "$run1"; return 1; }
+  log "run $run1 holds the queue and its SetQueueAttributes is held"
+  # 2. The second push plans against 30 and waits for the first run.
+  rows_estate "$work/tree" "$estate" "$(rows_queue "$queue" 422)"
+  sha2="$(TG_IMAGE_SUFFIX="$suffix" push_tree "$work/tree" "$repo" main "cdf-rows-takeover: 422")" || { cleanup "$run1"; return 1; }
+  run2="$(rows_run_id "$repo" "$sha2")"
+  for i in $(seq 1 120); do
+    [ -n "$(rows_log "$repo" "${run2:-0}" 'waiting for it')" ] && break
+    ends "${run2:-0}" && break
+    sleep 3
+  done
+  [ -n "$(rows_log "$repo" "${run2:-0}" 'waiting for it')" ] || { log "the second run never waited for the first (run ${run2:-none}: $(rows_run_status "$repo" "${run2:-0}"))"; cleanup "$run1" "$run2"; return 1; }
+  log "run $run2 waits for run $run1"
+  # 3. 411 lands, the first run's next call is held, and its job is killed.
+  curl -fsS -o /dev/null -X POST -G "$CDF_CTL/hold" --data-urlencode 're=.' --data-urlencode methods=POST,PUT --data-urlencode 'markers="411","422"' || true
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1" || true
+  for i in $(seq 1 60); do [ "$(rows_held)" -ge 1 ] && break; sleep 1; done
+  got="$(rows_visibility "$queue")"
+  [ "$got" = 411 ] || { log "the first run's call did not land: the queue is at '$got'"; cleanup "$run1" "$run2"; return 1; }
+  rows_kill_run "$repo" "$run1"
+  for i in $(seq 1 60); do ends "$run1" && break; sleep 2; done
+  log "run $run1, killed after 411 landed while it held the queue: $(rows_run_status "$repo" "$run1")"
+  ends "$run1" || { log "run $run1 did not end after its job was killed"; cleanup "$run1" "$run2"; return 1; }
+  # What the killed run left held is never let through.
+  for seq in $(curl -fsS "$CDF_CTL/held" | jq -r '.[] | select(.sent | not) | .seq'); do curl -fsS -o /dev/null -X POST "$CDF_CTL/drop?seq=$seq" || true; done
+  curl -fsS -o /dev/null -X POST -G "$CDF_CTL/hold" --data-urlencode 're=^/$' --data-urlencode methods=POST \
+    --data-urlencode 'target=SetQueueAttributes' --data-urlencode 'markers="411","422"' || true
+  # 4. The second run takes the row over, and its apply's re-read refuses.
+  for i in $(seq 1 60); do ends "$run2" && break; sleep 3; done
+  if ! ends "$run2"; then
+    log "run $run2 never took the queue over from run $run1, which is gone"
+    rows_log "$repo" "$run2" 'waiting for it|taking|takes them over' | tail -3 >&2
+    cleanup "$run2"; return 1
+  fi
+  s2="$(rows_run_status "$repo" "$run2")"
+  log2="$(run_logs "$repo" "$run2")"
+  grep -q "run $run1 held resources and is gone; this wave takes them over" <<<"$log2" || { log "run $run2 did not say it took the queue over from run $run1"; rc=1; }
+  grep -q 'The approved plan no longer matches the live system' <<<"$log2" || { log "run $run2's apply did not refuse the plan 411 made stale"; grep -E 'Error|FAILED|applied' <<<"$log2" | head -5 >&2; rc=1; }
+  [ "$s2" = failure ] || { log "run $run2 ended $s2, not failure"; rc=1; }
+  ev="$(curl -fsS "$CDF_CTL/events" | jq -c '[.[] | select(.target | test("SetQueueAttributes"))] | map({marker, status})')"
+  log "SetQueueAttributes calls: $ev"
+  [ "$(jq '[.[] | select(.marker == "\"422\"")] | length' <<<"$ev")" = 0 ] || { log "run $run2 called SetQueueAttributes"; rc=1; }
+  got="$(rows_visibility "$queue")"
+  [ "$got" = 411 ] || { log "the queue is at '$got', not the killed run's 411"; rc=1; }
+  [ "$(rows_file "$repo" | jq '(.rows // {}) | length')" = 0 ] || { log "rows are still held: $(rows_file "$repo" | jq -c .rows)"; rc=1; }
+  cleanup
+  [ $rc = 0 ] && log "run $run2 took the queue over from run $run1, killed after 411 landed, with nothing unlocked; its apply's re-read refused the stale plan before any call, and no row is left held"
   return $rc
 }
 
@@ -18077,6 +18570,10 @@ resume-schedule      runner self! weight=300
 cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
+apply-per-root       runner self! weight=300
+cdf-rows-overlap     runner self! weight=250
+cdf-rows-wait        self! weight=200
+cdf-rows-takeover    runner self! weight=300
 approve-command      runner self! weight=250
 tg-pr-apply          runner self! weight=300
 tg-pr-apply-lock     runner self! weight=300
