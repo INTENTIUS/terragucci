@@ -98,6 +98,7 @@ import { resumeStep } from "./resume";
 import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
+import { detectShape } from "./shape";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
@@ -424,8 +425,8 @@ export async function main(argv: string[]): Promise<number> {
         for (const line of await atmosWrite(cwd)) console.log(line);
         return 0;
       }
-      case "terramate": { // shape: the Terramate prepare step
-        // A Terramate repo's synth: every job checks the generated code and writes each stack's edges before it reads the stacks.
+      case "terramate": {
+        // A Terramate repo's prepare (../shape.ts): every job checks the generated code and writes each stack's edges.
         if (args[0] !== "generate") throw new ConfigError("usage: terragucci terramate generate");
         for (const line of await terramateWrite(cwd)) console.log(line);
         return 0;
@@ -784,12 +785,15 @@ export async function main(argv: string[]): Promise<number> {
           const config = await loadConfig(resolve(path), "check");
           // Which state each role reaches, read from the roots' code, and a warning for each that reaches another environment's.
           const repoDir = dirname(resolve(path));
-          if (!config.projects && config.oidc?.roles && detectAtmos(repoDir)) {
+          // The shape detection finds in the repo refuses what init would: the same table, worded for that shape.
+          const shape = config.projects ? undefined : detectShape(repoDir, resolveRepo(config));
+          if (shape) problems.push(...shape.problems("config"));
+          if (shape && problems.length === 0 && config.oidc?.roles && shape.kind === "atmos") {
             // An Atmos repo's roots are its instances, <stack>/<component>, so a glob such as prod/* gives a stack its roles.
             const instances = atmosInstances(await describeStacks(repoDir));
             access = stateAccess(repoDir, instances.map((i) => i.path), config.oidc, { ...instanceStates(instances), via: "!terraform.state" });
             warnings = access.warnings;
-          } else if (!config.projects && config.oidc?.roles && detectTerragrunt(repoDir) === undefined) {
+          } else if (shape && problems.length === 0 && config.oidc?.roles && shape.engine === "per-root") {
             access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
             warnings = access.warnings;
           }

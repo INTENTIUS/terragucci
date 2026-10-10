@@ -29,7 +29,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { join, posix } from "node:path";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { terragruntExec } from "./binary-env";
-import { ConfigError, responseTo, ROOTS_NOT_TERRAMATE, type ResolvedSettings } from "./config";
+import { ConfigError } from "./config";
 import { TERRAMATE_EDGES_FILE, type AtmosRead } from "./atmos";
 import { rootDependencies, type RootReason } from "./detect";
 import { unitWaves } from "./terragrunt";
@@ -395,90 +395,33 @@ export async function terramateWrite(repo: string, options: TerramateOptions = {
   ];
 }
 
-/** What a repo's shape may refuse; the names follow the Shape of gucci7-shape (architecture-adapters.md). */
-export type TerramateFeature = "roots" | "synth" | "drift-pr" | "rollouts";
-
-/** What discovery found: the roots, their waves, and the edges between them. */
-export interface TerramateDiscovery {
-  roots: RootReason[];
-  layers: string[][];
-  /** For each root, the stacks whose outputs its inputs read. */
-  reads: Map<string, Set<string>>;
-  /** For each root, every stack that runs before it. */
-  order: Map<string, Set<string>>;
-  /** Stacks that hold no Terraform, so are no roots. */
-  skipped: string[];
-  notes: string[];
-}
-
 /**
- * A Terramate repo as every command sees it, resolved once: the per-root
- * engine after a prepare step (the generate check and the edges), the stacks
- * as roots, and what the shape refuses. Shaped like gucci7-shape's `Shape`,
- * so it moves there whole.
+ * The Shape's discovery for a Terramate repo (./shape.ts): the stacks that
+ * hold Terraform as roots, their waves from Terramate's order and the
+ * terraform_remote_state reads between them, and their edges.
  */
-export interface TerramateShape {
-  kind: "terramate";
-  /** The marker that turned Terramate mode on. */
-  reason: string;
-  engine: "per-root";
-  /** What the jobs run before they read the stacks. */
-  prepare: string;
-  /** The Terramate release the jobs install. */
-  version: string;
-  discover(settings: ResolvedSettings): Promise<TerramateDiscovery>;
-  /** A stack runs in the job's environment as it is: Terramate selects no workspace. */
-  rootEnv(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
-  refuses(feature: TerramateFeature, settings: ResolvedSettings): string | undefined;
-  /** Where an edit to a root belongs: the stack's own directory, whose generated files come from its .tm.hcl. */
-  sourceOf(root: string): string;
-}
-
-/** The Terramate shape of `repo`, or undefined when it is no Terramate repo. */
-export function terramateShape(repo: string, options: TerramateOptions = {}): TerramateShape | undefined {
-  const reason = detectTerramate(repo);
-  if (!reason) return undefined;
+export async function terramateDiscover(
+  repo: string,
+  reason: string,
+  canary: readonly string[] | undefined,
+  options: TerramateOptions = {},
+): Promise<{ roots: RootReason[]; layers: string[][]; reads: Map<string, Set<string>>; order: Map<string, Set<string>>; notes: string[]; skipped: string[] }> {
+  const stacks = await terramateStacks(repo, options);
+  const found = terramateRoots(stacks);
+  if (found.length === 0) {
+    throw new ConfigError(`found no Terramate stacks that hold Terraform (${reason} turned Terramate mode on): terramate list names ${stacks.length === 0 ? "no stack" : stacks.map((s) => s.path).join(", ")}`);
+  }
+  // terraform_remote_state reads between stacks cut waves too, as they do for plain roots.
+  const remote = rootDependencies(repo, found.map((s) => s.path));
+  const skipped = stacks.filter((s) => !s.terraform).map((s) => s.path);
+  const reads = new Map(found.map((s) => [s.path, new Set([...s.reads.map((r) => r.upstream), ...(remote.get(s.path) ?? [])])] as const).filter(([, r]) => r.size > 0));
+  const order = new Map(found.map((s) => [s.path, new Set([...s.dependencies, ...(remote.get(s.path) ?? [])])] as const).filter(([, r]) => r.size > 0));
   return {
-    kind: "terramate",
-    reason,
-    engine: "per-root",
-    prepare: TERRAMATE_GENERATE,
-    version: TERRAMATE_VERSION,
-    rootEnv: (_root, env) => env,
-    sourceOf: (root) => root,
-    refuses(feature, settings) {
-      switch (feature) {
-        case "roots":
-          return settings.roots ? ROOTS_NOT_TERRAMATE : undefined;
-        case "synth":
-          return settings.synth ? `synth is for roots a command writes; a Terramate repo commits its generated code, and its jobs check it with ${TERRAMATE_GENERATE}, so remove synth` : undefined;
-        case "drift-pr":
-          return settings.drift && responseTo(settings, "drift") === "pull-request"
-            ? "respond.drift: the drift pull request writes each live value into a stack's files, and terramate generate owns the generated ones; set respond.drift to attribute, which names who changed each value in the drift issue, or to off"
-            : undefined;
-        case "rollouts":
-          return settings.rollouts && responseTo(settings, "rollout") !== "off"
-            ? "rollouts: a rollout moves a pin in each stack's files, and in a Terramate repo the pin is usually in code terramate generate writes from a .tm.hcl, which terragucci does not edit; leave rollouts unset"
-            : undefined;
-      }
-    },
-    async discover(settings) {
-      const stacks = await terramateStacks(repo, options);
-      const found = terramateRoots(stacks);
-      if (found.length === 0) {
-        throw new ConfigError(`found no Terramate stacks that hold Terraform (${reason} turned Terramate mode on): terramate list names ${stacks.length === 0 ? "no stack" : stacks.map((s) => s.path).join(", ")}`);
-      }
-      // terraform_remote_state reads between stacks cut waves too, as they do for plain roots.
-      const remote = rootDependencies(repo, found.map((s) => s.path));
-      const skipped = stacks.filter((s) => !s.terraform).map((s) => s.path);
-      return {
-        roots: found.map((s) => ({ root: s.path, reason: `terramate list${s.dependencies.length ? `, after ${s.dependencies.join(", ")}` : ""}` })),
-        layers: stackWaves(stacks, settings.waves?.canary, remote),
-        reads: new Map(found.filter((s) => s.reads.length > 0).map((s) => [s.path, new Set(s.reads.map((r) => r.upstream))])),
-        order: new Map(found.filter((s) => s.dependencies.length > 0).map((s) => [s.path, new Set(s.dependencies)])),
-        skipped,
-        notes: skipped.length > 0 ? [`stacks with no Terraform are no roots: ${skipped.join(", ")}; the order through them is kept`] : [],
-      };
-    },
+    roots: found.map((s) => ({ root: s.path, reason: `terramate list${s.dependencies.length ? `, after ${s.dependencies.join(", ")}` : ""}` })),
+    layers: stackWaves(stacks, canary ?? [], remote),
+    reads,
+    order,
+    notes: skipped.length > 0 ? [`stacks with no Terraform are no roots: ${skipped.join(", ")}; the order through them is kept`] : [],
+    skipped,
   };
 }

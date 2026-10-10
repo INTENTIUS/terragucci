@@ -38,7 +38,7 @@ import { appendLifecycle, appendPending, readLedger, type PendingRecord, type Re
 import { approvalRule } from "./approval";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
-import { detectBinary } from "./detect";
+import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { sealRefusal } from "./seal";
@@ -117,8 +117,8 @@ export function requestDigest(r: ExportRequest): string {
   return sha(JSON.stringify({ op: EXPORT_OP, root: r.root, location: r.location, version_id: r.version_id, by: r.by, at: r.at }));
 }
 
-function git(repo: string, args: string[]): string {
-  const r = spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
+function git(repo: string, args: string[], env: NodeJS.ProcessEnv): string {
+  const r = spawnSync("git", args, { cwd: repo, encoding: "utf-8", env });
   return r.status === 0 ? r.stdout.trim() : "";
 }
 
@@ -162,11 +162,12 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const why = refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
   const unit = existsSync(join(repo, root, "terragrunt.hcl"));
-  const by = options.actor || git(repo, ["config", "user.name"]) || git(repo, ["config", "user.email"]);
+  const by = options.actor || git(repo, ["config", "user.name"], env) || git(repo, ["config", "user.email"], env);
   if (!by) throw new ConfigError("state export names who asks: set git's user.name, or pass --actor <name>");
   const configPath = options.config ?? findConfig(repo);
   const settings = configPath ? resolveRepo(await loadConfig(configPath)) : undefined;
-  const binary = options.binary ?? settings?.binary ?? detectBinary(repo, [root]).value;
+  const shape = detectShape(repo, settings ?? resolveRepo({}));
+  const binary = options.binary ?? settings?.binary ?? shape.binary([root]).value;
 
   // The backend, read by an init in a data dir of the export's own: the checkout's .terraform is left alone.
   // A Terragrunt unit's backend is what Terragrunt makes of its remote_state: Terragrunt inits it where it runs the binary, as a migration prepares it.
@@ -177,10 +178,11 @@ export async function exportState(repo: string, options: ExportOptions): Promise
       const place = await unitPlace(repo, root, binary, env, data, options.terragrunt);
       object = stateObject(place.dir, place.env);
     } else {
+      // A root that names its workspace (an Atmos instance) inits in default; its state is its own workspace's.
       const benv = { ...env, TF_DATA_DIR: data };
-      const init = await exec(binary, ["init", "-input=false", "-no-color"], join(repo, root), benv);
+      const init = await exec(binary, ["init", "-input=false", "-no-color"], join(repo, root), shape.rootInit(root, benv)?.init ?? benv);
       if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${init.out.trim().split("\n").slice(-4).join(" ").slice(0, 400)}`);
-      object = stateObject(join(repo, root), benv);
+      object = stateObject(join(repo, root), shape.rootEnv(root, benv));
     }
   } finally {
     rmSync(data, { recursive: true, force: true });

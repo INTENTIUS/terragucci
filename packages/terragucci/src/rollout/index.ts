@@ -30,6 +30,8 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { terragruntDependencies } from "@intentius/chant-lexicon-terraform/pin";
+import { ATMOS_ROLLOUTS } from "../refusals";
+import { detectShape } from "../shape";
 import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, SYNTH_ROLLOUTS, type ForgeName, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } from "../detect";
 import { DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "../forge";
@@ -322,7 +324,7 @@ function classifyProvider(dir: string, project: string, root: string, name: stri
 // ── tips ─────────────────────────────────────────────────────────────────────
 
 function tipFor(r: RootStatus, to: string): Tip | undefined {
-  if (r.state !== "refused" || !r.reason || r.reason === SYNTH_ROLLOUTS) return undefined;
+  if (r.state !== "refused" || !r.reason || r.reason === SYNTH_ROLLOUTS || r.reason === ATMOS_ROLLOUTS) return undefined;
   const base = { project: r.project, root: r.root };
   if (/is a constraint/.test(r.reason)) {
     return { ...base, rule: "rollout-floating-pin", message: `${r.root}: ${r.reason}. Pin one version, such as version = "${to}", so a rollout can move it and the diff shows which roots it moves.` };
@@ -395,7 +397,8 @@ export async function rollout(cwd: string, options: RolloutOptions): Promise<Rol
       for (const key of Object.keys(config.projects)) projects.push(await controlProject(config, key, { ...options, mode }));
     } else {
       const settings = resolveRepo(config);
-      if (settings.synth) throw new ConfigError(`terragucci rollout: ${SYNTH_ROLLOUTS}`);
+      const refused = detectShape(repo, settings).refuses("rollouts");
+      if (refused) throw new ConfigError(`terragucci rollout: ${refused}`);
       projects.push(await singleProject(repo, settings, { ...options, mode }));
     }
     return await walk(repo, config, projects, { ...options, mode, parser });
@@ -457,7 +460,8 @@ export async function continueRollouts(cwd: string, options: Omit<RolloutOptions
   }
   const configPath = options.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(configPath) : {};
-  if (!config.projects && resolveRepo(config).synth) throw new ConfigError(`terragucci respond rollout: ${SYNTH_ROLLOUTS}`);
+  const refused = config.projects ? undefined : detectShape(repo, resolveRepo(config)).refuses("rollouts");
+  if (refused) throw new ConfigError(`terragucci respond rollout: ${refused}`);
   const targets = config.projects ? Object.keys(config.projects).map((key) => controlTarget(config, key, { ...options, mode })) : [singleTarget(repo, resolveRepo(config), { ...options, mode })];
 
   type Seen = { marker: Required<Pick<Marker, "kind" | "name" | "to" | "wave">> & Marker; state: ListedPullRequest["state"]; url: string };
@@ -521,9 +525,10 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   const calls = new Map<string, ModuleCall[]>();
   // A module named by its path is also every registry address modules.registry publishes it at.
   if (options.kind === "module") options = { ...options, aliases: registryAliases(options.name, [...projects.map((p) => p.settings), config.defaults ?? {}]) };
+  // A project whose shape refuses rollouts (synth, Atmos) has no root in its checkout to move: it is listed refused, with why.
+  const refusedOf = new Map(projects.map((p) => [p.key, detectShape(p.dir, p.settings).refuses("rollouts")]));
   for (const p of projects) {
-    // A project whose roots synth writes has none in its checkout to move: it is listed refused, with why.
-    roots.set(p.key, p.settings.synth ? [] : rootsOf(p));
+    roots.set(p.key, refusedOf.get(p.key) ? [] : rootsOf(p));
     if (options.kind === "module") for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!, options.aliases));
   }
 
@@ -569,7 +574,8 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   const inRollout = new Map<string, string[]>();
   for (const p of projects) {
     const list: string[] = [];
-    if (p.settings.synth) statuses.push({ project: p.key, root: ".", state: "refused", reason: SYNTH_ROLLOUTS });
+    const refused = refusedOf.get(p.key);
+    if (refused) statuses.push({ project: p.key, root: ".", state: "refused", reason: refused });
     for (const r of roots.get(p.key)!) {
       const s = options.kind === "module" ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion).status : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
       if (s.state !== "absent") statuses.push(s);
