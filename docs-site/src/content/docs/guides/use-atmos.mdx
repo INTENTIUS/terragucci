@@ -59,6 +59,17 @@ A pipeline whose roots are your [Atmos](https://atmos.tools) component instances
 | `roots` and `synth` | refused: the stacks decide the roots |
 | An instance that sets `env` or `generate` | refused; move the setting into the component's Terraform, or disable the instance |
 
+## Refused settings
+
+An instance's directory is a copy `terragucci atmos write` makes, so `config check` and `init` refuse what would edit it:
+
+| Setting | Instead |
+|---|---|
+| `drift` with the drift pull request, the default `respond.drift` | `respond.drift: attribute` or `off`; a live value belongs in the stack's vars or the component |
+| `rollouts` | move the pin in the component, which every instance of it shares |
+| `generate` | the stack's `backend` and `providers` settings |
+| `ephemeral` | none |
+
 ## Waves
 
 | What | How |
@@ -93,6 +104,12 @@ These directories are made in the job. If you run `terragucci atmos write` yours
 ## Workspaces
 
 Each instance plans and applies in the Terraform workspace Atmos names for it, never `default`. With an `s3` backend its state is at `<workspace_key_prefix>/<workspace>/<key>`, as Atmos keeps it.
+
+`terragucci plan`, `unlock-state`, `state export` and a state migration run each instance in its workspace too.
+
+## Tips
+
+The tip pull requests pin providers and add lock files in the components, which git holds, and name instances in a canary wave.
 
 ## Pull requests
 
