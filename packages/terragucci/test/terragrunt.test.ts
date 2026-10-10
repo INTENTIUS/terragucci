@@ -19,9 +19,13 @@ import {
   pinnedTerragrunt,
   literalDependencies,
   refineWaves,
+  stackOfUnit,
+  unitStack,
   unitWaves,
   walkUnits,
 } from "../src/terragrunt";
+import { explicitStacksLine } from "../src/report/views";
+import type { Report } from "../src/report/schema";
 import { rc } from "./report-fixtures";
 import { git, tmp, write } from "./helpers";
 
@@ -147,6 +151,37 @@ describe("detection", () => {
 
   it("plain roots and a module cache are not Terragrunt", () => {
     expect(detectTerragrunt(write(tmp(), { "net/main.tf": "", "net/.terragrunt-cache/x/terragrunt.hcl": "" }))).toBeUndefined();
+  });
+
+  it("names the explicit stack that generates a unit, and a unit's parent directory otherwise", () => {
+    expect(stackOfUnit("live/stk/.terragrunt-stack/base")).toBe("live/stk");
+    expect(stackOfUnit(".terragrunt-stack/base")).toBe(".");
+    expect(stackOfUnit("live/dev/app")).toBe("live/dev");
+    expect(unitStack("live/stk/.terragrunt-stack/base")).toEqual({ stack: "live/stk", stack_file: "live/stk/terragrunt.stack.hcl" });
+    expect(unitStack("live/dev/app")).toEqual({ stack: "live/dev" });
+  });
+
+  it("walks into a stack's generated units, with their edges", () => {
+    const repo = write(tmp(), {
+      "root.hcl": "",
+      "live/stk/terragrunt.stack.hcl": "",
+      "live/stk/.terragrunt-stack/base/terragrunt.hcl": unit(),
+      "live/stk/.terragrunt-stack/top/terragrunt.hcl": unit(["base"]),
+    });
+    expect(walkUnits(repo)).toEqual([
+      { path: "live/stk/.terragrunt-stack/base", dependencies: [] },
+      { path: "live/stk/.terragrunt-stack/top", dependencies: ["live/stk/.terragrunt-stack/base"] },
+    ]);
+  });
+
+  it("the plan note names each explicit stack and the units it generates", () => {
+    const roots = [
+      { path: "live/stk/.terragrunt-stack/top", terragrunt: unitStack("live/stk/.terragrunt-stack/top") },
+      { path: "live/stk/.terragrunt-stack/base", terragrunt: unitStack("live/stk/.terragrunt-stack/base") },
+      { path: "live/dev/app", terragrunt: unitStack("live/dev/app") },
+    ];
+    expect(explicitStacksLine({ roots } as unknown as Report)).toBe("Explicit stacks: `live/stk/terragrunt.stack.hcl` generates `base`, `top`.");
+    expect(explicitStacksLine({ roots: roots.slice(2) } as unknown as Report)).toBeUndefined();
   });
 
   it("names the explicit stacks", () => {
@@ -543,7 +578,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(25);
+    expect(r.report.minor).toBe(29);
     // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));

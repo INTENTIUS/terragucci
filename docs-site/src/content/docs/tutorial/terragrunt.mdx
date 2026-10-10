@@ -93,6 +93,10 @@ The plan job plans ledger, then plans billing on the bucket name from ledger's p
 
 Billing's dependency block has no allow-list, so its mocks could stand in for `apply`. The report's tips name it `TF041`, as for `live/prod/email`.
 
+## Explicit stacks
+
+The example's units are each in their own directory. A repo whose units come from a `terragrunt.stack.hcl` gets the same pipeline: every job runs `terragrunt stack generate` first, and the generated units take their waves from their `dependency` blocks. [Explicit stacks](/terragucci/guides/use-terragrunt/#explicit-stacks) lists what each stage does with them.
+
 ## Credentials
 
 Map a plan role and an apply role by path; a unit that sets its own `iam_role` keeps it:

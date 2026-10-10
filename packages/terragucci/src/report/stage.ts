@@ -19,7 +19,7 @@ import { workspaceEnv, workspaceInit } from "../backend";
 import { atmosDependencies, effectiveSynth, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { parseTerragruntReport, terragruntEnv } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
 import { terragruntRenderArgs } from "@intentius/chant-lexicon-terraform/terragrunt/mocks";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
@@ -35,7 +35,8 @@ import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoot
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
-import { detectTerragrunt, discoverUnits, generateStacks, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { detectTerragrunt, discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { findIssue, ForgeError, type Fetch } from "../forge";
@@ -605,7 +606,7 @@ async function planUnits(
       const path = part.member.member;
       const result = results.get(path);
       const preview = provisional.has(path);
-      const unit = { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
+      const unit = { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
       const file = join(dirOf(groups, path, groups[0]!.workDir), "json", path, "tfplan.json");
       const bin = tools.get(path)?.report;
       const read = reads.get(path) ?? [];
@@ -668,7 +669,7 @@ async function planUnits(
   /** A unit that did not plan for a reason of its own (a step, a pin): no plan, the error. */
   const unitFailed = (path: string, error: string, number: number, preview: boolean): void => {
     run.set(path, { wave: number });
-    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
+    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
   };
 
   const allWaiting: string[] = [];
@@ -734,7 +735,7 @@ async function planUnits(
           const error = (e as Error).message;
           for (const path of units) {
             run.set(path, { wave: layer.number });
-            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
+            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
           }
           log(`wave ${layer.number}: ${error}`);
           units = [];
@@ -1362,7 +1363,7 @@ async function runTerragruntStage(
       const r = await pins!(unit);
       if (r.refused.length) {
         log(`${unit}: refused by modules.require: attested`);
-        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
+        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { ...unitStack(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
       } else if (r.verified.length) log(`${unit}: attested ${r.verified.join("; ")}`);
     }
     const refused = new Set(refusedUnits.map((u) => u.path));
@@ -1409,7 +1410,7 @@ async function runTerragruntStage(
       planned = mergePlanned(parts);
       for (const [u, why] of sources.failed) {
         log(`${u}: not checked, its branch could not be checked out`);
-        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { ...unitStack(u), selection: everyUnit, provisional: false, run_result: "not run" } });
       }
     }
     const { inputs, plans, redacted, mockReads } = planned;
@@ -1427,7 +1428,7 @@ async function runTerragruntStage(
       if (drift) {
         // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.
         const error = "its upstream has no outputs yet, so Terragrunt would plan it on mock_outputs";
-        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { ...unitStack(u), selection: everyUnit, provisional: false, run_result: "not run" } });
         continue;
       }
       defer(u, [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort(), "would read mock_outputs");
