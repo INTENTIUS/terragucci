@@ -54,13 +54,13 @@ An unreachable collector never fails a stage, so you can turn this on before the
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
-       Settings > Secrets and variables > Actions > New repository secret, named `OTLP_HEADERS`.
+       Add a repository secret named `OTLP_HEADERS` under Settings > Secrets and variables > Actions.
      </TabItem>
      <TabItem label="GitLab">
-       Settings > CI/CD > Variables, named `OTLP_HEADERS`, masked.
+       Under Settings > CI/CD > Variables, add `OTLP_HEADERS` as a masked variable.
      </TabItem>
      <TabItem label="Forgejo">
-       Settings > Actions > Secrets, named `OTLP_HEADERS`.
+       Create the secret `OTLP_HEADERS` in Settings > Actions > Secrets.
      </TabItem>
    </Tabs>
 
@@ -72,7 +72,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
    dashboards: true
    ```
 
-   If your Grafana datasources are not named `prometheus` and `tempo`, give their uids:
+   Grafana datasources not named `prometheus` and `tempo` need their uids here:
 
    ```yaml
    dashboards:
@@ -134,7 +134,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
 
 7. Open and merge a pull request with `terragucci.yml`, the pipeline and `observability/terragucci/`.
 
-8. Open the next pull request that changes a root. Its plan job sends a trace with a span per root and the binary's spans inside it, and the Pipeline health and Change review dashboards show the run.
+8. Check the next pull request that changes a root. Its plan job sends a trace with a span per root and the binary's spans inside it, and the Pipeline health and Change review dashboards show the run.
 
    <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
 

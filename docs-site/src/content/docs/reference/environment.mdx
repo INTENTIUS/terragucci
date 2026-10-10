@@ -13,13 +13,13 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 <Tabs syncKey="forge">
   <TabItem label="GitHub">
-    A repository secret under Settings, Secrets and variables, Actions. The jobs read it as `secrets.<NAME>`; the run's own token is `github.token`.
+    A repository secret (Settings > Secrets and variables > Actions), read as `secrets.<NAME>`. The run's own token is `github.token`.
   </TabItem>
   <TabItem label="GitLab">
-    A masked CI/CD variable under Settings, CI/CD, Variables. The token is `GITLAB_TOKEN`, a project access token with the `api` scope.
+    A masked CI/CD variable (Settings > CI/CD > Variables). `GITLAB_TOKEN`, a project access token with the `api` scope, is its forge token.
   </TabItem>
   <TabItem label="Forgejo">
-    A repository secret under Settings, Actions, Secrets. The jobs read it as `secrets.<NAME>`; the run's own token is `github.token`.
+    As on GitHub, under Settings > Actions > Secrets.
   </TabItem>
 </Tabs>
 
@@ -57,7 +57,7 @@ On GitHub and Forgejo these jobs hold no forge token while the change's code run
 | `plan` | the step before the checkout, which posts `terragucci/plan` pending; the `plan-note` job then posts the note and the status from the plan report |
 | `replan` | the step that reads the comment, before the head is checked out; the `replan-note` job posts |
 
-On GitLab the check job drops `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITLAB_TOKEN` (or the `token_env` variable) and `CI_JOB_TOKEN` before it runs anything, and the `fmt` job pushes the formatting. The plan job holds `GITLAB_TOKEN` unless `gitlab.token: protected` makes it a protected variable. [Where the scrub ends](/terragucci/reference/threat-model/#token-scrub-limits).
+The GitLab check job drops `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITLAB_TOKEN` (or the `token_env` variable) and `CI_JOB_TOKEN` before it runs anything; the `fmt` job pushes the formatting. `GITLAB_TOKEN` stays with the plan job unless `gitlab.token: protected` makes it a protected variable. [Where the scrub ends](/terragucci/reference/threat-model/#token-scrub-limits).
 
 ### GitLab-managed state
 
@@ -96,7 +96,7 @@ Set these on the plan job when `reports.bucket` is set, and in the environment `
 | `notify.webhook` | none | a webhook's address for the JSON event; the apply jobs get it as `TERRAGUCCI_WEBHOOK` |
 | `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the apply jobs get it as `TERRAGUCCI_WEBHOOK_KEY` |
 
-`notify.slack` and `notify.teams` reach the drift job too. `notify.relay` is not a secret: the apply jobs get the relay's name as `TERRAGUCCI_RELAY`.
+The drift job also gets `notify.slack` and `notify.teams`. The apply jobs get `notify.relay`, a name rather than a secret, as `TERRAGUCCI_RELAY`.
 
 ## The relay
 
@@ -117,7 +117,7 @@ Set these on the plan job when `reports.bucket` is set, and in the environment `
 
 ## Module publishing
 
-Only `publish` gets these: secrets, or protected masked variables on GitLab.
+Only the `publish` job gets these, as secrets or, on GitLab, protected masked variables.
 
 | Variable | Meaning |
 |---|---|
@@ -155,7 +155,7 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-With `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`, and the stage sets `AWS_ROLE_ARN`, assumed with the job's token, for each root's binary, steps and state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
+Under `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets each root's `AWS_ROLE_ARN` from it; the binary and steps assume that role with the job's token, as does the state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
 
 Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
@@ -177,7 +177,7 @@ On GitLab a merge request's plan job carries its source branch in the subject, s
 
 A repo with Actions on before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is toggled. `GET /api/v1/repos/<owner>/<repo>` shows both IDs.
 
-On an older Forgejo or runner, leave `oidc` unset and give the runner static credentials.
+Older Forgejo or runner versions need `oidc` unset and static credentials on the runner.
 
 In a Terragrunt repo, roles can follow unit paths ([The generated pipeline](/terragucci/reference/pipeline/#terragrunt)).
 
@@ -192,7 +192,7 @@ In a Terragrunt repo, roles can follow unit paths ([The generated pipeline](/ter
 
 ## Traces and metrics
 
-See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
+The [observability reference](/terragucci/reference/observability/#turning-it-on) explains how to turn them on.
 
 | Variable | Meaning |
 |---|---|
@@ -229,7 +229,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `chant approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
 | `env:` in the config |  | variables every job gets; values only, never secrets |
 
-## Variables the forge provides
+## Forge variables
 
 A local run needs none of these.
 
@@ -239,7 +239,7 @@ A local run needs none of these.
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
-## Variables the generated jobs set
+## Generated job variables
 
 Internal; a value set in `env:` is overwritten.
 

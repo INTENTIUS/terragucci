@@ -32,7 +32,7 @@ Someone deletes a queue in the console.
 2. Run the `drift` job by hand from the Actions tab, or wait for six in the morning. Its `-refresh-only` plan of every root compares state with what exists in [floci](/terragucci/concepts/glossary/#floci) and never reads the code, so a change waiting on main is not drift. The report lists the deleted queue under deletes, in `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
 
    :::note
-   floci does not keep tags, so tags show as drifted on every root. On AWS they would not. Look for the entry marked deleted outside Terraform.
+   floci does not keep tags, so unlike AWS it shows tags as drifted on every root. Look for the entry marked deleted outside Terraform.
    :::
 
 3. Open the issue the job opened, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. A second run updates it.
@@ -41,4 +41,4 @@ Someone deletes a queue in the console.
 
 </Steps>
 
-Applying the code recreates the queue, which `just example reset` does. On AWS the next drift run closes the issue; on floci the tag entries keep it open.
+Applying the code recreates the queue, which `just example reset` does. The next drift run then closes the issue on AWS; on floci the tag entries keep it open.

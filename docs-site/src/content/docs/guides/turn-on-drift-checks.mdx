@@ -15,7 +15,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-A scheduled `tf-drift` run that plans every root and one issue reporting the drift, grouped like a pull-request plan.
+A scheduled `tf-drift` run that plans every root, and one issue that groups what drifted like a pull-request plan.
 
 ## Prerequisites
 
@@ -75,7 +75,7 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 5. Read the issue.
 
-   Each project has at most one open issue, `terragucci: drift found`, updated on each run. A root that cannot be refreshed fails the job; drift alone does not.
+   Each project has at most one open issue, `terragucci: drift found`, which every run updates. A root that cannot be refreshed fails the job; drift alone does not.
 
    | Event | The issue |
    |---|---|
@@ -103,20 +103,18 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 6. Remediate the drift.
 
-   With `respond.drift` left at its default, the drift job also opens a pull request from the branch `terragucci/drift`. It writes the live value where the root's own resource block sets a literal, and adds an import block for a resource the state does not hold. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
+   With `respond.drift` left at its default, the drift job also opens a pull request from `terragucci/drift`. It writes the live value where the root's own resource block sets a literal, and adds an import block for a resource the state does not hold. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
 
    | To | Do | Then |
    |---|---|---|
    | keep the live value | read the pull request, comment `/terragucci plan` on it for its plan note ([Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/)), and merge it | the apply job applies it in waves, behind the gate like any change |
    | put the object back | close the pull request and apply the root again | the apply makes the object match the code |
 
-   The next drift run that finds every root clean closes the issue.
-
-   Drift the pull request cannot write, such as a value set through a variable or a module, can go to a coding agent: with [`agent.drift`](/terragucci/guides/agent-fix-drift/), the drift issue starts an agent that returns its change as a pull request.
+   A coding agent can take what the pull request cannot write (a value set through a variable or a module). Set [`agent.drift`](/terragucci/guides/agent-fix-drift/) and the drift issue starts an agent that returns its change as a pull request.
 
    Nothing in the drift job applies or merges. Each wave's approval and each run's report stay in the [audit trail](/terragucci/reference/audit-trail/).
 
-   With `respond.drift: attribute`, the issue also says who changed each attribute, read from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)):
+   Under `respond.drift: attribute` the issue also names each attribute's changer from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)):
 
    <Shot step="drift-attribute" view="issue" alt="A drift issue in Forgejo for the root app: the queue's visibility_timeout_seconds changed, and Who changed it puts that down to a person, SetQueueAttributes by alice, from the audit log" />
 
@@ -128,13 +126,13 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 ## Roots another branch applies
 
-With [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches), a root that another branch applies is what that branch applied, not what the default branch holds. The drift job runs on the default branch and checks such a root from its own branch: it fetches the branch from `origin`, checks it out beside the default branch, and plans the root there. The log names the branch and its commit:
+With [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches), the drift job checks a root that another branch applies against that branch's code. The job runs on the default branch and plans the root in a checkout of its branch fetched from `origin`. The log names the branch and its commit:
 
 ```text
 apply.branches: envs/prod/app plans from release at 3f9a1c2e, the branch that applies it
 ```
 
-So a provider, backend or version the branch sets differently is the one the check uses, and the difference between the two branches is never reported as drift. A root whose branch cannot be fetched fails its check with the reason; it is never checked against the default branch instead. In a Terragrunt repo, a branch's units plan with one `run --all` in that branch's checkout.
+A provider, backend or version the branch sets differently is the one the check uses, so a difference between the two branches is never reported as drift. A root whose branch cannot be fetched fails its check with the reason; it is never checked against the default branch instead. In a Terragrunt repo, a branch's units plan with one `run --all` in that branch's checkout.
 
 ## Next
 

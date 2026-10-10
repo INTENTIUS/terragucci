@@ -23,7 +23,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 Each is plain HCL in `fmt`'s layout, and its first line says terragucci wrote it. Only the binary reads them; a directory stays ordinary Terraform or OpenTofu that works by hand or without `generate`.
 
-`tf-check` holds the files to the config. The check job fails, naming the file, when a generated file:
+The check job's `tf-check` fails, naming the file, when a generated file:
 
 | Case | Example |
 |---|---|
@@ -96,31 +96,35 @@ Each is plain HCL in `fmt`'s layout, and its first line says terragucci wrote it
 | 2 | each glob under `generate.dirs` the path matches, in file order | the matching directories |
 | 3 | `generate.roots`, keyed by exact path | that directory |
 
-A level changes only what it names. Backend arguments and provider settings merge key by key, nested maps included. A level that names another backend type replaces the backend. `null` drops what an earlier level set: `backend: null`, `providers: { aws.dr: null }`, `required_version: null` or `disable_init: null`.
+A higher level overrides only the keys it names. Backend arguments and provider settings merge key by key down through nested maps. Naming another backend type replaces the backend. Setting a key to `null` drops what an earlier level set (`backend: null`, `providers: { aws.dr: null }`, `required_version: null`, `disable_init: null`).
 
 In a [control repo](/terragucci/concepts/control-repo/), `defaults.generate` comes first, then the project's own `generate`.
 
 ## Providers
 
-The key is the local name: `aws`, or `aws.<alias>` for an aliased configuration. `source` and `version` go into `required_providers`. Every other key is an argument of the `provider` block. A provider with only `source` and `version` gets no `provider` block.
+Each provider is keyed by its local name: `aws`, or `aws.<alias>` for an aliased configuration. Its `source` and `version` go into `required_providers` and the rest become arguments of the `provider` block; a provider with only those two gets none.
 
-A map directly under a provider is a nested block, such as `default_tags` or azurerm's `features: {}`. A map one level further down is a map value, such as `tags`. Under the backend every map is a value: `assume_role: { role_arn: ... }` becomes `assume_role = { role_arn = "..." }`.
+| A map | Is written as | Example |
+|---|---|---|
+| directly under a provider | a nested block | `default_tags`, azurerm's `features: {}` |
+| one level further down | a map value | `tags` |
+| anywhere under the backend | a map value | `assume_role: { role_arn: ... }` becomes `assume_role = { role_arn = "..." }` |
 
 Values are literals. A `${` in a value is written as `$${`, so nothing interpolates.
 
 ## The version each directory declares
 
-With no `required_version` at any level, `versions.tf` takes the release `version` in `terragucci.yml` gives that path: the first matching glob of [the version map](/terragucci/reference/config/#a-version-per-root), or the one release. The version a job runs and the version the code declares then share one key.
+With no `required_version` at any level, `versions.tf` takes the release `version` in `terragucci.yml` gives that path: the first matching glob of [the version map](/terragucci/reference/config/#a-version-per-root), or the one release. A job's version and the code's declared one then come from one key.
 
-An exact `required_version` that disagrees with the pin stops `generate`. A range such as `">= 1.6"` is kept as written. `required_version: null` writes none. Under `binary: choudoufu`, `version` names a [choudoufu](/terragucci/concepts/glossary/#choudoufu) release, which is not a `required_version`.
+An exact `required_version` that disagrees with the pin stops `generate`; a range such as `">= 1.6"` is kept as written, and `required_version: null` writes none. Under `binary: choudoufu`, `version` names a [choudoufu](/terragucci/concepts/glossary/#choudoufu) release, which is not a `required_version`.
 
 ## Target directories
 
-`generate` writes for the directories `init` plans, found by `roots` or by detection, and for each path under `generate.roots`. Naming a new directory there gives it a backend before it has one of its own. `generate` deletes a generated file the config stops asking for, and `generate --check` refuses it.
+The targets are the directories `init` plans (from `roots` or detection) plus each path under `generate.roots`, so naming a new directory there gives it a backend before it has its own. A generated file the config stops asking for is deleted by `generate` and refused by `generate --check`.
 
 ## In a Terragrunt repo
 
-In a Terragrunt repo, `generate` writes one file at the repo's root, `terragucci.hcl`, instead of files in each unit. It holds each unit's settings, resolved through the same three levels with `{root}` as the unit's path, and Terragrunt's own blocks that use them:
+For Terragrunt, `generate` writes a single `terragucci.hcl` at the repo's root rather than files in each unit. It holds each unit's settings (resolved through the same three levels, with `{root}` as the unit's path) and the Terragrunt blocks that use them:
 
 | Block | Writes, in each unit's working directory |
 |---|---|
@@ -136,7 +140,7 @@ include "terragucci" {
 }
 ```
 
-The file is in the layout `terragrunt hcl fmt` keeps, and `tf-check` holds it to the config as it holds generated files. The check job also fails, naming the file, when:
+`tf-check` checks `terragucci.hcl` (kept in `terragrunt hcl fmt`'s layout) like the other files and also fails when:
 
 | Case | Why |
 |---|---|
@@ -146,9 +150,9 @@ The file is in the layout `terragrunt hcl fmt` keeps, and `tf-check` holds it to
 
 Each unit's key reads `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")` before a closing `.tfstate`, or at its end. The variable is empty in every job but an [ephemeral environment's](/terragucci/guides/ephemeral-environments/#terragrunt-units), so the key is the one `terragucci.yml` gives, and every unit can be copied per pull request.
 
-`generate` gives every unit a backend, or none: a backend for some units and not others stops it. The units are the directories holding a `terragrunt.hcl`, less `terragrunt.exclude`; the units of an explicit stack are the paths its `unit` blocks generate, and each unit template in the repo must include `terragucci.hcl`. A nested `stack` block stops `generate`, since only Terragrunt can list its units.
+`generate` gives every unit a backend, or none; a backend for only some units stops it. A unit is a directory holding a `terragrunt.hcl`, less `terragrunt.exclude`; an explicit stack's units are the paths its `unit` blocks generate. Each unit template in the repo must include `terragucci.hcl`. A nested `stack` block stops `generate`, since only Terragrunt can list its units.
 
-Terragrunt's own `generate` and `remote_state` blocks in `root.hcl` already keep one repo's units alike. What `generate` adds is one source for plain roots and Terragrunt units across a control repo's projects (`defaults.generate`), `required_version` from `version`, and a check job that refuses a hand edit.
+The `generate` and `remote_state` blocks in `root.hcl` already keep one repo's units alike. terragucci adds `required_version` from `version` and a check job that refuses a hand edit. In a control repo it also gives plain roots and units across projects one source, `defaults.generate`.
 
 ### Bucket bootstrap
 
@@ -171,11 +175,11 @@ generate:
 | apply | runs with `TG_BACKEND_BOOTSTRAP`: Terragrunt creates a missing bucket, and turns on versioning, encryption and access blocking on an existing one |
 | plan, drift | used as it is; a pull request's code and the plan role never change the bucket |
 
-A pull request that plans a unit before its bucket exists fails on the missing bucket, and the first apply creates it. The apply role needs the rights to create and configure the bucket. Without `disable_init`, or with `true`, no job creates or changes the bucket. `disable_init` is for Terragrunt units: a plain root's backend is the binary's, and `generate` refuses the key there. A unit set to `false` needs a backend.
+A pull request that plans a unit before its bucket exists fails. The first apply creates the bucket, so the apply role needs the rights to create and configure buckets. No job touches the bucket while `disable_init` is unset or `true`. A unit set to `false` needs a backend. The key is for Terragrunt units only; `generate` refuses it on a plain root, whose backend is the binary's.
 
 ## With synth
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/), `generate` is a config error. The roots are the synth command's output, so a file written into one is gone at the next synth, and the app already sets what `generate` would write through its constructs:
+`generate` beside [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/) is a config error. The roots are synth's output, so a file written into one is gone at the next synth; the app sets these values through its constructs instead:
 
 | `generate` writes | Set it in the CDK Terrain app with |
 |---|---|

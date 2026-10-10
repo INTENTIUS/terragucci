@@ -29,7 +29,7 @@ policy:
 
 ## A shared policy source
 
-One policy repo can serve many repos. Set `source`, and `path` becomes the directory inside that repo:
+Many repos can share one policy repo. With `source` set, `path` is the directory inside it:
 
 ```yaml
 policy:
@@ -43,7 +43,7 @@ policy:
 | `@<ref>` | required: a tag, a branch, or a commit, which pins it exactly |
 | `path` | the Rego directory inside the policy repo, default `policy` |
 
-The repo that sets `source` needs no policy directory of its own. `tf-plan`, `tf-check` and `tf-apply` fetch the source at the ref in each job, with the job's git credentials, and the log names the commit read. A private policy repo needs a credential the job's git can use, such as a credential helper.
+The repo that sets `source` needs no policy directory of its own. Each `tf-plan`, `tf-check` and `tf-apply` job fetches the source at the ref with its own git credentials and logs the commit read. A private policy repo needs a credential the job's git can use, such as a credential helper.
 
 | Case | Result |
 |---|---|
@@ -64,7 +64,7 @@ projects:
   github.com/acme/network: {}
 ```
 
-A project's jobs read `policy` from its own `terragucci.yml`, so `reconcile` writes the key there, in a file whose first line says the control repo writes it. A project whose `terragucci.yml` sets a different `policy` fails in `reconcile`, with the key to set.
+A project's jobs read `policy` from its own `terragucci.yml`, so `reconcile` writes the key there, in a file whose first line says the control repo writes it. `reconcile` fails a project whose `terragucci.yml` sets a different `policy` and names the key to set.
 
 ## Writing a policy
 
@@ -99,7 +99,7 @@ HCP Terraform and Spacelift policies read other paths and deny nothing as writte
 
 ### Cost
 
-With [`cost`](/terragucci/guides/estimate-cost/) set, `input.cost` holds the monthly cost of the root and of its wave, in `tf-plan` and in each `tf-apply` wave. The plan JSON has no `cost` key of its own, so with `input: plan` it sits beside the plan's keys; with `input: hcp` it sits beside `plan` and `run`.
+In `tf-plan` and every `tf-apply` wave, `input.cost` holds the monthly cost of the root and of its wave when [`cost`](/terragucci/guides/estimate-cost/) is set. Under `input: plan` it sits beside the plan's keys (the plan JSON has no `cost` key of its own); with `input: hcp`, beside `plan` and `run`.
 
 | Field | Value |
 |---|---|
@@ -132,7 +132,15 @@ With [`review.agent`](/terragucci/guides/agent-review-a-pull-request/) set, `inp
 | `review.risk` | `low`, `medium` or `high` from that review; `unknown` when none was found, the model gave none, or its command failed |
 | `review.pull_request`, `review.head` | the pull request the commit merged, or the one applied before merge, and its head; `null` for a commit no pull request made |
 
-The wave reads, through the forge's API, the newest `terragucci-review-<head>` artifact kept by a run of the default branch's review workflow: on GitHub a `workflow_run` run of `terragucci-review.yml`, on Forgejo a `pull_request_target` run of it whose event names the default branch as the base, and this pull request and head. The artifact must say it reviewed this pull request and head against the default branch. An artifact of that name from any other run, such as the pull request's own pipeline, is passed over, and the wave's log says why. It never reads the note on the pull request, which any run's token can post, the run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). On GitHub the apply jobs get `actions: read` for it. An artifact the forge has expired reads as no review. GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
+The wave reads, through the forge's API, the newest `terragucci-review-<head>` artifact kept by a run of the default branch's review workflow:
+
+| Forge | Run read |
+|---|---|
+| GitHub | a `workflow_run` run of `terragucci-review.yml`; the apply jobs get `actions: read` for it |
+| Forgejo | a `pull_request_target` run of it whose event names the default branch as the base, and this pull request and head |
+| GitLab | none; there is no review job, so `found` is always `false` |
+
+The artifact must say it reviewed this pull request and head against the default branch. The wave passes over an artifact of that name from any other run, such as the pull request's own pipeline, and logs why. It never reads the note on the pull request, since any run's token can post one, a run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). An artifact the forge has expired reads as no review. Without `review.agent`, `input.review` is absent.
 
 ```rego
 package main
@@ -178,7 +186,7 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 | the policy cannot run (no engine, Rego that does not compile) | the root fails |
 | a warning | never blocks |
 
-Responses, agents and comments cannot waive a denial. Either the code changes until the policy passes, the policy changes in a pull request your reviewers approve and merge, or a listed approver overrides one plan.
+A denial clears when the code changes until the policy passes, or when the policy changes in a pull request your reviewers approve and merge. A listed approver can also override one plan. Responses, agents and comments cannot waive it.
 
 ## Overriding a denial
 
@@ -192,16 +200,16 @@ policy:
 
 <Steps>
 
-1. The policy denies a root in a `tf-apply` wave. The wave applies nothing, exits 1, records the denial on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in `_gates/policy-override.jsonl`, and prints the command:
+1. The policy denies a root in a `tf-apply` wave. The wave applies nothing and exits 1. It records the denial on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in `_gates/policy-override.jsonl` and prints the command:
 
    ```text
    envs/prod/app: policy.override at base lists github:alice, github:bob; one of them can let this plan through with:
      terragucci override envs/prod/app --rule main.deny_public_bucket --reason "<why>"
    ```
 
-2. A listed approver reads the plan and the denial, then runs that command in a checkout, with the reason ([`override`](/terragucci/reference/cli/#override)). It runs `chant approve policy-override <root> --plan <digest> --note <reason>`, with `--sign` under `approval: sealed`.
+2. A listed approver reads the plan and the denial, then runs that command in a checkout, with the reason ([`override`](/terragucci/reference/cli/#override)). That command runs `chant approve policy-override <root> --plan <digest> --note <reason>`, with `--sign` under `approval: sealed`.
 
-3. Run the wave's job again. It applies the root, and its report and note name the override. Before it applies, it marks the override used in `_gates/policy-override/applied.jsonl`.
+3. Run the wave's job again. Before applying the root, it marks the override used in `_gates/policy-override/applied.jsonl`; its report and note name the override.
 
 </Steps>
 
@@ -279,7 +287,7 @@ terragucci reads `origin/<branch>`, and the checkout needs that ref fetched. `TG
 
 ### tf-apply
 
-`tf-apply` checks each wave's plans before the gate. A denied wave applies nothing and records no approval; with `override` set it records the denial for an [override](#overriding-a-denial), and a root an override stands for goes on to the gate. The policy comes from the default branch, or from `TG_BASE` when set.
+`tf-apply` checks each wave's plans before gating them. A denied wave applies nothing and records no approval; with `override` set it records the denial for an [override](#overriding-a-denial), and a root an override stands for goes on to the gate. The policy comes from the default branch, or from `TG_BASE` when set.
 
 ### The engines
 
@@ -350,10 +358,10 @@ policy "owner_tags" {
 }
 ```
 
-Mandatory messages fail the root; advisory ones, the default, warn. A missing or unmatched `query`, or an unknown level, fails the root.
+Mandatory messages fail the root, as does a missing or unmatched `query` or an unknown level; advisory ones, the default, warn.
 
 `namespace` keeps only the policies whose query is in that package.
 
 Without `policies.hcl`, opa runs each package under `terraform.policies` as a policy. conftest ignores the file and treats every policy as mandatory.
 
-The pinned OPA reads Rego 1.0: older policies need `if` and `contains`. terragucci does not run Sentinel or `tfpolicy` policies.
+The pinned OPA reads Rego 1.0, so older policies need `if` and `contains`. terragucci does not run Sentinel or `tfpolicy` policies.

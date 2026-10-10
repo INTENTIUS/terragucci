@@ -8,7 +8,7 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`, empty by default) in your S3 bucket, GCS bucket or Azure Blob container. A release adds keys and never moves one, so a program can rely on the layout below.
+`reports.bucket` names an S3 or GCS bucket or an Azure Blob container, and terragucci writes under one prefix in it (`reports.prefix`, empty by default). A release adds keys and never moves one, so a program can rely on the layout below.
 
 ## Keys
 
@@ -31,7 +31,12 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/audit.jsonl`, `audit.html`, `audit.json` | [`terragucci audit`](/terragucci/reference/audit-trail/) | the audit trail, its page and its summary |
 | `<prefix>/views/` | nothing | kept for a viewer's own files |
 
-`<project>` is the repo's `<host>/<path>`, such as `github.com/acme/infra`, slashes included; a repo with no git remote is named after its directory. `<yyyy>/<mm>` is the month the run finished, in UTC, and `<commit>` is the full SHA. `<stage>` is `tf-plan`, `tf-drift` or `tf-apply`, and a `tf-apply` directory ends in `-wave-<n>`.
+| Part | Value |
+|---|---|
+| `<project>` | the repo's `<host>/<path>`, such as `github.com/acme/infra`, slashes included; a repo with no git remote is named after its directory |
+| `<yyyy>/<mm>` | the month the run finished, in UTC |
+| `<commit>` | the full SHA |
+| `<stage>` | `tf-plan`, `tf-drift` or `tf-apply`; a `tf-apply` directory ends in `-wave-<n>` |
 
 ## A run's directory
 
@@ -50,7 +55,7 @@ Links inside a run's files are relative, so they resolve wherever the bucket is 
 
 ## JSON Schemas
 
-Each JSON object a program reads names its schema in its `schema` field, and the package ships a JSON Schema for each in its `dist/` directory:
+Each object a program reads names its schema in its `schema` field. The package's `dist/` directory ships the matching JSON Schema:
 
 | Object | `schema` | JSON Schema |
 |---|---|---|
@@ -77,7 +82,7 @@ tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
 
 ## The views prefix
 
-terragucci never writes or reads under `<prefix>/views/`. A tool that renders your reports, such as a static page built in a scheduled job, writes its files under `<prefix>/views/<tool>/`, clear of terragucci's keys. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
+terragucci never writes or reads under `<prefix>/views/`. A tool that renders your reports, such as a static page built in a scheduled job, writes its files under `<prefix>/views/<tool>/`. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
 
 Whatever serves the bucket serves `views/` too. A presigned link opens one object, and the [front door](/terragucci/guides/keep-reports-in-a-bucket/#the-front-door) serves every key under the prefix to whoever your identity provider signs in.
 

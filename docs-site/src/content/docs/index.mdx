@@ -15,7 +15,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
 
-The [0.4.4 release](/terragucci/reference/whats-new/) plans each root on its upstream's planned outputs and keeps every sensitive value out of its reports. terragucci launched in Rome, and you can [watch the launch party](/terragucci/launch-party/).
+The [0.4.4 release](/terragucci/reference/whats-new/) plans each root on its upstream's planned outputs and keeps every sensitive value out of its reports. Watch the [launch party](/terragucci/launch-party/) from the Rome launch.
 
 ## Your forge and your bucket
 
@@ -30,7 +30,7 @@ terragucci reads your roots and runs your binary. Code, state backend and provid
 
 ## See every run as a trace
 
-Every plan, apply and drift run sends one OpenTelemetry trace over OTLP to your collector, with the pipeline's metrics beside it.
+Every plan, apply and drift run sends one OpenTelemetry trace and the pipeline's metrics over OTLP to your collector.
 
 <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, wave 2, the root span for envs/dev/orders, the tofu init and plan spans under it, and OpenTofu's own spans inside them" />
 
@@ -48,7 +48,7 @@ Every plan, apply and drift run sends one OpenTelemetry trace over OTLP to your 
 
 ## Waves and approvals
 
-A change goes out a few roots at a time, [canary](/terragucci/concepts/glossary/#canary) roots first. By default a wave that destroys or replaces something waits for an approval, which covers exactly the plans it was shown.
+A change goes out a few roots at a time, starting with the [canary](/terragucci/concepts/glossary/#canary) roots. By default a wave that destroys or replaces something waits for an approval, which covers exactly the plans it was shown.
 
 <Waves />
 
@@ -58,7 +58,7 @@ The report lists each wave with the digest of its plans and links the approval r
 
 <PlanNote />
 
-Roots taking the same change share one diff, with each value before and after, and every destroy is named. Each root's whole plan sits collapsed below, and [the full report](/terragucci/reference/report/) links each root's plan.
+Roots taking the same change share one diff that shows each value before and after. Every destroy is named. Each root's whole plan sits collapsed below, and [the full report](/terragucci/reference/report/) links each root's plan.
 
 <ScaleLine />
 
@@ -71,7 +71,7 @@ Roots taking the same change share one diff, with each value before and after, a
 
 ## With choudoufu
 
-With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the OpenTofu fork from the team behind terragucci, the pipeline also gets:
+choudoufu is the OpenTofu fork from the team behind terragucci. Set `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)) and the pipeline also gets:
 
 | You get | Page |
 |---|---|
@@ -101,7 +101,7 @@ These are plain CI jobs in your pipeline.
 
 ### Opt-in: coding agent
 
-Only these four features run a model. Each is off until you set it up, and each needs a model API key in your forge's secrets.
+Only these four features run a model. Each is off until you set it up and needs a model API key in your forge's secrets.
 
 | Feature | Turn it on | Forges | Page |
 |---|---|---|---|
@@ -110,7 +110,7 @@ Only these four features run a model. Each is off until you set it up, and each 
 | A note on each pull request comparing its description with its plan: risk, mismatches, questions | `review.agent` in `terragucci.yml` | GitHub and Forgejo | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
 | A summary of what moved in a refused wave | add the explain-refusal job under `own_jobs` | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
-A coding agent at your desk reads the estate, a root's last apply, the audit trail and the DORA figures through `terragucci mcp`, a read-only MCP server that runs no model ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
+A coding agent at your desk reads the estate (down to a root's last apply), the audit trail and the DORA figures through `terragucci mcp`, a read-only MCP server that runs no model ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
 
 ## Security
 

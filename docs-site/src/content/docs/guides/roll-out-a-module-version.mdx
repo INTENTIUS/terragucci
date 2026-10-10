@@ -37,9 +37,9 @@ Every root that pins the module moved to the new version through one pull reques
    npx terragucci rollout modules/network
    ```
 
-   Name the module by path or by source without the pin; with no version, the newest published is used. The dry run changes nothing. When pins disagree, `--from` picks which moves.
+   Name the module by path or by source without the pin, and leave out the version to get the newest published. The dry run changes nothing. When pins disagree, `--from` picks which moves.
 
-   For a module that [`modules.registry`](/terragucci/guides/publish-modules/#serve-a-module-registry) publishes, `modules/network` also names the calls whose `source` is its registry address, such as `modules.example.com/acme/network/generic`, and their `version` moves; with no version, the newest the registry lists counts too.
+   For a module that [`modules.registry`](/terragucci/guides/publish-modules/#serve-a-module-registry) publishes, `modules/network` also names the calls whose `source` is its registry address, such as `modules.example.com/acme/network/generic`, and their `version` moves. With no version named, the newest the registry lists counts too.
 
 2. Fix any pin it refuses. The preview lists each pin it cannot move, with a tip:
 
@@ -50,7 +50,7 @@ Every root that pins the module moved to the new version through one pull reques
    | absent from the source | `rollout-pin`: add a `?ref=`, `?tag=` or `version` |
    | two versions of the module in one directory | `rollout-one-pin`: pin every call at one version |
 
-   Fix those in their own pull request and run the preview again.
+   Do that in its own pull request, then run the preview again.
 
 3. Open the first wave.
 
@@ -73,7 +73,7 @@ Every root that pins the module moved to the new version through one pull reques
    token_env: ROLLOUT_TOKEN
    ```
 
-   Each run opens the next wave of every rollout whose last wave merged and applied, so a wave opens within one interval of the last one applying. A rollout with a pull request still open, or one closed unmerged, is left alone.
+   Each run opens the next wave of every rollout whose last wave merged and applied, so a wave opens within one interval. A rollout with a pull request still open, or one closed unmerged, is left alone.
 
    | Forge | Job | Token | Schedule |
    |---|---|---|---|
@@ -81,7 +81,7 @@ Every root that pins the module moved to the new version through one pull reques
    | Forgejo | the same | the secret `token_env` names, else the job's own | the `rollouts` cron |
    | GitLab | the `rollout` job in the pipeline | the `token_env` variable | a pipeline schedule with that cron and the variable `TERRAGUCCI_SCHEDULE` set to `rollouts`; `init` prints the steps |
 
-   `token_env` is the project's forge token variable, not the rollout's alone: on GitLab every job that pushes or opens a merge request reads it, and on GitHub and Forgejo the fmt, tips, version-bump and drift jobs export their own token under that name. `respond.rollout: off` leaves the rollout job out.
+   `token_env` is the project's forge token variable, shared beyond the rollout: on GitLab every job that pushes or opens a merge request reads it, and on GitHub and Forgejo the fmt, tips, version-bump and drift jobs export their own token under that name. `respond.rollout: off` leaves the rollout job out.
 
    Without `rollouts`, run the rollout again after each merge. Each run takes at most one step:
 
@@ -89,7 +89,7 @@ Every root that pins the module moved to the new version through one pull reques
    npx terragucci rollout modules/network 1.4.0 --mode apply
    ```
 
-   Either way, a wave opens only after the last one merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
+   Either way, the next wave waits for the last to merge and apply. The apply status it checks is `apply/<path>` per directory, else `terragucci/apply`. A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
 
    | Exit code | Meaning |
    |---|---|
