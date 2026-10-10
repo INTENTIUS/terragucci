@@ -1,0 +1,206 @@
+---
+// One room of the site, from src/data/rooms.ts: what works, what you can
+// count on, what differs and the first step, then the pages to read in order:
+// how-to, explanation, reference. A room for a repo shape also lists what
+// differs on each binary and forge, since the shape works on all of them.
+import CoverageGrid from './CoverageGrid.astro';
+import { ASSUMED, BINARIES, FORGES, SHAPES, room } from '../data/rooms';
+
+interface Props {
+	id: string;
+}
+const r = room(Astro.props.id);
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const href = (h: string) => `${base}${h}`;
+const isShape = SHAPES.some((s) => s.room === r.id);
+const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.length) : [];
+---
+<div class="tg-room not-content">
+	<p class="lede">{r.lede}</p>
+	<div class="cols">
+		<section>
+			<h2>Works</h2>
+			<ul>{r.works.map((w) => <li>{w}</li>)}</ul>
+		</section>
+		<section>
+			<h2>Differs</h2>
+			{r.differs.length ? <ul>{r.differs.map((d) => <li>{d}</li>)}</ul> : <p>Nothing beyond what the other pages describe.</p>}
+			{elsewhere.length > 0 && (
+				<details class="elsewhere">
+					<summary>On {elsewhere.map((x) => x.label).join(', ')}</summary>
+					{elsewhere.map((x) => (
+						<>
+							<h3>On {x.label}</h3>
+							<ul>{x.differs.map((d) => <li>{d}</li>)}</ul>
+						</>
+					))}
+				</details>
+			)}
+		</section>
+		<section class="first">
+			<h2>First step</h2>
+			<p><a href={href(r.first.href)}>{r.first.label}</a></p>
+		</section>
+	</div>
+	{r.column && (
+		<section>
+			<h2>Proof</h2>
+			<CoverageGrid column={r.column} />
+		</section>
+	)}
+	<slot />
+	<section>
+		<h2>You can count on</h2>
+		<ul class="assumed">{ASSUMED.map((a) => <li><a href={href(a.href)}>{a.label}</a></li>)}</ul>
+	</section>
+	<section class="read">
+		<h2>Then read</h2>
+		<dl>
+			<dt>Tasks</dt>
+			<dd>{r.howto.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
+			<dt>Background</dt>
+			<dd>{r.explain.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
+			<dt>Details</dt>
+			<dd>{r.reference.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
+		</dl>
+	</section>
+</div>
+
+<style>
+	.tg-room {
+		display: grid;
+		gap: 2.25rem;
+		font-size: var(--sl-text-sm);
+		line-height: 1.6;
+		color: var(--sl-color-gray-2);
+		--tg-taco: url('/terragucci/brand/taco.svg');
+	}
+	.lede {
+		margin: 0;
+		font-size: var(--sl-text-base);
+		color: var(--sl-color-gray-3);
+	}
+	.cols {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+		gap: 0.75rem;
+	}
+	.cols section {
+		padding: 1rem 1.15rem;
+		border: 1px solid var(--tg-rule);
+		border-top: 1px solid var(--tg-gold);
+		border-radius: 0.6rem;
+		background: var(--tg-panel);
+	}
+	h2 {
+		margin: 0 0 0.6rem;
+		font-size: 0.68rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--sl-color-gray-3);
+	}
+	h3 {
+		margin: 1rem 0 0.4rem;
+		font-size: var(--sl-text-xs);
+		font-weight: 600;
+		color: var(--sl-color-gray-2);
+	}
+	ul {
+		display: grid;
+		gap: 0.4rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	li {
+		display: grid;
+		grid-template-columns: 20px 1fr;
+		gap: 0.55rem;
+		margin: 0;
+	}
+	li::before {
+		content: '';
+		width: 20px;
+		height: 12px;
+		margin-top: 0.3rem;
+		background: var(--tg-taco) center / contain no-repeat;
+		image-rendering: pixelated;
+	}
+	p {
+		margin: 0;
+	}
+	.elsewhere {
+		margin-top: 0.9rem;
+	}
+	.elsewhere summary {
+		font-size: var(--sl-text-xs);
+		color: var(--tg-accent);
+		cursor: pointer;
+	}
+	a {
+		color: var(--tg-accent);
+		text-decoration: none;
+	}
+	a:hover {
+		text-decoration: underline;
+		text-decoration-color: var(--tg-gold);
+		text-underline-offset: 0.2em;
+	}
+	.first a {
+		display: inline-block;
+		padding: 0.45rem 0.9rem;
+		font-weight: 600;
+		color: var(--sl-color-black);
+		background: var(--tg-accent);
+		border-radius: 0.5rem;
+	}
+	.first a:hover {
+		text-decoration: none;
+		filter: brightness(1.1);
+	}
+	.assumed {
+		grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+		gap: 0.45rem 1.5rem;
+	}
+	dl {
+		display: grid;
+		grid-template-columns: 7rem 1fr;
+		gap: 0.75rem 1.25rem;
+		margin: 0;
+	}
+	dt {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+		padding-top: 0.3rem;
+	}
+	dd {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		margin: 0;
+	}
+	dd a {
+		padding: 0.2rem 0.6rem;
+		white-space: nowrap;
+		color: var(--sl-color-white);
+		border: 1px solid var(--tg-rule);
+		border-radius: 999px;
+	}
+	dd a:hover {
+		text-decoration: none;
+		border-color: var(--tg-gold);
+	}
+	@media (max-width: 40rem) {
+		dl {
+			grid-template-columns: 1fr;
+			gap: 0.4rem;
+		}
+		dd {
+			margin-bottom: 0.6rem;
+		}
+	}
+</style>

@@ -1,6 +1,6 @@
 ---
 title: terragucci
-description: One workflow, one audit trail and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run. No account, no sign-in, no platform.
+description: One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run. No account, no sign-in, no platform.
 template: splash
 ---
 
@@ -11,7 +11,7 @@ import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
 import ScaleLine from '../../components/ScaleLine.astro';
 import Shot from '../../components/Shot.astro';
-import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import Limits from '../../components/Limits.astro';
 
 <Landing />
 
@@ -107,7 +107,7 @@ Only these four features run a model. Each is off until you set it up and needs 
 |---|---|---|---|
 | Comment `/terragucci agent <ask>` and an agent commits the change to the pull request | `agent.comment` in `terragucci.yml` | GitHub and Forgejo | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 | When drift opens the drift issue, an agent changes the code to match what is live, in a pull request | `agent.drift` in `terragucci.yml` | GitHub and Forgejo | [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) |
-| A note on each pull request comparing its description with its plan: risk, mismatches, questions | `review.agent` in `terragucci.yml` | GitHub and Forgejo | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
+| A note on each pull request comparing its description with its plan: risk, mismatches, questions | `review.agent` in `terragucci.yml` | all three; GitLab through the comments schedule | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
 | A summary of what moved in a refused wave | add the explain-refusal job under `own_jobs` | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
 A coding agent at your desk reads the estate (down to a root's last apply), the audit trail and the DORA figures through `terragucci mcp`, a read-only MCP server that runs no model ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
@@ -122,18 +122,13 @@ A coding agent at your desk reads the estate (down to a root's last apply), the 
 
 [The threat model](/terragucci/reference/threat-model/) lists what each job can reach on each forge.
 
-## Start from what you want
+## Limits
 
-<CardGrid>
-<LinkCard title="See a plan note in about 10 minutes" description="A 15-root example on your laptop, with a local forge and an AWS stand-in. No cloud account." href="/terragucci/tutorial/" />
-<LinkCard title="Add terragucci to my repo" description="One page for GitHub, GitLab and Forgejo: install, run init, and read the plan note on your next pull request." href="/terragucci/guides/add-to-a-repo/" />
-<LinkCard title="Switching from Atlantis, OpenTaco or Terrateam" description="The commands and settings you use now, and the terragucci key or command for each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
-<LinkCard title="Switching from a hosted platform" description="HCP Terraform, Scalr, OTF, Spacelift or env zero: each concept, its terragucci key, and moving state to your bucket." href="/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/" />
-<LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
-<LinkCard title="I use CDK Terrain" description="The pipeline synthesizes your stacks, then plans the ones a change affects." href="/terragucci/guides/plan-cdk-terrain-stacks/" />
-<LinkCard title="I have many repos" description="One control repo holds the shared settings and opens a pull request in each repo that changes." href="/terragucci/concepts/control-repo/" />
-<LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
-</CardGrid>
+What terragucci leaves to your forge and your cloud, and what it does not support.
+
+<Limits />
+
+Recorded checks show what is proven on each tool and forge ([validation](/terragucci/reference/validation/)). Apache-2.0.
 
 ## Hand the setup to your agent
 

@@ -36,6 +36,7 @@
 	--tg-accent: #56a8ec;   /* waiting, links, the one highlight */
 	--tg-ok: #e4e4e7;       /* applied: strong neutral, labelled */
 	--tg-warn: #f2894a;     /* destroy, refused: vermillion */
+	--tg-gold: #c9a96e;     /* fine details only: hairlines, the picked tile */
 	--tg-panel: #121215;
 	--tg-rule: #27272a;
 }
@@ -58,6 +59,7 @@
 	--tg-accent: #0a64c2;
 	--tg-ok: #27272a;
 	--tg-warn: #b94700;
+	--tg-gold: #9a7b3f;
 	--tg-panel: #fafafa;
 	--tg-rule: #e4e4e7;
 }
@@ -70,7 +72,7 @@ h1#_top {
 	letter-spacing: -0.02em;
 }
 h1#_top {
-	font-size: clamp(2rem, 4vw, 2.75rem);
+	font-size: clamp(1.75rem, 3.5vw, 2.25rem);
 }
 
 /* Site title as a wordmark. */
@@ -87,23 +89,118 @@ h1#_top {
 	height: 31px;
 }
 
-/* Tables: hairlines, no zebra. */
-.sl-markdown-content table {
-	border-collapse: collapse;
+/* Reading text: a size down from Starlight's, quieter grey, more air between blocks. */
+.sl-markdown-content {
+	font-size: 0.9375rem;
+	line-height: 1.7;
+	color: var(--sl-color-gray-2);
 }
-.sl-markdown-content :is(th, td) {
+.sl-markdown-content :is(strong, b):not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+	font-weight: 600;
+}
+.sl-markdown-content :is(h2, h3, h4):not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+}
+.sl-markdown-content h2:not(.not-content, .not-content *) {
+	font-size: 1.3rem;
+	margin-top: 2.75rem;
+}
+/* A small diamond, the taco's own, over each section heading. */
+.sl-markdown-content h2:not(.not-content, .not-content *)::before {
+	content: '';
+	display: block;
+	width: 17px;
+	height: 13px;
+	margin-bottom: 0.8rem;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
+.sl-markdown-content h3:not(.not-content, .not-content *) {
+	font-size: 1.05rem;
+	margin-top: 2rem;
+}
+
+/* Links: the accent, a fine underline that turns gold on hover. */
+.sl-markdown-content a:not(.not-content, .not-content *, :is(h1, h2, h3, h4) a) {
+	color: var(--tg-accent);
+	text-decoration-line: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+	text-decoration-color: color-mix(in srgb, var(--tg-accent) 35%, transparent);
+}
+.sl-markdown-content a:not(.not-content, .not-content *):hover {
+	text-decoration-color: var(--tg-gold);
+}
+
+/* Bullets are tacos, and a nested list's bullets are diamonds. Ordered lists keep their numbers. */
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li {
+	position: relative;
+	padding-left: 1.4rem;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.55em;
+	width: 12px;
+	height: 9px;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li {
+	position: relative;
+	padding-left: 1.85rem;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.5em;
+	width: 20px;
+	height: 12px;
+	background: url('/terragucci/brand/taco.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
+
+/* Tables: smaller type, a tracked caps header over a gold hairline, hairline rows. */
+.sl-markdown-content table:not(.not-content, .not-content *) {
+	border-collapse: collapse;
+	font-size: 0.85rem;
+	line-height: 1.55;
+}
+.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
 	border: none;
 	border-bottom: 1px solid var(--tg-rule);
+	padding: 0.6rem 0.9rem 0.6rem 0;
+	vertical-align: top;
 }
-.sl-markdown-content th {
-	font-size: 0.8rem;
-	font-weight: 500;
+.sl-markdown-content th:not(.not-content, .not-content *) {
+	font-size: 0.68rem;
+	font-weight: 600;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
 	color: var(--sl-color-gray-3);
 	background: none;
+	border-bottom: 1px solid var(--tg-gold);
+}
+.sl-markdown-content td:first-child:not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+}
+.sl-markdown-content tbody tr:hover td:not(.not-content, .not-content *) {
+	background: color-mix(in srgb, var(--tg-gold) 5%, transparent);
 }
 
 /* Inline code: a quiet grey chip. */
-.sl-markdown-content :not(pre):not(.not-content *) > code {
+.sl-markdown-content :not(pre):not(.not-content, .not-content *) > code {
 	background: var(--sl-color-gray-6);
 	color: var(--sl-color-gray-1);
 	border: 1px solid var(--tg-rule);
@@ -225,11 +322,9 @@ code, pre, kbd, samp {
 	font-weight: 500;
 }
 
-/* The header logo sits on the same tile as every other taco. */
+/* The header logo: the taco's art is transparent, so it sits on the page itself. */
 .site-title img {
-	background: var(--tg-taco-ground);
 	padding: 4px 6px;
-	border-radius: 6px;
 	box-sizing: content-box;
 }
 
@@ -242,4 +337,46 @@ code, pre, kbd, samp {
 	margin: 1.5rem auto;
 	border-radius: 0.5rem;
 	background: #000;
+}
+
+/* Sidebar: a step smaller, and the tutorial's minutes as quiet grey text, not blue blocks. */
+.sidebar-content a {
+	font-size: var(--sl-text-sm);
+}
+.sidebar-content .sl-badge {
+	font-family: var(--sl-font);
+	font-size: 0.68rem;
+	font-weight: 500;
+	color: var(--sl-color-gray-3);
+	background: none;
+	border: 1px solid var(--tg-rule);
+	border-radius: 999px;
+	padding: 0 0.4rem;
+}
+
+/* On a phone a wide table scrolls in its box, so its columns keep readable widths. */
+@media (max-width: 40rem) {
+	.sl-markdown-content table:not(.not-content, .not-content *) {
+		display: block;
+		overflow-x: auto;
+		font-size: 0.8rem;
+	}
+	.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
+		min-width: 7.5rem;
+	}
+}
+
+/* Each top-level sidebar group's label starts with the taco's diamond. */
+.sidebar-content .top-level > li > details > summary .group-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.sidebar-content .top-level > li > details > summary .group-label::before {
+	content: '';
+	flex: none;
+	width: 15px;
+	height: 11px;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
 }

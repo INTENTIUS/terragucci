@@ -1,0 +1,522 @@
+---
+// The coverage grids: each feature area by tool on Forgejo, and by forge,
+// from the smoke record (smoke.json), the per-forge record (validation.json)
+// and the area of each claim (claim-areas.json, which test/claim-areas.test.ts
+// keeps whole). column="Atmos" (or any one column's label) renders that column
+// alone, compact, for a page about one tool or forge.
+import smoke from '../data/smoke.json';
+import validation from '../data/validation.json';
+import { AREAS, FORGE, TOOL, rows, type Binary, type Col, type Forge, type Row, type Status } from '../data/coverage';
+
+interface Props {
+	column?: string;
+}
+const { column } = Astro.props;
+
+// What a tool or forge refuses by design, by area. whole: the area has nothing
+// else there, so the cell reads "not supported" instead of "none".
+type Limit = { column: string; area: string; text: string; whole?: boolean };
+const LIMITS: Limit[] = [
+	{ column: 'GitLab', area: 'Locks and safety', text: 'Locks from the first plan (locks: plan) are refused on GitLab, where no merge request event runs a job from the default branch.' },
+	{ column: 'Terragrunt', area: 'Setup and runtime', text: 'A Terragrunt repo takes no synth, so a CDK Terrain app cannot run in one.' },
+	{ column: 'CDK Terrain', area: 'Setup and runtime', text: 'A CDK Terrain app cannot run in a Terragrunt repo, which takes no synth.' },
+	{ column: 'Atmos', area: 'Drift', text: 'The drift pull request is refused: a live value belongs in the stack vars or the component.' },
+	{ column: 'Terramate', area: 'Drift', text: 'The drift pull request is refused: a live value belongs in the stack .tm.hcl or its own Terraform.' },
+	{ column: 'CDK Terrain', area: 'Drift', text: 'The drift pull request is refused: a live value belongs in the app that writes the stacks.' },
+	{ column: 'Atmos', area: 'Modules', text: 'Rollouts are refused: every instance of a component shares its files, so no wave can move a pin alone.' },
+	{ column: 'Terramate', area: 'Modules', text: 'Rollouts are refused: the pin is usually in code terramate generate writes.' },
+	{ column: 'CDK Terrain', area: 'Modules', text: 'Rollouts are refused: the pin is in the app that writes the stacks.' },
+	{ column: 'Atmos', area: 'Agents and pull request environments', text: 'A copy per pull request is refused: the stack backend and workspace name the state of an instance.' },
+];
+
+type State = Status | 'same' | 'unsupported' | 'none';
+type Claim = { claim: string; says: string; status: Status; githubCom: boolean };
+type Cell = { state: State; claims: Claim[]; same: Claim[]; limits: Limit[] };
+
+const RANK: Record<Status, number> = { fails: 0, passes: 1, proven: 2 };
+// One entry per claim, at its weakest result in the cell.
+const claimsIn = (picked: Row[]): Claim[] => {
+	const by = new Map<string, Claim>();
+	for (const r of picked) {
+		const was = by.get(r.claim);
+		if (!was || RANK[r.status] < RANK[was.status]) by.set(r.claim, { claim: r.claim, says: r.says, status: r.status, githubCom: r.githubCom });
+	}
+	return [...by.values()];
+};
+
+const cellOf = (col: Col, area: string): Cell => {
+	const claims = claimsIn(rows.filter((r) => r.area === area && col.take(r)));
+	const limits = LIMITS.filter((l) => l.column === col.label && l.area === area);
+	// Terraform and choudoufu re-run only the checks where the binary matters;
+	// the rest of the area runs the same code on every binary.
+	const tofu = col.binary && col.binary !== 'tofu' ? claimsIn(rows.filter((r) => r.area === area && TOOL[0]!.take(r))) : [];
+	const same = tofu.filter((t) => !claims.some((c) => c.claim === t.claim));
+	let state: State;
+	if (claims.length) state = claims.some((c) => c.status === 'fails') ? 'fails' : claims.every((c) => c.status === 'proven') ? 'proven' : 'passes';
+	else if (same.length) state = 'same';
+	else if (limits.some((l) => l.whole)) state = 'unsupported';
+	else state = 'none';
+	return { state, claims, same, limits };
+};
+
+const WORD: Record<State, string> = { proven: 'proven', passes: 'passes', fails: 'fails', same: 'same code', unsupported: 'not supported', none: 'none' };
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+const summary = (cell: Cell, col: Col): string => {
+	const n = cell.claims.length;
+	const proven = cell.claims.filter((c) => c.status === 'proven').length;
+	const failing = cell.claims.filter((c) => c.status === 'fails').length;
+	switch (cell.state) {
+		case 'proven':
+			return n === 1 ? '1 check, proven.' : `${n} checks, all proven.`;
+		case 'passes':
+			return `${plural(n, 'check', 'checks')}: ${proven} proven, ${n - proven} ${n - proven === 1 ? 'passes' : 'pass'} with nothing cut out.`;
+		case 'fails':
+			return `${plural(n, 'check', 'checks')}: ${failing} ${failing === 1 ? 'fails' : 'fail'}.`;
+		case 'same':
+			return `Not re-run on ${col.label}. ${cell.same.length === 1 ? 'This check runs' : `These ${cell.same.length} checks run`} the same code on every binary; on OpenTofu, ${cell.same.filter((c) => c.status === 'proven').length} ${cell.same.length === 1 ? 'is' : 'are'} proven.`;
+		case 'unsupported':
+			return 'Not supported by design.';
+		default:
+			return 'No check recorded.';
+	}
+};
+
+const grids = [
+	{ key: 'tool', title: 'By tool, on Forgejo', cols: TOOL },
+	{ key: 'forge', title: 'By forge', cols: FORGE },
+];
+const only = column ? grids.flatMap((g) => g.cols.filter((c) => c.label === column).map((c) => ({ grid: g, col: c })))[0] : undefined;
+if (column && !only) throw new Error(`CoverageGrid: no column "${column}"; the columns are ${[...TOOL, ...FORGE].map((c) => c.label).join(', ')}`);
+
+const cells = new Map<string, Cell>();
+for (const g of grids) for (const col of g.cols) for (const area of AREAS) cells.set(`${col.label}|${area}`, cellOf(col, area));
+const cell = (col: Col, area: string) => cells.get(`${col.label}|${area}`)!;
+// The legend names every state; a single column names the ones it shows.
+const inView = only ? AREAS.map((a) => cell(only.col, a)) : [...cells.values()];
+const has = (st: State) => !only || inView.some((c) => c.state === st);
+const hasLimit = !only || inView.some((c) => c.limits.length > 0 || c.state === 'unsupported');
+const anyFails = inView.some((c) => c.state === 'fails');
+
+const day = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+// Oct 7 to Oct 9, 2026; one day when both are the same.
+const range = (a: string, b: string) => {
+	if (a === b) return day(a);
+	const short = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+	return a.slice(0, 4) === b.slice(0, 4) ? `${short(a)} to ${day(b)}` : `${day(a)} to ${day(b)}`;
+};
+const rec = (validation as { recorded?: Record<string, string> }).recorded ?? {};
+const forgeDays = ['forgejo', 'github', 'gitlab'].map((f) => rec[f]).filter((d): d is string => Boolean(d)).sort();
+const recorded = [
+	`example checks, last full run ${day(smoke.recorded)}`,
+	forgeDays.length ? `per-forge checks ${range(forgeDays[0]!, forgeDays.at(-1)!)}` : '',
+	rec['github.com'] ? `github.com ${day(rec['github.com'])}` : '',
+].filter(Boolean);
+
+const uid = Math.random().toString(36).slice(2, 8);
+let n = 0;
+const tipId = () => `tg-cov-${uid}-${n++}`;
+---
+{(() => {
+	const tip = (c: Cell, col: Col, area: string, id: string) => {
+		const shown = (c.state === 'same' ? c.same : [...c.claims].sort((a, b) => RANK[a.status] - RANK[b.status])).slice(0, 3);
+		const total = c.state === 'same' ? c.same.length : c.claims.length;
+		return (
+			<span class="tip" role="tooltip" id={id}>
+				<strong>{area}, {col.label}</strong>
+				<span class="sum">{summary(c, col)}</span>
+				{shown.length > 0 && <ul>{shown.map((s) => <li>{s.says}</li>)}</ul>}
+				{total > shown.length && (only
+					? <span class="more">{total - shown.length} more on the <a href={`${import.meta.env.BASE_URL.replace(/\/?$/, '/')}reference/validation/`}>validation page</a>.</span>
+					: <span class="more">{total - shown.length} more in the full tables below.</span>)}
+				{c.state !== 'same' && c.same.length > 0 && <span class="more">{plural(c.same.length, 'other check runs', 'other checks run')} the same code on every binary and {c.same.length === 1 ? 'is' : 'are'} not re-run here.</span>}
+				{col.label === 'GitHub' && c.claims.some((x) => x.githubCom && x.status === 'passes') && <span class="more">On github.com most checks run with nothing cut out.</span>}
+				{c.limits.map((l) => <span class="limit">{l.text}</span>)}
+			</span>
+		);
+	};
+	const button = (col: Col, area: string) => {
+		const c = cell(col, area);
+		const id = tipId();
+		const count = c.state === 'same' ? 0 : c.claims.length;
+		return (
+			<span class="slot">
+				<button type="button" class={`cell s-${c.state}${c.limits.length ? ' limited' : ''}`} aria-describedby={id} aria-controls={id} aria-expanded="false" aria-label={`${area}, ${col.label}: ${WORD[c.state]}${count ? `, ${plural(count, 'check', 'checks')}` : ''}`}>
+					{count > 0 && <span class="n">{count}</span>}
+					<span class="w">{WORD[c.state]}</span>
+				</button>
+				{tip(c, col, area, id)}
+			</span>
+		);
+	};
+	return (
+		<div class={`tg-cov not-content${only ? ' compact' : ''}`}>
+			{only ? (
+				<div class="one">
+					<p class="title">{only.col.label}{only.grid.key === 'tool' ? ', on Forgejo' : ''}</p>
+					<ul class="list">
+						{AREAS.map((area) => (
+							<li><span class="area">{area}</span>{button(only.col, area)}</li>
+						))}
+					</ul>
+				</div>
+			) : (
+				grids.map((g) => (
+					<div class="grid-wrap">
+						<p class="title">{g.title}</p>
+						{g.key === 'tool' && <p class="swipe">Swipe for more columns</p>}
+						<div class="scroll">
+							<table class={g.key}>
+								<thead>
+									{g.key === 'tool' && (
+										<tr class="groups">
+											<th></th>
+											<th colspan="3" scope="colgroup">Binary</th>
+											<th colspan="4" scope="colgroup">Repo shape</th>
+										</tr>
+									)}
+									<tr>
+										<th scope="col" class="area-h">Feature area</th>
+										{g.cols.map((col) => <th scope="col">{col.label}</th>)}
+									</tr>
+								</thead>
+								<tbody>
+									{AREAS.map((area) => (
+										<tr>
+											<th scope="row">{area}</th>
+											{g.cols.map((col) => <td>{button(col, area)}</td>)}
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				))
+			)}
+			<ul class="legend">
+				{has('proven') && <li><span class="key s-proven">proven</span> passes, and fails with the feature cut out</li>}
+				{has('passes') && <li><span class="key s-passes">passes</span> passes, not run with the feature cut out</li>}
+				{has('same') && <li><span class="key s-same">same code</span> not re-run on this binary; its checks run the same code on every binary</li>}
+				{hasLimit && <li><span class="key s-unsupported limited">not supported</span> not supported by design; a corner mark means part of the area</li>}
+				{has('none') && <li><span class="key s-none">none</span> no check recorded</li>}
+				{anyFails && <li><span class="key s-fails">fails</span> the last run failed</li>}
+			</ul>
+			<p class="note">Every check runs on OpenTofu on Forgejo. Runs on Terraform, choudoufu and github.com are expensive, so they re-run only the checks where the binary or forge changes what happens.{(!only || only.col.label === 'GitHub') && ' On github.com most checks run with nothing cut out, so they pass but are not proven.'}</p>
+			<p class="note">Open a cell for the checks behind it. Recorded: {recorded.join('; ')}.</p>
+		</div>
+	);
+})()}
+
+<script>
+	// One overlay open at a time: on hover with a mouse, on keyboard focus, and
+	// pinned by a click or tap. It is fixed to the viewport, so a grid that
+	// scrolls sideways on a phone does not clip it.
+	let open: HTMLElement | null = null;
+	let pinned = false;
+
+	const parts = (slot: HTMLElement) => ({
+		button: slot.querySelector<HTMLButtonElement>('.cell')!,
+		tip: slot.querySelector<HTMLElement>('.tip')!,
+	});
+	const place = (slot: HTMLElement) => {
+		const { button, tip } = parts(slot);
+		const r = button.getBoundingClientRect();
+		const vw = document.documentElement.clientWidth;
+		const vh = window.innerHeight;
+		const w = Math.min(320, vw - 32);
+		tip.style.width = `${w}px`;
+		tip.style.left = `${Math.max(16, Math.min(r.left + r.width / 2 - w / 2, vw - w - 16))}px`;
+		const h = tip.offsetHeight;
+		tip.style.top = `${r.bottom + 6 + h > vh - 8 && r.top - 6 - h > 8 ? r.top - 6 - h : r.bottom + 6}px`;
+	};
+	const show = (slot: HTMLElement, pin = false) => {
+		if (open && open !== slot) hide();
+		open = slot;
+		pinned = pin;
+		slot.classList.add('open');
+		parts(slot).button.setAttribute('aria-expanded', 'true');
+		place(slot);
+	};
+	const hide = () => {
+		if (!open) return;
+		open.classList.remove('open');
+		parts(open).button.setAttribute('aria-expanded', 'false');
+		open = null;
+		pinned = false;
+	};
+
+	for (const slot of document.querySelectorAll<HTMLElement>('.tg-cov .slot')) {
+		const { button } = parts(slot);
+		slot.addEventListener('pointerenter', (e) => {
+			if (e.pointerType === 'mouse' && !pinned) show(slot);
+		});
+		slot.addEventListener('pointerleave', (e) => {
+			if (e.pointerType === 'mouse' && !pinned && open === slot) hide();
+		});
+		button.addEventListener('focus', () => {
+			if (button.matches(':focus-visible')) show(slot);
+		});
+		button.addEventListener('blur', (e) => {
+			if (!pinned && open === slot && !slot.contains(e.relatedTarget as Node | null)) hide();
+		});
+		button.addEventListener('click', () => {
+			if (open === slot && pinned) hide();
+			else show(slot, true);
+		});
+	}
+	document.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape') hide();
+	});
+	document.addEventListener('pointerdown', (e) => {
+		if (open && !open.contains(e.target as Node)) hide();
+	});
+	window.addEventListener('scroll', () => hide(), { passive: true, capture: true });
+	window.addEventListener('resize', () => hide());
+</script>
+
+<style>
+	.tg-cov {
+		margin: 1.5rem 0;
+		font-size: 0.85rem;
+	}
+	.title {
+		margin: 0 0 0.5rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+	.grid-wrap + .grid-wrap {
+		margin-top: 1.75rem;
+	}
+	.scroll {
+		overflow-x: auto;
+	}
+	.swipe {
+		display: none;
+	}
+	/* On a phone the by-forge grid fits; the by-tool grid scrolls, and says so. */
+	@media (max-width: 40rem) {
+		.swipe {
+			display: block;
+			margin: 0 0 0.4rem;
+			font-size: 0.72rem;
+			color: var(--sl-color-gray-3);
+		}
+		.swipe::after {
+			content: ' →';
+		}
+		table.forge {
+			min-width: 0;
+		}
+		tbody th {
+			min-width: 6.5rem;
+			font-size: 0.75rem;
+		}
+		.cell {
+			min-width: 2.9rem;
+		}
+	}
+	table {
+		border-collapse: collapse;
+		width: 100%;
+		min-width: 34rem;
+	}
+	th {
+		text-align: left;
+		font-weight: 500;
+		font-size: 0.78rem;
+		color: var(--sl-color-gray-3);
+		padding: 0.35rem 0.4rem 0.35rem 0;
+		vertical-align: bottom;
+	}
+	thead tr:last-child th {
+		border-bottom: 1px solid var(--tg-rule);
+	}
+	.groups th {
+		padding-bottom: 0;
+		font-size: 0.72rem;
+		color: var(--sl-color-gray-4);
+	}
+	tbody th {
+		color: var(--sl-color-white);
+		font-size: 0.82rem;
+		vertical-align: middle;
+		position: sticky;
+		left: 0;
+		background: var(--sl-color-black);
+		z-index: 1;
+		min-width: 8.5rem;
+		max-width: 11rem;
+	}
+	tbody tr + tr :is(th, td) {
+		border-top: 1px solid var(--tg-rule);
+	}
+	td {
+		padding: 0.3rem 0.3rem 0.3rem 0;
+	}
+	.cell {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		min-width: 3.6rem;
+		min-height: 2.6rem;
+		padding: 0.2rem 0.25rem;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.35rem;
+		background: transparent;
+		color: var(--sl-color-gray-3);
+		font: inherit;
+		line-height: 1.1;
+		cursor: pointer;
+	}
+	.cell:focus-visible {
+		outline: 2px solid var(--tg-accent);
+		outline-offset: 1px;
+	}
+	.n {
+		font-family: var(--sl-font-mono);
+		font-size: 0.9rem;
+		font-weight: 500;
+	}
+	.w {
+		font-size: 0.68rem;
+		white-space: nowrap;
+	}
+	.s-proven {
+		background: var(--sl-color-accent-low);
+		border-color: var(--tg-accent);
+		color: var(--sl-color-white);
+	}
+	.s-passes {
+		border: 1px dashed var(--tg-accent);
+		color: var(--tg-accent);
+	}
+	.s-fails {
+		border-color: var(--tg-warn);
+		color: var(--tg-warn);
+		font-weight: 600;
+	}
+	.s-same {
+		background: var(--tg-panel);
+		color: var(--sl-color-gray-3);
+	}
+	.s-none,
+	.s-unsupported {
+		border-style: dotted;
+		color: var(--sl-color-gray-4);
+	}
+	/* A corner mark: part of the area is not supported by design. */
+	.limited::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		right: 0;
+		border-style: solid;
+		border-width: 0 0.6rem 0.6rem 0;
+		border-color: transparent var(--sl-color-gray-3) transparent transparent;
+		border-top-right-radius: 0.3rem;
+	}
+	.tip {
+		display: none;
+		position: fixed;
+		z-index: 50;
+		text-align: left;
+		padding: 0.65rem 0.75rem;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.45rem;
+		background: var(--sl-color-black);
+		color: var(--sl-color-gray-2);
+		box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+		font-size: 0.8rem;
+		font-weight: 400;
+		line-height: 1.4;
+		cursor: auto;
+	}
+	.slot {
+		display: block;
+	}
+	.open .tip {
+		display: block;
+	}
+	.tip a {
+		color: var(--tg-accent);
+	}
+	.tip strong {
+		display: block;
+		color: var(--sl-color-white);
+		font-weight: 600;
+	}
+	.tip .sum,
+	.tip .more,
+	.tip .limit {
+		display: block;
+		margin-top: 0.3rem;
+	}
+	.tip .more {
+		color: var(--sl-color-gray-3);
+	}
+	.tip .limit {
+		color: var(--sl-color-white);
+	}
+	.tip ul {
+		margin: 0.35rem 0 0;
+		padding-left: 1rem;
+	}
+	.tip li + li {
+		margin-top: 0.25rem;
+	}
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem 1.1rem;
+		list-style: none;
+		margin: 1rem 0 0;
+		padding: 0;
+		font-size: 0.78rem;
+		color: var(--sl-color-gray-3);
+	}
+	.legend li {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.key {
+		position: relative;
+		display: inline-block;
+		min-width: 3.4rem;
+		padding: 0.1rem 0.35rem;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.3rem;
+		font-size: 0.7rem;
+		text-align: center;
+		white-space: nowrap;
+	}
+	.note {
+		margin: 0.6rem 0 0;
+		font-size: 0.78rem;
+		color: var(--sl-color-gray-3);
+	}
+	.compact .list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.compact .list > li {
+		display: grid;
+		grid-template-columns: 1fr 5.5rem;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.25rem 0;
+		border-top: 1px solid var(--tg-rule);
+	}
+	.compact .area {
+		color: var(--sl-color-white);
+	}
+	.compact .cell {
+		flex-direction: row;
+		gap: 0.35rem;
+		min-height: 2rem;
+	}
+</style>

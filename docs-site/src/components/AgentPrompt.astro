@@ -1,12 +1,14 @@
 ---
-// "Optional: hand this page to your coding agent": a prompt to paste into a
-// coding agent, with a Copy button, and a line saying the page works by hand.
-// Only two features run an agent (the agent comment and the refused-wave job);
-// the box is a shortcut for the rest, never a requirement. The text is the page's `prompt:` front matter, or `text` when given
-// (the home page passes the setup prompt). The page header (PageTitle.astro)
-// renders it under the title of every page with a `prompt:`, so a page needs
-// no import for it; a page that places <AgentPrompt /> itself gets it there
-// instead. Every prompt forbids apply, approve and merge (lint-prompts.mjs).
+// "Optional: hand this page to your coding agent": a compact card with the
+// prompt's first lines showing, a button that copies the whole prompt, one that
+// copies a link to it, and a toggle that shows it all. Only two features run an
+// agent (the agent comment and the refused-wave job); the card is a shortcut
+// for the rest, never a requirement. The text is the page's `prompt:` front
+// matter, or `text` when given (the home page passes the setup prompt). The
+// page header (PageTitle.astro) renders it under the title of every page with
+// a `prompt:`, so a page needs no import for it; a page that places
+// <AgentPrompt /> itself gets it there instead. Every prompt forbids apply,
+// approve and merge (lint-prompts.mjs).
 import { promptText } from '../prompts';
 import Taco from './Taco.astro';
 
@@ -17,36 +19,52 @@ interface Props {
 }
 const {
 	label = 'Optional: hand this page to your coding agent',
-	note = 'The steps below work by hand, with no agent.',
+	note = 'The steps work by hand too.',
 	text,
 } = Astro.props;
 const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt);
 ---
 {prompt && (
-	<figure class="tg-prompt not-content">
+	<figure class="tg-prompt not-content" id="agent-prompt">
 		<figcaption>
-			<span class="tg-prompt-label"><Taco scale="small" />{label}</span>
-			<button type="button" class="tg-prompt-copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
+			<span class="label"><Taco scale="small" />{label}</span>
+			<span class="note">{note}</span>
 		</figcaption>
-		<p class="tg-prompt-note">{note}</p>
-		<pre><code>{prompt}</code></pre>
+		<details>
+			<summary>
+				<pre class="peek" aria-hidden="true">{prompt}</pre>
+				<span class="more">Show the whole prompt</span>
+			</summary>
+			<pre class="full"><code>{prompt}</code></pre>
+		</details>
+		<div class="actions">
+			<button type="button" class="copy" data-copy={prompt} data-done="Copied">Copy prompt</button>
+			<button type="button" class="link" data-link data-done="Link copied">Copy link</button>
+		</div>
 	</figure>
 )}
 
 <script>
-	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-prompt-copy')) {
+	const flash = (button: HTMLButtonElement, text: string) => {
+		const was = button.textContent;
+		button.textContent = text;
+		setTimeout(() => (button.textContent = was), 1600);
+	};
+	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-prompt button')) {
 		button.addEventListener('click', async () => {
+			const card = button.closest('figure')!;
+			const text = button.dataset.link !== undefined ? `${location.origin}${location.pathname}#${card.id}` : (button.dataset.copy ?? '');
 			try {
-				await navigator.clipboard.writeText(button.dataset.copy ?? '');
-				button.textContent = 'Copied';
+				await navigator.clipboard.writeText(text);
+				flash(button, button.dataset.done ?? 'Copied');
 			} catch {
-				// No clipboard (an insecure origin, a denied permission): select the
-				// text so the reader can copy it by hand.
-				const code = button.closest('figure')?.querySelector('code');
+				// No clipboard (an insecure origin, a denied permission): open the
+				// prompt and select it so the reader can copy it by hand.
+				card.querySelector('details')?.setAttribute('open', '');
+				const code = card.querySelector('.full code');
 				if (code) window.getSelection()?.selectAllChildren(code);
-				button.textContent = 'Selected';
+				flash(button, 'Selected');
 			}
-			setTimeout(() => (button.textContent = 'Copy'), 1600);
 		});
 	}
 </script>
@@ -57,52 +75,103 @@ const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt
 		width: min(100%, 44rem);
 		text-align: left;
 		border: 1px solid var(--tg-rule);
-		border-radius: 0.75rem;
+		border-left: 2px solid var(--tg-gold);
+		border-radius: 0.6rem;
 		background: var(--tg-panel);
 		overflow: hidden;
 	}
 	figcaption {
 		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.6rem 0.9rem;
-		border-bottom: 1px solid var(--tg-rule);
-		font-size: 0.8rem;
-		color: var(--sl-color-gray-3);
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 0.75rem;
+		padding: 0.7rem 1rem 0.4rem;
 	}
-	.tg-prompt-label {
+	.label {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.5rem;
-	}
-	button {
-		font: inherit;
-		font-weight: 500;
+		font-size: 0.85rem;
+		font-weight: 600;
 		color: var(--sl-color-white);
-		background: var(--sl-color-gray-6);
-		border: 1px solid var(--tg-rule);
-		border-radius: 0.4rem;
-		padding: 0.2rem 0.7rem;
-		cursor: pointer;
 	}
-	button:hover {
-		border-color: var(--tg-accent);
-	}
-	.tg-prompt-note {
-		margin: 0;
-		padding: 0.5rem 1.1rem 0;
-		font-size: 0.8rem;
+	.note {
+		font-size: 0.75rem;
 		color: var(--sl-color-gray-3);
+	}
+	summary {
+		position: relative;
+		display: block;
+		list-style: none;
+		cursor: pointer;
+		padding: 0 1rem;
+	}
+	summary::-webkit-details-marker {
+		display: none;
 	}
 	pre {
 		margin: 0;
-		padding: 1rem 1.1rem;
 		font-family: var(--sl-font-mono);
-		font-size: 0.85rem;
-		line-height: 1.65;
-		color: var(--sl-color-gray-1);
+		font-size: 0.75rem;
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+		background: none;
+		border: 0;
+		padding: 0;
+	}
+	/* Two lines of the prompt, fading out, say it is there. */
+	.peek {
+		max-height: 2.4rem;
+		overflow: hidden;
+		mask-image: linear-gradient(to bottom, #000 40%, transparent);
+	}
+	.more {
+		display: inline-block;
+		margin-top: 0.2rem;
+		font-size: 0.72rem;
+		color: var(--tg-accent);
+	}
+	details[open] .peek,
+	details[open] .more {
+		display: none;
+	}
+	details[open] summary::after {
+		content: 'Hide the prompt';
+		font-size: 0.72rem;
+		color: var(--tg-accent);
+	}
+	.full {
+		padding: 0.25rem 1rem 0;
+	}
+	.actions {
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.7rem 1rem 0.8rem;
+	}
+	button {
+		font: inherit;
+		font-size: 0.78rem;
+		font-weight: 600;
+		border-radius: 0.45rem;
+		padding: 0.35rem 0.85rem;
+		cursor: pointer;
+	}
+	.copy {
+		color: var(--sl-color-black);
+		background: var(--tg-accent);
+		border: 1px solid var(--tg-accent);
+	}
+	.copy:hover {
+		filter: brightness(1.1);
+	}
+	.link {
+		color: var(--sl-color-white);
+		background: none;
+		border: 1px solid var(--tg-rule);
+	}
+	.link:hover {
+		border-color: var(--tg-gold);
 	}
 </style>

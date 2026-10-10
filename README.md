@@ -2,7 +2,7 @@
 
 # terragucci
 
-One workflow, one audit trail and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests and trace every run.
+One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests and trace every run.
 
 CI does this: each job runs in your forge's CI and lands in your git and your bucket, with no account to create and no platform to sign in to.
 
