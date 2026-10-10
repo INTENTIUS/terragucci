@@ -1118,7 +1118,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "77c1fba3"
+      "commit": "f605ee01"
     },
     {
       "claim": "cdf-live-progress",
@@ -1126,7 +1126,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "2bdb05f3"
+      "commit": "f605ee01"
     },
     {
       "claim": "cdf-iam",
