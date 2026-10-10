@@ -1577,6 +1577,16 @@ export function gitlabTokenCheck(tokenEnv = "GITLAB_TOKEN"): string {
   return `if [ -n "\${${tokenEnv}:-}" ]; then echo "terragucci: ${tokenEnv} reaches this merge request's pipeline, so its code can use the token; gitlab.token is protected, so mark the variable Protected" >&2; exit 1; fi`;
 }
 
+/** The plan workflow's workflow_dispatch inputs: a pull request to re-plan, and optionally one root of it. */
+export const REPLAN_INPUTS = {
+  pr: { description: "The number of a pull request to re-plan", required: false, type: "string" },
+  root: { description: "One root of it to re-plan, a path from the repository root", required: false, type: "string" },
+};
+/** A dispatch that names a pull request: the replan job's, never the drift job's. */
+export const REPLAN_DISPATCH = "(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')";
+/** Forgejo's concurrency group for such a dispatch: the pull request's comment group, not the default branch's, whose runs apply. */
+const DISPATCH_GROUP = `${REPLAN_DISPATCH} && format('comment-{0}', github.event.inputs.pr)`;
+
 /** Reads the decision file `terragucci comment` wrote. */
 const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")';
 
@@ -2162,7 +2172,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // locks: plan: the pr-lock job, from the default branch's workflow, locks a pull request's roots and releases them when it closes.
       // ephemeral: the same events apply a pull request's copy of the ephemeral roots and destroy it on close.
       ...(locksPlan || ephemeral ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
-      ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
+      ...(drift ? { schedule: [{ cron: drift }] } : {}),
+      // A dispatch with pr re-plans that pull request as `/terragucci plan [root]` does (comment.ts); with drift set, one without pr runs the drift job.
+      workflow_dispatch: { inputs: REPLAN_INPUTS },
     },
     env: jobEnv,
     permissions: { contents: "read" },
@@ -2172,8 +2184,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // A pull_request_target run's ref is the default branch's, so with locks: plan it gets a group of its own pull request's.
     ...(forge === "forgejo"
       ? { concurrency: { group: locksPlan || ephemeral
-        ? "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}"
-        : "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } }
+        ? `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}`
+        : `terragucci-\${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || ${DISPATCH_GROUP} || github.ref }}`, "cancel-in-progress": false } }
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
@@ -2292,10 +2304,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
+    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
-    concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
+    concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
     ...(Object.keys(replanEnv).length ? { env: replanEnv } : {}),
     outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", sha: "${{ steps.decide.outputs.sha }}", root: "${{ steps.decide.outputs.root }}" },
     steps: [
@@ -2563,7 +2575,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     entities.set("drift", new Job({
       "runs-on": "ubuntu-latest",
       container: { image },
-      if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+      if: "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')",
       permissions: { contents: driftPr ? "write" : "read", issues: "write", ...(driftPr ? { "pull-requests": "write" } : {}), ...(oidc ? { "id-token": "write" } : {}) },
       ...openid(Boolean(oidc)),
       ...(input.agentDrift ? { outputs: { agent: "${{ steps.drift.outputs.agent }}", issue: "${{ steps.drift.outputs.issue }}" } } : {}),

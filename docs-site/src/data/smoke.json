@@ -208,6 +208,23 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "reconcile-mixed",
+      "says": "a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bf5dd40e"
+    },
+    {
+      "claim": "reconcile-mixed",
+      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
       "claim": "traces",
       "says": "each plan run is one trace, with a span per root and the binary spans inside it",
       "needs": null,
@@ -862,7 +879,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1468a6e6"
+      "commit": "bf5dd40e"
     },
     {
       "claim": "plan-lock-release",
@@ -1335,7 +1352,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "bf5dd40e"
     },
     {
       "claim": "note-footer",
@@ -1345,6 +1362,14 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "e8d2cfb"
+    },
+    {
+      "claim": "replan-dispatch",
+      "says": "a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bf5dd40e"
     },
     {
       "claim": "cdf-shared-bucket",
@@ -1954,15 +1979,6 @@
     {
       "claim": "explain-refusal",
       "says": "after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "02e7f08"
-    },
-    {
-      "claim": "reconcile-mixed",
-      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
       "needs": null,
       "verdict": "pass",
       "break": "caught",

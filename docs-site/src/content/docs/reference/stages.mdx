@@ -114,7 +114,7 @@ drift: "0 6 * * *"
 
 | Forge | Issue token | Schedule |
 |---|---|---|
-| GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` |
+| GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` with no `pr` |
 | GitLab | `token_env`, `api` scope | CI/CD > Schedules, by hand |
 
 ### Overdue drift checks

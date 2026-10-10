@@ -223,14 +223,34 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   }
   if (event === null || typeof event !== "object") return broke(`the event file ${eventPath} is not a JSON object`);
 
-  if (event.action !== "created") return stop("not a new comment");
-  const parsed = parseComment(event.comment?.body, parseOptions(env));
-  if (!parsed) return stop("the comment is not addressed to terragucci");
-  const number = event.issue?.number;
-  if (!Number.isInteger(number) || number < 1) return stop("the comment has no issue number");
-  if (!event.issue?.pull_request && event.issue?.is_pull !== true) return stop("the comment is not on a pull request");
-  const user = event.comment?.user?.login;
-  if (typeof user !== "string" || !LOGIN.test(user)) return stop("the comment has no usable author");
+  // A workflow_dispatch with a pr input asks for the same re-plan as `/terragucci plan [root]` on that pull request.
+  const dispatch = env.GITHUB_EVENT_NAME === "workflow_dispatch";
+  let parsed: ParsedComment;
+  let number: number;
+  let user: string;
+  if (dispatch) {
+    if (o.agent === "run") return stop("an agent runs on a comment, not on a dispatch");
+    const ask = readDispatch(event.inputs);
+    if (ask === undefined) return stop("the dispatch names no pull request");
+    if ("error" in ask) return broke(ask.error);
+    const sender = event.sender?.login;
+    if (typeof sender !== "string" || !LOGIN.test(sender)) return stop("the dispatch has no usable sender");
+    parsed = ask.parsed;
+    number = ask.pr;
+    user = sender;
+  } else {
+    if (event.action !== "created") return stop("not a new comment");
+    const read = parseComment(event.comment?.body, parseOptions(env));
+    if (!read) return stop("the comment is not addressed to terragucci");
+    const issue = event.issue?.number;
+    if (!Number.isInteger(issue) || issue < 1) return stop("the comment has no issue number");
+    if (!event.issue?.pull_request && event.issue?.is_pull !== true) return stop("the comment is not on a pull request");
+    const author = event.comment?.user?.login;
+    if (typeof author !== "string" || !LOGIN.test(author)) return stop("the comment has no usable author");
+    parsed = read;
+    number = issue;
+    user = author;
+  }
 
   const { api, repo, token } = apiOf(env);
   const call = async (method: string, path: string, body?: unknown): Promise<any> => {
@@ -258,9 +278,15 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     // repository.permissions is computed for the comment's author when the
     // comment is created, and the comment's text cannot change it.
     if (event.repository?.full_name !== repo) return stop("the event is not for this repository");
-    if (event.sender?.login !== user) return stop("the comment's author is not the event's sender");
-    const p = event.repository?.permissions;
-    if (p?.push !== true && p?.admin !== true) return stop(`${user} has no write access, so the comment is ignored`);
+    if (dispatch) {
+      // A dispatch's payload carries no permission (Forgejo writes them all false), and the job's token may
+      // not ask for the sender's. Forgejo itself refuses a dispatch from anyone without write access ("user
+      // should have a permission to write to a repo"), so a workflow_dispatch event is already a writer's.
+    } else {
+      if (event.sender?.login !== user) return stop("the comment's author is not the event's sender");
+      const p = event.repository?.permissions;
+      if (p?.push !== true && p?.admin !== true) return stop(`${user} has no write access, so the comment is ignored`);
+    }
   } else {
     let permission: unknown;
     try {
@@ -268,7 +294,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     } catch (e) {
       return broke(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
     }
-    if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the comment is ignored`);
+    if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the ${dispatch ? "dispatch" : "comment"} is ignored`);
   }
 
   const agent = o.agent ?? "off";
@@ -346,6 +372,26 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     return { go: true, reason: `run the agent on pull request ${number} (${head}) for ${user}`, pr: number, sha, base, head, ask: parsed.ask, user };
   }
   return { go: true, reason: `re-plan pull request ${number}${parsed.root ? ` at ${parsed.root}` : ""} for ${user}`, pr: number, sha, base, ...(parsed.root ? { root: parsed.root } : {}) };
+}
+
+/** A pull request number as a dispatch's pr input carries it: digits, no sign, no leading zero. */
+const PR_INPUT = /^[1-9][0-9]{0,9}$/;
+
+/**
+ * The re-plan a workflow_dispatch asks for, from its inputs: `pr` names the
+ * pull request and the optional `root` one root, read by the comment grammar
+ * as `/terragucci plan <root>`. Undefined when `pr` is empty (a dispatch for
+ * another job, such as drift); an error when `pr` is not a pull request number.
+ */
+export function readDispatch(inputs: unknown): { pr: number; parsed: ParsedComment } | { error: string } | undefined {
+  const i = inputs !== null && typeof inputs === "object" ? (inputs as Record<string, unknown>) : {};
+  const pr = typeof i.pr === "number" ? String(i.pr) : i.pr;
+  if (pr === undefined || pr === null || pr === "") return undefined;
+  if (typeof pr !== "string" || !PR_INPUT.test(pr.trim())) return { error: "the dispatch's pr input is a pull request number, like 42" };
+  const root = i.root;
+  if (root !== undefined && root !== null && typeof root !== "string") return { error: "the dispatch's root input is a root path, like envs/dev/orders" };
+  const parsed = typeof root === "string" && root.trim() !== "" ? parseComment(`/terragucci plan ${root.trim()}`)! : ({ kind: "plan" } as const);
+  return { pr: Number(pr.trim()), parsed };
 }
 
 /** Write the decision where the job's script reads it. */
