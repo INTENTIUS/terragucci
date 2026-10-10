@@ -38,7 +38,9 @@
  * State contents never leave the job: the record holds version ids and
  * digests. It moves states between `s3` backends that take a lock file and
  * `local` backends, in roots of `.tf` files and CDK Terrain's synthesized
- * `*.tf.json` stacks alike, and refuses roots with a `cloud` block.
+ * `*.tf.json` stacks alike, and refuses roots with a `cloud` block. A backend
+ * move also reads a state from a workspace over the TFE API (`remote` or
+ * `cloud`) or from an exported state file (./state-source.ts).
  *
  * A Terragrunt unit takes part as a root does: Terragrunt prepares it once
  * (unitPlace), and the migration runs the binary in the directory Terragrunt
@@ -63,6 +65,7 @@ import type { S3Fetch, S3Target } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 import { rootRoleEnv } from "./roles";
+import { EXTERNAL_BACKENDS, externalProblems, externalSource, type ExternalSource } from "./state-source";
 
 export const MIGRATE_OP = "tf-migrate";
 export const MIGRATE_LEDGER = `_gates/${MIGRATE_OP}.jsonl`;
@@ -213,8 +216,9 @@ function parseBackends(raw: unknown, problems: string[], rootOf: (at: string, k:
       continue;
     }
     for (const k of Object.keys(from)) if (!["backend", "config"].includes(k)) problems.push(`${at}.from.${k} is not a key; from has backend and config`);
-    if (typeof from.backend !== "string" || !BACKENDS.includes(from.backend)) problems.push(`${at}.from.backend must be ${BACKENDS.join(" or ")}`);
+    if (typeof from.backend !== "string" || ![...BACKENDS, ...EXTERNAL_BACKENDS].includes(from.backend)) problems.push(`${at}.from.backend must be ${[...BACKENDS, ...EXTERNAL_BACKENDS].join(", ")}`);
     const config = from.config && typeof from.config === "object" && !Array.isArray(from.config) ? (from.config as Record<string, unknown>) : {};
+    if (typeof from.backend === "string" && EXTERNAL_BACKENDS.includes(from.backend)) problems.push(...externalProblems(at, from.backend, config));
     if (from.backend === "s3" && (typeof config.bucket !== "string" || typeof config.key !== "string")) problems.push(`${at}.from.config must name the bucket and key of the state`);
     if (root && typeof from.backend === "string") out.push({ root, from: { backend: from.backend, config } });
   }
@@ -529,7 +533,7 @@ export function refusal(repo: string, root: string): string | undefined {
   // A CDK Terrain stack is a root whose code is JSON: cdktf.out/stacks/<stack>/cdk.tf.json.
   const files = readdirSync(dir).filter((f) => (f.endsWith(".tf") || f.endsWith(".tf.json")) && f !== OVERRIDE_FILE);
   if (files.length === 0) return `${root} holds no .tf or .tf.json files`;
-  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations move state in s3 and local backends`;
+  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations write state to s3 and local backends, so point its code at one and move the state with a backend move from cloud`;
   for (const f of files) {
     const text = readFileSync(join(dir, f), "utf-8");
     if (f.endsWith(".tf")) {
@@ -680,11 +684,29 @@ async function withBackend<T>(exec: BinaryExec, binary: string, root: string, di
   }
 }
 
-/** Where a backend move's state is now: its object, read through the root with the old backend. */
-interface Source {
-  object: StateObject;
-  block: string;
-  data: string;
+/** Where a backend move's state is now: its object, read through the root with the old backend, or a source the job reads itself. */
+type Source = { object: StateObject; block: string; data: string } | { external: ExternalSource };
+
+/** A source's backend and location, as the record names them. */
+const sourceAt = (s: Source): { backend: string; location?: string } => ("external" in s ? { backend: s.external.backend, location: s.external.location } : { backend: s.object.backend, ...(locationOf(s.object) ? { location: locationOf(s.object)! } : {}) });
+
+/** A source's state and version id now. */
+async function readSource(s: Source, exec: BinaryExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv, fetchFn?: S3Fetch): Promise<{ state: StateFile | null; version?: string }> {
+  if ("external" in s) {
+    const got = await s.external.read();
+    if (!got) return { state: null };
+    let state: StateFile;
+    try {
+      state = JSON.parse(got.text) as StateFile;
+    } catch {
+      throw new ConfigError(`${s.external.location} holds something that is not a state`);
+    }
+    if (!Array.isArray(state.resources)) state.resources = [];
+    return { state, ...(got.version ? { version: got.version } : {}) };
+  }
+  const state = await withBackend(exec, binary, root, dir, s.block, s.data, env, "the backend it moves from", (benv) => pullState(exec, binary, root, dir, benv));
+  const version = await versionOf(s.object, fetchFn);
+  return { state, ...(version ? { version } : {}) };
 }
 
 /** What planning leaves for the apply: the record, and where each root's new state is. */
@@ -744,16 +766,21 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   } else if (m.kind === "backends") {
     for (const [i, b] of m.backends.entries()) {
       const { dir, env: renv } = places.get(b.root)!;
-      const object = stateObject(dir, renv, { type: b.from.backend, config: b.from.config });
-      const why = backendRefusal(b.root, object);
-      if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it moves from: ${why}`);
-      if (locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
+      const external = externalSource(repo, b.from.backend, b.from.config, renv, options.fetch);
+      let source: Source;
+      if (external) {
+        source = { external };
+      } else {
+        const object = stateObject(dir, renv, { type: b.from.backend, config: b.from.config });
+        const why = backendRefusal(b.root, object);
+        if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it moves from: ${why}`);
+        if (locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
+        source = { object, block: backendBlock(b.from.backend, b.from.config), data: join(options.work, `source-${i}`) };
+      }
       if (before.get(b.root)) throw new ConfigError(`migration ${m.name}: the backend ${b.root}'s code names, ${locationOf(objects.get(b.root)!)}, already holds a state, so a move would overwrite it`);
-      const block = backendBlock(b.from.backend, b.from.config);
-      const data = join(options.work, `source-${i}`);
-      const state = await withBackend(exec, options.binary, b.root, dir, block, data, renv, `the backend it moves from`, (benv) => pullState(exec, options.binary, b.root, dir, benv));
-      if (!state) throw new ConfigError(`migration ${m.name}: ${locationOf(object)} holds no state of ${b.root} to move`);
-      sources.set(b.root, { object, block, data, version: await versionOf(object, options.fetch), state });
+      const { state, version } = await readSource(source, exec, options.binary, b.root, dir, renv, options.fetch);
+      if (!state) throw new ConfigError(`migration ${m.name}: ${sourceAt(source).location ?? b.from.backend} holds no state of ${b.root} to move`);
+      sources.set(b.root, { ...source, ...(version ? { version } : {}), state });
       after.set(b.root, state);
     }
   } else {
@@ -788,7 +815,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     const path = join(options.work, `${i}.tfstate`);
     writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
     const src = sources.get(root);
-    files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(src ? { source: { object: src.object, block: src.block, data: src.data } } : {}) });
+    files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(src ? { source: "external" in src ? { external: src.external } : { object: src.object, block: src.block, data: src.data } } : {}) });
     const proof = await proofPlan(exec, options.binary, places.get(root)!, root, path, options.work, i);
     log(`${root}: ${proof.changes.length === 0 ? "no changes against its new state" : `${proof.changes.length} change${proof.changes.length === 1 ? "" : "s"} against its new state: ${proof.changes.join(", ")}`}`);
     const o = objects.get(root)!;
@@ -800,7 +827,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
       ...(locationOf(o) ? { location: locationOf(o) } : {}),
       before: { ...(v ? { version_id: v } : {}), digest: b ? stateDigest(b) : null },
       after: { digest: stateDigest(state) },
-      ...(src ? { source: { backend: src.object.backend, ...(locationOf(src.object) ? { location: locationOf(src.object) } : {}), ...(src.version ? { version_id: src.version } : {}), digest: stateDigest(src.state) } } : {}),
+      ...(src ? { source: { ...sourceAt(src), ...(src.version ? { version_id: src.version } : {}), digest: stateDigest(src.state) } } : {}),
       ...(restored.has(root) ? { restore: { version_id: restored.get(root)! } } : {}),
       proof,
     });
@@ -812,7 +839,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     file_digest: m.digest,
     change: m.kind,
     moves: m.moves,
-    ...(m.kind === "backends" ? { backends: m.backends.map((b) => ({ root: b.root, from: locationOf(sources.get(b.root)!.object) ?? b.from.backend })) } : {}),
+    ...(m.kind === "backends" ? { backends: m.backends.map((b) => ({ root: b.root, from: sourceAt(sources.get(b.root)!).location ?? b.from.backend })) } : {}),
     ...(m.revert ? { revert: m.revert } : {}),
     roots: out,
     digest: migrationDigest(m, out),
@@ -852,7 +879,18 @@ interface HeldLock {
 /** Take the lock file of each S3 state a migration writes or moves from. Releases what it took and throws when one is held. */
 async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {
   const held: HeldLock[] = [];
-  const objects = [...files].flatMap(([root, f]) => [{ root, object: f.object }, ...(f.source ? [{ root, object: f.source.object }] : [])]);
+  const objects = [...files].flatMap(([root, f]) => [{ root, object: f.object }, ...(f.source && "object" in f.source ? [{ root, object: f.source.object }] : [])]);
+  // A workspace the state moves from is locked as its backend locks it, so no run writes it meanwhile.
+  for (const [root, f] of files) {
+    const take = f.source && "external" in f.source ? f.source.external.lock : undefined;
+    if (!take) continue;
+    try {
+      held.push({ root, release: await take("terragucci migrate: a state migration is reading this state") });
+    } catch (e) {
+      for (const h of held) await h.release().catch(() => {});
+      throw new ConfigError(`${root}: ${(e as Error).message}`);
+    }
+  }
   for (const { root, object } of objects) {
     if (object.backend !== "s3" || !("target" in object)) continue;
     const o = object as Extract<StateObject, { target: S3Target }>;
@@ -887,9 +925,7 @@ async function movedSince(repo: string, plan: PlannedMigration, options: Migrate
     const s = await pullState(exec, options.binary, r.root, dir, renv);
     let same = (v ?? undefined) === r.before.version_id && (s ? stateDigest(s) : null) === r.before.digest;
     if (same && f.source && r.source) {
-      const src = f.source;
-      const sv = await versionOf(src.object, options.fetch);
-      const ss = await withBackend(exec, options.binary, r.root, dir, src.block, src.data, renv, "the backend it moves from", (benv) => pullState(exec, options.binary, r.root, dir, benv));
+      const { state: ss, version: sv } = await readSource(f.source, exec, options.binary, r.root, dir, renv, options.fetch);
       same = (sv ?? undefined) === r.source.version_id && (ss ? stateDigest(ss) : null) === r.source.digest;
     }
     if (!same) moved.push(r.root);
@@ -946,9 +982,17 @@ function gained(plan: PlannedMigration, root: string): number {
   return f.state.resources.length - f.beforeCount;
 }
 
+/** Where a backend move's state is, as a person reads it. */
+function fromOf(b: BackendMove): string {
+  const c = b.from.config;
+  if (b.from.backend === "file") return `the state file ${String(c.path)}`;
+  if (b.from.backend === "remote" || b.from.backend === "cloud") return `its ${b.from.backend} workspace ${typeof c.hostname === "string" ? c.hostname : "app.terraform.io"}/${String(c.organization)}/${String((c.workspaces as { name?: unknown } | undefined)?.name)}`;
+  return `its ${b.from.backend} backend${typeof c.bucket === "string" ? ` s3://${c.bucket}/${String(c.key)}` : ""}`;
+}
+
 /** What a migration does, in one line. */
 export function describeChange(m: Migration): string {
-  if (m.kind === "backends") return `moving the state of ${m.backends.map((b) => `${b.root} from its ${b.from.backend} backend${typeof b.from.config.bucket === "string" ? ` s3://${b.from.config.bucket}/${String(b.from.config.key)}` : ""}`).join("; ")} to the backend its code names`;
+  if (m.kind === "backends") return `moving the state of ${m.backends.map((b) => `${b.root} from ${fromOf(b)}`).join("; ")} to the backend its code names`;
   if (m.kind === "revert") return `putting back the states ${m.revert} wrote: ${m.restores.map((r) => `${r.root} to ${r.version_id ?? "no state"}`).join(", ")}`;
   return `moving ${m.moves.map((x) => `${x.addresses.join(", ")} from ${x.from} to ${x.to}`).join("; ")}`;
 }
