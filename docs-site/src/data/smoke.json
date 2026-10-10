@@ -9,7 +9,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "boot",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "boot",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "check",
@@ -25,7 +43,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
     },
     {
       "claim": "grouped",
@@ -41,7 +59,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "report",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "report",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "highlight",
@@ -57,7 +93,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "waves",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "waves",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "refuse",
@@ -81,7 +135,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "drift",
+      "says": "drift is reported by root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "drift",
+      "says": "with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "rollout",
@@ -180,7 +252,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
     },
     {
       "claim": "apply-serial",
@@ -469,7 +541,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "policy-wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "policy-wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "check-diagnostics",
@@ -615,6 +705,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "pr-apply",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "pr-apply",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "pr-apply-lock",
@@ -790,7 +898,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
     },
     {
       "claim": "cdf-write-race",
@@ -831,6 +939,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "approve-plan",
+      "says": "terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "approve-plan",
+      "says": "terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "approve-command",
@@ -1279,7 +1405,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
     },
     {
       "claim": "tg-terraform",
@@ -1352,7 +1478,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
     },
     {
       "claim": "cdktn-synth",
@@ -1523,6 +1649,24 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "notify-webhook",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "notify-webhook",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
+    },
+    {
       "claim": "cost-estimate",
       "says": "with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret",
       "needs": null,
@@ -1536,7 +1680,25 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "cost-gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "cost-gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "cost-policy",
@@ -1649,6 +1811,24 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "steps-gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "steps-gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "4db5e993"
     },
     {
       "claim": "tg-cost-gate",
@@ -1905,6 +2085,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "7c2ff19c"
+    },
+    {
+      "claim": "image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
     },
     {
       "claim": "mr-widget",

@@ -30,7 +30,7 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
+import { applyLayers, detectBinary, detectForge, detectVersion, driftRefusal, findRootsWithReasons, liveRoots, type RootReason } from "./detect";
 import { terragruntStepsRefusal } from "./steps";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
@@ -206,6 +206,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
 
+  const noDrift = settings.drift && !tgMode ? driftRefusal(binary.value, liveRoots(repo, roots)) : undefined;
+  if (noDrift) throw new ConfigError(noDrift);
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.

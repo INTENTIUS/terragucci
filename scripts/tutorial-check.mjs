@@ -18,8 +18,8 @@ const pages = join(root, "docs-site/src/content/docs/tutorial");
 const data = join(root, "docs-site/src/data/tutorial");
 const shots = join(root, "docs-site/src/assets/tutorial");
 const smoke = JSON.parse(readFileSync(join(root, "docs-site/src/data/smoke.json"), "utf8"));
-// A page's claims are the Forgejo rows; a GitLab row carries forge: "gitlab".
-const verdict = Object.fromEntries(smoke.claims.filter((c) => (c.forge ?? "forgejo") === "forgejo").map((c) => [c.claim, c.verdict]));
+// A page's claims are the OpenTofu rows on Forgejo; a GitLab row carries forge: "gitlab", and a Terraform or choudoufu row binary.
+const verdict = Object.fromEntries(smoke.claims.filter((c) => (c.forge ?? "forgejo") === "forgejo" && !c.binary).map((c) => [c.claim, c.verdict]));
 
 // The same hash stack/tutorial-capture.sh writes: each file under example/,
 // in byte order, as its path, a NUL, then its content. In the pipeline the
