@@ -208,8 +208,8 @@ policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the 
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
 import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
-import-hcp|terragucci import hcp reads an organization's workspaces over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask|
-import-scalr|terragucci import scalr reads a Scalr account's workspaces over Scalr's API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names each OPA policy group's policies|
+import-hcp|terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask|
+import-scalr|terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group|
 waves-after|waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three|
 comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
@@ -4710,7 +4710,7 @@ claim_import_hcp() {
     [ "$got" = "$want" ] || { log "the pipeline applies $got, not the order the reads and the run trigger ask for, $want"; rc=1; }
     wf="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out")"
     for got in TF_VAR_api_token TF_VAR_db_password; do
-      grep -qF "$got: \${{ secrets.$got }}" <<<"$wf" || { log "the pipeline does not pass the secret $got to the jobs"; rc=1; }
+      grep -qF "$got: '\${{ secrets.$got }}'" <<<"$wf" || { log "the pipeline does not pass the secret $got to the jobs"; rc=1; }
     done
   fi
   [ -n "$TFE_MOCK" ] && { docker rm -f "$TFE_MOCK" >/dev/null 2>&1 || true; }
@@ -4773,7 +4773,7 @@ claim_import_scalr() {
     [ "$got" = "$want" ] || { log "init found the roots $got, not the five workspaces' $want"; rc=1; }
     wf="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out")"
     for got in DATADOG_API_KEY TF_VAR_db_password; do
-      grep -qF "$got: \${{ secrets.$got }}" <<<"$wf" || { log "the pipeline does not pass the secret $got to the jobs"; rc=1; }
+      grep -qF "$got: '\${{ secrets.$got }}'" <<<"$wf" || { log "the pipeline does not pass the secret $got to the jobs"; rc=1; }
     done
   fi
   [ -n "$TFE_MOCK" ] && { docker rm -f "$TFE_MOCK" >/dev/null 2>&1 || true; }

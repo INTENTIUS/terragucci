@@ -490,6 +490,22 @@
       "commit": "ff7d397e"
     },
     {
+      "claim": "import-hcp",
+      "says": "terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "190e171f"
+    },
+    {
+      "claim": "import-scalr",
+      "says": "terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "190e171f"
+    },
+    {
       "claim": "waves-after",
       "says": "waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three",
       "needs": null,
@@ -2011,7 +2027,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "9d9e7a0b"
+      "commit": "190e171f"
     },
     {
       "claim": "migrate-revert",
