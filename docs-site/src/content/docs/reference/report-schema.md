@@ -4,7 +4,7 @@ description: The fields of report.json, which every plan, apply and drift run wr
 prompt: |
   Read https://intentius.io/terragucci/reference/report-schema/.
   Write a jq script that reads terragucci-report/report.json and prints every destroy and replacement by address, with its root and the wave that applies it.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `report.json` sits beside every `report.html`, which also carries it inline:
@@ -25,7 +25,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `run.commit_url`, `run.pull_request`, `run.pull_request_url` | the commit's page, and the pull or merge request the run planned with its page |
 | `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
 | `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
-| `change_set` | the set digest over every root's plan digest, the same digest [`chant`](/terragucci/concepts/glossary/#chant) gives the change set |
+| `change_set` | the set digest over every root's plan digest, the digest an approval names |
 | `unit`, `units` | what the groups count: `member` or `instance`, and how many |
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |

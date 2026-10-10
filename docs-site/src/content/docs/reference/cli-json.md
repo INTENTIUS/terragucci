@@ -4,7 +4,7 @@ description: The envelope that init, reconcile, plan, stage, rollout, respond, c
 prompt: |
   Read https://intentius.io/terragucci/reference/cli-json/.
   Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 With `--json`, these commands print only one JSON object on stdout.
@@ -86,7 +86,7 @@ A root that refused to plan exits 1.
 
 ## The apply outcome
 
-On every exit but a usage error, `stage tf-apply` writes its wave's outcome to the file `TG_OUTCOME_JSON` names. With `--rest` the file holds the last wave that ran. The generated apply jobs set the variable when `notify` is on, and `terragucci notify` reads the file. A waiting wave's file carries the [chant](/terragucci/concepts/glossary/#chant) command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+On every exit but a usage error, `stage tf-apply` writes its wave's outcome to the file `TG_OUTCOME_JSON` names. With `--rest` the file holds the last wave that ran. The generated apply jobs set the variable when `notify` is on, and `terragucci notify` reads the file. A waiting wave's file carries the `terragucci approve` command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
 
 ```json
 {
@@ -95,12 +95,12 @@ On every exit but a usage error, `stage tf-apply` writes its wave's outcome to t
   "exit": 3,
   "wave": 2,
   "roots": ["envs/prod/app", "envs/prod/db"],
-  "line": "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c...",
+  "line": "wave 2 waits: terragucci approve wave-2 --plan jcs1-sha256:9f2c...",
   "set_digest": "jcs1-sha256:9f2c...",
   "gate": { "name": "wave-2", "branch": "chant/lifecycle", "path": "_gates/tf-apply.jsonl" },
   "approval": "waiting",
   "approval_mode": "pr-review",
-  "approve_command": "chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c...",
+  "approve_command": "terragucci approve wave-2 --plan jcs1-sha256:9f2c...",
   "waiting_since": "2026-10-08T14:02:11.000Z",
   "review": { "pull_request": 12, "url": "https://github.com/acme/infra/pull/12/files" }
 }
@@ -116,7 +116,7 @@ On every exit but a usage error, `stage tf-apply` writes its wave's outcome to t
 | `gate` | when a gate held the wave: its `name` and the `branch` and `path` of its ledger |
 | `approval` | `waiting`, `approved` or `not-required` |
 | `approval_mode` | with a gate: `ledger`, `pr-review` or `sealed`, the mode in force at base |
-| `approve_command` | waiting, or refused because the plans moved after an approval or a review: the `chant approve` command for `set_digest`, with `--sign` under `sealed` |
+| `approve_command` | waiting, or refused because the plans moved after an approval or a review: the `terragucci approve` command for `set_digest`, with `--sign` under `sealed` |
 | `waiting_since` | waiting: when the wave began waiting for an approval of this digest |
 | `review` | waiting under `approval: pr-review`: the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
 | `refused` | why the wave applied nothing although it planned: `reason` (`approval`, `review`, `override` or `policy`), the digest `approved` and `by` whom, and the `roots` that moved or were denied |

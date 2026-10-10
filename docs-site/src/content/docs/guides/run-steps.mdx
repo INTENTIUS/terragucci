@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/run-steps/.
   Propose the steps block for terragucci.yml that runs my repo's checks before each plan, with on_failure: approve on any check that should hold a wave for a person rather than fail it.
   Add it to terragucci.yml, run `npx terragucci config check`, and open a pull request. Tell me that the steps take effect once it merges, and why.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
@@ -112,7 +112,7 @@ Terragrunt inits each unit inside `run --all plan` and leaves no gap before its 
 
 An `approve` step must run before the gate decides, so `config check` accepts it only around `init` or `plan`.
 
-The wave waits through the same ledger as every other gated wave: [`chant approve`](/terragucci/concepts/glossary/#chant) of its digest on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), under the [approval mode](/terragucci/guides/approve-a-wave/#approval-modes) at base. A wave that changes nothing applies nothing, so it never waits. With `waves.jobs`, a share job whose `approve` step fails applies nothing unless the wave's job decided under an approval.
+The wave waits through the same ledger as every other gated wave: [`terragucci approve`](/terragucci/reference/cli/#approve) of its digest on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), under the [approval mode](/terragucci/guides/approve-a-wave/#approval-modes) at base. A wave that changes nothing applies nothing, so it never waits. With `waves.jobs`, a share job whose `approve` step fails applies nothing unless the wave's job decided under an approval.
 
 ## Steps are read at base
 

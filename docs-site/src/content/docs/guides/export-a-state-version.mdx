@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/export-a-state-version/.
   Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3, gcs or azurerm backend that keeps versions), from the roots' backend blocks.
   Read only: do not run `terragucci state export`, and do not read or download any state.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
@@ -43,13 +43,13 @@ A Terragrunt unit exports the same way: name the unit, such as `terragucci state
    ```text
    state export: alice asks for envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY; request sha256:5e0b...
    someone other than you approves it with:
-     chant approve tf-state-export envs/dev/app --plan sha256:5e0b...
+     terragucci approve export envs/dev/app --plan sha256:5e0b...
    then run this command again to download it.
    ```
 
    The request names you by git's `user.name`, or by `--actor`.
 
-2. Someone else approves the request with the [chant](/terragucci/concepts/glossary/#chant) command it printed. Under `approval: sealed` the approval needs a seal (`--sign`) from a key the signers file lists.
+2. Someone else approves the request with the command it printed. Under `approval: sealed` the approval needs a seal (`--sign`) from a key the signers file lists.
 
 3. Run the same command again. It downloads the version and records the export in `_gates/tf-state-export/done.jsonl`. Only then does it write the file:
 

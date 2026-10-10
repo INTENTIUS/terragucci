@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/generate-root-files/.
   Read the backend, provider and required_version blocks in my Terraform directories and propose a generate key for terragucci.yml that writes the same values: shared values at the top, per-directory values under dirs, single-directory values under roots.
   Add it, delete the blocks it replaces, run `npx terragucci generate`, `npx terragucci generate --check` and `npx terragucci init`, and open a pull request.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';

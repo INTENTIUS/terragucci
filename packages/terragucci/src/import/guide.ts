@@ -66,7 +66,7 @@ export const COMMENT_TABLE = [
   ["Import", "`atlantis import <address> <id>`", "none", "refused; [an `import` block](#left-out-on-purpose) in the change"],
   ["Remove from state", "`atlantis state rm <address>`", "none", "refused; [a `removed` block](#left-out-on-purpose) in the change"],
   ["Pass a failed policy", "`atlantis approve_policies`", "none", "refused from a comment; a person `policy.override` lists runs [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) for one root's plan"],
-  ["Approve", "the forge's review", "the forge's review", "[`terragucci approve`](/terragucci/reference/cli/#approve) (it runs [`chant approve`](/terragucci/concepts/glossary/#chant)) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes)"],
+  ["Approve", "the forge's review", "the forge's review", "[`terragucci approve`](/terragucci/reference/cli/#approve) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes)"],
 ] as const satisfies readonly (readonly [string, string, string, string])[];
 
 /** `## Terrateam`: setting, Terrateam (`.terrateam/config.yml`), terragucci (`terragucci.yml`). `terragucci import terrateam` maps by these rows. */

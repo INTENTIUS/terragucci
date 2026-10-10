@@ -9,7 +9,7 @@ prompt: |
   Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
   List the token, OIDC roles and required status I must set in the forge settings.
   Do not create secrets, variables or branch protection yourself.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -277,7 +277,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A wave that destroys something waits until a person runs `npx terragucci approve` from a checkout (it runs [chant](/terragucci/concepts/glossary/#chant), so `npm i -D @intentius/chant`) or, under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes), reviews the pull request. Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
+6. Make approval possible. A wave that destroys something waits until a person runs `npx terragucci approve` from a checkout or, under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes), reviews the pull request. Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
 
 </Steps>
 

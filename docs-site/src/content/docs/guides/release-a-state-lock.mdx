@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/release-a-state-lock/.
   A plan or apply in this repo fails because the state of a root I name is locked. Read the lock for that root (a lock file, a gcs lock object, or an azurerm blob lease) and tell me its ID, who took it and when, and which of the forge's runs that began before then are still running.
   Do not run `terragucci unlock-state`, `force-unlock` or any state command, and do not delete the lock file.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
@@ -60,10 +60,10 @@ A comment never runs it. With [`binary: choudoufu`](/terragucci/concepts/glossar
 
    ```text
    terragucci unlock-state: envs/prod/app: releasing lock 1f0c6a52-..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z waits for an approval of digest jcs1-sha256:6d2b.... Approve it with:
-   terragucci unlock-state:   chant approve tf-unlock envs/prod/app --plan jcs1-sha256:6d2b...
+   terragucci unlock-state:   terragucci approve unlock envs/prod/app --plan jcs1-sha256:6d2b...
    ```
 
-4. Whoever approves your waves runs that [chant](/terragucci/concepts/glossary/#chant) command, with `--sign` under `approval: sealed`. The approval names this ID and no other.
+4. Whoever approves your waves runs that command, with `--sign` under `approval: sealed`. The approval names this ID and no other.
 
 5. Run `npx terragucci unlock-state envs/prod/app` again. It asks the forge about the runs once more and frees the state with the binary's `force-unlock` of that ID. The release goes in `_gates/tf-unlock/done.jsonl` with the approver and the person who ran it.
 
