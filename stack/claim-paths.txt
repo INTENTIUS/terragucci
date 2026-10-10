@@ -31,8 +31,8 @@ packages/terragucci/src/review-agent.ts   review-*
 packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-*
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate tg-generate
-packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-*
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-* apply-branches own-jobs-kept state-roles tg-cost-gate tg-steps-gate tg-wave-jobs tg-apply-branches apply-branches-drift tg-generate ephemeral-*
+packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-* atmos-affected atmos-upstream-wait atmos-roles
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-* apply-branches own-jobs-kept state-roles tg-cost-gate tg-steps-gate tg-wave-jobs tg-apply-branches apply-branches-drift tg-generate ephemeral-* atmos-version atmos-check
 packages/terragucci/src/synth.ts          cdktn-* atmos-*
 packages/terragucci/src/steps.ts          steps-* tg-steps-gate
 packages/terragucci/src/linked.ts         linked-*
@@ -54,7 +54,7 @@ packages/terragucci/src/generate-config.ts generate reconcile tg-generate
 packages/terragucci/src/notify.ts         notify-chat notify-webhook chat-*
 packages/terragucci/src/relay.ts          chat-approve*
 packages/terragucci/src/unlock.ts         unlock-state
-packages/terragucci/src/roles.ts          state-roles
+packages/terragucci/src/roles.ts          state-roles atmos-roles
 packages/terragucci/src/export.ts         state-export tg-state-export
 packages/terragucci/src/branch-checkouts.ts apply-branches-drift
 packages/terragucci/src/ephemeral.ts      ephemeral-*
@@ -140,6 +140,7 @@ stack/example.sh                          ALL
 stack/mock-github/                        github-drift-issue
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/atmos-two-stacks          atmos-*
+stack/fixtures/atmos-reads               atmos-upstream-wait
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/linked-states              linked-*
 stack/fixtures/tg-preview                 tg-preview*

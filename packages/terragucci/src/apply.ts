@@ -121,6 +121,7 @@ import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
+import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
@@ -575,6 +576,8 @@ const indent = (s: string): string => s.trim().split("\n").map((l) => `    ${l}`
 interface WaveCache {
   dir: string;
   initTurn: Turn;
+  /** The outputs of the instances an Atmos instance of the wave reads (./atmos.ts), each read once. */
+  outputs: Map<string, Promise<UpstreamOutputs>>;
 }
 
 /**
@@ -585,7 +588,7 @@ interface WaveCache {
  * of a hundred roots cannot hold on a runner's disk.
  */
 function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
-  return { dir: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "cache-")), initTurn: oneAtATime() };
+  return { dir: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "cache-")), initTurn: oneAtATime(), outputs: new Map() };
 }
 
 async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps): Promise<PlannedRoot> {
@@ -625,6 +628,20 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
     const sel = await timed(observer, timing, binary, wsInit.select, wsInit.selectEnv, dir);
     if (sel.code !== 0) return { ...base, error: `workspace select failed\n${sel.out}` };
   }
+  // An Atmos instance that reads another's outputs plans on their values. Its upstreams applied in the waves before, so a missing one stops it.
+  const filled = await fillReads(repo, root, (up) => {
+    if (!cache.outputs.has(up)) {
+      const upDir = join(repo, up);
+      const upEnv = workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, up), upDir);
+      cache.outputs.set(up, binaries.resolve(up).then((b) => b.path, () => binary).then((b) => upstreamOutputs(b, upDir, upEnv, cache.initTurn)));
+    }
+    return cache.outputs.get(up)!;
+  });
+  if (filled.errors.length > 0) return { ...base, error: filled.errors.join("\n") };
+  if (filled.waiting.length > 0) {
+    return { ...base, error: `not planned: ${filled.waiting.map((w) => `it reads ${w.read.var} from ${w.read.upstream}, which ${w.why} (${w.read.function})`).join("; ")}; apply ${[...new Set(filled.waiting.map((w) => w.read.upstream))].join(", ")} first` };
+  }
+  for (const v of filled.filled) console.log(`${root}: ${v} read from the state its stacks name`);
   stepError = (await rootSteps(repo, base, stepEnv, "after-init")) ?? (await rootSteps(repo, base, stepEnv, "before-plan"));
   if (stepError) return { ...base, error: stepError };
   const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);

@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { forgeFromHost, type Binary, type ForgeName } from "./config";
+import { atmosStateReads } from "./atmos";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
 
@@ -357,10 +358,14 @@ export function backendBlock(dir: string): { type: string; attrs: Record<string,
 /** Two addresses name one state: the same key, and the same bucket where both name one. */
 export const sameState = (a: StateAddress, b: StateAddress): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
 
-/** For each root, the roots whose state it reads through `terraform_remote_state`. */
+/**
+ * For each root, the roots whose state it reads: through `terraform_remote_state`,
+ * and for an Atmos instance, through the `!terraform.state` reads its stacks set (./atmos.ts).
+ */
 export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
   const reads = remoteStateReads(repo, roots);
-  return new Map(roots.map((r) => [r, new Set(reads.get(r)!.map((x) => x.upstream))]));
+  const atmos = atmosStateReads(repo, roots);
+  return new Map(roots.map((r) => [r, new Set([...reads.get(r)!.map((x) => x.upstream), ...(atmos.get(r) ?? [])])]));
 }
 
 /**
