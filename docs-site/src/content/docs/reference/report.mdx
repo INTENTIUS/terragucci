@@ -62,7 +62,7 @@ It writes to `terragucci-report/`.
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 | `roots/<root>/cost.json` | with `cost` set, the estimator's output for the root |
 
-[CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue; see [Drift](/terragucci/reference/stages/#drift).
+[CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue, and `issue.json`, what it did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address; see [Drift](/terragucci/reference/stages/#drift).
 
 ## What a reviewer sees
 
@@ -186,7 +186,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 | Value | In the report |
 |---|---|
-| sensitive value, default of a sensitive variable | `(sensitive, redacted by terragucci)` |
+| sensitive value, default of a sensitive variable | `(sensitive, redacted by terragucci)`, in `plan.json` and the report alike, wherever the value appears, including an attribute the plan does not mark, such as the `output` of a `terraform_data` whose `input` is sensitive |
 | the same value in `plan.txt` and the note | `(sensitive value)`, as the binary prints it, wherever the value appears, including an attribute the plan does not mark |
 | policy denial or warning | redacted before it reaches the report, note or log; the [policy](/terragucci/reference/policy/) itself reads the unredacted plan |
 | write-only attribute | its version (`*_wo_version`), labelled as such; the value is never in the plan |

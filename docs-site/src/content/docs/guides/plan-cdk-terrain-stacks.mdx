@@ -1,7 +1,7 @@
 ---
 title: Plan CDK Terrain stacks
 description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the CDK Terrain stacks its change affects.
-claims: [cdktn-synth, cdktn-affected, cdktn-apply, cdktn-tips, cdktn-refused]
+claims: [cdktn-synth, cdktn-affected, cdktn-apply, cdktn-tips, cdktn-refused, cdktn-migrate]
 prompt: |
   Read https://intentius.io/terragucci/guides/plan-cdk-terrain-stacks/.
   Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,
@@ -124,6 +124,7 @@ A command that fails ends the job; the plan job also sets `terragucci/plan` to f
 | Which stacks a pull request plans | the ones the change affects; see below |
 | Format check | the `.tf`, `.tofu` and `.tfvars` files git tracks, one directory at a time, so the packages `npm ci` installs are left out |
 | Terragrunt | not supported: `init` refuses `synth` in a Terragrunt repo |
+| [State migrations](/terragucci/guides/move-resources-between-roots/) | a migration file names stacks by their roots, such as `cdktf.out/stacks/dev`; `tf-plan` proves it against each stack's `cdk.tf.json` after the synth, and wave 1 writes it once approved. Move the construct in the app in the same change, keeping its id, so the address in the other stack is the same |
 
 ## What edits the stacks
 

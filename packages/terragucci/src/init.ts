@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
@@ -16,10 +16,12 @@ import {
   COST_KEY_SECRET,
   gitlabPrApplyProblems,
   findConfig,
+  ownJobsProblems,
   loadConfig,
   BUILT_IN,
   PROJECT_FILE_KEYS,
   resolveRepo,
+  ROOTS_NOT_TERRAGRUNT,
   responseTo,
   type Approval,
   type Binary,
@@ -28,20 +30,21 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
-import { STEPS_NOT_TERRAGRUNT } from "./steps";
+import { terragruntStepsRefusal } from "./steps";
 import { TERRAGRUNT_GENERATE } from "./generate-config";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
-import { agentCommentInput } from "./agent-comment";
-import { reviewInput } from "./review-agent";
+import { agentCommentInput, agentDriftInput } from "./agent-comment";
+import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
+import { unitTerragruntPin } from "./unit-pins";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -104,6 +107,8 @@ export interface InitResult {
 /** A root that pins its own version, and where. */
 export interface RootVersion {
   root: string;
+  /** The tool pinned, when it is not the binary: `terragrunt` for a unit's terragrunt_version_constraint. */
+  tool?: string;
   version: string;
   source: string;
 }
@@ -111,6 +116,22 @@ export interface RootVersion {
 function plan(path: string, content: string): FileChange {
   if (!existsSync(path)) return { path, status: "created", content };
   return { path, status: readFileSync(path, "utf-8") === content ? "unchanged" : "updated", content };
+}
+
+/** `own_jobs`: the map itself, or the map the repo's YAML file at that path holds. */
+export function ownJobs(repo: string, v: NonNullable<ProjectSettings["own_jobs"]>): Record<string, Record<string, unknown>> {
+  if (typeof v !== "string") return v;
+  const path = join(repo, v);
+  if (!existsSync(path)) throw new ConfigError(`own_jobs names ${v}, which the repo does not have`);
+  let doc: unknown;
+  try {
+    doc = parseYAMLDocument(readFileSync(path, "utf-8"));
+  } catch (e) {
+    throw new ConfigError(`own_jobs: ${v} is not YAML (${(e as Error).message})`);
+  }
+  const problems = typeof doc === "string" ? [`own_jobs (${v}) must be a map of job name to job`] : ownJobsProblems(doc, `own_jobs (${v})`);
+  if (problems.length > 0) throw new ConfigError(problems.join("; "));
+  return doc as Record<string, Record<string, unknown>>;
 }
 
 export async function init(repo: string, options: InitOptions = {}): Promise<InitResult> {
@@ -138,10 +159,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (detectedTg) {
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};
-    if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
-    if (settings.cost) throw new ConfigError("cost estimates read each root's plan from tf-plan, and a Terragrunt repo plans its units with run --all; remove cost");
+    if (settings.roots) throw new ConfigError(ROOTS_NOT_TERRAGRUNT);
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
-    if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
+    const stepsRefused = terragruntStepsRefusal(settings.steps);
+    if (stepsRefused) throw new ConfigError(stepsRefused);
     if (settings.generate) throw new ConfigError(TERRAGRUNT_GENERATE);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
@@ -149,7 +170,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       throw new ConfigError(`found no Terragrunt units (${detectedTg.reason} turned Terragrunt mode on): no directory outside catalog/ holds a terragrunt.hcl`);
     }
     if (detectedTg.stacks.length > 0) {
-      notes.push(`explicit stacks (terragrunt.stack.hcl) are not supported, so ${detectedTg.stacks.join(", ")} is left out`);
+      notes.push(`explicit stacks: ${detectedTg.stacks.join(", ")}; terragrunt stack generate wrote their units, and every job generates them again before discovery`);
     }
     rootReasons = found.units.map((u) => ({ root: u.path, reason: found.source === "terragrunt find" ? "terragrunt find" : "terragrunt.hcl" }));
     try {
@@ -186,9 +207,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
 
-  if (tgMode && versionGlobs(settings.version)) {
-    throw new ConfigError("version as a map pins plain roots by glob; a Terragrunt repo runs one release of its binary for every unit, so give version one release");
-  }
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.
@@ -203,12 +221,14 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
         ? { value: pinned, reason: "required_version" }
         : { value: (TOOL_VERSIONS as Record<string, string>)[binary.value] ?? "", reason: "the image" };
   // Roots that pin a version of their own, other than the one every job runs: each runs its own, installed in the job.
+  // A Terragrunt unit pins its binary the same ways, and its Terragrunt release with an exact terragrunt_version_constraint;
+  // the stage installs each in the job and runs the unit's wave as one run --all per pair of releases.
   const pins: RootVersion[] = [];
-  if (!tgMode) {
-    for (const root of roots) {
-      const pin = rootPin(repo, root, binary.value, settings.version);
-      if (pin && pin.version !== version.value) pins.push({ root, ...pin });
-    }
+  for (const root of roots) {
+    const pin = rootPin(repo, root, binary.value, settings.version);
+    if (pin && pin.version !== version.value) pins.push({ root, ...pin });
+    const tgPin = tgMode ? unitTerragruntPin(repo, root) : undefined;
+    if (tgPin && tgPin !== terragrunt?.version.value) pins.push({ root, tool: "terragrunt", version: tgPin, source: "terragrunt_version_constraint" });
   }
 
   const detectedForge = detectForge(repo);
@@ -239,16 +259,16 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
   if (terragrunt) {
-    if (binary.value !== "tofu" && binary.value !== "terraform") {
-      throw new RenderError(`Terragrunt runs tofu or terraform in terragucci's pipeline; ${binary.value} is not supported with Terragrunt`);
-    }
-    ref = terragruntImage();
+    // Terragrunt calls the binary through TG_TF_PATH. tofu and terraform run in the Terragrunt image; choudoufu runs in its own
+    // image, which carries no Terragrunt, so the jobs install the Terragrunt release beside it.
+    ref = binary.value === "choudoufu" ? imageFor("choudoufu") : terragruntImage();
     tgInput = {
       version: terragrunt.version.value,
       parallelism: terragrunt.parallelism.value,
       exclude: settings.terragrunt?.exclude ?? [],
+      ...(detectedTg && detectTerragrunt(repo)!.stacks.length > 0 ? { stacks: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
-      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, TOOL_VERSIONS),
+      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
     };
   } else {
     ref = imageFor(binary.value);
@@ -273,7 +293,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     tokenEnv: settings.token_env,
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
-    ...(settings.modules?.publish ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}) } : {}),
+    ...(settings.modules?.publish || settings.modules?.registry
+      ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}) }
+      : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(rollouts ? { rollouts } : {}),
@@ -291,29 +313,34 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
+    ...(agentDriftInput(settings) ? { agentDrift: agentDriftInput(settings) } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(reviewInput(settings) ? { review: reviewInput(settings) } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
     ...(migrationFiles(repo).length > 0 ? { migrations: true } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
+    ...(settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? { applyBranches: settings.apply.branches } : {}),
+    ...(settings.own_jobs !== undefined ? { ownJobs: ownJobs(repo, settings.own_jobs) } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
   const rolloutRel = forgeChoice.value === "gitlab" ? undefined : ROLLOUT_PATHS[forgeChoice.value];
+  const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
-    // The rollout workflow, like the pipeline, overwrites only a file terragucci wrote.
-    if (f.path === rolloutRel && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    // The rollout and review workflows, like the pipeline, overwrite only a file terragucci wrote.
+    if ((f.path === rolloutRel || f.path === reviewRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
-  // A rollout workflow an earlier init wrote goes when the config stops asking for it.
-  if (rolloutRel && !(pipeline.extra ?? []).some((f) => f.path === rolloutRel) && !options.settings) {
-    const rolloutPath = join(repo, rolloutRel);
-    if (existsSync(rolloutPath) && readFileSync(rolloutPath, "utf-8").startsWith(MARKER)) files.push({ path: rolloutPath, status: "removed", content: "" });
+  // A rollout or review workflow an earlier init wrote goes when the config stops asking for it.
+  for (const rel of [rolloutRel, reviewRel]) {
+    if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
+    const path = join(repo, rel);
+    if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });
   }
   // On GitLab the repo's own .gitlab-ci.yml includes the pipeline; its jobs stay.
   if (forgeChoice.value === "gitlab") {
@@ -565,7 +592,7 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
         `parallelism ${tg.parallelism.value} (${tg.parallelism.reason}), forge ${r.forge.value} (${r.forge.reason})`
       : `found ${plural(r.roots.length, "root")} in ${plural(r.layers.length, "layer")}, ` +
         `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
-    ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
+    ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${p.tool ?? r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
     ...r.files.map((f) => `${verb(f.status)} ${relative(repo, f.path)}`),
     r.configNote,
     ...r.notes.map((n) => `note: ${n}`),

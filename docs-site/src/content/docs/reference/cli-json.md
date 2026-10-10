@@ -162,3 +162,5 @@ Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not 
 | `ok` | whether it has no problems |
 | `problems` | a list of strings; a config with problems exits 2 |
 | `approval` | for a repo's own config with no problems: `mode` (`ledger`, `pr-review` or `sealed`), `source` (the key, [`identity.gates`](/terragucci/concepts/glossary/#identitygates), or the default) and a `note` when the repo should change something |
+| `warnings` | present when there are some: each role that reaches another environment's state, as text; warnings leave the exit code 0 |
+| `state_access` | with `oidc.roles` and no problems: one entry per role and stage, with `role`, `stage` (`plan` or `apply`), `environment` (the glob, or `plan_role/apply_role`), `roots`, `states` (the state keys its roots' backends name) and `reads` (other environments' states they read) |

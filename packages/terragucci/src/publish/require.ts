@@ -3,8 +3,11 @@
  * release of a checked source unless the release verifies.
  *
  * The checked sources are this repo's own published modules, when
- * `modules.attest` is on (its git URL for `git-tags`, each `oci://` target),
- * and each publisher `modules.trusted` lists. A module call whose source is
+ * `modules.attest` is on (its git URL for `git-tags`, each `oci://` target,
+ * and the host of `modules.registry`), and each publisher `modules.trusted`
+ * lists. A registry source's pin is its `version`; the registry's download
+ * answer says where that version is (a tarball, a git tag, an OCI artifact),
+ * and the release there is checked as that kind of source is. A module call whose source is
  * none of them is not checked. For one that is, the pin must name one release
  * (a tag or a digest), and that release must verify as `verify-release`
  * verifies it: the bytes the tag names now are in a record of the publisher's
@@ -30,12 +33,13 @@ import { moduleTarAt } from "./archive";
 import { attestKey } from "./attest";
 import { fetchLedger, shown, type Ledger } from "./ledger";
 import { Registry, parseOci, type Fetch } from "./oci";
+import { fetchTarball, parseRegistrySource, registryHost, registryLocation, RegistryError } from "./registry";
 import { AttestationError, publicKey, verifyRelease } from "./verify";
 
 /** One publisher whose releases are checked. */
 export interface CheckedSource {
-  kind: "git" | "oci";
-  /** The normalised git URL of the publishing repo, or the `oci://` prefix. */
+  kind: "git" | "oci" | "registry";
+  /** The normalised git URL of the publishing repo, the `oci://` prefix, or a registry's host. */
   match: string;
   key: KeyObject;
   keyPath: string;
@@ -121,6 +125,7 @@ export function checkedSources(repo: string, governing: GoverningModules): Check
         out.push({ kind: "oci", match: normalizeSource(t), key: k, keyPath: own, ledger: "origin" });
       }
     }
+    if (m.registry) out.push({ kind: "registry", match: registryHost(m.registry), key: k, keyPath: own, ledger: "origin", tags: "origin" });
   }
   for (const t of m.trusted ?? []) {
     out.push({ kind: t.source.startsWith("oci://") ? "oci" : "git", match: normalizeSource(t.source), key: key(t.key, `the trusted source ${shown(t.source)}'s`), keyPath: t.key, ledger: t.ledger });
@@ -199,7 +204,11 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
     let source: CheckedSource | undefined;
     let module = "";
     let git: { url: string; subdir: string } | undefined;
-    if (base.startsWith("oci://")) {
+    const reg = parseRegistrySource(base);
+    if (reg) {
+      source = sources.find((s) => s.kind === "registry" && s.match === reg.host);
+      module = reg.name;
+    } else if (base.startsWith("oci://")) {
       const n = normalizeSource(base);
       source = sources.find((s) => s.kind === "oci" && n.startsWith(`${s.match}/`));
       module = posix.basename(n);
@@ -227,29 +236,48 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
       refuse(pin.pin, `${shown(source.ledger)} has no chant/lifecycle branch, so no release is recorded`);
       continue;
     }
+    const verifyGit = (url: string, subdir: string, tag: string): void => {
+      if (!subdir) throw new AttestationError("the source names no module directory (//<path>)");
+      const commit = fetchTag(repo, source!.tags ?? url, tag);
+      if (!commit) throw new AttestationError(`${tag} is not a tag of ${shown(url)}`);
+      const bytes = moduleTarAt(repo, commit, subdir);
+      if (!bytes) throw new AttestationError(`the tag ${tag} holds no ${subdir}`);
+      verifyRelease({ module: subdir, version: pinVersion(tag), bytes, commit }, ledger!, source!.key);
+    };
+    const verifyOci = async (repoUrl: string, tag: string): Promise<void> => {
+      const { host, repo: path } = parseOci(repoUrl.replace(/\/+$/, ""));
+      const registry = new Registry(host, {
+        fetch: options.fetch,
+        scheme: /^(1|true|yes)$/i.test(env.TERRAGUCCI_REGISTRY_INSECURE ?? "") ? "http" : "https",
+        user: env.TERRAGUCCI_REGISTRY_USER,
+        password: env.TERRAGUCCI_REGISTRY_PASSWORD,
+      });
+      const bytes = await registry.manifestBytes(path, tag);
+      if (!bytes) throw new AttestationError(`${host}/${path} has no ${tag}`);
+      verifyRelease({ module: posix.basename(path), version: tag, bytes, byName: true }, ledger!, source!.key);
+    };
     try {
-      if (git) {
-        if (!module) throw new AttestationError("the source names no module directory (//<path>)");
-        const commit = fetchTag(repo, source.tags ?? git.url, pin.pin);
-        if (!commit) throw new AttestationError(`${pin.pin} is not a tag of ${shown(git.url)}`);
-        const bytes = moduleTarAt(repo, commit, module);
-        if (!bytes) throw new AttestationError(`the tag ${pin.pin} holds no ${module}`);
-        verifyRelease({ module, version: pinVersion(pin.pin), bytes, commit }, ledger, source.key);
-      } else {
-        const { host, repo: path } = parseOci(base.replace(/\/+$/, ""));
-        const registry = new Registry(host, {
-          fetch: options.fetch,
-          scheme: /^(1|true|yes)$/i.test(env.TERRAGUCCI_REGISTRY_INSECURE ?? "") ? "http" : "https",
-          user: env.TERRAGUCCI_REGISTRY_USER,
-          password: env.TERRAGUCCI_REGISTRY_PASSWORD,
-        });
-        const bytes = await registry.manifestBytes(path, pin.pin);
-        if (!bytes) throw new AttestationError(`${host}/${path} has no ${pin.pin}`);
-        verifyRelease({ module, version: pin.pin, bytes, byName: true }, ledger, source.key);
-      }
+      if (reg) {
+        // Where the registry says the version is, checked as that kind of source.
+        const location = await registryLocation(base, pin.pin, options.fetch);
+        const query = new URLSearchParams(location.split("?")[1] ?? "");
+        if (location.startsWith("oci://")) {
+          const tag = query.get("tag");
+          if (!tag) throw new AttestationError(`the registry points ${pin.pin} at ${location}, which names no tag`);
+          await verifyOci(location.split("?")[0]!, tag);
+        } else if (location.startsWith("git::") || splitGitSource(location)?.url.endsWith(".git")) {
+          const at = splitGitSource(location);
+          const ref = query.get("ref");
+          if (!at || !ref) throw new AttestationError(`the registry points ${pin.pin} at ${location}, which names no tag`);
+          verifyGit(at.url, at.subdir, ref);
+        } else {
+          verifyRelease({ module, version: pin.pin, bytes: await fetchTarball(location, options.fetch), byName: true }, ledger, source.key);
+        }
+      } else if (git) verifyGit(git.url, module, pin.pin);
+      else await verifyOci(base, pin.pin);
       out.verified.push(`${c.call} ${pin.module} ${pin.pin}`);
     } catch (e) {
-      if (!(e instanceof AttestationError) && !(e instanceof Error && e.name === "OciError")) throw e;
+      if (!(e instanceof AttestationError) && !(e instanceof RegistryError) && !(e instanceof Error && e.name === "OciError")) throw e;
       refuse(pin.pin, e.message);
     }
   }
