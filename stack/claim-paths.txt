@@ -70,6 +70,7 @@ packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate revie
 
 # Pull request comments (GitLab's files run in the GitLab claims, not here).
 packages/terragucci/src/comment-gitlab.ts
+packages/terragucci/src/gitlab-agent.ts  review-*
 packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* drift-overdue
 packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent

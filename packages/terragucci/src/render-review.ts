@@ -1,11 +1,12 @@
 /**
  * The review workflow's two jobs, `review` and `review-note`, for GitHub and
- * Forgejo (see review-agent.ts for what each does and why there are two).
+ * Forgejo (see review-agent.ts for what each does and why there are two),
+ * and the review job's script on GitLab (gitlab-agent.ts).
  */
 import { Job, Step, Workflow } from "@intentius/chant-lexicon-github/generated/index";
 import type { ForgeName } from "./config";
 import { READS_EXIT } from "./render";
-import { RUNNER_TOKEN_VARS } from "./render-agent";
+import { gitlabCleanEnv, RUNNER_TOKEN_VARS } from "./render-agent";
 import { REVIEW_ARTIFACT, REVIEW_DIR, REVIEW_FILE, REVIEW_OUT, REVIEW_WORK, type ReviewInput } from "./review-agent";
 
 /** Where the prompt's step puts the plan report it fetches: outside the checkout. */
@@ -35,6 +36,28 @@ export function reviewRunScript(command: string): string {
     `( ${command} ) <"$TG_REVIEW_PROMPT" >${REVIEW_OUT}/${REVIEW_FILE}`,
     `echo "$?" >${REVIEW_OUT}/rc`,
     `echo "terragucci review: the review command exited $(cat ${REVIEW_OUT}/rc) and printed $(wc -c <${REVIEW_OUT}/${REVIEW_FILE}) bytes"`,
+  ].join("\n");
+}
+
+/**
+ * The GitLab review job's script (gitlab-agent.ts): read the merge request and
+ * its plan report and write the prompt, drop the job token from the remote,
+ * then run the review command in the default branch's tree with a cleared
+ * environment, since GitLab hands every job the project's variables. The
+ * review, its exit code and what was reviewed go to the job's artifact.
+ */
+export function gitlabReviewScript(review: ReviewInput, artifact: string): string {
+  return [
+    READS_EXIT,
+    `terragucci review prompt --forge gitlab --report ${REVIEW_REPORT} --instructions ${sh(review.instructions)} || exit 1`,
+    'git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"',
+    `mkdir -p ${REVIEW_OUT}`,
+    `cd ${REVIEW_WORK} || exit 1`,
+    `export TG_REVIEW_PROMPT=${REVIEW_DIR}/prompt.md`,
+    `${gitlabCleanEnv(review.keySecret)} bash -c ${sh(review.command)} <"$TG_REVIEW_PROMPT" >${REVIEW_OUT}/${REVIEW_FILE}`,
+    `echo "$?" >${REVIEW_OUT}/rc`,
+    `echo "terragucci review: the review command exited $(cat ${REVIEW_OUT}/rc) and printed $(wc -c <${REVIEW_OUT}/${REVIEW_FILE}) bytes"`,
+    `cd "$CI_PROJECT_DIR" && mkdir -p ${artifact} && cp ${REVIEW_OUT}/* ${artifact}/`,
   ].join("\n");
 }
 
