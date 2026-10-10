@@ -207,6 +207,7 @@ steward|tf-apply runs as a turn on a fountain steward, started by the forge job,
 policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
+import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
 comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
 dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
@@ -4389,6 +4390,99 @@ YAML
   [ "$got" = "$want" ] || { log "the pipeline planned $got, not the Atlantis projects $want"; rc=1; }
   drop_work "$work"; drop_work "$tree"
   [ $rc = 0 ] && log "the imported pipeline planned the six Atlantis projects and nothing else"
+  return $rc
+}
+
+claim_import_terrateam() {
+  # The example as a Terrateam repo would have it: a .terrateam/config.yml
+  # with the layered-runs shape (staging after dev's platform and orders, prod
+  # after staging's platform), a plan hook, a scoped workflow step that passes
+  # a flag, apply requirements and access control. `terragucci import
+  # terrateam` writes terragucci.yml from it and names what it cannot map;
+  # `config check` passes; and `init --dry-run` finds the example's 15 roots
+  # and cuts them into the waves the dependencies ask for, as far as one
+  # canary set carries them: dev's platform, dev's orders, the other
+  # platforms, the rest. BREAK: the written waves block, the dependency
+  # mapping, is dropped before init, so the roots apply in their two read
+  # layers and staging no longer waits for dev.
+  log() { echo "[smoke import-terrateam] $*" >&2; }
+  local tree out rc=0 got roots canary
+  local want="envs/dev/platform|envs/dev/orders|envs/prod/platform,envs/staging/platform|envs/dev/email,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search"
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  mkdir -p "$tree/.terrateam"
+  cat > "$tree/.terrateam/config.yml" <<'YAML'
+engine:
+  name: tofu
+  version: 1.13.1
+when_modified:
+  file_patterns: ["${DIR}/*.tf", "modules/**/*.tf"]
+apply_requirements:
+  checks:
+    - tag_query: ""
+      approved:
+        enabled: true
+        any_of: ["team:platform"]
+      merge_conflicts:
+        enabled: true
+      status_checks:
+        enabled: true
+dirs:
+  modules/**:
+    when_modified:
+      file_patterns: []
+  envs/dev/**:
+    tags: [dev]
+  envs/staging/**:
+    tags: [staging]
+    when_modified:
+      depends_on: "dir:envs/dev/platform or dir:envs/dev/orders"
+  envs/prod/**:
+    tags: [prod]
+    when_modified:
+      depends_on: "dir:envs/staging/platform"
+hooks:
+  plan:
+    pre:
+      - type: env
+        name: TF_VAR_team
+        cmd: ["echo", "shop"]
+workflows:
+  - tag_query: "dir:envs/prod/payments"
+    plan:
+      - type: init
+      - type: plan
+        extra_args: ["-lock=false"]
+      - type: run
+        cmd: ["tofu", "show", "-no-color", "$TERRATEAM_PLAN_FILE"]
+access_control:
+  policies:
+    - tag_query: "prod"
+      apply: ["team:sre"]
+YAML
+  # The example's own terragucci.yml gives way to the imported one.
+  out="$(cd "$tree" && "$TERRAGUCCI" import terrateam --force --forge forgejo 2>&1)" || { log "import failed: $out"; return 1; }
+  grep -q '^  dirs.envs/prod/\*\*.when_modified.depends_on (Order): envs/prod/platform after envs/staging/platform is not kept' <<<"$out" \
+    || { log "the import did not name the dependency one canary set cannot keep"; rc=1; }
+  grep -q '^  access_control.policies (Access control): ' <<<"$out" || { log "the import did not name access_control as not mapped"; rc=1; }
+  grep -q '^  workflows\[0\].plan\[1\].extra_args (Flags at run time)' <<<"$out" || { log "the import did not name the flag a step passes"; rc=1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^waves:/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; return 1; }
+  out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; return 1; }
+  roots="$(jq -r '[.results.roots[].path] | sort | join(",")' <<<"$out")"
+  [ "$roots" = "$(cd "$tree" && find envs -mindepth 2 -maxdepth 2 -type d | sort | paste -sd, -)" ] || { log "init found the roots $roots, not the example's"; rc=1; }
+  # The waves the pipeline applies: its plan layers, the canary's first, as the generated tf-apply step passes them.
+  canary="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out" | grep -o -- "--canary '[^']*'" | head -1 | sed -E "s/--canary '([^']*)'/\1/")"
+  log "the pipeline's canary: ${canary:-none}"
+  got="$(jq -r --arg c "$canary" '($c | split(",") | map(select(. != ""))) as $c
+    | .results.layers as $l
+    | ([$l[] | map(select(. as $r | $c | index($r)))] + [$l[] | map(select(. as $r | $c | index($r) | not))])
+    | map(select(length > 0) | sort | join(",")) | join("|")' <<<"$out")"
+  [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves depends_on asks for, $want"; rc=1; }
+  drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline applies dev's platform, then dev's orders, then the other platforms, then the rest"
   return $rc
 }
 
@@ -8773,7 +8867,7 @@ HCL
   git -C "$work/behold-drift" init -q -b main
   git -C "$work/behold-drift" add -A && git -C "$work/behold-drift" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke behold-view"
   in_image() { # the command
-    run_copied --rm --network terragucci -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -18614,6 +18708,7 @@ steward         ex! runner fountain! weight=950
 comment-plan    runner self! weight=150
 comment-atlantis runner self! weight=150
 import-atlantis ex after=boot weight=150
+import-terrateam weight=30
 lock-wait       otel! self! weight=150
 dash-pipeline   ex otel after=boot weight=120
 dash-changes    ex otel after=boot weight=120
