@@ -68,7 +68,7 @@ drift-attribute|booted|drift-attribute|issue|the drift-attribute claim; the drif
 config|alone|zero-config sealed-migrate||terragucci config check and init --dry-run on the example, then config check with a key that is not a setting
 publish|booted|publish version-bump-job|tags release|the publish and version-bump-job claims; the module tags the publish job pushed, and the release pull request the version-bump job opened
 reconcile|booted|reconcile|pull files|the reconcile claim; the pipeline pull request reconcile opened in the project with no pipeline, and its files
-tg|alone|tg-check tg-gate-wait|check waiting|the Terragrunt example with its unformatted scenario pushed to a branch, and the tg-gate-wait claim; the check job'"'"'s hcl fmt failure, and wave 2 waiting for its own approval (the example is reset afterwards)'
+tg|alone|tg-check tg-pr-plan tg-gate-wait|check note waiting|the Terragrunt example with its unformatted scenario pushed to a branch, its module-bump scenario as a pull request, and the tg-gate-wait claim; the check job'"'"'s hcl fmt failure, the plan note, and wave 2 waiting for its own approval (the example is reset afterwards)'
 
 field() { # step, field number -> that field of the step's row
   awk -F'|' -v s="$1" -v n="$2" '$1 == s { print $n }' <<<"$STEPS"
@@ -893,13 +893,12 @@ step_reconcile() {
 # Terragrunt (tutorial/terragrunt, use-terragrunt): the Terragrunt example
 # beside the plain one, booted when it is not running and reset when it is.
 # The unformatted scenario pushed to a branch, and its push run's check job
-# failing on terragrunt hcl fmt; then the tg-gate-wait claim's run, where
-# wave 2 waits for its own approval. No pull request is opened: Forgejo 16
-# inserts no pull_request run for the example's pipeline (its five waves'
-# skipped jobs pass checkJobsOfRun's recursion limit), so no note would come.
+# failing on terragrunt hcl fmt; the module-bump scenario's pull request and
+# its plan note; then the tg-gate-wait claim's run, where wave 2 waits for its
+# own approval.
 step_tg() {
   forge
-  local repo="$USER/example-terragrunt" work="$STAGE/tg" sha page run
+  local repo="$USER/example-terragrunt" work="$STAGE/tg" sha page run pr
   if "$HERE/example-terragrunt.sh" verify >/dev/null 2>&1; then
     "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
   else
@@ -910,6 +909,14 @@ step_tg() {
   sha="$(TG_FIXED_DATE=1 push_tree "$work" "$repo" change/unformatted "Name dev orders' owner, without running terragrunt hcl fmt")"
   page="$(REPO="$repo"; FORGEJO="$URL/$repo"; job_page "$(REPO="$repo"; push_run "$sha")" '.status == "failure"')"
   if [ -n "$page" ]; then shot tg check "$page" 900 "Format check" "needs formatting"; else log "tg: no failed job in the push run on ${sha:-the pushed commit}"; fi
+  "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
+  # change opens the pull request and waits for its plan.
+  if "$HERE/example-terragrunt.sh" change module-bump >"$STAGE/tg-change.out" 2>&1; then
+    pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open&limit=50" | jq -r '.[] | select(.head.ref == "change/module-bump") | .number' | head -1)"
+    if [ -n "$pr" ]; then (REPO="$repo"; FORGEJO="$URL/$repo"; note_shot tg note "$pr" 1400); else log "tg: no module-bump pull request"; fi
+  else
+    log "tg: 'just example-terragrunt change module-bump' failed: $(tail -3 "$STAGE/tg-change.out" | tr '\n' ' ')"
+  fi
   "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
   if claim_run tg tg-gate-wait; then
     run="$(api "$URL/api/v1/repos/$USER/tg-gate-wait/actions/runs?event=push&limit=50" | jq -c '.workflow_runs[0] // empty')"

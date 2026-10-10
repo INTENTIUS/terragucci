@@ -7,14 +7,14 @@ prompt: |
   Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-`npx terragucci <command>` runs from the root of a repo. A generated pipeline calls the same commands.
+Run `npx terragucci <command>` from a repo's root; a generated pipeline calls the same commands.
 
-| Command | What it does |
+| Command | Does |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `import` | writes `terragucci.yml` from an `atlantis.yaml` or a `digger.yml`, and prints what became of each setting |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
-| `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/); `--check` refuses one that differs, and the generated `tf-check` job runs it |
+| `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
@@ -39,6 +39,7 @@ prompt: |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
+| `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
@@ -61,7 +62,7 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 
 A flag detection would not reach goes into a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
 
-What `init` writes besides the pipeline depends on the approval mode. `--approval ledger|pr-review|sealed` picks the mode and saves it to `terragucci.yml` when detection would not reach it.
+`--approval ledger|pr-review|sealed` picks the approval mode, which decides what else `init` writes, and saves it to `terragucci.yml` when detection would not reach it.
 
 | Mode | `init` also |
 |---|---|
@@ -78,7 +79,7 @@ terragucci import atlantis [<file>] [--forge github|gitlab|forgejo] [--apply-whe
 terragucci import digger [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 ```
 
-Reads `atlantis.yaml` (or `atlantis.yml`), or OpenTaco's `digger.yml` (or `digger.yaml`), or the file named, and writes `terragucci.yml` by the tables of [Coming from Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/). It then prints every setting the file carries under one of four headings, quoting the guide's row for each:
+Reads `atlantis.yaml` (or `atlantis.yml`), or OpenTaco's `digger.yml` (or `digger.yaml`), or the file named, and writes `terragucci.yml` by the tables of [Coming from Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/). It then prints each setting the file carries under one of four headings, quoting the guide's row:
 
 | Heading | The setting |
 |---|---|
@@ -189,7 +190,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 `stage tf-plan` and `stage tf-drift` still write the report when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Wave 1 first runs each [state migration](/terragucci/reference/migration-files/) that has not applied, behind its own gate, and `stage tf-plan` proves them. It refuses `--json` with exit 2. With `TG_OUTCOME_JSON` set it writes how the wave ended to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Wave 1 first runs each [state migration](/terragucci/reference/migration-files/) that has not applied, behind its own gate, and `stage tf-plan` proves them. It refuses `--json` with exit 2. With `TG_OUTCOME_JSON` set it writes the wave's outcome to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
 
 | Flag | Environment | Meaning |
 |---|---|---|
@@ -200,7 +201,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
 | `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
-| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots of `--branch` when the map names it, and otherwise every root no branch's glob matches |
+| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots (in a Terragrunt repo, the units) of `--branch` when the map names it, and otherwise every root no branch's glob matches |
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
 
 ## publish
@@ -264,9 +265,7 @@ terragucci comment --agent push --change <dir> [--policy-dir <dir>]
 terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes]
 ```
 
-Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`.
-
-`--agent` picks the mode:
+Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`. Each `--agent` mode runs in its own job.
 
 | `--agent` | Run by job | Does |
 |---|---|---|
@@ -293,7 +292,7 @@ On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments`
 | `/terragucci lock`, `unlock`, with `--when pull-request` | the merge request is open | starts the same pipeline |
 | `/terragucci lock`, `unlock` without it, `agent` | | replies that the verb does not run here |
 
-[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
+[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists the checks every comment passes before a job uses a credential.
 
 ## review
 
@@ -302,7 +301,7 @@ terragucci review prompt --report <dir> [--instructions <path>]
 terragucci review post --dir <dir>
 ```
 
-The two halves of the [review](/terragucci/guides/agent-review-a-pull-request/), run by the `review` and `review-note` jobs of the generated review workflow.
+The `review` and `review-note` jobs of the generated review workflow run the two halves of the [review](/terragucci/guides/agent-review-a-pull-request/).
 
 | Command | Does |
 |---|---|
@@ -405,7 +404,7 @@ Posts the drift job's findings to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEA
 terragucci relay [--port <n>]
 ```
 
-Serves `POST /slack`, `POST /teams` and `GET /healthz`, with its settings from [the environment](/terragucci/reference/environment/#the-relay). It checks the token first and does not start with one that can do more than approve. [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) sets it up.
+Serves `POST /slack`, `POST /teams` and `GET /healthz`, with its settings from [the environment](/terragucci/reference/environment/#the-relay). On start it checks the token, and refuses one that can do more than approve. [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) sets it up.
 
 | A request | The relay |
 |---|---|
@@ -416,9 +415,9 @@ Serves `POST /slack`, `POST /teams` and `GET /healthz`, with its settings from [
 | Approve, under `approval: sealed` | records nothing: only the approver's own key seals an approval |
 | Decline | records nothing, and says in the thread who declined; the wave keeps waiting |
 
-It runs until stopped; an error in a request never stops it.
+The relay runs until stopped, whatever error a request hits.
 
-A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
+A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command, which never prints a webhook's address, exits 0.
 
 ## mcp
 
@@ -440,7 +439,7 @@ Serves the Model Context Protocol on stdin and stdout until the client closes th
 | `dora` | `dora.json` | none |
 | `waiting` | the waves waiting on `chant/lifecycle` in the repo it runs in, each with the `terragucci approve` command a person runs | none |
 
-Every tool is marked read-only. What the server refuses:
+Every tool is marked read-only, and the server refuses these calls.
 
 | A call | The answer |
 |---|---|
@@ -448,7 +447,7 @@ Every tool is marked read-only. What the server refuses:
 | with an argument the tool does not list | an error naming the argument; one named like a credential (`token`, `secret`, `key`) says credentials come from the server's environment |
 | with a `path` outside the reports prefix | an error |
 
-The server writes nothing: its bucket client refuses a write and a signed link, and it does not start with a tool whose name says it would approve, apply, override, lock, merge or write.
+The server writes nothing. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would approve, apply, override, lock, merge or write.
 
 ## drift-agent
 
@@ -457,7 +456,7 @@ terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
 terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
 ```
 
-The two halves of the [drift agent](/terragucci/guides/agent-fix-drift/), run by the generated `drift-agent` and `drift-agent-push` jobs.
+The generated `drift-agent` and `drift-agent-push` jobs run the two halves of the [drift agent](/terragucci/guides/agent-fix-drift/).
 
 | Command | Does |
 |---|---|
@@ -515,7 +514,7 @@ terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--actor <name>] [
 | `--dry-run` | print the `chant approve` command and run nothing |
 | `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
 
-Run it in a checkout whose `origin` you can push to. It finds chant in `node_modules/.bin`, then on the path.
+Run it in a checkout whose `origin` you can push to; chant is looked up in `node_modules/.bin`, then on the path.
 
 ```text
 wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), since 2026-10-07T18:04:11.000Z
@@ -536,7 +535,7 @@ not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha
 terragucci migrate revert <migration>
 ```
 
-Writes `migrations/<migration>-revert.yml`, the [revert](/terragucci/reference/migration-files/#revert) of a migration that applied, from its record on `chant/lifecycle` as `origin` holds it. It writes the file and nothing else: the change that carries it is proved by the plan job and waits at wave 1 for its approval, like any migration. Exit code 1 when the migration never applied, moved states to a new backend, or left a root with no version to put back.
+Writes `migrations/<migration>-revert.yml`, the [revert](/terragucci/reference/migration-files/#revert) of a migration that applied, from its record on `chant/lifecycle` as `origin` holds it. Nothing else is written; the plan job proves the change that carries the file, which waits at wave 1 for its approval like any migration. Exit code 1 when the migration never applied, moved states to a new backend, or left a root with no version to put back.
 
 ## state export
 
@@ -546,7 +545,7 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 
 | Flag | Meaning |
 |---|---|
-| `<root>` | the root whose state to export, a directory of plain roots with an `s3` backend in a bucket that keeps versions |
+| `<root>` | the root whose state to export, with an `s3` backend in a bucket that keeps versions: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
 | `--version` | the version id, as the estate page's State versions section lists it; the bucket's current version by default |
 | `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |
@@ -565,9 +564,9 @@ An approval by the person who asked does not count. A request exports once; anot
 terragucci unlock-state <root> [--actor <name>] [--binary <b>] [--config <file>]
 ```
 
-Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes. Run it at a shell, in a checkout whose `origin` you can push to, with the backend's credentials and the forge token in the variable `token_env` names (`FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN` by default). A comment never runs it.
+Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes. A comment never runs it; run it at a shell with the backend's credentials, the forge token in the variable `token_env` names (`FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN` by default), and push access to the checkout's `origin`.
 
-| Step | What it does |
+| Step | Does |
 |---|---|
 | read the lock | inits the root and reads `<key>.tflock`: its ID, who took it and when |
 | check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
@@ -587,6 +586,24 @@ terragucci unlock-state:   chant approve tf-unlock slow --plan jcs1-sha256:6d2b.
 ```
 
 An approval names one lock: when the lock was released some other way and another taken since, the approval does not release the new one, and it exits 4.
+
+## ephemeral
+
+```bash
+terragucci ephemeral up --pr <n> [--head <sha>] [--base <ref>] [--binary <b>] [--config <file>]
+terragucci ephemeral down --pr <n> --reason closed|expired [--base <ref>] [--binary <b>] [--config <file>]
+terragucci ephemeral sweep [--base <ref>] [--binary <b>] [--config <file>]
+```
+
+The generated pipeline runs it for [`ephemeral`](/terragucci/reference/config/#ephemeral-environments). It reads `ephemeral` from terragucci.yml in the checkout, which the jobs check out at the default branch, or at `--base`, and checks out the pull request's code apart, from the forge's pull request ref.
+
+| Subcommand | What it does |
+|---|---|
+| `up` | inits each root the globs match at `--head` with `-backend-config` naming its key with `-pr-<n>` added, plans it, and decides gate `pr-<n>` of op `tf-ephemeral` on the set digest as `gate` says, printing `chant approve tf-ephemeral pr-<n> --plan <digest>` and exiting 3 while it waits; then applies, and appends the copy, its expiry and who approved it to `_gates/tf-ephemeral/done.jsonl` |
+| `down` | plans the destroy of each root of the live copy and applies it, in reverse order, from the commit the copy applied, and appends the destroy with `--reason` and its digest; with no live copy it does nothing |
+| `sweep` | destroys each live copy whose TTL passed (`expired`), and each whose pull request the forge says is closed or merged (`closed`), reading it with `TG_TOKEN` |
+
+A root on a backend other than `s3`, `azurerm`, `gcs` or `local`, a backend block that names no key, a Terragrunt repo and `synth` are config errors (exit 2). A destroy that fails leaves the copy live, and the next sweep tries again.
 
 ## resume
 
@@ -625,7 +642,7 @@ terragucci check-pins [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
 ```
 
-`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-pins` does the same pin check for each unit of a Terragrunt repo, on its `terraform { source }`, and prints nothing without `modules.require: attested`. `check-policy` runs the policy's tests when `policy` is set. Each appends to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-pins` does the same pin check for each unit of a Terragrunt repo, on its `terraform { source }`, and prints nothing without `modules.require: attested`. `check-policy` runs the policy's tests when `policy` is set. Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs all three. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 
@@ -637,7 +654,7 @@ Fetches the release, checks it against its SHA256SUMS and prints the directory i
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` and `config check` take `--json`. The command then prints one envelope on stdout and nothing else. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` and `config check` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -671,6 +688,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
+| `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt repo, `synth` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
@@ -678,4 +696,4 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `mcp` | the client closed stdin | | a bad flag or config | | |
 | `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
 
-Code 4 comes from `stage tf-apply` and `unlock-state`, which have no `--json`.
+Code 4 comes from `stage tf-apply`, `unlock-state` and `ephemeral`, which have no `--json`.

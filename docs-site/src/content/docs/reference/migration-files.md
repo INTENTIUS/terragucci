@@ -75,13 +75,13 @@ restores:
 | `restores[].version_id` | the version to put back, read from the bucket by its id; `null` for a root that had no state, which gets an empty one |
 | `restores[].from_version_id` | the version the migration left; a state at any other version is refused, since putting the old one back would undo that later change too |
 
-Each restored state keeps the root's lineage and gets the next serial. The revert goes through the same proof, gate and lock as any migration, so revert the code of the migration in the same change. A backend move is put back with a backend move the other way. A root whose bucket kept no version, or a local backend, has nothing to put back, and the command refuses it.
+The revert goes through the same proof, gate and lock as any migration, so revert the code of the migration in the same change. A backend move is put back with a backend move the other way. The command refuses a root on a local backend or a bucket that kept no version, since it has nothing to put back.
 
 ## The new states
 
 A changed state keeps its lineage and gets the next serial. A root with no state gets a new one at serial 1. Its lineage is derived from the migration and the root, so the same migration planned twice gives the same digest.
 
-The proof plan runs the root's own binary against its new state, through a `terragucci_migrate_override.tf` file that switches the backend to a local file in a data dir of the job's own. The file is removed after the plan. The root's `.terraform` and its real state are left as they were.
+The proof plan runs the root's own binary against its new state, through a `terragucci_migrate_override.tf` file that switches the backend to a local file in a data dir of the job's own. The file is removed after the plan, and the root's `.terraform` and real state are left as they were.
 
 ## The record
 

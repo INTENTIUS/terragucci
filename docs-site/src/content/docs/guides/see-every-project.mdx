@@ -1,7 +1,7 @@
 ---
 title: See every project in one page
 description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
-claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph]
+claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph, tg-estate-graph]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-every-project/.
   In this control repo, add the scheduled estate job the page gives for my forge,
@@ -12,9 +12,9 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
-`estate.html` and `estate.json` at the top of your reports prefix, rebuilt on a schedule. Nothing is hosted: the page is an object in your S3 bucket, GCS bucket or Azure Blob container, opened by a link the job prints: presigned on S3, a V4 signed URL on GCS, a user delegation SAS on Azure.
+`estate.html` and `estate.json` at the top of your reports prefix, rebuilt on a schedule. Nothing is hosted. The page is an object in your S3 bucket, GCS bucket or Azure Blob container, and the job prints a link to it (presigned on S3, a V4 signed URL on GCS, a user delegation SAS on Azure).
 
 | The page shows | From |
 |---|---|
@@ -31,11 +31,11 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 | a link to the [audit trail](/terragucci/reference/audit-trail/), when the job writes one | `audit.json` beside the page |
 | the four DORA metrics per project and for the estate, week by week, also in `dora.json` | `audit.jsonl` and each project's `index.json` |
 
-The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `edges.json`, `run.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
+The page reads only `index.json`, `inventory.json`, `changes.json`, `states.json`, `edges.json`, `run.json`, `audit.json` and `audit.jsonl`, never a report, a plan's text or a root's plan JSON.
 
-A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG in the page: no script loads.
+In a Terragrunt repo the graph's nodes are the units, by the waves their apply cut from `terragrunt find`, and an edge goes from a unit to each unit whose `dependency` or `dependencies` block names it. A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG, so the page loads no script.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -53,7 +53,7 @@ A read between projects is a `terraform_remote_state` block in one project whose
    | a control repo | its `projects:` | each project's own `reports` | `defaults.reports` |
    | one repo | every project in the top `index.json` | that repo's `reports` | the same bucket |
 
-   Projects in other accounts work two ways:
+   For projects in other accounts:
 
    | Option | Set up |
    |---|---|
@@ -187,7 +187,7 @@ A read between projects is a `terraform_remote_state` block in one project whose
    - run: npx --yes @intentius/terragucci estate
    ```
 
-6. Share the link. Post it where your team looks, such as the drift issue or a chat channel.
+6. Share the link where your team looks, such as the drift issue or a chat channel.
 
    | Link lifetime | Set by |
    |---|---|
@@ -197,11 +197,11 @@ A read between projects is a `terraform_remote_state` block in one project whose
 
 </Steps>
 
-The page's own numbers need nothing else. Its links to each run's report open where the bucket is served: `reports.url`, or your own front door.
+The page's numbers need nothing else; its links to each run's report open where the bucket is served (`reports.url`, or your own front door).
 
 ## The resources
 
-Each `tf-apply` wave records, for every root it applied or that had nothing to apply, the resources the root holds afterwards: address, type and provider, read from the plan the wave applied. The upload keeps the newest list of each root in the project's `inventory.json`, and the page lists them.
+For every root it applied or that had nothing to apply, each `tf-apply` wave records the resources the root then holds (address, type and provider, read from the applied plan). The upload keeps each root's newest list in the project's `inventory.json`.
 
 | On the page | What it holds |
 |---|---|
@@ -209,11 +209,11 @@ Each `tf-apply` wave records, for every root it applied or that had nothing to a
 | per project | how many of each type |
 | per root | each resource's address, type and provider, and the wave that recorded them |
 
-No attribute value is ever recorded, sensitive or not. A root is listed from the first wave that applies it. A root you remove from the repo keeps its last list.
+No attribute value is ever recorded, sensitive or not. A root is listed from the first wave that applies it, and keeps its last list after you remove it from the repo.
 
 ## Change history
 
-Each `tf-apply` wave also records what it did to each resource of the roots it applied. The upload adds one row per resource to the project's `changes.json`. The estate job then writes `history.html` and `history.json` beside the page. They list every resource address with each apply that changed it, oldest first. Each resource on the page links to its history.
+Each `tf-apply` wave also records what it did to each resource of the roots it applied, and the upload adds one row per resource to the project's `changes.json`. From these the estate job writes `history.html` and `history.json` beside the page, listing every resource address with each apply that changed it, oldest first. Each resource on the page links to its history.
 
 | Action | Attributes named |
 |---|---|

@@ -52,7 +52,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `roots[].dependencies` | a Terragrunt unit's `dependency` and `dependencies` blocks: the units whose outputs it reads, as plain paths in its `terragrunt.hcl`; absent when it names none |
 | `roots[].steps` | the [steps](/terragucci/guides/run-steps/) that ran for the root, in order: `name`, `when` (such as `before-plan`), `status` (`passed`; `failed`, which failed the root; `approval`, a failed `on_failure: approve` step that holds the wave), `exit` and `seconds`; the steps' output stays in the job log |
 | `roots[].reads` | the roots whose state the root reads through `terraform_remote_state`, or a Terragrunt unit's upstreams whose planned outputs it read through its `dependency` blocks: `upstream`, the block's label (`data`), and `outputs`: `planned`, the upstream's plan in the same run, with `unknown` naming the outputs known only once it applies, or `applied`, its state as it stands, with `why` in a pull request's plan |
-| `blast` | on a `tf-plan` run of plain roots in which a root's plan changes something: `roots`, the roots whose plan changes a resource or an output, and `downstream`, nearest first, each root that reads the state of a root in the radius through `terraform_remote_state`, with the roots it reads there (`reads`), `depth` (1 when it reads a changed root itself), its `wave`, and whether the run `planned` it |
+| `blast` | on a `tf-plan` run in which a root's plan changes something: `roots`, the roots whose plan changes a resource or an output, and `downstream`, nearest first, each root that reads the state of a root in the radius through `terraform_remote_state` (in a Terragrunt repo, each unit whose `dependency` or `dependencies` block names a unit in the radius), with the roots it reads there (`reads`), `depth` (1 when it reads a changed root itself), its `wave`, and whether the run `planned` it |
 | `waves[].held_by_steps` | the roots whose `on_failure: approve` step failed, so the gate holds the wave when it changes anything, whatever `gate` says |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
@@ -74,7 +74,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `preview` | a `tf-apply` wave of Terragrunt units the merged pull request previewed (minor 25) | the `pull_request`, and per previewed unit (`units[]`) its `differences` from the preview, absent when it plans as previewed |
 | `cost` | a wave, with `cost` set | the wave's monthly change and totals over the roots it estimated, the roots it could not estimate (`unestimated`), and with `cost.approve_above` at base the amount (`approve_above`) and whether the change is `over` it |
 
-The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
+Its JSON Schema is `@intentius/terragucci/report.schema.json` in the package. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
 
 ## Reading it
 
@@ -97,7 +97,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 ## The index and the estate page
 
-Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON Schema in the package as `dist/report-index.schema.json`: one row per run, newest first.
+Every `index.json` in the bucket is `terragucci.report-index/v1` (JSON Schema `dist/report-index.schema.json`), one row per run, newest first.
 
 | Row field | What it holds |
 |---|---|
@@ -116,26 +116,26 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON S
 | `destroys`, `destroys_total` | up to 50 destroys and replacements, and how many there are when the row lists fewer |
 | `commit_url`, `pull_request`, `pull_request_url`, `job_url`, `trace_url` | links |
 
-`estate.json` is `terragucci.estate/v1`, which [`terragucci estate`](/terragucci/reference/cli/#estate) builds from those rows and each project's newest run view, with its JSON Schema in the package as `dist/estate.schema.json`:
+[`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, `terragucci.estate/v1` (`dist/estate.schema.json`), from those rows and each project's newest run view:
 
 | Field | What it holds |
 |---|---|
 | `generated` | when the page was built; every `age_seconds` is as of then |
 | `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, `overridden_roots` when an override let a root through, and `resources` when a project has an inventory |
-| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, `status` (`ok`, `no-index` or `error`), `inventory`: its resource count, the count of each type (`types`) and each root's resources with the wave that recorded them (`roots`), `states`: each root's state location, `versioning` and the version ids its applies left, newest first, each with its commit, wave and `report`, `edges`: each root that reads another's state (`consumer`, `producer`, `via`), with the consumer's last plan (`consumer_planned`) and the producer's last apply that changed it (`producer_applied`), each a run's `stage`, `commit`, `finished`, `wave`, `pull_request`, `version_id` and `report`, and a `status`: `stale` when the producer applied after that plan, `current`, or `unknown`, and `run_view`: the commit of the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) the graph read, when a wave last wrote it (`updated`) and its `page` |
+| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, `status` (`ok`, `no-index` or `error`), `inventory`: its resource count, the count of each type (`types`) and each root's resources with the wave that recorded them (`roots`), `states`: each root's state location, `versioning` and the version ids its applies left, newest first, each with its commit, wave and `report`, `edges`: each root that reads another's state (`consumer`, `producer`, `via`), with the consumer's last plan (`consumer_planned`) and the producer's last apply that changed it (`producer_applied`), each a run's `stage`, `commit`, `finished`, `wave`, `pull_request`, `version_id` and `report`, and a `status`: `stale` when the producer applied after that plan, `current`, or `unknown`, `run_view`: the commit of the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) the graph read, when a wave last wrote it (`updated`) and its `page`, and `ephemeral`: each live [ephemeral environment](/terragucci/guides/ephemeral-environments/), with its `pull_request`, its `roots` and each one's state `location`, the `commit` it `applied` from, when it `expires`, `approved_by`, and `status` (`live`, or `destroy-failed` until the sweep destroys it) |
 | `recent[]` | the 20 newest runs across every project |
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |
 | `history` | the resource history beside the page: `page`, how many addresses it holds (`resources`) and `generated`, once an apply changed a resource; each listed resource with a history links its section as `history` |
-| `graph` | the dependency graph, once a project has a run view: `nodes`, each root by `project`, `root` and `wave`, and `edges`, each `from` a root `to` a root that reads its state through `terraform_remote_state`; an edge between two projects matched a read of a state outside the reader's project to the root of the other whose backend holds it |
+| `graph` | the dependency graph, once a project has a run view: `nodes`, each root by `project`, `root` and `wave`, and `edges`, each `from` a root `to` a root that reads its state through `terraform_remote_state`, or a Terragrunt unit `to` a unit that depends on it; an edge between two projects matched a read of a state outside the reader's project to the root of the other whose backend holds it |
 | `dora` | the [delivery metrics](/terragucci/reference/delivery-metrics/) beside the page: `file` (`dora.json`), `generated`, and the estate's applied waves in their window as `deployments` |
 
-Each project's `inventory.json` is `terragucci.inventory/v1`, with its JSON Schema in the package as `dist/inventory.schema.json`. A `tf-apply` wave's upload replaces the list of each root it applied, unless the file holds a newer one.
+A project's `inventory.json` is `terragucci.inventory/v1` (`dist/inventory.schema.json`). A `tf-apply` wave's upload replaces the list of each root it applied, unless the file holds a newer one.
 
 | Field | What it holds |
 |---|---|
 | `roots[]` | by root path: `root`, the `commit`, `wave` and `finished` time of the wave that recorded the list, the wave's directory as `path`, relative to the project's `index.json`, and `resources`, each with `address`, `type` and `provider` |
 
-Each project's `changes.json` is `terragucci.changes/v1`, with its JSON Schema in the package as `dist/changes.schema.json`: one row per resource each applied `tf-apply` wave changed, newest first, up to 20,000 rows. A rerun of the same wave replaces its rows.
+Its `changes.json`, `terragucci.changes/v1` (`dist/changes.schema.json`), has one row per resource each applied `tf-apply` wave changed, newest first, up to 20,000 rows. A rerun of the same wave replaces its rows.
 
 | Row field | What it holds |
 |---|---|
@@ -144,7 +144,7 @@ Each project's `changes.json` is `terragucci.changes/v1`, with its JSON Schema i
 | `plan_digest`, `set_digest` | the root's plan digest, and the wave's set digest, which its approval binds |
 | `pull_request` | the pull or merge request the wave applied |
 
-`history.json` beside the page is `terragucci.history/v1`, with its JSON Schema in the package as `dist/history.schema.json`. `terragucci estate` builds it from every project's `changes.json` and the audit trail.
+`terragucci estate` also builds `history.json` beside the page, `terragucci.history/v1` (`dist/history.schema.json`), from every project's `changes.json` and the audit trail.
 
 | Field | What it holds |
 |---|---|
@@ -154,7 +154,7 @@ Each project's `changes.json` is `terragucci.changes/v1`, with its JSON Schema i
 
 ## State versions
 
-A project's `states.json` holds the version ids its roots' applies left, never a state's contents. Its `schema` is `terragucci.state-versions/v1`, checked by `dist/state-versions.schema.json`. When a wave uploads its report, every root it applied adds its version, unless the root already lists that version. A root keeps its newest 20.
+A project's `states.json` holds the version ids its roots' applies left, without any state's contents; its `schema` is `terragucci.state-versions/v1`, checked by `dist/state-versions.schema.json`. When a wave uploads its report, every root it applied adds its version, unless the root already lists that version. A root keeps its newest 20.
 
 | Field | What it holds |
 |---|---|
@@ -165,7 +165,7 @@ A project's `states.json` holds the version ids its roots' applies left, never a
 
 ## Cross-state edges
 
-A project's `edges.json` holds, for each root, the roots whose state it reads and the runs that planned and applied it: root paths and run facts, never a state's contents or an output's value. Its `schema` is `terragucci.state-edges/v1`, checked by `dist/state-edges.schema.json`. An upload writes it when a root of the report reads another's state, or when a `tf-apply` wave changed a root.
+A project's `edges.json` holds, for each root, the roots whose state it reads and the runs that planned and applied it, as root paths and run facts with no state contents or output values. Its `schema` is `terragucci.state-edges/v1`, checked by `dist/state-edges.schema.json`. An upload writes it when a root of the report reads another's state, or when a `tf-apply` wave changed a root.
 
 | Field | What it holds |
 |---|---|

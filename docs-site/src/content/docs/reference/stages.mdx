@@ -1,6 +1,6 @@
 ---
 title: Stages
-description: What each stage does, its inputs, permissions and outputs.
+description: Each stage's inputs, permissions and outputs.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -55,7 +55,7 @@ Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 whi
 :::tip[A live check before any plan]
 Every pull request learns, before any plan and with no cloud credentials, whether each resource can carry the tag that identifies it.
 
-<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci. <a href="/terragucci/guides/use-a-binary/#choudoufu">Set it up</a>.</small>
+<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci; <a href="/terragucci/guides/use-a-binary/#choudoufu">set it up</a>.</small>
 :::
 
 | Order | Command | A difference |
@@ -90,7 +90,7 @@ With [`policy`](/terragucci/reference/policy/) set, the last step runs `conftest
 
 ## Drift
 
-Set `drift` in `terragucci.yml` to a cron schedule and the pipeline gets a `drift` job that runs on it.
+A cron schedule in `drift` adds a `drift` job that runs on it.
 
 ```yaml
 drift: "0 6 * * *"
@@ -155,7 +155,7 @@ A wave whose plans changed since approval applies nothing and exits 4:
 
 ## State migrations
 
-A file in `migrations/` moves resources from one root's state to another's. `stage tf-plan` proves the first migration that has not applied, since a later one plans against the states it writes: every affected root plans with no change against its new state. The job fails when one would change. Wave 1 of `stage tf-apply` proves it again before it plans its roots and waits on the gate `tf-migrate <name>`, with the same exit codes as a wave: 3 while it waits, 4 when a state moved since the approval, 1 when it cannot be proved or written. Approved, it writes the new states under each state's lock and records each version before and after. See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
+A file in `migrations/` moves resources between roots' states. `stage tf-plan` proves the first migration that has not applied, since a later one plans against the states it writes: every affected root plans with no change against its new state. The job fails when one would change. Wave 1 of `stage tf-apply` proves it again before it plans its roots and waits on the gate `tf-migrate <name>`, with the same exit codes as a wave: 3 while it waits, 4 when a state moved since the approval, 1 when it cannot be proved or written. Approved, it writes the new states under each state's lock and records each version before and after. See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
 
 ## Rolling out a module version
 
@@ -216,7 +216,7 @@ The `publish` job runs after `apply` on the default branch and alone gets the [r
 
 ### Version bump rules
 
-A changed module is published at the version these rules give. [Responses](/terragucci/reference/responses/#version-bump) and [Publish your modules](/terragucci/guides/publish-modules/) link here.
+A changed module is published at the version these rules give; [Responses](/terragucci/reference/responses/#version-bump) and [Publish your modules](/terragucci/guides/publish-modules/) link here.
 
 | Commit or file | Bump |
 |---|---|

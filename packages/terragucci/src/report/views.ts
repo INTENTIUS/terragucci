@@ -127,10 +127,14 @@ export const BLAST_LISTED = 40;
 export function blastLines(report: Report, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
   const b = report.blast;
   if (!b || b.downstream.length === 0) return undefined;
-  let t = `**Blast radius:** ${plural(b.roots.length, "root")} ${b.roots.length === 1 ? "changes" : "change"} (${b.roots.slice(0, 10).map(code).join(", ")}${b.roots.length > 10 ? `, and ${b.roots.length - 10} more` : ""}), and ${plural(b.downstream.length, "root")} downstream ${b.downstream.length === 1 ? "reads" : "read"} their state:\n\n`;
+  // A Terragrunt repo's units read each other through dependency blocks, not terraform_remote_state.
+  const unit = report.roots.some((r) => r.terragrunt !== undefined);
+  const what = unit ? "unit" : "root";
+  const reads = (n: number): string => (unit ? (n === 1 ? "depends on" : "depend on") : n === 1 ? "reads" : "read");
+  let t = `**Blast radius:** ${plural(b.roots.length, what)} ${b.roots.length === 1 ? "changes" : "change"} (${b.roots.slice(0, 10).map(code).join(", ")}${b.roots.length > 10 ? `, and ${b.roots.length - 10} more` : ""}), and ${plural(b.downstream.length, what)} downstream ${reads(b.downstream.length)} ${unit ? "them" : "their state"}:\n\n`;
   for (const d of b.downstream.slice(0, BLAST_LISTED)) {
     const who = d.planned ? name(d.root) : code(d.root);
-    t += `- ${who}${d.wave !== undefined ? ` (wave ${d.wave})` : ""} reads ${d.reads.map(code).join(", ")}${d.planned ? "" : "; not planned in this run"}\n`;
+    t += `- ${who}${d.wave !== undefined ? ` (wave ${d.wave})` : ""} ${reads(1)} ${d.reads.map(code).join(", ")}${d.planned ? "" : "; not planned in this run"}\n`;
   }
   if (b.downstream.length > BLAST_LISTED) t += `- and ${b.downstream.length - BLAST_LISTED} more in the report's JSON\n`;
   return t;

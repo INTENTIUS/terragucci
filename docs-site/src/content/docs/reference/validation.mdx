@@ -6,7 +6,7 @@ description: Every pipeline feature is proven on a local Forgejo against an AWS 
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
-Every pipeline feature has a check that runs on a local Forgejo against an AWS emulator. The per-forge claims below list what is also proven on GitHub, github.com and GitLab. A local check must pass, and also fail when broken on purpose.
+A local check must pass, and also fail when broken on purpose.
 
 | Forge | What runs |
 |---|---|
@@ -17,9 +17,9 @@ Every pipeline feature has a check that runs on a local Forgejo against an AWS e
 
 ## The per-forge claims
 
-These are the features proven on each forge. Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
+Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
 
-The github.com claims run the newest published release against real GitHub: its pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account. That has these limits:
+The github.com claims run the newest published release against real GitHub pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account, with these limits:
 
 | Limit | What runs instead |
 |---|---|
@@ -33,7 +33,7 @@ The github.com claims run the newest published release against real GitHub: its 
 
 ## The example's checks
 
-Every pipeline feature has a check here, run against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo. A check that passes has also been broken on purpose, and it failed then. The GitLab column lists the checks that also run on a local GitLab CE and its runner, each in a small repo with the pipeline `terragucci init` writes for GitLab.
+Each check runs against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo; a passing check also failed when broken on purpose. The GitLab column lists the checks that also run on a local GitLab CE and its runner, each in a small repo with the pipeline `terragucci init` writes for GitLab.
 
 <SmokeClaims />
 
@@ -41,4 +41,4 @@ The same setup runs on your laptop. [The tutorial](/terragucci/tutorial/) boots 
 
 ## Running it yourself
 
-[CONTRIBUTING.md](https://github.com/INTENTIUS/terragucci/blob/main/CONTRIBUTING.md) says how to run these checks on your own machine.
+See [CONTRIBUTING.md](https://github.com/INTENTIUS/terragucci/blob/main/CONTRIBUTING.md).

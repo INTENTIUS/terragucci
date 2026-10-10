@@ -13,11 +13,11 @@ prompt: |
 import Shot from '../../../components/Shot.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 Every run's report in a bucket under one path per run, and an `index.html` that lists every plan you have run.
 
-## Before you start
+## Prerequisites
 
 | Cloud | Store | Identity the plan job writes with |
 |---|---|---|
@@ -43,7 +43,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
      role: arn:aws:iam::123456789012:role/terragucci-reports
    ```
 
-   For a store that is not AWS, add `endpoint`. When it is absent, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
+   For a store that is not AWS, add `endpoint`; without it, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
 
    Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. For a bucket in another region, set it in the config's `env`:
 
@@ -74,7 +74,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
    `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` and each root's `plan.txt` there. Without `url` the note links them in the bucket, presigned for up to 7 days.
 
-2. Write the pipeline again, and commit the result.
+2. Regenerate the pipeline and commit it.
 
    ```bash
    npx terragucci init
@@ -82,7 +82,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 3. <span id="3-give-the-job-an-identity-that-writes-only-reports"></span>Give the job an identity that writes only reports.
 
-   The plan job runs the pull request's code, which can read its credentials. Give the identity that writes reports nothing but read and write under the prefix.
+   The plan job runs the pull request's code, and that code can read its credentials. Limit this identity to read and write under the prefix.
 
    <Tabs syncKey="cloud">
      <TabItem label="AWS">
@@ -242,7 +242,7 @@ Register a web application with your identity provider first, with the redirect 
    OidcClientSecretName=terragucci-reports-client AllowedEmailDomain=acme.example
    ```
 
-3. Let the distribution read the bucket. Add the statement in the stack's `BucketPolicyStatement` output to the bucket's policy:
+3. Let the distribution read the bucket by adding the statement in the stack's `BucketPolicyStatement` output to the bucket's policy:
 
    ```bash
    aws cloudformation describe-stacks --region us-east-1 --stack-name terragucci-reports \
@@ -280,7 +280,7 @@ Register a web application with your identity provider first, with the redirect 
 
 A request without a session cookie goes to the identity provider and then back to its report. `/_terragucci/logout` clears the session. A parameter change reaches the edge within five minutes.
 
-Deleting the stack can fail on the function while CloudFront removes its copies, which takes a few hours. Delete it again after that.
+Deleting the stack can fail on the function while CloudFront removes its copies, which takes a few hours; delete it again after that.
 
 ## Next
 

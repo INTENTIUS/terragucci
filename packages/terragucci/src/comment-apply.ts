@@ -529,7 +529,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   const what = o.terragrunt ? "unit" : "root";
 
   /** Lock what the head of an open pull request of this repository reaches, as a plan lock. */
-  const lockHead = async (pr: any, number: number, reply: (text: string) => Promise<void>): Promise<ApplyCommentDecision> => {
+  const lockHead = async (pr: any, number: number, reply: (text: string) => Promise<void>, reread = false): Promise<ApplyCommentDecision> => {
     if (pr?.state !== "open" || pr?.merged === true) return stop(`pull request ${number} is not open, so it takes no lock`);
     if (pr?.head?.repo?.full_name !== repo) return stop(`pull request ${number} comes from a fork, so it takes no lock`);
     if (!validBranch(base)) return broke("the event names no default branch this command passes on");
@@ -542,8 +542,25 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
     const headRemote = "refs/remotes/terragucci/pull-request-head";
     const fetched = git(["fetch", "-q", "origin", `+refs/heads/${base}:${remote}`, `+refs/heads/${headRef}:${headRemote}`]);
     if (fetched.status !== 0) return broke(`could not fetch ${base} and ${headRef} (${fetched.stderr.trim()})`);
-    // A head that moved since the event is the next event's to lock.
-    if (git(["rev-parse", headRemote]).stdout.trim() !== sha) return stop(`pull request ${number} moved since this event; its next run locks the new head`);
+    // A head that moved since the event is locked as the forge has it now: a push made with the job's own token,
+    // such as the check job's format fix on GitHub, starts no run, so no later event would lock it.
+    const now = git(["rev-parse", headRemote]).stdout.trim();
+    if (now !== sha) {
+      if (reread) return stop(`pull request ${number} moved again while it was read; its next run locks the new head`);
+      // The forge can take a few seconds to move the pull request's head after the push.
+      const wait = o.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+      let fresh: any;
+      for (let read = 1; read <= HEAD_READS; read++) {
+        try {
+          fresh = await call("GET", `repos/${repo}/pulls/${number}`);
+        } catch (e) {
+          return broke(`pull request ${number} moved since this event, and could not be read again (${(e as Error).message})`);
+        }
+        if (fresh?.head?.sha === now) return lockHead(fresh, number, reply, true);
+        if (read < HEAD_READS) await wait(HEAD_WAIT_MS);
+      }
+      return stop(`pull request ${number} moved since this event; its next run locks the new head`);
+    }
     const reach = o.terragrunt ? reachedUnits(git, remote, sha, o.layers) : { units: reachedRoots(repoDir, git, remote, sha, o.layers) };
     const author = typeof pr?.user?.login === "string" && LOGIN.test(pr.user.login) ? pr.user.login : "its author";
     let locked;
@@ -563,6 +580,23 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
     const freed = locked.released?.length ? `; released ${locked.released.join(", ")}, which its head no longer reaches` : "";
     return stop(`pull request ${number} at ${short(sha)} ${holds}${freed}${reach.every ? ` (${everyUnit(number, reach.every)})` : ""}`);
   };
+
+  // A push to a branch: the fmt job, once it has committed the formatting with the job's own token (a push that
+  // starts no run), answers the lock of the branch's open pull request on its new head.
+  if (typeof event.ref === "string" && event.ref.startsWith("refs/heads/") && !event.pull_request && !event.comment) {
+    const branch = event.ref.slice("refs/heads/".length);
+    let open: any;
+    try {
+      open = await call("GET", `repos/${repo}/pulls?state=open&per_page=100&limit=50`);
+    } catch (e) {
+      return broke(`could not list the open pull requests (${(e as Error).message})`);
+    }
+    const from = (Array.isArray(open) ? open : []).filter((p: any) => p?.head?.ref === branch && p?.head?.repo?.full_name === repo && Number.isInteger(p?.number));
+    if (from.length === 0) return stop(`no open pull request comes from ${branch}`);
+    const said: string[] = [];
+    for (const p of from) said.push((await lockHead(p, p.number, replyOn(p.number))).reason);
+    return stop(said.join("; "));
+  }
 
   if (event.pull_request && typeof event.pull_request === "object") {
     const number = event.pull_request.number ?? event.number;
@@ -625,6 +659,10 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   }
   return lockHead(pr, number, reply);
 }
+
+/** How many times pr-lock reads a pull request whose head moved since the event, and how long between reads. */
+const HEAD_READS = 4;
+const HEAD_WAIT_MS = 3000;
 
 /** How many times a pull request the forge has not finished checking is read again, and how long between reads. */
 const MERGEABLE_READS = 5;

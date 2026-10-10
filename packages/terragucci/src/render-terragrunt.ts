@@ -40,6 +40,8 @@ export interface TerragruntPipelineInput {
   credentials?: Record<string, RolePair>;
   /** The repo has explicit stacks: the check job generates their units before it validates them. */
   stacks?: boolean;
+  /** `generate` is set: the check job runs `terragucci generate --check`, which refuses a terragucci.hcl out of line with terragucci.yml. */
+  generate?: boolean;
 }
 
 /** Where sources and providers are kept: under the repo, in a directory Terragrunt's discovery skips. */
@@ -89,6 +91,8 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     // The modules units call are plain Terraform: the binary formats them, Terragrunt formats its own files.
     `${binary} fmt -check -recursive -diff .`,
     "terragrunt hcl fmt --check --diff --no-color",
+    // With `generate` set, terragucci.hcl must be what terragucci generate writes, and every unit must include it.
+    ...(tg.generate ? ["terragucci generate --check"] : []),
     // An explicit stack's units are generated, not committed: generate them, then validate them with the rest.
     ...(tg.stacks ? ["terragrunt stack generate --non-interactive --no-color"] : []),
     `terragrunt hcl validate --inputs --no-color ${filters(tg.exclude)}`,

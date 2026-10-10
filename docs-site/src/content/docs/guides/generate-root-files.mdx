@@ -1,7 +1,7 @@
 ---
 title: Generate backend and provider files
 description: Write the backend, provider and version files of every root from terragucci.yml, and have tf-check refuse a hand edit.
-claims: [generate]
+claims: [generate, tg-generate]
 prompt: |
   Read https://intentius.io/terragucci/guides/generate-root-files/.
   Read the backend, provider and required_version blocks in my Terraform directories and propose a generate key for terragucci.yml that writes the same values: shared values at the top, per-directory values under dirs, single-directory values under roots.
@@ -11,9 +11,9 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
-`terragucci generate` writes these files from `terragucci.yml`:
+`terragucci generate` writes three files from `terragucci.yml`.
 
 | File | Holds |
 |---|---|
@@ -21,7 +21,7 @@ import { Steps } from '@astrojs/starlight/components';
 | `providers.tf` | a `provider` block per configuration that sets an argument, aliases included |
 | `versions.tf` | `required_version`, and `required_providers` from each provider's `source` and `version` |
 
-Each is plain HCL in the layout `fmt` keeps, with a first line that says terragucci wrote it. Only the binary reads them. A directory keeps working as ordinary Terraform or OpenTofu, by hand or after you drop `generate`.
+Each is plain HCL in `fmt`'s layout, and its first line says terragucci wrote it. Only the binary reads them; a directory stays ordinary Terraform or OpenTofu that works by hand or without `generate`.
 
 `tf-check` holds the files to the config. The check job fails, naming the file, when a generated file:
 
@@ -31,12 +31,12 @@ Each is plain HCL in the layout `fmt` keeps, with a first line that says terragu
 | is missing | a new directory matched, and nobody ran `generate` |
 | is left over | the config no longer asks for it |
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
 | The [pipeline](/terragucci/getting-started/) | `init` adds `terragucci generate --check` to the check job |
-| No Terragrunt | Terragrunt writes these files with its own [`generate` blocks](https://terragrunt.gruntwork.io/docs/reference/hcl/blocks/#generate) and `remote_state`, included from `root.hcl`. terragucci refuses the key in a Terragrunt repo |
+| In a Terragrunt repo, an `include "terragucci"` in each unit | the settings reach a unit through `terragucci.hcl` ([In a Terragrunt repo](#in-a-terragrunt-repo)) |
 
 ## Steps
 
@@ -88,7 +88,7 @@ Each is plain HCL in the layout `fmt` keeps, with a first line that says terragu
 
 </Steps>
 
-## How the levels stack
+## Level precedence
 
 | Order | Level | Applies to |
 |---|---|---|
@@ -110,13 +110,43 @@ Values are literals. A `${` in a value is written as `$${`, so nothing interpola
 
 ## The version each directory declares
 
-With no `required_version` at any level, `versions.tf` takes the release `version` in `terragucci.yml` gives that path: the first matching glob of [the version map](/terragucci/reference/config/#a-version-per-root), or the one release. The version a job runs and the one the code declares then come from the same key.
+With no `required_version` at any level, `versions.tf` takes the release `version` in `terragucci.yml` gives that path: the first matching glob of [the version map](/terragucci/reference/config/#a-version-per-root), or the one release. The version a job runs and the version the code declares then share one key.
 
 An exact `required_version` that disagrees with the pin stops `generate`. A range such as `">= 1.6"` is kept as written. `required_version: null` writes none. Under `binary: choudoufu`, `version` names a [choudoufu](/terragucci/concepts/glossary/#choudoufu) release, which is not a `required_version`.
 
-## Which directories get files
+## Target directories
 
 `generate` writes for the directories `init` plans, found by `roots` or by detection, and for each path under `generate.roots`. Naming a new directory there gives it a backend before it has one of its own. `generate` deletes a generated file the config stops asking for, and `generate --check` refuses it.
+
+## In a Terragrunt repo
+
+In a Terragrunt repo, `generate` writes one file at the repo's root, `terragucci.hcl`, instead of files in each unit. It holds each unit's settings, resolved through the same three levels with `{root}` as the unit's path, and Terragrunt's own blocks that use them:
+
+| Block | Writes, in each unit's working directory |
+|---|---|
+| `remote_state`, with `disable_init` | `backend.tf`, from the unit's backend; Terragrunt creates no bucket, as for a plain root |
+| `generate "terragucci_providers"` | `providers.tf` |
+| `generate "terragucci_versions"` | `versions.tf` |
+
+Each unit takes them by including the file, in its `terragrunt.hcl`:
+
+```hcl
+include "terragucci" {
+  path = find_in_parent_folders("terragucci.hcl")
+}
+```
+
+The file is in the layout `terragrunt hcl fmt` keeps, and `tf-check` holds it to the config as it holds generated files. The check job also fails, naming the file, when:
+
+| Case | Why |
+|---|---|
+| a unit does not include `terragucci.hcl` | the settings would never reach it |
+| another `.hcl` file declares `remote_state` | two backends would contend in each unit that includes both |
+| another `.hcl` file has a `generate` block for `backend.tf`, `providers.tf` or `versions.tf` | two blocks would write one file |
+
+`generate` gives every unit a backend, or none: a backend for some units and not others stops it. The units are the directories holding a `terragrunt.hcl`, less `terragrunt.exclude`; the units of an explicit stack are generated by Terragrunt, so they take their settings from the stack's own files.
+
+Terragrunt's own `generate` and `remote_state` blocks in `root.hcl` already keep one repo's units alike. What `generate` adds is one source for plain roots and Terragrunt units across a control repo's projects (`defaults.generate`), `required_version` from `version`, and a check job that refuses a hand edit.
 
 ## In a control repo
 

@@ -19,7 +19,8 @@
         "failed_roots": { "type": "integer" },
         "unreadable": { "type": "integer", "description": "Projects whose index could not be read." },
         "overridden_roots": { "type": "integer", "description": "Roots the newest apply waves applied under a policy override. Absent when none." },
-        "resources": { "type": "integer", "description": "Resources across every project's inventory. Absent when no project has one." }
+        "resources": { "type": "integer", "description": "Resources across every project's inventory. Absent when no project has one." },
+        "ephemeral": { "type": "integer", "description": "Live ephemeral environments across every project. Absent when none is live." }
       }
     },
     "projects": { "type": "array", "items": { "$ref": "#/$defs/project" } },
@@ -178,6 +179,25 @@
             "commit": { "type": "string" },
             "updated": { "type": "string" },
             "page": { "type": "string" }
+          }
+        },
+        "ephemeral": {
+          "type": "array",
+          "description": "The live ephemeral environments, from its ephemeral.json: each pull request's copy of the ephemeral roots, their state keys, and when it expires. Absent when none is live.",
+          "items": {
+            "type": "object",
+            "required": ["pull_request", "suffix", "roots", "commit", "applied", "expires", "status"],
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "pull_request_url": { "type": "string" },
+              "suffix": { "type": "string", "description": "What the copy's state keys end in: pr-<n>." },
+              "roots": { "type": "array", "items": { "type": "object", "required": ["root", "location"], "properties": { "root": { "type": "string" }, "location": { "type": "string" } } } },
+              "commit": { "type": "string", "description": "The head the copy last applied from." },
+              "applied": { "type": "string" },
+              "expires": { "type": "string" },
+              "approved_by": { "type": "string" },
+              "status": { "enum": ["live", "destroy-failed"] }
+            }
           }
         }
       }

@@ -42,7 +42,7 @@ const posix = (p: string): string => p.split("\\").join("/");
 
 /**
  * A root is a directory whose Terraform files declare a backend (or a `cloud`
- * block) or configure a provider. A child module does neither, so a module
+ * block, or choudoufu's `live` block) or configure a provider. A child module does neither, so a module
  * with its own `terraform { required_providers }` block is not a root.
  */
 export function isRoot(dir: string): boolean {
@@ -62,6 +62,8 @@ export function rootReason(dir: string): string | undefined {
     if (m) return `backend ${m[1]}`;
   }
   if (texts.some((t) => /^\s*cloud\s*\{/m.test(t))) return "cloud block";
+  // choudoufu keeps an estate in a record store its `terraform { live { ... } }` block names, in place of a backend.
+  if (texts.some(hasLiveBlock)) return "choudoufu live block";
   for (const text of texts) {
     const m = text.match(/^\s*provider\s+"([^"]+)"\s*\{/m);
     if (m) return `provider ${m[1]}`;
@@ -88,6 +90,23 @@ function jsonRootReason(text: string): string | undefined {
   if (blocks.some((b) => b.cloud !== undefined)) return "cloud block";
   const provider = Object.keys(obj(obj(doc)?.provider) ?? {})[0];
   return provider ? `provider ${provider}` : undefined;
+}
+
+/** Whether a `terraform` block holds a `live` block directly. */
+function hasLiveBlock(text: string): boolean {
+  for (const m of text.matchAll(/^\s*terraform\s*\{/gm)) {
+    let depth = 1;
+    let line = "";
+    for (let i = (m.index ?? 0) + m[0].length; i < text.length && depth > 0; i++) {
+      const c = text[i]!;
+      if (c === "{") {
+        if (depth === 1 && /^\s*live\s*$/.test(line)) return true;
+        depth++;
+      } else if (c === "}") depth--;
+      line = c === "\n" ? "" : line + c;
+    }
+  }
+  return false;
 }
 
 function stripComments(text: string): string {
@@ -291,6 +310,48 @@ export function rootStates(repo: string, roots: string[]): Map<string, { state?:
     out.set(root, { ...(own ? { state: { ...(own.bucket !== undefined ? { bucket: own.bucket } : {}), key: own.key } } : {}), external });
   }
   return out;
+}
+
+/**
+ * The backend a root's code declares: its type and the attributes written as
+ * plain strings, from its `.tf` files or Terraform's JSON syntax. `cloud` for
+ * a `cloud` block. Undefined when the root declares neither. Backend blocks
+ * take no expressions, so a string is all an attribute can be.
+ */
+export function backendBlock(dir: string): { type: string; attrs: Record<string, string> } | { cloud: true } | undefined {
+  for (const f of tfFiles(dir)) {
+    const raw = readFileSync(f, "utf-8");
+    if (isJson(f)) {
+      let doc: unknown;
+      try {
+        doc = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const terraform = (doc as Record<string, unknown> | null)?.terraform;
+      for (const b of (Array.isArray(terraform) ? terraform : [terraform]) as Record<string, unknown>[]) {
+        if (!b || typeof b !== "object") continue;
+        if (b.cloud !== undefined) return { cloud: true };
+        const backends = b.backend && typeof b.backend === "object" ? (b.backend as Record<string, unknown>) : {};
+        const type = Object.keys(backends)[0];
+        if (!type) continue;
+        const body = (Array.isArray(backends[type]) ? (backends[type] as unknown[])[0] : backends[type]) as Record<string, unknown> | undefined;
+        const attrs = Object.fromEntries(Object.entries(body ?? {}).filter(([, v]) => typeof v === "string")) as Record<string, string>;
+        return { type, attrs };
+      }
+      continue;
+    }
+    const text = stripComments(raw);
+    const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
+    if (m) {
+      const body = blockBody(text, m.index!);
+      const attrs: Record<string, string> = {};
+      for (const a of body.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"/gm)) attrs[a[1]] = a[2];
+      return { type: m[1], attrs };
+    }
+    if (/^\s*cloud\s*\{/m.test(text)) return { cloud: true };
+  }
+  return undefined;
 }
 
 /** Two addresses name one state: the same key, and the same bucket where both name one. */

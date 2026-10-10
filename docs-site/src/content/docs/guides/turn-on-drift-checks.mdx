@@ -1,7 +1,7 @@
 ---
 title: Turn on drift checks
 description: Plan every root on a schedule and get a grouped report of what changed outside Terraform.
-claims: [drift, drift-overdue, drift-close, respond-drift, comment-plan, waves]
+claims: [drift, drift-overdue, drift-close, respond-drift, comment-plan, waves, apply-branches-drift]
 prompt: |
   Read https://intentius.io/terragucci/guides/turn-on-drift-checks/.
   Add a `drift:` cron to terragucci.yml, run `npx terragucci config check --json`
@@ -13,11 +13,11 @@ prompt: |
 import Shot from '../../../components/Shot.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A scheduled `tf-drift` run that plans every root and one issue reporting the drift, grouped like a pull-request plan.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -75,7 +75,7 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 5. Read the issue.
 
-   Each project has at most one open issue, `terragucci: drift found`, updated on each run. The job never applies. A root that cannot be refreshed fails it; drift alone does not.
+   Each project has at most one open issue, `terragucci: drift found`, updated on each run. A root that cannot be refreshed fails the job; drift alone does not.
 
    | Event | The issue |
    |---|---|
@@ -112,9 +112,9 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
    The next drift run that finds every root clean closes the issue.
 
-   Drift the pull request cannot write, such as a value set through a variable or a module, can go to a coding agent instead: with [`agent.drift`](/terragucci/guides/agent-fix-drift/), the drift job's issue starts an agent whose change comes back as a pull request.
+   Drift the pull request cannot write, such as a value set through a variable or a module, can go to a coding agent: with [`agent.drift`](/terragucci/guides/agent-fix-drift/), the drift issue starts an agent that returns its change as a pull request.
 
-   Nothing in the drift job applies or merges. The approval of the wave and the report of each run stay as the [audit trail](/terragucci/reference/audit-trail/).
+   Nothing in the drift job applies or merges. Each wave's approval and each run's report stay in the [audit trail](/terragucci/reference/audit-trail/).
 
    With `respond.drift: attribute`, the issue also says who changed each attribute, read from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)):
 
@@ -122,9 +122,19 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 7. Watch for an overdue note.
 
-   If the schedule stops, the next pull request's plan note says the drift checks are overdue and why ([Overdue drift checks](/terragucci/reference/stages/#overdue-drift-checks)).
+   When the schedule stops, the next pull request's plan note says why the drift checks are overdue ([Overdue drift checks](/terragucci/reference/stages/#overdue-drift-checks)).
 
 </Steps>
+
+## Roots another branch applies
+
+With [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches), a root that another branch applies is what that branch applied, not what the default branch holds. The drift job runs on the default branch and checks such a root from its own branch: it fetches the branch from `origin`, checks it out beside the default branch, and plans the root there. The log names the branch and its commit:
+
+```text
+apply.branches: envs/prod/app plans from release at 3f9a1c2e, the branch that applies it
+```
+
+So a provider, backend or version the branch sets differently is the one the check uses, and the difference between the two branches is never reported as drift. A root whose branch cannot be fetched fails its check with the reason; it is never checked against the default branch instead. In a Terragrunt repo, a branch's units plan with one `run --all` in that branch's checkout.
 
 ## Next
 

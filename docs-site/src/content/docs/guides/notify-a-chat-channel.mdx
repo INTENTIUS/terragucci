@@ -12,9 +12,9 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
-A message in your channel each time an apply job stops at a wave, and each time the drift job finds drift. A message approves nothing. A person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
+A message in your channel each time an apply job stops at a wave or the drift job finds drift. The message approves nothing; a person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
 
 | You want | You set up |
 |---|---|
@@ -27,7 +27,7 @@ A message in your channel each time an apply job stops at a wave, and each time 
 | is refused: its plans changed after approval | 4 | the wave, its roots, the outcome line, `npx terragucci approve wave-<k> --plan <digest>` for the new digest, and the run |
 | fails, or the policy denies it | 1 | the wave, its roots, the outcome line, that there is nothing to approve, and the run |
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -130,7 +130,7 @@ The generic webhook gets no drift event: its events are a wave's.
 
 ## Approve from the message, by review
 
-With [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review), a waiting wave's message opens with a link to the pull request's review page, when an approving review of its head would approve the wave. The approval is still a person's own review on the forge, and it binds the plans the pull request's note recorded. The chat app holds no key and approves nothing.
+With [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review), a waiting wave's message opens with a link to the pull request's review page when an approving review of its head would approve the wave. The approval is still a person's own review on the forge, and it binds the plans the pull request's note recorded. The chat app holds no key and approves nothing.
 
 ```text
 terragucci: wave 2 of github.com/acme/infra waits for an approval
@@ -151,11 +151,11 @@ In Teams, the card's first button (Review and approve) opens the same page.
 
 A direct push gets no link, and neither does a refused wave or one the pull request's note has no digest for: no review of that head can approve those plans. The message then offers the approve command alone.
 
-After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-with-chant)). The wave finds the approving review of the head and records it on `chant/lifecycle` with `via: pr-review`. Then it applies.
+After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-with-chant)). The wave finds the approving review of the head and records it on `chant/lifecycle` with `via: pr-review`, then applies.
 
 ## Send events to your own webhook
 
-For a program rather than a channel, such as a chat bot, an incident tool or a relay that approves from chat, `notify` also posts one JSON event to any HTTPS endpoint. A key you hold signs it. The default chat path above needs none of this.
+For a program such as a chat bot, an incident tool or a relay that approves from chat, `notify` also posts one JSON event, signed with a key you hold, to any HTTPS endpoint. The chat setup above needs none of this.
 
 <Steps>
 

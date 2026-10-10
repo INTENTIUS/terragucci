@@ -15,18 +15,30 @@
  * `required_version`, when no level sets it, is the version terragucci.yml's
  * `version` gives the root (its map's first matching glob, or the one
  * release), so the version the job runs and the one the root declares come
- * from one key. A Terragrunt repo generates its boilerplate with Terragrunt's
- * own `generate` blocks, so generate refuses one.
+ * from one key.
+ *
+ * In a Terragrunt repo the same settings, resolved for each unit with the
+ * same three levels, become one file at the repo's root, `terragucci.hcl`:
+ * a `remote_state` block and `generate` blocks that Terragrunt runs, keyed
+ * by the unit's path, so Terragrunt writes each unit's backend.tf,
+ * providers.tf and versions.tf in its working directory. Each unit includes
+ * it (`include "terragucci"`); `--check` refuses a unit that does not, so no
+ * unit silently goes without its settings, and a `remote_state` block or a
+ * `generate` block for the same file elsewhere, which would contend with it.
+ * Terragrunt's own blocks in root.hcl do the same within one repo; what
+ * generate adds is one source across a control repo's projects
+ * (`defaults.generate`), plain and Terragrunt alike, `required_version` kept
+ * in line with `version`, and tf-check refusing a hand edit.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ConfigError, type ResolvedSettings } from "./config";
 import { findRoots, globMatch } from "./detect";
-import { IDENT, isMap, overlayLevel, TERRAGRUNT_GENERATE, type GenerateLevel, type GenerateSettings } from "./generate-config";
+import { IDENT, isMap, overlayLevel, type GenerateLevel, type GenerateSettings } from "./generate-config";
 import { versionGlobs } from "./pins";
-import { detectTerragrunt } from "./terragrunt";
+import { detectTerragrunt, hclBlocks, walkUnits } from "./terragrunt";
 
-export { checkGenerate, combineGenerate, TERRAGRUNT_GENERATE, type GenerateLevel, type GenerateSettings } from "./generate-config";
+export { checkGenerate, combineGenerate, type GenerateLevel, type GenerateSettings } from "./generate-config";
 
 /** A file generate writes, as init's FileChange. */
 interface FileChange {
@@ -223,8 +235,10 @@ function handDeclared(dir: string, what: "backend" | "required_version"): string
 }
 
 export interface GeneratePlan {
-  /** The roots generate wrote for. */
+  /** The roots generate wrote for; in a Terragrunt repo, the units. */
   roots: string[];
+  /** A Terragrunt repo: one terragucci.hcl for every unit. */
+  terragrunt?: boolean;
   /** Each generated file: created, updated, unchanged, or removed (generated, and no longer asked for). */
   files: FileChange[];
   /** Files at a generated file's path that terragucci did not write, with what to do. */
@@ -247,7 +261,7 @@ export function generateRoots(repo: string, settings: ResolvedSettings): string[
  * ConfigError for a Terragrunt repo and for settings that cannot be written.
  */
 export function planGenerate(repo: string, settings: ResolvedSettings): GeneratePlan {
-  if (detectTerragrunt(repo)) throw new ConfigError(TERRAGRUNT_GENERATE);
+  if (detectTerragrunt(repo)) return planTerragrunt(repo, settings);
   const gen = settings.generate ?? {};
   const roots = settings.generate ? generateRoots(repo, settings) : [];
   const files: FileChange[] = [];
@@ -283,6 +297,142 @@ export function planGenerate(repo: string, settings: ResolvedSettings): Generate
 }
 
 const rel = (repo: string, path: string): string => relative(repo, path) || path;
+
+// ── Terragrunt ───────────────────────────────────────────────────────────────
+
+/** The file generate writes at a Terragrunt repo's root, which every unit includes. */
+export const TERRAGRUNT_FILE = "terragucci.hcl";
+/** The include a unit names it by: its path is the unit's key in the file. */
+export const TERRAGRUNT_INCLUDE = "terragucci";
+/** What a unit's terragrunt.hcl adds to take generate's settings. */
+export const INCLUDE_BLOCK = `include "${TERRAGRUNT_INCLUDE}" {\n  path = find_in_parent_folders("${TERRAGRUNT_FILE}")\n}`;
+
+/** Text for an HCL template: `${` and `%{` doubled, so Terragrunt writes the file as it is. */
+const literal = (text: string): string => text.replace(/\$\{/g, () => "$${").replace(/%\{/g, () => "%%{");
+
+/** A generated file's body without the marker: Terragrunt heads the file with its own signature. */
+const unmarked = (content: string): string => content.slice(GENERATED_MARKER.length + 2);
+
+/** An indented heredoc, Terragrunt's `contents`: the text indented under the attribute, `<<-EOT` strips it. */
+function heredoc(text: string, indent: string): string {
+  const body = literal(text).replace(/\n$/, "").split("\n").map((l) => (l ? `${indent}  ${l}` : "")).join("\n");
+  return `<<-EOT\n${body}\n${indent}EOT`;
+}
+
+/** Every `.hcl` file Terragrunt reads, but terragucci.hcl and the caches. */
+function hclFiles(repo: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      if (SKIP.has(name) || name.startsWith(".")) continue;
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else if (name.endsWith(".hcl") && abs !== join(repo, TERRAGRUNT_FILE)) out.push(abs);
+    }
+  };
+  walk(repo);
+  return out.sort();
+}
+
+const hclComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"$])(#|\/\/).*$/gm, "$1");
+
+/** Whether a unit's terragrunt.hcl includes terragucci.hcl as `include "terragucci"`. */
+export function includesGenerated(text: string): boolean {
+  return hclBlocks(hclComments(text), `include(?=\\s+"${TERRAGRUNT_INCLUDE}")`).some((b) => b.includes(TERRAGRUNT_FILE));
+}
+
+/**
+ * terragucci.hcl for a Terragrunt repo: each unit's settings, resolved as a
+ * plain root's are, in a map keyed by the unit's path, which Terragrunt
+ * reads through `path_relative_to_include("terragucci")`. The backend goes
+ * through `remote_state` (with `disable_init`, so Terragrunt makes no bucket:
+ * the backend is the binary's, as for a plain root); the providers and the
+ * versions through `generate` blocks, each off for a unit without them.
+ * Written as `terragrunt hcl fmt` leaves it.
+ */
+export function renderTerragrunt(units: Map<string, RootSettings>): string | undefined {
+  const rendered = new Map([...units].map(([u, s]) => [u, { s, files: renderRoot(s) }]));
+  const withBackend = [...rendered].filter(([, r]) => r.s.backend).map(([u]) => u);
+  if (withBackend.length > 0 && withBackend.length < rendered.size) {
+    const without = [...rendered.keys()].filter((u) => !withBackend.includes(u));
+    throw new ConfigError(`generate gives ${withBackend.join(", ")} a backend and not ${without.join(", ")}; terragucci.hcl gives every unit that includes it a remote_state, so give each unit a backend or none`);
+  }
+  const has = (k: "providers" | "versions"): boolean => [...rendered.values()].some((r) => r.files[k] !== undefined);
+  if (withBackend.length === 0 && !has("providers") && !has("versions")) return undefined;
+  const keys = [...(withBackend.length ? ["backend", "config"] : []), ...(has("providers") ? ["providers"] : []), ...(has("versions") ? ["versions"] : [])];
+  const width = Math.max(...keys.map((k) => k.length));
+  const attr = (k: string, v: string): string => `      ${k.padEnd(width)} = ${v}`;
+  const entries = [...rendered].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([u, r]) => {
+    const lines = [`    ${hclString(u)} = {`];
+    if (r.s.backend) lines.push(attr("backend", hclString(r.s.backend.type)), attr("config", hclValue(r.s.backend.config)));
+    for (const k of ["providers", "versions"] as const) {
+      if (!keys.includes(k)) continue;
+      const f = r.files[k];
+      lines.push(attr(k, f === undefined ? '""' : heredoc(unmarked(f), "      ")));
+    }
+    lines.push("    }");
+    return lines.join("\n");
+  });
+  const out = [
+    GENERATED_MARKER,
+    "#",
+    "# Every unit includes it, in its terragrunt.hcl:",
+    "#",
+    ...INCLUDE_BLOCK.split("\n").map((l) => `#   ${l}`),
+    "",
+    "locals {",
+    "  terragucci_units = {",
+    entries.join("\n"),
+    "  }",
+    `  terragucci_unit = local.terragucci_units[path_relative_to_include("${TERRAGRUNT_INCLUDE}")]`,
+    "}",
+  ];
+  if (withBackend.length) {
+    out.push("", "remote_state {", "  backend      = local.terragucci_unit.backend", "  disable_init = true", "", "  generate = {", `    path      = "${GENERATED_FILES.backend}"`, '    if_exists = "overwrite_terragrunt"', "  }", "", "  config = local.terragucci_unit.config", "}");
+  }
+  for (const k of ["providers", "versions"] as const) {
+    if (!keys.includes(k)) continue;
+    out.push("", `generate "terragucci_${k}" {`, `  path      = "${GENERATED_FILES[k]}"`, '  if_exists = "overwrite_terragrunt"', `  disable   = local.terragucci_unit.${k} == ""`, `  contents  = local.terragucci_unit.${k}`, "}");
+  }
+  return out.join("\n") + "\n";
+}
+
+/** generate in a Terragrunt repo: terragucci.hcl, and why a unit or another file would keep it from taking effect. */
+function planTerragrunt(repo: string, settings: ResolvedSettings): GeneratePlan {
+  const path = join(repo, TERRAGRUNT_FILE);
+  const before = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+  const files: FileChange[] = [];
+  const foreign: string[] = [];
+  const gen = settings.generate;
+  const units = gen ? walkUnits(repo, settings.terragrunt?.exclude).map((u) => u.path) : [];
+  for (const u of Object.keys(gen?.roots ?? {})) {
+    if (!units.includes(u.replace(/\/+$/, ""))) throw new ConfigError(`generate.roots names ${u}, which is not a Terragrunt unit in the repo`);
+  }
+  const content = gen ? renderTerragrunt(new Map(units.map((u) => [u, rootSettings(gen, u, settings)]))) : undefined;
+  if (content !== undefined) {
+    if (before !== undefined && !before.startsWith(GENERATED_MARKER)) {
+      foreign.push(`${TERRAGRUNT_FILE} exists and terragucci did not write it; move what it declares into terragucci.yml's generate key and remove it, or rename it`);
+    } else files.push({ path, status: before === undefined ? "created" : before === content ? "unchanged" : "updated", content });
+    for (const u of units) {
+      const text = readFileSync(join(repo, u, "terragrunt.hcl"), "utf-8");
+      if (!includesGenerated(text)) foreign.push(`${u}/terragrunt.hcl does not include ${TERRAGRUNT_FILE}, so generate's settings never reach it; add ${INCLUDE_BLOCK.replace(/\n\s*/g, " ")}`);
+    }
+    // Another remote_state, or a generate block for a file terragucci.hcl writes, would contend with it in the units that include both.
+    const writes = new Set<string>([...(content.includes("remote_state {") ? [GENERATED_FILES.backend] : []), ...(["providers", "versions"] as const).filter((k) => content.includes(`generate "terragucci_${k}"`)).map((k) => GENERATED_FILES[k])]);
+    for (const f of hclFiles(repo)) {
+      const text = hclComments(readFileSync(f, "utf-8"));
+      if (writes.has(GENERATED_FILES.backend) && /^\s*remote_state\s*\{/m.test(text)) foreign.push(`${rel(repo, f)} declares remote_state, and ${TERRAGRUNT_FILE} gives each unit its backend from generate; remove one of them`);
+      // generate "<name>" blocks only: remote_state's own `generate = {` is its backend, which the line above covers.
+      for (const b of hclBlocks(text, 'generate(?=\\s+")')) {
+        const target = /^\s*path\s*=\s*"([^"]+)"/m.exec(b)?.[1];
+        if (target && writes.has(target)) foreign.push(`${rel(repo, f)} has a generate block that writes ${target}, which ${TERRAGRUNT_FILE} writes from generate; remove one of them`);
+      }
+    }
+  } else if (before?.startsWith(GENERATED_MARKER)) files.push({ path, status: "removed", content: "" });
+  // Files a plain root's generate wrote are left over here: generate removes them.
+  for (const p of generatedOnDisk(repo)) files.push({ path: p, status: "removed", content: "" });
+  return { roots: units, terragrunt: true, files, foreign };
+}
 
 /** The lines that differ, `-` what the file holds and `+` what generate writes. */
 export function lineDiff(have: string, want: string): string[] {
@@ -332,7 +482,8 @@ export function checkGenerated(repo: string, settings: ResolvedSettings): CheckR
     return { ok: false, log, report: [...report, ""] };
   }
   const n = plan.files.length;
-  const line = `generated files match terragucci.yml: ${n} file${n === 1 ? "" : "s"} in ${plan.roots.length} root${plan.roots.length === 1 ? "" : "s"}`;
+  const where = plan.terragrunt ? `for ${plan.roots.length} unit${plan.roots.length === 1 ? "" : "s"}` : `in ${plan.roots.length} root${plan.roots.length === 1 ? "" : "s"}`;
+  const line = `generated files match terragucci.yml: ${n} file${n === 1 ? "" : "s"} ${where}`;
   return { ok: true, log: [line], report: [...report, `- ${line}`, ""] };
 }
 
@@ -342,7 +493,8 @@ export function describeGenerate(repo: string, plan: GeneratePlan, dryRun: boole
     s === "unchanged" ? "unchanged" : dryRun ? (s === "created" ? "would write" : s === "removed" ? "would remove" : "would update") : s === "created" ? "wrote" : s === "removed" ? "removed" : "updated";
   const lines = plan.files.map((f) => `${verb(f.status)} ${rel(repo, f.path)}`);
   const changed = plan.files.filter((f) => f.status !== "unchanged").length;
-  lines.push(`${plan.files.length} generated file${plan.files.length === 1 ? "" : "s"} in ${plan.roots.length} root${plan.roots.length === 1 ? "" : "s"}, ${changed} ${dryRun ? "to change; nothing was written" : "changed"}`);
+  const where = plan.terragrunt ? `for ${plan.roots.length} unit${plan.roots.length === 1 ? "" : "s"}` : `in ${plan.roots.length} root${plan.roots.length === 1 ? "" : "s"}`;
+  lines.push(`${plan.files.length} generated file${plan.files.length === 1 ? "" : "s"} ${where}, ${changed} ${dryRun ? "to change; nothing was written" : "changed"}`);
   return lines.join("\n");
 }
 

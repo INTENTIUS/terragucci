@@ -88,7 +88,7 @@ export default defineConfig({
 				{
 					label: 'Getting started',
 					items: [
-						{ label: 'How terragucci works', slug: 'concepts/how-it-works' },
+						{ label: 'Architecture', slug: 'concepts/how-it-works' },
 						{ label: 'Get your first plan note', slug: 'getting-started' },
 					],
 				},
@@ -112,6 +112,7 @@ export default defineConfig({
 								{ label: 'Apply a pull request before it merges', slug: 'guides/apply-before-merge' },
 								{ label: 'Move resources between roots', slug: 'guides/move-resources-between-roots' },
 								{ label: 'Release a state lock a killed job left', slug: 'guides/release-a-state-lock' },
+								{ label: 'Ephemeral environments per pull request', slug: 'guides/ephemeral-environments' },
 							],
 						},
 						{
@@ -130,6 +131,7 @@ export default defineConfig({
 							label: 'Set it up your way',
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
+								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
 								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
@@ -175,14 +177,14 @@ export default defineConfig({
 						{ label: 'Threat model', slug: 'reference/threat-model' },
 						{ label: 'Responses to pipeline events', slug: 'reference/responses' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
-						{ label: 'Where it runs', slug: 'reference/runtimes' },
+						{ label: 'Runtimes', slug: 'reference/runtimes' },
 					],
 				},
 				{
 					label: 'Concepts',
 					items: [
-						{ label: 'How waves and approvals work', slug: 'concepts/waves-and-approvals' },
-						{ label: 'Why plans are grouped', slug: 'concepts/why-plans-are-grouped' },
+						{ label: 'Waves and approvals', slug: 'concepts/waves-and-approvals' },
+						{ label: 'Plan grouping', slug: 'concepts/why-plans-are-grouped' },
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
 						{ label: 'Locking per resource', slug: 'concepts/locking-per-resource' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },

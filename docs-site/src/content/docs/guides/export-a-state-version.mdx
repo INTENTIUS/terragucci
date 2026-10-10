@@ -1,7 +1,7 @@
 ---
 title: Export a state version
 description: Download one version of a root's state to your machine, once someone else approved the request, with the export recorded on chant/lifecycle and in the audit trail.
-claims: [state-export]
+claims: [state-export, tg-state-export]
 prompt: |
   Read https://intentius.io/terragucci/guides/export-a-state-version/.
   Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3 backend, bucket versioning), from the roots' backend blocks.
@@ -11,13 +11,13 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 One version of a root's state in a file on your machine that only you can read. A record on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) names who exported which root and version, and who approved it. The [audit trail](/terragucci/reference/audit-trail/) lists it as a `state-export` entry.
 
-The state goes to the person who runs the command and nowhere else. It never goes to the reports bucket, and no job writes it as an artifact: a job's artifact is readable by everyone with read access to the repo for as long as the forge keeps it, which on a public repo is everyone, and a state holds every secret its resources hold. Run on your machine, the state reaches only someone whose own cloud identity can already read the bucket. What terragucci adds is the approval by someone else and the record.
+The state goes only to the person who runs the command; no job writes it to the reports bucket or as an artifact. Anyone with read access to the repo can read a job's artifact while the forge keeps it (on a public repo, everyone), and a state holds every secret its resources hold. On your machine, the state reaches only someone whose own cloud identity can already read the bucket; terragucci adds another person's approval and the record.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -26,7 +26,7 @@ The state goes to the person who runs the command and nowhere else. It never goe
 | A checkout whose `origin` you can push to | the request and the record go to `chant/lifecycle` |
 | Someone else to approve | an approval by the person who asked does not count |
 
-The command refuses Terragrunt units and roots with a `cloud` block. A `local` backend, or a bucket that keeps no versions, has no version id to export.
+A Terragrunt unit exports the same way: name the unit, such as `terragucci state export live/app`. Terragrunt prepares it as a [migration](/terragucci/guides/move-resources-between-roots/) does, running `init` in the unit through its `remote_state` block, so the state is the one Terragrunt reads, and you need Terragrunt on the path. The command refuses roots with a `cloud` block. A `local` backend, or a bucket that keeps no versions, has no version id to export.
 
 ## Steps
 
@@ -59,17 +59,17 @@ The command refuses Terragrunt units and roots with a `cloud` block. A `local` b
 
    The file is mode 0600 in a new directory of its own. `--out <file>` names another place outside the repo; a path inside the repo is refused, so the state is never committed by accident. When the record cannot be pushed, nothing is written.
 
-4. Delete the file when you are done with it.
+4. Delete the file when you are done.
 
 </Steps>
 
-A request exports once. To export again, run the command again: it records a new request for a new approval.
+A request exports once; running the command again records a new request for a new approval.
 
 ## In the audit trail
 
 `terragucci audit` turns the request into an `approval-requested` entry and the approval into an `approval` entry. The export is a `state-export` entry: `who` is the person who exported and `what` the root. Its `detail` holds the location and the version id, who approved it, and the digest of the file, never its contents.
 
-## See also
+## Next
 
 - [Threat model](/terragucci/reference/threat-model/#exporting-a-state) for what the approval stops and what it does not.
 - [`state export`](/terragucci/reference/cli/#state-export) for every flag.

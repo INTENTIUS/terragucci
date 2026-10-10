@@ -3,13 +3,13 @@ title: Glossary
 description: The words terragucci, chant and the example use, and the ones that mean something different in Terraform and HCP Terraform.
 ---
 
-Each docs page links a word here the first time it uses it, unless the page explains the word itself.
+A page links a word here on first use, unless the page explains it.
 
 ## Your code
 
 ### root
 
-A directory whose files hold a `backend` or `cloud` block or configure a provider. `init` finds roots, or `roots:` names them by glob. Every stage runs the binary once in each.
+A directory whose files hold a `backend` or `cloud` block, or choudoufu's `live` block, or configure a provider. `init` finds roots, or `roots:` names them by glob. Every stage runs the binary once in each.
 
 A root with a `cloud` block on remote execution runs on HCP Terraform's workers, where the job's `oidc` roles do not reach. Local execution keeps the runs in your CI.
 
@@ -31,7 +31,7 @@ A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`: can
 
 ### canary
 
-The roots named in `waves.canary`. They apply first, in wave 1, so a bad change reaches a few roots before the rest.
+The roots named in `waves.canary`, applied first in wave 1 so a bad change reaches a few roots before the rest.
 
 ### plan digest
 
@@ -65,7 +65,7 @@ The gates in `chant.workspace.json` (`init` lists all under `approval: sealed`) 
 
 ### .chant/allowed_signers
 
-The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format. It is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
+The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format, read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
 
 ### pr-review
 

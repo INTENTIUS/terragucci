@@ -27,7 +27,7 @@ Orders in dev should keep unpicked jobs for seven days instead of four: one line
 
 <Steps>
 
-1. Make the branch and open the pull request with one command. The push and the pull request each start a run: the pull request's run posts the plan note and the push's run is the check. Take the run numbers from the output.
+1. One command makes the branch and opens the pull request. The push and the pull request each start a run: the pull request's run posts the plan note, the push's run is the check. The output prints both run numbers.
 
    <Captured step="first-pr" />
 
@@ -66,6 +66,6 @@ Orders in dev should keep unpicked jobs for seven days instead of four: one line
 
 </Steps>
 
-## What you saw
+## Recap
 
 Every push runs the check stage on every root. It needs no cloud credentials, because it never plans.

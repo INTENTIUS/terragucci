@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyLayers, detectBinary, detectForge, detectVersion, findRoots, globMatch, hostOfRemote } from "../src/detect";
+import { applyLayers, detectBinary, detectForge, detectVersion, findRoots, findRootsWithReasons, globMatch, hostOfRemote } from "../src/detect";
 import { backend, git, remoteState, tmp, twoRootRepo, write } from "./helpers";
 
 describe("roots", () => {
@@ -16,6 +16,16 @@ describe("roots", () => {
       "c/main.tf": `# provider "aws" {}\nresource "null_resource" "x" {}\n`,
     });
     expect(findRoots(dir)).toEqual(["a", "b"]);
+  });
+
+  it("a choudoufu live block in a terraform block makes a root, with only built-in resources and no provider", () => {
+    const dir = write(tmp(), {
+      "estate/main.tf": `terraform {\n  live {\n    estate = "shop"\n\n    record_store "s3" {\n      bucket = "records"\n    }\n  }\n}\n\nresource "terraform_data" "x" {\n  input = "a"\n}\n`,
+      // A live block outside a terraform block, or one commented out, is not choudoufu's.
+      "other/main.tf": `resource "terraform_data" "x" {\n  live {\n  }\n}\n`,
+      "off/main.tf": `terraform {\n  # live {\n  # }\n  required_version = ">= 1.6"\n}\n`,
+    });
+    expect(findRootsWithReasons(dir)).toEqual([{ root: "estate", reason: "choudoufu live block" }]);
   });
 
   it("globs choose the roots instead, among directories with Terraform files", () => {
