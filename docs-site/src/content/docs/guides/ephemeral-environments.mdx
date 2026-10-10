@@ -1,7 +1,7 @@
 ---
 title: Ephemeral environments per pull request
 description: Give each pull request its own copy of a set of roots, under state keys of its own, and have terragucci destroy the copy when the pull request closes or its TTL passes.
-claims: [ephemeral-pr, ephemeral-ttl]
+claims: [ephemeral-pr, ephemeral-ttl, tg-ephemeral-pr, cdktn-ephemeral]
 prompt: |
   Read https://intentius.io/terragucci/guides/ephemeral-environments/.
   Look at this repo's roots and tell me which of them could be copied per pull request with ephemeral: name each root's backend and the key its copy would get, and, in a Terragrunt repo, whether the remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX.
