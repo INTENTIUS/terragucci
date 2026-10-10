@@ -1,10 +1,9 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the taco, the wordmark, the
-// tagline, the one-sentence position, the proof line, the door picker and the eight highlights, in the order the site leads with;
+// one-line claim, the door picker and the eight highlights, in the order the site leads with;
 // index.mdx follows it with the plan note. `part="agent"` is the prompt to hand
 // a coding agent, last on the page: the setup prompt from src/prompts.ts, which
-// the agents page and the README carry too. The tagline is the one the README
-// and the site description use.
+// the agents page and the README carry too.
 import AgentPrompt from './AgentPrompt.astro';
 import DoorPicker from './DoorPicker.astro';
 import Taco from './Taco.astro';
@@ -18,17 +17,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const pillars = [
 	{
 		title: 'No server to host',
-		text: 'Every job runs in your CI. Plan reports and approvals stay in your git and your bucket, beside your state.',
 		links: [{ label: 'Components', href: '/concepts/how-it-works/#components' }],
 	},
 	{
 		title: 'GitHub, GitLab or Forgejo',
-		text: 'terragucci init writes the pipeline in your forge\'s own format: a GitHub or Forgejo workflow, or a GitLab CI file.',
 		links: [{ label: 'Per forge', href: '/guides/add-to-a-repo/#per-forge' }],
 	},
 	{
 		title: 'Object storage on AWS, GCP or Azure',
-		text: 'Your state backend and the reports bucket in S3, GCS or Azure Blob, reached through OIDC with no stored keys.',
 		links: [
 			{ label: 'Credentials', href: '/reference/pipeline/#credentials' },
 			{ label: 'Reports bucket', href: '/guides/keep-reports-in-a-bucket/' },
@@ -36,27 +32,22 @@ const pillars = [
 	},
 	{
 		title: 'Tracing and metrics',
-		text: 'One OpenTelemetry trace per stage run with a span per root, and Grafana dashboards for the metrics.',
 		links: [{ label: 'Send traces and metrics', href: '/guides/send-traces-and-metrics/' }],
 	},
 	{
 		title: 'Rich lifecycles',
-		text: 'Check, plan, apply in waves, drift, tips and module releases, each a job in the pipeline init writes.',
 		links: [{ label: 'The lifecycle', href: '/concepts/how-it-works/' }],
 	},
 	{
 		title: 'Gated waves',
-		text: 'Canary roots apply first, then the rest in waves. An approval covers exactly the plans it was shown, and a plan that changed after it is refused.',
 		links: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
 	},
 	{
 		title: 'Aggregated plan output',
-		text: 'One grouped note for 200 plans: roots taking the same change share one diff, and every destroy is named.',
 		links: [{ label: 'Grouped plans', href: '/concepts/why-plans-are-grouped/' }],
 	},
 	{
 		title: 'Module publishing and pinned rollouts',
-		text: 'Publish changed modules after apply, then move every repo that pins one to a new version, a wave of pull requests at a time.',
 		links: [
 			{ label: 'Publish modules', href: '/guides/publish-modules/' },
 			{ label: 'Roll out a version', href: '/guides/roll-out-a-module-version/' },
@@ -67,18 +58,8 @@ const pillars = [
 {part === 'top' ? (
 	<section class="tg-landing not-content">
 		<Taco scale={2} class="hero-taco" />
-		<p class="wordmark">TERRAGUCCI</p>
-
-		<h1 class="claim">One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI.</h1>
-
-		<p class="lede">
-			CI does this: your own forge's CI plans each pull request and applies it once approved, with no account or server
-			to run. Terragrunt, Atmos, Terramate and CDK Terrain repos work as they are.
-		</p>
-
-		<p class="proof">
-			Recorded checks show what is proven on each tool and forge (<a href={`${base}/reference/validation/`}>validation</a>). Apache-2.0.
-		</p>
+		<h1 class="wordmark">TERRAGUCCI</h1>
+		<p class="claim">Plans, gated applies and drift for Terraform and OpenTofu, in your own CI, open source under Apache-2.0.</p>
 	</section>
 	<DoorPicker />
 	<ul class="tg-pillars not-content">
@@ -86,7 +67,6 @@ const pillars = [
 			<li>
 				<Taco />
 				<h2>{p.title}</h2>
-				<p>{p.text}</p>
 				<span class="links">
 					{p.links.map((l) => <a href={`${base}${l.href}`}>{l.label}</a>)}
 				</span>
@@ -114,7 +94,7 @@ const pillars = [
 		margin: 0;
 		font-family: var(--tg-display);
 		font-weight: 600;
-		font-size: clamp(1.6rem, 5vw, 2.4rem);
+		font-size: clamp(1.25rem, 3.5vw, 1.6rem);
 		letter-spacing: 0.14em;
 		line-height: 1;
 		color: var(--sl-color-white);
@@ -126,7 +106,7 @@ const pillars = [
 		max-width: 46rem;
 		font-family: var(--tg-display);
 		font-weight: 500;
-		font-size: clamp(1.15rem, 2.5vw, 1.45rem);
+		font-size: var(--sl-text-base);
 		line-height: 1.3;
 		letter-spacing: -0.015em;
 		color: var(--sl-color-gray-2);
@@ -177,7 +157,7 @@ const pillars = [
 	.tg-pillars h2 {
 		margin: 0;
 		font-family: var(--tg-display);
-		font-size: clamp(1.3rem, 2.5vw, 1.6rem);
+		font-size: var(--sl-text-lg);
 		font-weight: 600;
 		line-height: 1.2;
 		color: var(--sl-color-white);

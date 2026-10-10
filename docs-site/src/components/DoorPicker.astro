@@ -1,61 +1,75 @@
 ---
-// The home page's first choice: what you run, where, and what you are leaving.
-// It names the room for that pick, what differs on that binary and forge, and
-// the first step. The role doors sit beside it. Every list comes from
-// src/data/rooms.ts, so the picker and the room pages say the same thing.
+// The home page's first choice: the repo shape as tiles, the binary and forge
+// as switches, and what you are leaving as a dropdown. The role doors sit right
+// under them. Two cards then say what works (with what carries over from the
+// tool you leave, and how many recorded checks prove each choice) and the
+// first step; a quiet line under them notes what differs on that pick. Every
+// list comes from src/data/rooms.ts and every count from src/data/coverage.ts,
+// so the picker, the rooms and the grids agree. The first pick is rendered on
+// the server, so the cards read the same without script.
 import { BINARIES, FORGES, FROM, ROLES, ROOMS, SHAPES } from '../data/rooms';
+import { provenFor } from '../data/coverage';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const data = {
-	base,
-	shapes: SHAPES.map((s) => {
-		const r = ROOMS.find((x) => x.id === s.room)!;
-		return { id: s.id, label: s.label, room: s.room, title: r.title, works: r.works, differs: r.differs, first: r.first };
-	}),
-	binaries: BINARIES,
-	forges: FORGES,
-	from: FROM,
-};
-// The first pick, rendered on the server so the panel reads the same without script.
-const first = data.shapes[0];
+const shapes = SHAPES.map((s) => {
+	const r = ROOMS.find((x) => x.id === s.room)!;
+	return { ...s, title: r.title, works: r.works, differs: r.differs, first: r.first, proven: provenFor(s.label) };
+});
+const binaries = BINARIES.map((b) => ({ ...b, proven: provenFor(b.label) }));
+const forges = FORGES.map((f) => ({ ...f, proven: provenFor(f.label) }));
+const data = { base, shapes, binaries, forges, from: FROM };
+const first = shapes[0];
+const taco = `${base}/brand/taco.svg`;
+const fromLabel = (label: string, id: string) => (id === 'none' ? 'Coming from a CI script, or nothing' : `Coming from ${label}`);
+const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, ${binaries[0].proven} on ${binaries[0].label} and ${forges[0].proven} on ${forges[0].label}. Each count covers one choice.`;
 ---
-<section class="tg-doors not-content" aria-label="Your setup">
-	<form class="pick" data-doors>
-		<label>Your repo
-			<select name="shape">{SHAPES.map((s) => <option value={s.id}>{s.label}</option>)}</select>
-		</label>
-		<label>Binary
-			<select name="binary">{BINARIES.map((b) => <option value={b.id}>{b.label}</option>)}</select>
-		</label>
-		<label>Forge
-			<select name="forge">{FORGES.map((f) => <option value={f.id}>{f.label}</option>)}</select>
-		</label>
-		<label>Coming from
-			<select name="from">{FROM.map((f) => <option value={f.id}>{f.label}</option>)}</select>
-		</label>
-	</form>
-	<div class="room" data-room aria-live="polite">
-		<div>
-			<h3>Works</h3>
-			<ul data-works>{first.works.map((w) => <li>{w}</li>)}</ul>
+<section class="tg-doors not-content" aria-label="Your setup" style={`--tg-taco: url(${taco})`}>
+	<div class="tiles" role="group" aria-label="Your repo">
+		{shapes.map((s, i) => (
+			<button type="button" class="tile" data-pick="shape" value={s.id} aria-pressed={String(i === 0)}>
+				<img src={taco} width="34" height="21" alt="" />
+				<b>{s.label}</b>
+				<small>{s.blurb}</small>
+			</button>
+		))}
+	</div>
+	<div class="row">
+		<div class="seg" role="group" aria-label="Binary">
+			{BINARIES.map((b, i) => <button type="button" data-pick="binary" value={b.id} aria-pressed={String(i === 0)}>{b.label}</button>)}
 		</div>
-		<div>
-			<h3>Differs</h3>
-			<ul data-differs>{first.differs.map((w) => <li>{w}</li>)}</ul>
+		<div class="seg" role="group" aria-label="Forge">
+			{FORGES.map((f, i) => <button type="button" data-pick="forge" value={f.id} aria-pressed={String(i === 0)}>{f.label}</button>)}
 		</div>
-		<div class="first">
-			<h3>First step</h3>
-			<p data-first><a href={`${base}${first.first.href}`}>{first.first.label}</a></p>
-			<p class="more" data-more>Then the <a href={`${base}/rooms/${first.room}/`}>{first.title} room</a>, with what you can count on and the proof for each.</p>
-		</div>
+		<span class="fancy">
+			<select data-pick="from" aria-label="Coming from">
+				{FROM.map((f) => <option value={f.id}>{fromLabel(f.label, f.id)}</option>)}
+			</select>
+		</span>
 	</div>
 	<nav class="roles" aria-label="Doors by role">
-		{ROLES.map((r) => <a href={`${base}/rooms/${r.room}/`}>{r.label}</a>)}
+		<span>Or start from your role</span>
+		{ROLES.map((r) => <a class="role" href={`${base}/rooms/${r.room}/`}><img src={taco} width="20" height="12" alt="" />{r.label}</a>)}
 	</nav>
-	<p class="aside">
-		Or <a href={`${base}/tutorial/`}>see a plan note in about 10 minutes</a> on your laptop, with no cloud account.
-		Bitbucket, Azure DevOps and a hosted web UI are not supported; <a href={`${base}/#limits`}>limits</a> says why.
-	</p>
+	<div class="cards" aria-live="polite">
+		<div class="card">
+			<p class="h">Works</p>
+			<ul class="taco-list" data-works>{first.works.map((w) => <li>{w}</li>)}</ul>
+			<div data-carries hidden>
+				<p class="h from" data-carries-title></p>
+				<ul class="taco-list" data-carries-list></ul>
+			</div>
+			<p class="proof" data-proof>{firstProof} <a href={`${base}/reference/validation/`}>Validation</a></p>
+		</div>
+		<div class="card">
+			<p class="h">First step</p>
+			<a class="go" data-first href={`${base}${first.first.href}`}>{first.first.label}</a>
+			<p class="sub" data-more>Then read the <a href={`${base}/rooms/${first.room}/`}>{first.title} room</a> for what you can count on, and the proof.</p>
+		</div>
+	</div>
+	<div class="notes" data-notes hidden>
+		<p class="h">Good to know</p>
+		<ul data-differs></ul>
+	</div>
 	<script type="application/json" data-doors-data set:html={JSON.stringify(data)} />
 </section>
 
@@ -63,48 +77,64 @@ const first = data.shapes[0];
 	type Link = { label: string; href: string };
 	type Data = {
 		base: string;
-		shapes: { id: string; label: string; room: string; title: string; works: string[]; differs: string[]; first: Link }[];
-		binaries: { id: string; label: string; differs: string[]; href: string }[];
-		forges: { id: string; label: string; differs: string[]; href: string }[];
-		from: { id: string; label: string; first: Link }[];
+		shapes: { id: string; label: string; room: string; title: string; works: string[]; differs: string[]; first: Link; proven: number }[];
+		binaries: { id: string; label: string; adds: string[]; differs: string[]; href: string; proven: number }[];
+		forges: { id: string; label: string; differs: string[]; proven: number }[];
+		from: { id: string; label: string; first: Link; carries: string[] }[];
 	};
 	const key = 'tg-doors';
 	for (const section of document.querySelectorAll<HTMLElement>('.tg-doors')) {
 		const data = JSON.parse(section.querySelector('[data-doors-data]')!.textContent!) as Data;
-		const form = section.querySelector<HTMLFormElement>('[data-doors]')!;
-		const list = (sel: string, items: string[]) => {
-			const ul = section.querySelector(sel)!;
-			ul.replaceChildren(...items.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
-		};
-		const link = (l: Link) => Object.assign(document.createElement('a'), { href: data.base + l.href, textContent: l.label });
+		const pick: Record<string, string> = { shape: data.shapes[0].id, binary: data.binaries[0].id, forge: data.forges[0].id, from: data.from[0].id };
 		try {
 			const saved = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, string>;
-			for (const [k, v] of Object.entries(saved)) {
-				const el = form.elements.namedItem(k) as HTMLSelectElement | null;
-				if (el && [...el.options].some((o) => o.value === v)) el.value = v;
-			}
+			for (const k of Object.keys(pick)) if (saved[k]) pick[k] = saved[k];
 		} catch {}
+		const select = section.querySelector<HTMLSelectElement>('select[data-pick="from"]')!;
+		const $ = <T extends Element = HTMLElement>(sel: string) => section.querySelector<T>(sel)!;
+		const list = (sel: string, items: string[]) => $(sel).replaceChildren(...items.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
+		const link = (label: string, href: string) => Object.assign(document.createElement('a'), { href: data.base + href, textContent: label });
 		const show = () => {
-			const v = Object.fromEntries(new FormData(form)) as Record<string, string>;
-			const shape = data.shapes.find((s) => s.id === v.shape)!;
-			const binary = data.binaries.find((b) => b.id === v.binary)!;
-			const forge = data.forges.find((f) => f.id === v.forge)!;
-			const from = data.from.find((f) => f.id === v.from)!;
-			list('[data-works]', shape.works);
-			const differs = [...shape.differs, ...binary.differs, ...forge.differs.map((d) => `${forge.label}: ${d}`)];
-			list('[data-differs]', differs.length ? differs : ['Nothing on this pick.']);
-			const first = from.id === 'none' ? shape.first : from.first;
-			section.querySelector('[data-first]')!.replaceChildren(link(first));
-			section.querySelector('[data-more]')!.replaceChildren(
-				'Then the ',
-				link({ label: `${shape.title} room`, href: `/rooms/${shape.room}/` }),
-				', with what you can count on and the proof for each.',
+			const shape = data.shapes.find((s) => s.id === pick.shape) ?? data.shapes[0];
+			const binary = data.binaries.find((b) => b.id === pick.binary) ?? data.binaries[0];
+			const forge = data.forges.find((f) => f.id === pick.forge) ?? data.forges[0];
+			const from = data.from.find((f) => f.id === pick.from) ?? data.from[0];
+			for (const b of section.querySelectorAll<HTMLButtonElement>('button[data-pick]')) {
+				b.setAttribute('aria-pressed', String(pick[b.dataset.pick!] === b.value));
+			}
+			select.value = from.id;
+			list('[data-works]', [...shape.works, ...binary.adds]);
+			$('[data-carries]').hidden = !from.carries.length;
+			$('[data-carries-title]').textContent = `From ${from.label}`;
+			list('[data-carries-list]', from.carries);
+			$('[data-proof]').replaceChildren(
+				`Proven by recorded checks: ${shape.proven} for ${shape.id === 'plain' ? 'plain roots' : shape.label}, ${binary.proven} on ${binary.label} and ${forge.proven} on ${forge.label}. Each count covers one choice. `,
+				link('Validation', '/reference/validation/'),
 			);
+			const differs = [...shape.differs, ...binary.differs, ...forge.differs.map((d) => `${forge.label}: ${d}`)];
+			$('[data-notes]').hidden = !differs.length;
+			list('[data-differs]', differs);
+			const first = from.id === 'none' ? shape.first : from.first;
+			const go = $<HTMLAnchorElement>('[data-first]');
+			go.href = data.base + first.href;
+			go.textContent = first.label;
+			const rooms: Node[] = ['Then read the ', link(`${shape.title} room`, `/rooms/${shape.room}/`)];
+			if (binary.href.startsWith('/rooms/')) rooms.push(' and the ', link(`${binary.label} room`, binary.href));
+			$('[data-more]').replaceChildren(...rooms, ' for what you can count on, and the proof.');
 			try {
-				localStorage.setItem(key, JSON.stringify(v));
+				localStorage.setItem(key, JSON.stringify(pick));
 			} catch {}
 		};
-		form.addEventListener('change', show);
+		section.addEventListener('click', (e) => {
+			const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-pick]');
+			if (!b) return;
+			pick[b.dataset.pick!] = b.value;
+			show();
+		});
+		select.addEventListener('change', () => {
+			pick.from = select.value;
+			show();
+		});
 		show();
 	}
 </script>
@@ -112,85 +142,253 @@ const first = data.shapes[0];
 <style>
 	.tg-doors {
 		display: grid;
-		gap: 1.25rem;
+		gap: 1rem;
 		max-width: 64rem;
 		margin: 0 auto 3rem;
-		padding: 1.5rem;
-		border: 1px solid var(--tg-rule);
-		border-radius: 0.75rem;
-		background: var(--tg-panel);
-	}
-	.pick {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-		gap: 0.75rem;
-	}
-	.pick label {
-		display: grid;
-		gap: 0.25rem;
 		font-size: var(--sl-text-sm);
-		color: var(--sl-color-gray-3);
 	}
-	.pick select {
-		width: 100%;
-		padding: 0.5rem;
-		border: 1px solid var(--tg-rule);
-		border-radius: 0.375rem;
-		background: var(--sl-color-black);
-		color: var(--sl-color-white);
-		font: inherit;
-		font-size: var(--sl-text-base);
-	}
-	.room {
+	.tiles {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-		gap: 1rem 1.5rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--tg-rule);
+		grid-template-columns: repeat(5, 1fr);
+		gap: 0.5rem;
 	}
-	.room h3 {
-		margin: 0 0 0.5rem;
-		font-size: var(--sl-text-sm);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--sl-color-gray-3);
-	}
-	.room ul {
-		margin: 0;
-		padding-left: 1.1rem;
+	.tile {
 		display: grid;
 		gap: 0.35rem;
+		align-content: start;
+		padding: 0.75rem;
+		text-align: left;
+		font: inherit;
+		color: var(--sl-color-white);
+		background: var(--tg-panel);
+		border: 1px solid var(--tg-rule);
+		border-top: 3px solid var(--tg-rule);
+		border-radius: 0.6rem;
+		cursor: pointer;
 	}
-	.room p {
-		margin: 0 0 0.5rem;
+	.tile img {
+		width: 34px;
+		height: auto;
+		image-rendering: pixelated;
+		opacity: 0.35;
 	}
-	.first [data-first] a {
-		font-weight: 600;
-		font-size: var(--sl-text-lg);
-	}
-	.more {
-		color: var(--sl-color-gray-3);
+	.tile b {
 		font-size: var(--sl-text-sm);
+		line-height: 1.3;
 	}
-	.aside {
+	.tile small {
+		font-size: var(--sl-text-xs);
+		line-height: 1.35;
+		color: var(--sl-color-gray-3);
+	}
+	.tile:hover {
+		border-color: var(--tg-accent);
+	}
+	.tile[aria-pressed='true'] {
+		background: var(--sl-color-accent-low);
+		border-color: var(--tg-accent);
+	}
+	.tile[aria-pressed='true'] img {
+		opacity: 1;
+	}
+	.row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		align-items: center;
+	}
+	.seg {
+		display: inline-flex;
+		padding: 3px;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.55rem;
+		background: var(--tg-panel);
+	}
+	.seg button {
+		padding: 0.35rem 0.8rem;
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-gray-3);
+		background: none;
+		border: 0;
+		border-radius: 0.4rem;
+		cursor: pointer;
+	}
+	.seg button:hover {
+		color: var(--sl-color-white);
+	}
+	.seg button[aria-pressed='true'] {
+		color: var(--sl-color-black);
+		background: var(--sl-color-white);
+	}
+	.fancy {
+		position: relative;
+		display: inline-block;
+	}
+	.fancy select {
+		appearance: none;
+		padding: 0.45rem 2rem 0.45rem 0.8rem;
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		background: var(--tg-panel);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.55rem;
+		cursor: pointer;
+	}
+	.fancy::after {
+		content: '';
+		position: absolute;
+		right: 0.8rem;
+		top: 50%;
+		border: 0.3em solid transparent;
+		border-top-color: var(--sl-color-gray-3);
+		transform: translateY(-20%);
+		pointer-events: none;
+	}
+	.cards {
+		display: grid;
+		grid-template-columns: 2fr 1fr;
+		gap: 0.75rem;
+	}
+	.card {
+		padding: 1rem;
+		background: var(--tg-panel);
+		border: 1px solid var(--tg-rule);
+		border-top: 3px solid var(--tg-accent);
+		border-radius: 0.6rem;
+	}
+	.h.from {
+		margin-top: 1rem;
+	}
+	.proof {
+		margin: 1rem 0 0;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--tg-rule);
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	.proof :global(a) {
+		color: var(--tg-accent);
+	}
+	.notes {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem 1rem;
+		align-items: baseline;
+		padding: 0 0.25rem;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	.notes[hidden] {
+		display: none;
+	}
+	.notes .h {
 		margin: 0;
+	}
+	.notes ul {
+		display: contents;
+		list-style: none;
+	}
+	.notes :global(li) {
+		margin: 0;
+	}
+	.notes :global(li)::before {
+		content: '·';
+		margin-right: 0.5rem;
+	}
+	.roles > span {
+		align-self: center;
+		margin-right: 0.25rem;
+		font-size: var(--sl-text-xs);
 		color: var(--sl-color-gray-3);
-		font-size: var(--sl-text-sm);
+	}
+	.h {
+		margin: 0 0 0.5rem;
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.taco-list {
+		display: grid;
+		gap: 0.4rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.taco-list :global(li) {
+		display: grid;
+		grid-template-columns: 22px 1fr;
+		gap: 0.5rem;
+		align-items: start;
+		margin: 0;
+		color: var(--sl-color-white);
+	}
+	.taco-list :global(li)::before {
+		content: '';
+		width: 22px;
+		height: 14px;
+		margin-top: 0.2rem;
+		background: var(--tg-taco) center / contain no-repeat;
+		image-rendering: pixelated;
+	}
+	.go {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.55rem 1rem;
+		font-weight: 600;
+		color: var(--sl-color-black);
+		background: var(--tg-accent);
+		border-radius: 0.5rem;
+		text-decoration: none;
+	}
+	.go::after {
+		content: '→';
+	}
+	.go:hover {
+		filter: brightness(1.1);
+	}
+	.sub {
+		margin: 0.6rem 0 0;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
 	}
 	.roles {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
-	.roles a {
-		padding: 0.35rem 0.8rem;
+	.role {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.4rem 0.8rem 0.4rem 0.5rem;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		background: var(--tg-panel);
 		border: 1px solid var(--tg-rule);
-		border-radius: 999px;
+		border-radius: 0.5rem;
 		text-decoration: none;
-		font-size: var(--sl-text-sm);
 	}
-	.roles a:hover,
-	.roles a:focus-visible {
+	.role img {
+		width: 20px;
+		height: auto;
+		image-rendering: pixelated;
+	}
+	.role:hover,
+	.role:focus-visible {
+		background: var(--sl-color-accent-low);
 		border-color: var(--tg-accent);
+	}
+	@media (max-width: 52rem) {
+		.tiles {
+			grid-template-columns: repeat(2, 1fr);
+		}
+		.cards {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

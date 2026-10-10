@@ -45,26 +45,33 @@ export const LIMITS: { label: string; why: string; href?: string }[] = [
 	{ label: 'A server or database to run', why: 'Every job runs in your CI and writes to your git and your bucket.', href: '/concepts/how-it-works/#components' },
 ];
 
-export const SHAPES: { id: string; label: string; room: string }[] = [
-	{ id: 'plain', label: 'Terraform or OpenTofu roots', room: 'plain-roots' },
-	{ id: 'terragrunt', label: 'Terragrunt', room: 'terragrunt' },
-	{ id: 'atmos', label: 'Atmos', room: 'atmos' },
-	{ id: 'terramate', label: 'Terramate', room: 'terramate' },
-	{ id: 'cdktn', label: 'CDK Terrain', room: 'cdk-terrain' },
+/** The repo shapes, each a tile on the picker with a short line under its name. */
+export const SHAPES: { id: string; label: string; blurb: string; room: string }[] = [
+	{ id: 'plain', label: 'Plain roots', blurb: 'Directories of .tf files', room: 'plain-roots' },
+	{ id: 'terragrunt', label: 'Terragrunt', blurb: 'Units, stacks, Scale', room: 'terragrunt' },
+	{ id: 'atmos', label: 'Atmos', blurb: 'Component instances', room: 'atmos' },
+	{ id: 'terramate', label: 'Terramate', blurb: 'Stacks with order', room: 'terramate' },
+	{ id: 'cdktn', label: 'CDK Terrain', blurb: 'Synthesized stacks', room: 'cdk-terrain' },
 ];
 
-export const BINARIES: { id: string; label: string; differs: string[]; href: string }[] = [
-	{ id: 'tofu', label: 'OpenTofu', differs: [], href: '/guides/use-a-binary/' },
+/** The binaries: what each adds to the Works card, what differs, and its page. */
+export const BINARIES: { id: string; label: string; adds: string[]; differs: string[]; href: string }[] = [
+	{ id: 'tofu', label: 'OpenTofu', adds: [], differs: [], href: '/guides/use-a-binary/' },
 	{
 		id: 'terraform',
 		label: 'Terraform',
+		adds: [],
 		differs: ['Two overlapping pushes to one root can fail the newer apply with "Saved plan is stale"; run it again and it plans again.'],
 		href: '/guides/use-a-binary/',
 	},
 	{
 		id: 'choudoufu',
 		label: 'choudoufu',
-		differs: ['A killed apply leaves no state lock to release, and there is no lock table to run.'],
+		adds: [
+			'Applies to different resources of one estate run at the same time',
+			'One record per resource in a bucket you own, with no lock table',
+		],
+		differs: ['terragucci does not read a root\'s required_version as a choudoufu release.'],
 		href: '/rooms/choudoufu/',
 	},
 ];
@@ -75,25 +82,66 @@ export const FORGES: { id: string; label: string; differs: string[]; href: strin
 		id: 'gitlab',
 		label: 'GitLab',
 		differs: [
-			'Comment commands run from the comments schedule, since a merge request note starts no pipeline.',
-			'No locks from the first plan: no merge request event runs a job from the default branch that could hold them. A merge request locks its roots on /terragucci apply or /terragucci lock.',
-			'The coding agent comment and drift fixes run on GitHub and Forgejo only.',
+			'Comment commands answer on a schedule, since a merge request note starts no pipeline.',
+			'Roots lock on /terragucci apply or /terragucci lock, not at the first plan.',
+			'The agent comment and drift fixes are GitHub and Forgejo only.',
 		],
 		href: '/guides/add-to-a-repo/#per-forge',
 	},
 	{ id: 'forgejo', label: 'Forgejo', differs: [], href: '/guides/add-to-a-repo/#per-forge' },
 ];
 
-export const FROM: { id: string; label: string; first: Link }[] = [
-	{ id: 'none', label: 'Nothing yet, or a CI script', first: { label: 'Get your first plan note', href: '/getting-started/' } },
-	{ id: 'atlantis', label: 'Atlantis', first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' } },
-	{ id: 'digger', label: 'OpenTaco or Digger', first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' } },
-	{ id: 'terrateam', label: 'Terrateam', first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' } },
-	{ id: 'hcp', label: 'HCP Terraform or Terraform Enterprise', first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' } },
-	{ id: 'scalr', label: 'Scalr or OTF', first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' } },
-	{ id: 'spacelift', label: 'Spacelift', first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' } },
-	{ id: 'env0', label: 'env zero', first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' } },
-	{ id: 'tgscale', label: 'Terragrunt Scale (Gruntwork Pipelines)', first: { label: 'Use Terragrunt: Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' } },
+/** What you are leaving: its first page, and what carries over, shown in the picker's Works card. */
+export const FROM: { id: string; label: string; first: Link; carries: string[] }[] = [
+	{ id: 'none', label: 'Nothing yet, or a CI script', first: { label: 'Get your first plan note', href: '/getting-started/' }, carries: [] },
+	{
+		id: 'atlantis',
+		label: 'Atlantis',
+		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import atlantis writes terragucci.yml from atlantis.yaml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of atlantis plan and atlantis apply'],
+	},
+	{
+		id: 'digger',
+		label: 'OpenTaco or Digger',
+		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import digger writes terragucci.yml from digger.yml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of digger plan and digger apply'],
+	},
+	{
+		id: 'terrateam',
+		label: 'Terrateam',
+		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import terrateam writes terragucci.yml from .terrateam/config.yml', 'A terrateam apply before merge becomes /terragucci apply, with the same required checks'],
+	},
+	{
+		id: 'hcp',
+		label: 'HCP Terraform or Terraform Enterprise',
+		first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
+		carries: ['terragucci import hcp reads your workspaces over the API, and each becomes a root', 'An OPA policy set runs as it is; a Sentinel policy is rewritten in Rego', 'Workspace state moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'scalr',
+		label: 'Scalr or OTF',
+		first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
+		carries: ['terragucci import scalr or import otf reads your workspaces, and each becomes a root', 'A Scalr OPA policy group runs with its input paths changed', 'Workspace state moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'spacelift',
+		label: 'Spacelift',
+		first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
+		carries: ['terragucci import spacelift reads .spacelift/config.yml and the spacelift_* resources, and each stack becomes a root', 'Hooks become steps, and the drift schedule carries over', 'Managed state moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'env0',
+		label: 'env zero',
+		first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
+		carries: ['terragucci import env0 reads env0-discovery.yml and the env0_* resources, and each environment becomes a root', 'An environment with a TTL becomes an ephemeral environment per pull request', 'State in env zero\'s backend moves to your bucket, one root at a time'],
+	},
+	{
+		id: 'tgscale',
+		label: 'Terragrunt Scale (Gruntwork Pipelines)',
+		first: { label: 'Use Terragrunt: Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' },
+		carries: ['terragucci import terragrunt-scale writes each environment\'s roles from .gruntwork/*.hcl'],
+	},
 ];
 
 /** The doors for a role rather than a stack. */
@@ -167,7 +215,7 @@ export const ROOMS: Room[] = [
 		],
 		differs: [
 			'Settings that would edit an instance\'s copied directory are refused, each by name.',
-			'A change to a stack manifest, a catalog or atmos.yaml locks every instance.',
+			'A change outside a component directory, such as to a stack manifest, locks every instance.',
 		],
 		first: { label: 'Use Atmos', href: '/guides/use-atmos/' },
 		howto: [{ label: 'Use Atmos', href: '/guides/use-atmos/' }],
@@ -177,10 +225,10 @@ export const ROOMS: Room[] = [
 	{
 		id: 'terramate',
 		title: 'Terramate',
-		lede: 'A Terramate repo, where each stack is a root and its after and before decide the waves.',
+		lede: 'A Terramate repo, where each stack is one root.',
 		column: 'Terramate',
 		works: [
-			'Each stack is a root, in the order its after and before give',
+			'Stacks apply in waves ordered by their after and before',
 			'Only the stacks a change reaches, and those ordered after them, are planned',
 			'Stale generated code fails the check',
 		],
@@ -220,7 +268,7 @@ export const ROOMS: Room[] = [
 		works: [
 			'One record per resource in an S3 bucket you own, each write conditional, with no lock table',
 			'Applies to different resources of one estate run at the same time; a killed apply leaves nothing to release',
-			'A live check on every push, slow provider calls in the report, and each record\'s past versions',
+			'A live check on every push, and the slowest provider calls in the report',
 		],
 		differs: [
 			'terragucci does not read a root\'s required_version as a choudoufu release.',
