@@ -67,6 +67,7 @@ import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } fro
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
@@ -846,6 +847,9 @@ export async function main(argv: string[]): Promise<number> {
         let approval: ApprovalMode | undefined;
         try {
           const config = await loadConfig(resolve(path), "check");
+          // What passed config.ts must pass the published schema too, so an editor never flags a config that checks.
+          const schema = configSchemaProblems(config);
+          if (schema.length) throw new ConfigError(`${path} does not match terragucci.schema.json`, schema.map((p) => `${p} (terragucci.schema.json)`));
           // Which state each role reaches, read from the roots' code, and a warning for each that reaches another environment's.
           const repoDir = dirname(resolve(path));
           // The shape detection finds in the repo refuses what init would: the same table, worded for that shape.

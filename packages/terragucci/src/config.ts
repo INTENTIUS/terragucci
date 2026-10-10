@@ -582,8 +582,8 @@ export function runnerByStage(v: RunnerSettings): v is Partial<Record<RunnerStag
   return isObject(v) && !("group" in v);
 }
 
-const JOB_LABEL = /^[^\s,]+$/;
-const JOB_STAGE_KEYS = ["default", ...JOB_STAGES];
+export const JOB_LABEL = /^[^\s,]+$/;
+export const JOB_STAGE_KEYS = ["default", ...JOB_STAGES];
 
 function runnerSpecProblems(v: unknown, where: string, forge: unknown): string[] {
   const label = (x: unknown): boolean => typeof x === "string" && JOB_LABEL.test(x);
@@ -608,14 +608,14 @@ export function runnerProblems(v: unknown, where: string, forge?: unknown): stri
 }
 
 /** Names `pass` refuses: the forges refuse a secret under these prefixes, and terragucci sets the rest in the jobs itself. */
-const PASS_RESERVED_PREFIXES = ["GITHUB_", "GITEA_", "FORGEJO_", "TG_", "TERRAGUCCI_"];
-const PASS_RESERVED = ["TF_IN_AUTOMATION", "TF_INPUT"];
+export const PASS_RESERVED_PREFIXES = ["GITHUB_", "GITEA_", "FORGEJO_", "TG_", "TERRAGUCCI_"];
+export const PASS_RESERVED = ["TF_IN_AUTOMATION", "TF_INPUT"];
 
 /** The problems with `pass`: lists of secret and variable names, each a name a job's environment takes, none listed twice or set by `env` too. */
 export function passProblems(v: unknown, where: string, env?: unknown): string[] {
   if (!isObject(v)) return [`${where} must be a map (settings: secrets, vars)`];
   const out: string[] = [];
-  for (const k of Object.keys(v)) if (k !== "secrets" && k !== "vars") out.push(`${where}.${k} is not a setting (settings: secrets, vars)`);
+  for (const k of Object.keys(v)) if (!PASS_KEYS.includes(k)) out.push(`${where}.${k} is not a setting (settings: secrets, vars)`);
   const seen = new Set<string>();
   for (const k of ["secrets", "vars"] as const) {
     const list = v[k];
@@ -723,12 +723,12 @@ export function findConfig(dir: string): string | undefined {
 
 // ── validation ───────────────────────────────────────────────────────────────
 
-const SETTING_KEYS = new Set([
+export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass",
 ]);
 
-const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
+export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -746,7 +746,7 @@ function stringList(v: unknown, where: string, problems: string[]): void {
   }
 }
 
-const RELEASE_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+export const RELEASE_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
 
 /** `version`: one release for the repo, or, in a repo's own file, a map of root glob to the release those roots run. */
 function checkVersion(v: unknown, binary: unknown, where: string, problems: string[]): void {
@@ -796,7 +796,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.notify !== undefined) {
     const n = s.notify;
-    const keys = ["slack", "teams", "webhook", "webhook_key", "relay"];
+    const keys = NOTIFY_KEYS;
     if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: ${keys.join(", ")})`);
     else {
       for (const [k, v] of Object.entries(n)) {
@@ -815,7 +815,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.cost !== undefined && s.cost !== true) {
     if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command, approve_above)`);
     else {
-      for (const k of Object.keys(s.cost)) if (k !== "key_secret" && k !== "command" && k !== "approve_above") problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command, approve_above)`);
+      for (const k of Object.keys(s.cost)) if (!COST_KEYS.includes(k)) problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command, approve_above)`);
       if (s.cost.approve_above !== undefined && !(typeof s.cost.approve_above === "number" && Number.isFinite(s.cost.approve_above) && s.cost.approve_above >= 0)) problems.push(`${where}.cost.approve_above must be an amount of 0 or more, in the estimator's currency a month, such as 100`);
       if (s.cost.key_secret !== undefined && !(typeof s.cost.key_secret === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.cost.key_secret))) problems.push(`${where}.cost.key_secret must name the secret that holds the estimator's key, such as INFRACOST_API_KEY`);
       if (s.cost.command !== undefined && !(typeof s.cost.command === "string" && s.cost.command.trim() !== "")) problems.push(`${where}.cost.command must be a command that prints Infracost's JSON`);
@@ -848,7 +848,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.gitlab !== undefined) {
     if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
     else {
-      for (const k of Object.keys(s.gitlab)) if (k !== "token") problems.push(`${where}.gitlab.${k} is not a setting (settings: token)`);
+      for (const k of Object.keys(s.gitlab)) if (!TOKEN_PROTECTION_KEYS.includes(k)) problems.push(`${where}.gitlab.${k} is not a setting (settings: token)`);
       oneOf(s.gitlab.token, TOKEN_PROTECTIONS, `${where}.gitlab.token`, problems);
     }
     if (s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.gitlab is for GitLab projects; leave it unset on ${String(s.forge)}`);
@@ -881,7 +881,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const t = s.telemetry;
     if (!isObject(t)) problems.push(`${where}.telemetry must be a map (settings: headers_secret, trace_url)`);
     else {
-      for (const k of Object.keys(t)) if (k !== "headers_secret" && k !== "trace_url") problems.push(`${where}.telemetry.${k} is not a setting (settings: headers_secret, trace_url)`);
+      for (const k of Object.keys(t)) if (!TELEMETRY_KEYS.includes(k)) problems.push(`${where}.telemetry.${k} is not a setting (settings: headers_secret, trace_url)`);
       if (t.headers_secret === undefined && t.trace_url === undefined) problems.push(`${where}.telemetry must set headers_secret, trace_url or both`);
       if (t.headers_secret !== undefined && (typeof t.headers_secret !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.headers_secret))) {
         problems.push(`${where}.telemetry.headers_secret must name the secret holding the OTLP headers, such as OTLP_HEADERS`);
@@ -936,7 +936,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!["via", "token_env", "comment", "drift"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment, drift)`);
+      for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment, drift)`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
       else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
@@ -964,6 +964,16 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
 }
 
+/** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
+export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
+export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override"];
+export const OIDC_KEYS = ["plan_role", "apply_role", "audience", "roles", "gcp", "azure"];
+export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
+export const TOKEN_PROTECTION_KEYS = ["token"];
+export const COST_KEYS = ["key_secret", "command", "approve_above"];
+export const PASS_KEYS = ["secrets", "vars"];
+export const AGENT_KEYS = ["via", "token_env", "comment", "drift"];
+
 function checkSteps(v: unknown, where: string, problems: string[]): void {
   if (!Array.isArray(v)) {
     problems.push(`${where} must be a list of steps, each with run and before or after`);
@@ -987,8 +997,8 @@ function checkSteps(v: unknown, where: string, problems: string[]): void {
   });
 }
 
-const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
-const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
+export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
+export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
 /** A registry namespace or module name, as the Terraform module registry protocol allows them. */
 export const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
 /** A registry module's system (its target provider): lower-case letters and digits. */
@@ -1230,7 +1240,7 @@ export function ownJobsProblems(v: unknown, where: string): string[] {
   return problems;
 }
 
-const EPHEMERAL_KEYS = ["roots", "ttl", "sweep"];
+export const EPHEMERAL_KEYS = ["roots", "ttl", "sweep"];
 
 function checkEphemeral(e: unknown, where: string, problems: string[], s: Record<string, unknown>): void {
   if (!isObject(e)) {
@@ -1246,7 +1256,7 @@ function checkEphemeral(e: unknown, where: string, problems: string[], s: Record
   if (s.forge === "gitlab" && isObject(s.gitlab) && s.gitlab.token === "protected") problems.push(`${where}: ${EPHEMERAL_NOT_PROTECTED}`);
 }
 
-const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];
+export const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];
 
 /** A branch name `apply.branches` may name: what a forge's rule and the job's shell both take as it is. */
 export const APPLY_BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
@@ -1283,7 +1293,7 @@ function checkPolicy(p: unknown, where: string, problems: string[]): void {
     problems.push(`${where} must be a map (settings: engine, path, namespace, input, source, override)`);
     return;
   }
-  for (const k of Object.keys(p)) if (!["engine", "path", "namespace", "input", "source", "override"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace, input, source, override)`);
+  for (const k of Object.keys(p)) if (!POLICY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${POLICY_KEYS.join(", ")})`);
   if (p.override !== undefined && !(Array.isArray(p.override) && p.override.length > 0 && p.override.every((o) => typeof o === "string" && o.trim() !== "" && !/[\r\n]/.test(o)))) {
     problems.push(`${where}.override must be a list of the forge identities or signers who may override a denial, such as [github:alice]`);
   }
@@ -1326,7 +1336,7 @@ export function parsePolicySource(source: string): PolicySource | undefined {
   return { url, ref };
 }
 
-const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. */
 function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[]): void {
@@ -1380,7 +1390,7 @@ function checkReview(r: unknown, where: string, problems: string[]): void {
   if (r.agent === undefined && Object.keys(r).length > 0) problems.push(`${where}.agent is missing, so no review runs; set ${where}.agent: true`);
 }
 
-const DECIDE_KEYS = ["backend", "url", "model", "token_env", "thresholds"];
+export const DECIDE_KEYS = ["backend", "url", "model", "token_env", "thresholds"];
 
 function checkDecide(d: unknown, where: string, problems: string[]): void {
   if (!isObject(d)) {
@@ -1416,7 +1426,7 @@ function checkDecide(d: unknown, where: string, problems: string[]): void {
   }
 }
 
-const DURATION = /^(\d+(ms|s|m|h|d|w|y))+$/;
+export const DURATION = /^(\d+(ms|s|m|h|d|w|y))+$/;
 
 function checkDashboards(d: unknown, where: string, problems: string[]): void {
   if (typeof d === "boolean") return;
@@ -1437,7 +1447,7 @@ function checkDashboards(d: unknown, where: string, problems: string[]): void {
   if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);
 }
 
-const ATMOS_KEYS = ["version"];
+export const ATMOS_KEYS = ["version"];
 /** Why a config with both an atmos and a terragrunt block is refused. */
 export const ATMOS_NOT_TERRAGRUNT = "terragucci runs an Atmos repo or a Terragrunt repo, not both; keep the block of the one this repo is";
 
@@ -1499,7 +1509,7 @@ function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
 }
 
 /** The GCP Workload Identity Federation provider's resource name. */
-const WIF_PROVIDER = /^projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/\s]+\/providers\/[^/\s]+$/;
+export const WIF_PROVIDER = /^projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/\s]+\/providers\/[^/\s]+$/;
 
 function checkOidc(o: unknown, where: string, problems: string[]): void {
   if (!isObject(o)) {
@@ -1507,18 +1517,18 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
     return;
   }
   for (const k of Object.keys(o)) {
-    if (!["plan_role", "apply_role", "audience", "roles", "gcp", "azure"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: plan_role, apply_role, audience, roles, gcp, azure)`);
+    if (!OIDC_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${OIDC_KEYS.join(", ")})`);
   }
   const pairSet = o.plan_role !== undefined || o.apply_role !== undefined;
   const aws = pairSet || o.audience !== undefined || o.roles !== undefined;
   if (!aws && o.gcp === undefined && o.azure === undefined) problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
   if (o.roles !== undefined) checkRoles(o.roles, `${where}.roles`, problems);
+  if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.audience must be a string`);
   // With roles, a pair is optional: the roots no glob matches take it, and config check names any root left with no role.
   if (aws && (pairSet || o.roles === undefined)) {
     for (const k of ["plan_role", "apply_role"] as const) {
       if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
     }
-    if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.audience must be a string`);
     if (typeof o.plan_role === "string" && o.plan_role === o.apply_role) {
       problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
     }

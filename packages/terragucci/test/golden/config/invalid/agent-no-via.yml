@@ -1,0 +1,2 @@
+agent:
+  token_env: AGENT_FORGE_TOKEN
