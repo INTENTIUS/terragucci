@@ -285,6 +285,7 @@ cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that chan
 cdf-killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
 cdf-resume|with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one|
 cdf-live-progress|with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store|
+cdf-record-versions|with binary: choudoufu a record changed by three tf-apply waves shows three versions, newest first, on the estate page and in its history, listed by choudoufu live-history|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
 apply-stand-down|a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root|
@@ -10394,12 +10395,12 @@ HCL
 }
 
 # A choudoufu whose record update carries no If-Match, for cdf-write-race's
-# BREAK: the source of CHOUDOUFU_BREAK_REF (default v0.24.0, the release the
+# BREAK: the source of CHOUDOUFU_BREAK_REF (default v0.25.0, the release the
 # choudoufu image runs) in the checkout at CHOUDOUFU_DIR, with the line of
 # S3Store.PutIfVersion that sets the condition replaced. Built for Linux the
 # way choudoufu_linux builds, and kept under .state/choudoufu.
 choudoufu_no_if_match() {
-  local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_BREAK_REF:-v0.24.0}" sha arch out src go
+  local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_BREAK_REF:-v0.25.0}" sha arch out src go
   local file=internal/live/staterecord/s3.go cut='s/input\.IfMatch = aws\.String(expectedVersion)/_ = expectedVersion \/\/ smoke BREAK: an update with no precondition/'
   sha="$(git -C "$dir" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || { echo "no choudoufu checkout at $dir with $ref; set CHOUDOUFU_DIR" >&2; return 1; }
   [ "$(git -C "$dir" show "$sha:$file" | grep -c 'input\.IfMatch = aws\.String(expectedVersion)')" = 1 ] \
@@ -10786,6 +10787,73 @@ HCL
   [ "$local_p" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply terragucci-report/progress.json does not show first done and second in flight"; rc=1; }
   cdf_down "$work"
   [ $rc = 0 ] && log "while second applied, the run view, its page and the job's progress.json showed first done and second in flight, read from the records"
+  return $rc
+}
+
+claim_cdf_record_versions() {
+  # One choudoufu estate holding terraform_data.app, its records in the
+  # versioned record store bucket on floci, reports in a bucket. Three
+  # tf-apply waves in the choudoufu CI image, one per commit, each set a new
+  # input: a create and two updates. Each wave lists the record's versions
+  # with choudoufu live-history, and terragucci estate then writes the page:
+  # history.json gives terraform_data.app three versions, newest first, one
+  # current, the same count the bucket lists for its record key, and
+  # history.html and estate.html show 3 versions. No input value reaches the
+  # history or the page.
+  # BREAK: the wave's bundle skips the live-history call, so no listing
+  # reaches the history and the estate page shows no versions.
+  log() { echo "[smoke cdf-record-versions] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate bucket=terragucci-smoke-versions n hist html page key listed got rc=0 CDF_BUNDLE=""
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply.ts '    for (const a of addresses) byAddress.set(a, await recordVersions(p.binary, dir, a, estate, p.env));' '' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    CDF_BUNDLE="$work/break.mjs"
+  fi
+  estate="smoke-versions-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  curl -s -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  mkdir -p "$work/a" && git -C "$work/a" init -q -b main
+  for n in 1 2 3; do
+    rows_estate "$work/a" "$estate" "$(printf 'resource "terraform_data" "app" {\n  input = "versions-%s-%s"\n}\n' "$STAMP" "$n")"
+    printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$bucket" "$estate" >"$work/a/terragucci.yml"
+    git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app input $n" \
+      || { log "could not commit change $n"; rc=1; break; }
+    CDF_BUNDLE="$CDF_BUNDLE" cdf_run "$work/a" "$work/apply-$n.log" "$CDF_ALIAS-apply-$n" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate never \
+      || { log "apply $n failed"; tail -20 "$work/apply-$n.log" >&2; rc=1; break; }
+    grep 'record versions' "$work/apply-$n.log" | sed 's/^/  /' >&2 || true
+  done
+  if [ $rc = 0 ]; then
+    CDF_BUNDLE="$CDF_BUNDLE" CDF_COMMAND=estate cdf_run "$work/a" "$work/estate.log" "$CDF_ALIAS-estate" choudoufu "" --link-hours 1 \
+      || { log "terragucci estate failed"; tail -20 "$work/estate.log" >&2; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    hist="$(curl -fsS "$FLOCI/$bucket/$estate/history.json")" || { log "no history.json at $bucket/$estate"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$bucket/$estate/history.html")" || { log "no history.html at $bucket/$estate"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$bucket/$estate/estate.html")" || { log "no estate.html at $bucket/$estate"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The bucket's own count of the record's versions.
+    key="$(cdf_keys "$estate" | while read -r k; do [ "$(jq -Rr 'split("/") | last | (try @base64d catch .)' <<<"$k")" = terraform_data.app ] && echo "$k"; done | head -1)"
+    listed="$(curl -fsS "$FLOCI/$CDF_RECORDS?versions&prefix=$(jq -rn --arg k "$key" '$k | @uri')" | grep -o '<Version>' | wc -l | tr -d ' ')"
+    jq -c '.resources[] | {address, record_versions}' <<<"$hist" >&2
+    got="$(jq -r '[.resources[] | select(.address == "terraform_data.app") | .record_versions | select(.kept == true) | .versions | "\(length) \([.[] | select(.current)] | length)"] | first // "none"' <<<"$hist")"
+    log "terraform_data.app: ${got} (versions, current) in history.json; the bucket lists ${listed:-none} for ${key:-no key}"
+    [ "$got" = "3 1" ] || { log "history.json does not give terraform_data.app three versions with one current"; rc=1; }
+    [ "$listed" = 3 ] || { log "the bucket lists ${listed:-no} versions of the record, not 3"; rc=1; }
+    jq -e '[.resources[] | select(.address == "terraform_data.app") | .record_versions.versions | map(.last_modified) | . == (sort | reverse)] == [true]' <<<"$hist" >/dev/null \
+      || { log "the versions are not newest first"; rc=1; }
+    grep -q 'data-kept="true" data-versions="3"' <<<"$html" || { log "history.html does not show three versions"; rc=1; }
+    grep -q '<small class="versions" data-versions="3">' <<<"$page" || { log "estate.html does not show three versions beside terraform_data.app"; rc=1; }
+    if grep -q "versions-$STAMP-" <<<"$hist$html$page"; then log "an input value reached the history or the estate page"; rc=1; fi
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "terraform_data.app, changed by three applies, shows three versions on the estate page and its history, newest first, and no value"
   return $rc
 }
 
@@ -21874,6 +21942,7 @@ cdf-concurrency      weight=150
 cdf-concurrency-time weight=250
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
+cdf-record-versions  weight=120
 cdf-killed-records   weight=90
 cdf-resume           weight=150
 cdf-live-progress    weight=90
