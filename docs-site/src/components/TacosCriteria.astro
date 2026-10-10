@@ -1,0 +1,149 @@
+---
+// The 24 tacos.guru criteria (https://tacos.guru/evaluation.json, dataset 2026-09) as one strip,
+// each block as wide as its default weight. A block reads "proven" only while every smoke claim it
+// names passes in smoke.json, so a claim that stops passing turns its block grey here.
+import record from '../data/smoke.json';
+
+type Kind = 'claims' | 'forge' | 'licence';
+const CRITERIA: { id: number; short: string; weight: number; kind: Kind; claims?: string[] }[] = [
+	{ id: 1, short: 'CDK Terrain', weight: 5, kind: 'claims', claims: ['cdktn-synth', 'cdktn-affected'] },
+	{ id: 2, short: 'OpenTofu', weight: 5, kind: 'claims', claims: ['root-pins', 'pinned-install'] },
+	{ id: 3, short: 'Runners', weight: 5, kind: 'claims', claims: ['boot', 'image'] },
+	{ id: 4, short: 'RBAC/SSO', weight: 5, kind: 'forge' },
+	{ id: 5, short: 'Orchestration', weight: 5, kind: 'claims', claims: ['linked-plan', 'linked-states', 'waves'] },
+	{ id: 6, short: 'Drift', weight: 4, kind: 'claims', claims: ['drift', 'drift-close', 'respond-drift'] },
+	{ id: 7, short: 'OIDC', weight: 4, kind: 'claims', claims: ['forgejo-oidc', 'report-oidc', 'oidc-clouds'] },
+	{ id: 8, short: 'Pricing', weight: 4, kind: 'licence' },
+	{ id: 9, short: 'Scaffolding', weight: 4, kind: 'claims', claims: ['generate'] },
+	{ id: 10, short: 'State', weight: 4, kind: 'claims', claims: ['state-roles', 'state-export', 'state-edges', 'state-versions', 'migrate-split'] },
+	{ id: 11, short: 'Migration', weight: 3, kind: 'claims', claims: ['import-atlantis', 'comment-atlantis'] },
+	{ id: 12, short: 'Workflows', weight: 3, kind: 'claims', claims: ['steps-before-plan', 'steps-stop', 'steps-gate', 'image'] },
+	{ id: 13, short: 'Registry', weight: 3, kind: 'claims', claims: ['module-registry', 'publish'] },
+	{ id: 14, short: 'Cost Est.', weight: 3, kind: 'claims', claims: ['cost-estimate', 'cost-gate', 'cost-policy'] },
+	{ id: 15, short: 'Policy', weight: 3, kind: 'claims', claims: ['policy-opa', 'policy-hcl', 'policy-source'] },
+	{ id: 16, short: 'AI Review', weight: 3, kind: 'claims', claims: ['review-agent', 'review-policy'] },
+	{ id: 17, short: 'Collab', weight: 4, kind: 'claims', claims: ['chat-approve', 'chat-approve-teams', 'chat-replan'] },
+	{ id: 18, short: 'VCS', weight: 3, kind: 'claims', claims: ['comment-plan', 'comment-apply', 'fork-no-plan'] },
+	{ id: 19, short: 'Observability', weight: 3, kind: 'claims', claims: ['traces', 'metrics', 'notify-webhook', 'audit'] },
+	{ id: 20, short: 'Viz', weight: 2, kind: 'claims', claims: ['estate-graph'] },
+	{ id: 21, short: 'AI Agents', weight: 2, kind: 'claims', claims: ['mcp-last-apply', 'drift-agent'] },
+	{ id: 22, short: 'Ephemeral', weight: 1, kind: 'claims', claims: ['ephemeral-pr', 'ephemeral-ttl'] },
+	{ id: 23, short: 'TF Provider', weight: 1, kind: 'claims', claims: ['provider-project'] },
+	{ id: 24, short: 'Multi-cloud', weight: 1, kind: 'claims', claims: ['oidc-clouds', 'blob-gcs', 'blob-azure'] },
+];
+
+// The OpenTofu rows on Forgejo, as tutorial-check reads them.
+const rows = record.claims as { claim: string; verdict: string; break?: string | null; forge?: string; binary?: string }[];
+const passes = new Set(rows.filter((c) => !c.forge && !c.binary && c.verdict === 'pass' && c.break === 'caught').map((c) => c.claim));
+const state = (c: (typeof CRITERIA)[number]) => (c.kind !== 'claims' ? c.kind : c.claims!.every((n) => passes.has(n)) ? 'proven' : 'open');
+const blocks = CRITERIA.map((c) => ({ ...c, state: state(c) }));
+const sum = (s: string) => blocks.filter((b) => b.state === s).reduce((n, b) => n + b.weight, 0);
+const total = blocks.reduce((n, b) => n + b.weight, 0);
+const LABEL: Record<string, string> = {
+	proven: 'a passing claim, also failing when broken',
+	forge: "the forge's, by design",
+	licence: 'Apache-2.0, nothing hosted',
+	open: 'a claim not passing',
+};
+const legend = (['proven', 'forge', 'licence', 'open'] as const).filter((s) => sum(s) > 0);
+---
+<figure class="tg-tacos not-content">
+	<div class="strip" role="img" aria-label={`The 24 tacos.guru criteria by default weight: ${sum('proven')} of ${total} weight points rest on passing claims`}>
+		{blocks.map((b) => (
+			<div class={`block s-${b.state}`} style={`flex: ${b.weight} ${b.weight} ${b.weight * 1.6}rem`} title={`${b.id}. ${b.short}, weight ${b.weight}: ${LABEL[b.state]}`}>
+				<span class="id">{b.id}</span>
+				<span class="name">{b.short}</span>
+				<span class="w">{b.weight}</span>
+			</div>
+		))}
+	</div>
+	<figcaption>
+		Each block is as wide as its criterion's default weight. <span class="total">{sum('proven')} of {total}</span> weight points rest on a passing smoke claim.
+		<ul class="legend">
+			{legend.map((s) => <li><span class={`key s-${s}`} />{LABEL[s]} ({sum(s)})</li>)}
+		</ul>
+	</figcaption>
+</figure>
+
+<style>
+	.tg-tacos {
+		margin: 1.5rem 0;
+	}
+	.strip {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px;
+	}
+	.block {
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		min-height: 4.25rem;
+		padding: 0.4rem 0.45rem;
+		border-radius: 3px;
+		font-size: 0.72rem;
+		line-height: 1.2;
+		overflow: hidden;
+	}
+	.id {
+		font-family: var(--sl-font-mono);
+		opacity: 0.75;
+	}
+	.name {
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+	.w {
+		font-family: var(--sl-font-mono);
+		opacity: 0.75;
+	}
+	.s-proven {
+		background: var(--tg-accent);
+		color: var(--sl-color-black);
+	}
+	.s-forge {
+		background: transparent;
+		border: 1px dashed var(--sl-color-gray-3);
+		color: var(--sl-color-gray-2);
+	}
+	.s-licence {
+		background: var(--tg-panel);
+		border: 1px solid var(--tg-rule);
+		color: var(--sl-color-white);
+	}
+	.s-open {
+		background: var(--tg-warn);
+		color: var(--sl-color-black);
+	}
+	figcaption {
+		margin-top: 0.75rem;
+		font-size: 0.9rem;
+		color: var(--sl-color-gray-2);
+	}
+	.total {
+		font-family: var(--tg-display);
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+	.legend {
+		list-style: none;
+		padding: 0;
+		margin: 0.5rem 0 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem 1.25rem;
+		font-size: 0.8rem;
+	}
+	.legend li {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: 0;
+	}
+	.key {
+		display: inline-block;
+		width: 0.9rem;
+		height: 0.9rem;
+		border-radius: 2px;
+	}
+</style>
