@@ -250,6 +250,10 @@ atmos-upstream-wait|an Atmos instance whose stack reads an unapplied instance wi
 atmos-check|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
 atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
 atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
+terramate-waves|init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate|
+terramate-affected|a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other|
+terramate-sharing|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
+terramate-stale|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
 provider-project|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
@@ -7750,6 +7754,224 @@ YML
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "config check listed each stack's role with its instances' states, and each stack's vpc applied as its own stack's role"
+  return $rc
+}
+
+# ── Terramate stacks ──────────────────────────────────────────────────────
+# stack/fixtures/terramate-stacks: network (tagged net), db (before app) and
+# app (after tag:net), each with its generated code committed; state under
+# <claim>/ in shop-terraform-state. stack/fixtures/terramate-sharing: app
+# reads network's name through an input block. The jobs install the pinned
+# Terramate release; init here runs the host's build of it (terramate_host),
+# fetched once and checked against the release's checksums.txt.
+
+TERRAMATE_SMOKE_VERSION="$(sed -n 's/^export const TERRAMATE_VERSION = "\(.*\)";$/\1/p' "$HERE/../packages/terragucci/src/terramate.ts")"
+
+terramate_host() { # -> the path of the host's terramate at the pinned release
+  local os arch dir file v="$TERRAMATE_SMOKE_VERSION"
+  case "$(uname -s)" in Darwin) os=darwin ;; *) os=linux ;; esac
+  case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=x86_64 ;; esac
+  dir="$HERE/.state/terramate-$v"; file="terramate_${v}_${os}_${arch}.tar.gz"
+  if [ ! -x "$dir/terramate" ]; then
+    mkdir -p "$dir" || return 1
+    curl -fsSL -o "$dir/$file" "https://github.com/terramate-io/terramate/releases/download/v$v/$file" || return 1
+    curl -fsSL -o "$dir/checksums.txt" "https://github.com/terramate-io/terramate/releases/download/v$v/checksums.txt" || return 1
+    [ "$(grep " $file\$" "$dir/checksums.txt" | cut -d' ' -f1)" = "$(shasum -a 256 "$dir/$file" | cut -d' ' -f1)" ] \
+      || { echo "[smoke terramate] $file does not match the release's checksums.txt" >&2; return 1; }
+    tar -xzf "$dir/$file" -C "$dir" terramate || return 1
+  fi
+  echo "$dir/terramate"
+}
+
+terramate_plan_log() { # repo, run id -> the plan job's whole log
+  atmos_plan_log "$@"
+}
+
+claim_terramate_waves() {
+  # Push the fixture, gate: always. init takes the three stacks as roots and
+  # cuts two waves from their order: db (before app) and network, then app
+  # (after tag:net). Wave 1 waits, so nothing has state. Approve wave 1 and
+  # push again: db and network apply and wave 2 waits at its own gate.
+  # Approve wave 2 and push again: app applies after them.
+  # BREAK: init runs a bundle that drops each stack's order, so all three
+  # share one wave and app goes out with db and network.
+  log() { echo "[smoke terramate-waves] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-waves" sha applied logs rc=0 k want wf TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_TERRAMATE
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" terramate.ts '      dependencies: [...closure(p)].filter((d) => d !== p).sort(),' '      dependencies: [],' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-waves terramate-stacks || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-waves: first")"
+  wait_run "$repo" "$sha"
+  applied="$(gated_applied terramate-waves)"
+  logs="$(print_logs "$repo" "$RUN_ID")"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "a stack applied before any wave was approved"; rc=1; }
+  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  for k in 1 2; do
+    [ $rc = 0 ] || break
+    gated_approve terramate-waves "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "terramate-waves: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied terramate-waves)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+    case "$k" in
+      1) want="db network " ;;
+      2) want="app db network " ;;
+    esac
+    [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
+    if [ "$k" = 1 ]; then
+      grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+    else
+      [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once both waves were approved"; rc=1; }
+    fi
+  done
+  grep -q -- "-auto-approve" <<<"$logs" && { log "a job ran an apply with -auto-approve"; rc=1; }
+  for k in 1 2; do
+    grep -q "^  apply-wave-$k:" "$wf" || { log "init wrote no apply-wave-$k job"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "db and network went out in wave 1, app after them in wave 2, as before and after order them, each wave after an approval of its own digest"
+  return $rc
+}
+
+claim_terramate_affected() {
+  # The fixture on main, then a pull request that changes network. The plan
+  # job's diff names stacks/network, and stacks/app plans after it, since its
+  # after (tag:net) puts it after network; db is not reached, so it does not plan.
+  # BREAK: the jobs run an image whose stage leaves out the stacks' order,
+  # so stacks/app does not plan.
+  log() { echo "[smoke terramate-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-affected" sha head pr plan_log rc=0 r TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" report/stage.ts '  const order = atmosDependencies(repo, all);' '  const order = new Map<string, Set<string>>();' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-affected terramate-stacks || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-affected: three stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  sed -i.bak 's/:1"/:2"/' "$work/tree/stacks/network/main.tf" && find "$work/tree" -name '*.bak' -delete
+  head="$(push_tree "$work/tree" "$repo" change "terramate-affected: network moves")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "terramate-affected: network moves")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    plan_log="$(terramate_plan_log "$repo" "$RUN_ID")"
+    grep -E 'terramate generate|affected: |stacks/(network|db|app): (Plan|No changes)' <<<"$plan_log" >&2 || true
+    [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }
+    for r in stacks/network stacks/app; do
+      grep -q "$r: Plan:" <<<"$plan_log" || { log "the pull request did not plan $r"; rc=1; }
+    done
+    grep -qE "stacks/db: (Plan:|No changes)" <<<"$plan_log" && { log "the pull request planned stacks/db, which the change does not reach"; rc=1; }
+    grep -q "affected: stacks/app depends on stacks/network" <<<"$plan_log" || { log "the plan does not say stacks/app plans because it runs after stacks/network"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "a change to network planned network and app, which runs after it, and not db"
+  return $rc
+}
+
+claim_terramate_sharing() {
+  # stack/fixtures/terramate-sharing: app reads network's name with an input
+  # block, so app is a wave after network. On main wave 1 waits, so nothing
+  # has state. A pull request that changes app plans it in the plan job:
+  # network has no state, so app is held back, never planned on the input's
+  # mock. Then wave 1 and wave 2 are approved on main: app applies with the
+  # name network's state holds.
+  # BREAK: the jobs run an image that neither counts the input as a state
+  # read nor waits for a missing output, so app plans on null.
+  log() { echo "[smoke terramate-sharing] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-sharing" sha head pr plan_log applied got k rc=0 TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" \
+      atmos.ts '    if (reads.length > 0) out.set(r, new Set(reads.map((x) => x.upstream)));' '' \
+      atmos.ts '    if (!v) {' '    if (false) {' \
+      atmos.ts '    values[read.var] = v.value;' '    values[read.var] = v ? v.value : null;' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-sharing terramate-sharing || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-sharing: app reads network")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  sed -i.bak 's/replicas = 1/replicas = 2/' "$work/tree/stacks/app/main.tf" && find "$work/tree" -name '*.bak' -delete
+  head="$(push_tree "$work/tree" "$repo" change "terramate-sharing: app grows")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "terramate-sharing: app grows")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    plan_log="$(terramate_plan_log "$repo" "$RUN_ID")"
+    grep -E 'affected: |held back|stacks/(network|app): (Plan|No changes)' <<<"$plan_log" >&2 || true
+    grep -q "stacks/app: held back, stacks/network has no state yet" <<<"$plan_log" || { log "stacks/app was not held back for stacks/network"; rc=1; }
+    grep -qE "stacks/app: (Plan:|No changes)" <<<"$plan_log" && { log "stacks/app planned before stacks/network had state"; rc=1; }
+  fi
+  for k in 1 2; do
+    [ $rc = 0 ] || break
+    gated_approve terramate-sharing "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "terramate-sharing: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied terramate-sharing)"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+  done
+  if [ $rc = 0 ]; then
+    [ "$applied" = "app network " ] || { log "expected both stacks to apply once both waves were approved"; rc=1; }
+    got="$(curl -fsS "$FLOCI/shop-terraform-state/terramate-sharing/app.tfstate" 2>/dev/null | jq -r '.resources[0].instances[0].attributes.input.value.net // empty' 2>/dev/null || true)"
+    [ "$got" = "net-1" ] || { log "stacks/app applied with net_name '${got:-null}', not network's net-1"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "stacks/app was held back while stacks/network had no state, then applied on the name network's state holds"
+  return $rc
+}
+
+claim_terramate_stale() {
+  # The fixture with a global changed in terramate.tm.hcl and the generated
+  # code left as it was. The push's check job runs terramate generate
+  # --detailed-exit-code, which would rewrite every stack's
+  # _terramate_generated_owner.tf, so the check fails and names the file.
+  # BREAK: the jobs run an image that ignores what the generate check found,
+  # so the check passes on the stale code.
+  log() { echo "[smoke terramate-stale] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/terramate-stale" sha logs rc=0 TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" terramate.ts '  if (stale) throw new ConfigError(stale);' '' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo terramate-stale terramate-stacks || { drop_work "$work"; return 1; }
+  sed -i.bak 's/owner = "smoke"/owner = "stale"/' "$work/tree/terramate.tm.hcl" && find "$work/tree" -name '*.bak' -delete
+  sha="$(push_tree "$work/tree" "$repo" main "terramate-stale: a global changed, the generated code not")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  logs="$(run_logs "$repo" "$RUN_ID")"
+  grep -E "generated code is stale|_terramate_generated_owner|synth command failed" <<<"$logs" | head -8 >&2 || true
+  [ "$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "check") | .status' | head -1)" = failure ] || { log "the check job did not fail on the stale generated code"; rc=1; }
+  grep -q "the generated code is stale" <<<"$logs" || { log "the check job did not say the generated code is stale"; rc=1; }
+  grep -q "_terramate_generated_owner.tf" <<<"$logs" || { log "the check job does not name the file terramate generate would change"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the check job ran terramate generate --detailed-exit-code, which failed it on the stale _terramate_generated_owner.tf"
   return $rc
 }
 
@@ -17521,6 +17743,10 @@ atmos-upstream-wait  runner self! weight=400
 atmos-check          runner self! weight=150
 atmos-version        self! weight=90
 atmos-roles          self! weight=150
+terramate-waves      runner self! weight=350
+terramate-affected   runner self! weight=250
+terramate-sharing    runner self! weight=400
+terramate-stale      runner self! weight=150
 policy-source        self! weight=150
 reconcile-parallelism weight=120
 provider-project self! weight=90
