@@ -3,6 +3,7 @@
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
  *   terragucci import atlantis|digger|terrateam [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
+ *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -122,6 +123,7 @@ import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
   terragucci import atlantis|digger|terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+  terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci generate [--check] [--dry-run] [--config <file>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -276,7 +278,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "import": {
         const [source, file, extra] = args;
-        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\` or \`terragucci import terrateam [.terrateam/config.yml]\``);
+        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\`, \`terragucci import terrateam [.terrateam/config.yml]\` or \`terragucci import terragrunt-scale [.gruntwork]\``);
         if (extra !== undefined) throw new ConfigError("import reads one file");
         const forge = str(flags, "forge");
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);

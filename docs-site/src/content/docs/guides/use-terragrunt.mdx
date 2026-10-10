@@ -1,7 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks, tg-stack-check, tg-stack-affected, tg-stack-gate, tg-stack-drift, tg-estate-graph, tg-state-export, tg-apply-branches, tg-generate]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks, tg-stack-check, tg-stack-affected, tg-stack-gate, tg-stack-drift, tg-estate-graph, tg-state-export, tg-apply-branches, tg-generate, import-tg-scale]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-terragrunt/.
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
@@ -168,6 +168,51 @@ wave 2 of 3:   live/app: terraform_data.this (update): input differs from the pr
 ```
 
 The wave's report keeps the comparison in `waves[].preview`, and its note shows it.
+
+## Terragrunt Scale
+
+`import terragrunt-scale` reads Gruntwork Pipelines' `.gruntwork/*.hcl` and each unit's `gruntwork.hcl`, and writes each environment's roles as [`terragrunt.credentials`](/terragucci/reference/config/#the-terragrunt-block).
+
+```bash
+npx terragucci import terragrunt-scale
+```
+
+```hcl
+# .gruntwork/environments.hcl
+environment "prod" {
+  filter {
+    paths = ["live/prod/*"]
+  }
+  authentication {
+    aws_oidc {
+      account_id         = aws.accounts.all.prod.id
+      plan_iam_role_arn  = "arn:aws:iam::${aws.accounts.all.prod.id}:role/pipelines-plan"
+      apply_iam_role_arn = "arn:aws:iam::${aws.accounts.all.prod.id}:role/pipelines-apply"
+    }
+  }
+}
+```
+
+becomes, with `prod`'s id from `accounts.yml`:
+
+```yaml
+terragrunt:
+  credentials:
+    "live/prod/**":
+      plan: arn:aws:iam::222222222222:role/pipelines-plan
+      apply: arn:aws:iam::222222222222:role/pipelines-apply
+```
+
+A role built with a function is listed as not mapped. A filter path that matches no unit is named. The legacy `.gruntwork/config.yml` names no roles, so the import refuses it.
+
+| Setting | Terragrunt Scale | terragucci |
+|---|---|---|
+| Roles | an `environment`'s `filter.paths` and `aws_oidc` roles; a unit's `gruntwork.hcl` | `terragrunt.credentials`: each path and the units below it, mapped to its plan and apply role; a unit's own roles come first, by its path |
+| Accounts | `aws.accounts` and its `accounts.yml` | read for the account ids the role ARNs name |
+| No authentication | `authentication {}` | no key: a unit no glob matches runs with the runner's credentials |
+| Other clouds | `azure_oidc`, `gcp_oidc`, `custom` | none by unit path: `oidc.azure` or `oidc.gcp` sets one pair for every unit |
+| Binary | `repository.tf_binary` | `binary` |
+| Other settings | `repository`, `annotation` | not mapped: set `env`, `steps` or `terragrunt.exclude` by hand |
 
 ## Next
 

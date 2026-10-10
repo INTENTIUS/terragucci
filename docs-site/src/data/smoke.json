@@ -490,6 +490,14 @@
       "commit": "ff7d397e"
     },
     {
+      "claim": "import-tg-scale",
+      "says": "terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6792b9e1"
+    },
+    {
       "claim": "waves-after",
       "says": "waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three",
       "needs": null,

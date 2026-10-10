@@ -208,6 +208,7 @@ policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the 
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
 import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
+import-tg-scale|terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own|
 waves-after|waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three|
 comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
@@ -4619,6 +4620,126 @@ YAML
   [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves depends_on asks for, $want"; rc=1; }
   drop_work "$tree"
   [ $rc = 0 ] && log "the imported pipeline applies dev, then staging's platform, then prod's platform with staging's services, then prod's services"
+  return $rc
+}
+
+claim_import_tg_scale() {
+  # The Terragrunt example as a Terragrunt Scale repo would have it: Gruntwork
+  # Pipelines' .gruntwork/aws.hcl reading accounts.yml, an environment block
+  # per account (dev and staging by account reference, prod by literal ARNs),
+  # live/prod/payments with roles of its own in its gruntwork.hcl, and
+  # tf_binary. `terragucci import terragrunt-scale` writes terragucci.yml;
+  # `config check` passes; `init --dry-run` writes a pipeline whose plan and
+  # apply jobs hand the auth provider those roles; and `terragucci
+  # auth-provider`, run in each unit as Terragrunt runs it, gives every unit
+  # the plan and apply role of its environment, and payments its own.
+  # BREAK: the written terragrunt block, the role split, is dropped before
+  # init, so no unit gets a role.
+  log() { echo "[smoke import-tg-scale] $*" >&2; }
+  local tree out rc=0 phase roles unit want got arn=arn:aws:iam
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$TG_EXAMPLE/." "$tree/"
+  mkdir -p "$tree/.gruntwork"
+  cat > "$tree/accounts.yml" <<'YAML'
+"dev":
+  "email": "dev@example.com"
+  "id": "111111111111"
+"staging":
+  "email": "staging@example.com"
+  "id": "222222222222"
+YAML
+  cat > "$tree/.gruntwork/aws.hcl" <<'HCL'
+aws {
+  accounts "all" {
+    path = "accounts.yml"
+  }
+}
+HCL
+  cat > "$tree/.gruntwork/environments.hcl" <<'HCL'
+environment "dev" {
+  filter {
+    paths = ["live/dev/*"]
+  }
+  authentication {
+    aws_oidc {
+      account_id         = aws.accounts.all.dev.id
+      plan_iam_role_arn  = "arn:aws:iam::${aws.accounts.all.dev.id}:role/pipelines-plan"
+      apply_iam_role_arn = "arn:aws:iam::${aws.accounts.all.dev.id}:role/pipelines-apply"
+    }
+  }
+}
+
+environment "staging" {
+  filter {
+    paths = ["live/staging/*"]
+  }
+  authentication {
+    aws_oidc {
+      account_id         = aws.accounts.all.staging.id
+      plan_iam_role_arn  = "arn:aws:iam::${aws.accounts.all.staging.id}:role/pipelines-plan"
+      apply_iam_role_arn = "arn:aws:iam::${aws.accounts.all.staging.id}:role/pipelines-apply"
+    }
+  }
+}
+
+environment "prod" {
+  filter {
+    paths = ["live/prod/*"]
+  }
+  authentication {
+    aws_oidc {
+      account_id         = "333333333333"
+      plan_iam_role_arn  = "arn:aws:iam::333333333333:role/pipelines-plan"
+      apply_iam_role_arn = "arn:aws:iam::333333333333:role/pipelines-apply"
+    }
+  }
+}
+HCL
+  cat > "$tree/.gruntwork/repository.hcl" <<'HCL'
+repository {
+  tf_binary = "opentofu"
+}
+HCL
+  cat > "$tree/live/prod/payments/gruntwork.hcl" <<'HCL'
+unit {
+  authentication {
+    aws_oidc {
+      account_id         = "333333333333"
+      plan_iam_role_arn  = "arn:aws:iam::333333333333:role/payments-plan"
+      apply_iam_role_arn = "arn:aws:iam::333333333333:role/payments-apply"
+    }
+  }
+}
+HCL
+  # The example's own terragucci.yml gives way to the imported one.
+  out="$(cd "$tree" && "$TERRAGUCCI" import terragrunt-scale --force 2>&1)" || { log "import failed: $out"; return 1; }
+  grep -q '^  \.gruntwork/environments\.hcl: environment\.dev\.authentication\.aws_oidc (Roles): terragrunt\.credentials "live/dev/\*\*": plan arn:aws:iam::111111111111:role/pipelines-plan' <<<"$out" \
+    || { log "the import did not write dev's roles from accounts.yml"; rc=1; }
+  grep -q '^  \.gruntwork/repository\.hcl: repository\.tf_binary (Binary): binary: tofu' <<<"$out" || { log "the import did not map tf_binary"; rc=1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^terragrunt:/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; return 1; }
+  out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; return 1; }
+  printf 'smoke-token' > "$tree/.oidc-token"
+  for phase in plan apply; do
+    # The role map the generated job exports for the auth provider in this phase.
+    roles="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out" | grep -o "TERRAGUCCI_PHASE=$phase TERRAGUCCI_TG_ROLES='[^']*'" | head -1 | sed -E "s/.*TERRAGUCCI_TG_ROLES='([^']*)'/\1/")"
+    [ -n "$roles" ] || { log "the $phase job hands the auth provider no roles"; rc=1; continue; }
+    for unit in live/dev/orders live/staging/search live/prod/platform live/prod/payments; do
+      case "$unit" in
+        live/dev/*) want="$arn::111111111111:role/pipelines-$phase" ;;
+        live/staging/*) want="$arn::222222222222:role/pipelines-$phase" ;;
+        live/prod/payments) want="$arn::333333333333:role/payments-$phase" ;;
+        *) want="$arn::333333333333:role/pipelines-$phase" ;;
+      esac
+      # The repo as the unit's working directory resolves it: TMPDIR may sit behind a symlink, as /var does on macOS.
+      got="$(cd "$tree/$unit" && TERRAGUCCI_REPO="$(cd "$tree" && pwd -P)" TERRAGUCCI_PHASE="$phase" TERRAGUCCI_TG_ROLES="$roles" AWS_WEB_IDENTITY_TOKEN_FILE="$tree/.oidc-token" "$TERRAGUCCI" auth-provider 2>/dev/null | jq -r '.awsRole.roleARN // "none"')"
+      [ "$got" = "$want" ] || { log "$phase: $unit assumes $got, not $want"; rc=1; }
+    done
+  done
+  drop_work "$tree"
+  [ $rc = 0 ] && log "each environment's units plan and apply with that environment's roles, and live/prod/payments with its own"
   return $rc
 }
 
@@ -20762,6 +20883,7 @@ comment-plan    runner self! weight=150
 comment-atlantis runner self! weight=150
 import-atlantis ex after=boot weight=150
 import-terrateam weight=30
+import-tg-scale weight=30
 waves-after     runner self! weight=150
 lock-wait       otel! self! weight=150
 dash-pipeline   ex otel after=boot weight=120

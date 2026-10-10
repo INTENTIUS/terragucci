@@ -125,3 +125,23 @@ export const TERRATEAM_URL = `${GUIDE_URL}#terrateam`;
 export function commentCell(row: CommentRow): string {
   return plain(COMMENT_TABLE.find((r) => r[0] === row)![3]);
 }
+
+/** The page `terragucci import terragrunt-scale` maps by: Use Terragrunt's Terragrunt Scale section. */
+export const SCALE_URL = "https://intentius.io/terragucci/guides/use-terragrunt/#terragrunt-scale";
+
+/** That section's table: setting, Terragrunt Scale (`.gruntwork`), terragucci (`terragucci.yml`). */
+export const SCALE_TABLE = [
+  ["Roles", "an `environment`'s `filter.paths` and `aws_oidc` roles; a unit's `gruntwork.hcl`", "`terragrunt.credentials`: each path and the units below it, mapped to its plan and apply role; a unit's own roles come first, by its path"],
+  ["Accounts", "`aws.accounts` and its `accounts.yml`", "read for the account ids the role ARNs name"],
+  ["No authentication", "`authentication {}`", "no key: a unit no glob matches runs with the runner's credentials"],
+  ["Other clouds", "`azure_oidc`, `gcp_oidc`, `custom`", "none by unit path: `oidc.azure` or `oidc.gcp` sets one pair for every unit"],
+  ["Binary", "`repository.tf_binary`", "`binary`"],
+  ["Other settings", "`repository`, `annotation`", "not mapped: set `env`, `steps` or `terragrunt.exclude` by hand"],
+] as const satisfies readonly (readonly [string, string, string])[];
+
+export type TgScaleRow = (typeof SCALE_TABLE)[number][0];
+
+/** The terragucci cell of a Terragrunt Scale row. */
+export function tgScaleCell(row: TgScaleRow): string {
+  return plain(SCALE_TABLE.find((r) => r[0] === row)![2]);
+}
