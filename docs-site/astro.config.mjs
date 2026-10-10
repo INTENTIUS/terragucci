@@ -202,7 +202,7 @@ export default defineConfig({
 						{ label: 'Access and identity', slug: 'standards/access-and-identity' },
 					],
 				},
-				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
+				{ label: 'Coming from Atlantis, OpenTaco or Terrateam', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Coming from HCP Terraform, Scalr or OTF', slug: 'guides/coming-from-hcp-terraform-scalr-or-otf' },
 				{ label: 'Coming from Spacelift or env zero', slug: 'guides/coming-from-spacelift-or-env-zero' },
 				{ label: 'Validation', slug: 'reference/validation' },
