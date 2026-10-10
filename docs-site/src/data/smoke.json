@@ -490,6 +490,30 @@
       "commit": "ff7d397e"
     },
     {
+      "claim": "import-tg-scale",
+      "says": "terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6792b9e1"
+    },
+    {
+      "claim": "import-hcp",
+      "says": "terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "190e171f"
+    },
+    {
+      "claim": "import-scalr",
+      "says": "terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "190e171f"
+    },
+    {
       "claim": "import-spacelift",
       "says": "terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask",
       "needs": null,
@@ -1105,6 +1129,14 @@
       "commit": "fd59fd2a"
     },
     {
+      "claim": "cdf-concurrency-time",
+      "says": "with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a86647ee"
+    },
+    {
       "claim": "cdf-write-race",
       "says": "with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
       "needs": null,
@@ -1121,6 +1153,22 @@
       "commit": "fd59fd2a"
     },
     {
+      "claim": "cdf-resume",
+      "says": "with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f605ee01"
+    },
+    {
+      "claim": "cdf-live-progress",
+      "says": "with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f605ee01"
+    },
+    {
       "claim": "cdf-iam",
       "says": "with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate",
       "needs": null,
@@ -1135,6 +1183,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "1d6ba08a"
+    },
+    {
+      "claim": "apply-stand-down",
+      "says": "a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "cdf-rows-overlap",
@@ -2030,6 +2086,22 @@
       "commit": "9d9e7a0b"
     },
     {
+      "claim": "migrate-backend-pg",
+      "says": "a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
+      "claim": "migrate-backend-k8s",
+      "says": "a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
       "claim": "migrate-revert",
       "says": "terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left",
       "needs": null,
@@ -2160,6 +2232,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
+    },
+    {
+      "claim": "cdktn-pr-apply-lock",
+      "says": "with synth and apply.when: pull-request, a pull request applied on a comment locks every CDK Terrain stack, since its change to the app can reach any, and a second pull request that changes a stack is refused with the stack and the holder named, its state left as the first applied it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
     },
     {
       "claim": "cdktn-tips",

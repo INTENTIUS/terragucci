@@ -1,12 +1,12 @@
 ---
 title: Coming from HCP Terraform, Scalr or OTF
 description: Each HCP Terraform, Scalr and OTF workspace concept, the terragucci key or job that does the same work, how to move a workspace's state into your own bucket, and what has no equivalent.
-claims: [pass-secrets, runner-label]
+claims: [pass-secrets, runner-label, import-hcp, import-scalr]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/.
-  List each root with a `cloud` block or a `remote` backend, the workspace it names, and whether another workspace runs the same directory. Propose a directory per workspace where one directory serves several.
-  Write terragucci.yml for what the concepts table maps: `version`, `env` for values that are not secret, `policy` with `input: hcp` for an OPA policy set, `steps` for run tasks. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml and the generated pipeline.
-  List the sensitive variables I must recreate as CI secrets, add their names under `pass`, and list each Sentinel policy that needs a Rego rewrite.
+  Run `npx terragucci import hcp --organization <org> --dry-run` (`import otf --hostname <host>`, or `import scalr --hostname <account>.scalr.io`) with the token in `TF_TOKEN_<host>`, and show me what it prints. Propose a directory per workspace for each directory it lists as run by several workspaces.
+  Once I agree, run it without `--dry-run`. Add what the concepts table maps that the import does not write: `policy` with `input: hcp` for an OPA policy set, `steps` for run tasks. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the `terraform.tfvars` files and the generated pipeline.
+  List the sensitive variables the import named under `pass` that I must recreate as CI secrets, and each Sentinel policy that needs a Rego rewrite.
   Do not change a `cloud` or `backend` block, do not run `init -migrate-state`, `state pull` or `state push`, and do not create secrets: a person moves the state.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -31,9 +31,10 @@ Each workspace becomes a root with its own state in your bucket. The jobs `init`
 | VCS-driven runs, trigger patterns | the [generated pipeline](/terragucci/getting-started/): a pull request plans the roots its files reach |
 | Speculative plan | the plan note and `terragucci/plan` status on the pull request |
 | Confirm and apply, auto-apply | [`gate`](/terragucci/reference/stages/#gate-policy): `always`, `on-destroy` (default) or `never`, then [approve a wave](/terragucci/guides/approve-a-wave/) |
-| Run triggers, `tfe_outputs` | [waves](/terragucci/concepts/waves-and-approvals/#linked-roots): a root that reads another through `terraform_remote_state` applies in a later wave |
+| Run triggers, `tfe_outputs` | [waves](/terragucci/concepts/waves-and-approvals/#linked-roots): a root that reads another through `terraform_remote_state` applies in a later wave; `waves.after`, which an import writes from run triggers, for an order the reads do not give |
 | Sentinel policy set | [`policy`](/terragucci/reference/policy/) in Rego, rewritten by hand |
 | OPA policy set | `policy.input: hcp` with `engine: opa`; `policies.hcl` [runs as is](/terragucci/reference/policy/#hcp-terraform-policy-sets) |
+| Scalr OPA policy group | `policy` with `engine: opa` and `input: plan`, each policy's `input.tfplan` changed to `input`; a check of `input.tfrun` is rewritten |
 | Soft-mandatory override | [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a person `policy.override` lists |
 | Run tasks | [`steps`](/terragucci/guides/run-steps/) after `plan`, with `on_failure: fail` or `approve` |
 | Workspace lock | [root locks](/terragucci/reference/config/#plan-locks) and the backend's lock file |
@@ -46,11 +47,62 @@ Each workspace becomes a root with its own state in your bucket. The jobs `init`
 | Teams and permissions | your forge's permissions and cloud IAM ([access and identity](/terragucci/standards/access-and-identity/)) |
 | Run history | the [report](/terragucci/guides/keep-reports-in-a-bucket/) per run and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 
+## Import the workspaces
+
+`terragucci import` reads the workspaces over the platform's API and writes `terragucci.yml`, with the same token Terraform uses for the host, in `TF_TOKEN_<host>` or `credentials.tfrc.json`:
+
+<Tabs>
+<TabItem label="HCP Terraform">
+
+```bash
+export TF_TOKEN_app_terraform_io=...   # a user or team token that reads the workspaces
+npx terragucci import hcp --organization acme --dry-run
+```
+
+`--hostname` names a Terraform Enterprise host.
+
+</TabItem>
+<TabItem label="OTF">
+
+```bash
+npx terragucci import otf --hostname otf.example.com --organization acme --dry-run
+```
+
+</TabItem>
+<TabItem label="Scalr">
+
+```bash
+export TF_TOKEN_acme_scalr_io=...      # or SCALR_TOKEN
+npx terragucci import scalr --hostname acme.scalr.io --dry-run
+```
+
+It reads every environment the token sees; `--environment` names one, by name or ID.
+
+</TabItem>
+</Tabs>
+
+A workspace becomes a root when it is connected to this repo (the `origin` remote, or `--repo owner/name`), at its working directory, or when a `cloud` block or `remote` backend in the repo names it. Then, for each root:
+
+| On the platform | What the import writes |
+|---|---|
+| Working directory | `roots` |
+| Several workspaces on one directory | nothing: it lists the directory and its workspaces to split, and leaves it out of `roots` |
+| Terraform version | `version`, a map of root to release when they differ; `latest` or a range is left to the root's `required_version` |
+| OpenTofu (Scalr) | `binary: tofu` when every workspace runs it |
+| Terraform variable, not sensitive | `<root>/terraform.tfvars`, unless the file is already there |
+| Environment variable, not sensitive | `env`, unless workspaces set it to different values |
+| Sensitive variable | its name under `pass.secrets`: `TF_VAR_<key>` for a Terraform variable; the value is never read |
+| Variable set (HCP Terraform, OTF) | as the workspace's own variables, which win over the set's |
+| Run trigger (HCP Terraform) | `waves.after`, unless a `terraform_remote_state` read already gives the order |
+| Policy group (Scalr) | nothing: it lists each group, its repo and each policy's enforcement level, to port as [below](#policies) |
+
+It prints every setting under the headings of the [other imports](/terragucci/reference/cli/#import): written, done with no key, not mapped. A workspace connected to another repo, or to none that no block in the repo names, is listed and skipped. Scalr's API lists no run triggers, so for Scalr an order the reads do not give goes in `waves.after` by hand.
+
 ## Steps
 
 <Steps>
 
-1. Give each workspace a directory. Where several share one working directory, put the code in a module that each root calls:
+1. Run the [import](#import-the-workspaces). Where it lists several workspaces on one working directory, give each its own directory, with the code in a module that each root calls:
 
    ```text
    modules/network/        the shared code
@@ -60,7 +112,7 @@ Each workspace becomes a root with its own state in your bucket. The jobs `init`
 
 2. Move each workspace's state into the bucket ([state move](#state-move)), one root at a time, before its backend change merges.
 
-3. Copy the variables ([variables](#variables)).
+3. Create the secrets the import listed under `pass`, and copy any variable it did not write ([variables](#variables)).
 
 4. Port the policies ([policies](#policies)) and run tasks ([run tasks](#run-tasks)).
 
@@ -212,7 +264,7 @@ terragucci does not run Sentinel. Rewrite each policy in Rego over the plan JSON
 </TabItem>
 <TabItem label="Scalr">
 
-terragucci has no input mode shaped as Scalr's OPA input. Point each policy's paths at the plan JSON (`input: plan`) or at HCP's shape (`input: hcp`), and test it on a plan.
+Scalr hands a policy the plan as `input.tfplan` and the run (workspace, environment, VCS, user, cost estimate) as `input.tfrun`. Set `input: plan` and change `input.tfplan` to `input`; terragucci has no `tfrun`, so rewrite a check of it against [the run fields](/terragucci/reference/policy/#the-run-fields) under `input: hcp`, or drop it. In `scalr-policy.hcl`, a `hard-mandatory` policy becomes a `deny` rule, a `soft-mandatory` one a `deny` rule a person in `policy.override` can let through, and an `advisory` one a `warn` rule. `terragucci import scalr` lists each policy group and its policies' levels.
 
 </TabItem>
 </Tabs>
@@ -238,8 +290,8 @@ steps:
 
 | On the platform | In terragucci today |
 |---|---|
-| State move | one workspace per entry of a backend move; no importer reads a workspace's settings |
-| Workspace settings | no importer; `terragucci.yml` is written by hand or by an agent from this page |
+| State move | one workspace per entry of a backend move |
+| Workspace settings | [the import](#import-the-workspaces) reads directories, versions, variables and run triggers; agent pools, auto-apply, run tasks and policy sets are listed, not written |
 | Sentinel | not run; each policy is rewritten in Rego |
 | HCP Terraform Stacks | no equivalent; a Stack's components become roots ordered by `terraform_remote_state` |
 | No-code provisioning, workspace UI | none; changes come through pull requests |

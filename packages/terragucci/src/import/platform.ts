@@ -2,12 +2,12 @@
  * What `import spacelift` and `import env0` share once each has read its
  * files: a unit (a stack, an environment) per root, and the settings the
  * units carry gathered into terragucci.yml by the guide's concepts table
- * (./platform-guide.ts). The readers (./spacelift.ts, ./env0.ts) say what
+ * (./spacelift-env0-guide.ts). The readers (./spacelift.ts, ./env0.ts) say what
  * each unit has; `finish` decides what one repo-wide key can hold.
  */
 import { PASS_RESERVED, PASS_RESERVED_PREFIXES, PR_APPLY_NEEDS_ON_GITLAB, RELEASE_VERSION, type ApplyWhen, type Binary, type ForgeName, type ProjectSettings, type StepSettings } from "../config";
 import { Notes, wavesAfterOf, type ImportNote } from "./notes";
-import { noteConcept, type ConceptRow } from "./platform-guide";
+import { noteConcept, type SpaceliftEnv0Row } from "./spacelift-env0-guide";
 import type { RepoShape } from "./terrateam";
 
 export interface PlatformOptions {
@@ -57,7 +57,7 @@ export class Build {
   ttl?: { value: string; key: string };
   constructor(readonly platform: string) {}
 
-  note(kind: "mapped" | "default" | "unmapped", key: string, row: ConceptRow, detail?: string): void {
+  note(kind: "mapped" | "default" | "unmapped", key: string, row: SpaceliftEnv0Row, detail?: string): void {
     noteConcept(this.notes, kind, key, row, detail);
   }
 

@@ -1,7 +1,7 @@
 /**
  * `terragucci import env0 [env0-discovery.yml]`: terragucci.yml from an env
  * zero repo, by the concepts table of "Coming from Spacelift or env zero"
- * (./platform-guide.ts). It reads three things, each when the repo has it:
+ * (./spacelift-env0-guide.ts). It reads three things, each when the repo has it:
  *
  *   env0-discovery.yml   the environments env zero creates from the repo
  *   env0.yml             a template's custom flow, in the template's directory
@@ -21,7 +21,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, ttlMs, type StepStage } from "../config";
 import { literalString, refTo, resourcesOf, shown, type HclBody, type HclResource, type HclValue } from "./hcl";
 import { isMap, list, rootOf } from "./notes";
-import { notePlatformOnly, noteUnknown } from "./platform-guide";
+import { notePlatformOnly, noteUnknown } from "./spacelift-env0-guide";
 import { Build, finish, type PlatformConverted, type PlatformOptions, type Unit } from "./platform";
 
 export const ENV0_DISCOVERY_FILES = ["env0-discovery.yml", "env0-discovery.yaml"];

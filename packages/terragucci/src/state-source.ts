@@ -113,14 +113,46 @@ interface Json {
   data?: { id?: string; attributes?: Record<string, unknown> };
 }
 
-/** A workspace's state over the TFE API, as the remote backend and the cloud block read it. */
-export function workspaceSource(backend: string, host: string, org: string, name: string, env: NodeJS.ProcessEnv, fetchFn: StoreFetch = fetch as unknown as StoreFetch): ExternalSource {
-  const location = `${backend}://${host}/${org}/${name}`;
-  const token = tokenFor(host, env);
+/** A JSON:API resource as the TFE API and Scalr's give it. */
+export interface ApiResource {
+  id: string;
+  type?: string;
+  attributes?: Record<string, unknown>;
+  relationships?: Record<string, { data?: { id?: string; type?: string } | { id?: string; type?: string }[] | null }>;
+}
+
+/** A call's answer: its status and body. */
+export interface ApiAnswer {
+  status: number;
+  text: string;
+}
+
+/** A client of a host that speaks the TFE API: its token, discovery and JSON:API reads. */
+export interface TfeClient {
+  host: string;
+  /** The token found for the host, if any; never printed. */
+  hasToken: boolean;
+  call(url: string, method?: string, body?: string): Promise<ApiAnswer>;
+  /** The body of a 2xx answer as JSON; a 401 or 404 says what to check, naming `what`. */
+  json<T = Json>(what: string, r: ApiAnswer): T;
+  /** The `tfe.v2` base that discovery names, ending in `/`. */
+  api(): Promise<string>;
+  /** Every resource of a list, page by page (`meta.pagination.next-page`). */
+  list(what: string, url: string): Promise<{ data: ApiResource[]; included: ApiResource[] }>;
+}
+
+/**
+ * A client of `host` over the TFE API, as the remote backend and the cloud
+ * block reach it: discovery at /.well-known/terraform.json, the token in
+ * `TF_TOKEN_<host>` or credentials.tfrc.json (else `tokenEnv`, when named),
+ * sent only to the host and the API discovery names. `location` heads every
+ * error.
+ */
+export function tfeClient(host: string, location: string, env: NodeJS.ProcessEnv, fetchFn: StoreFetch = fetch as unknown as StoreFetch, tokenEnv?: string): TfeClient {
+  const token = tokenFor(host, env) ?? (tokenEnv ? env[tokenEnv] || undefined : undefined);
   const origin = `https://${host}`;
   let base: string | undefined;
-  let id: string | undefined;
-  const call = async (url: string, method = "GET", body?: string): Promise<{ status: number; text: string }> => {
+  const call = async (url: string, method = "GET", body?: string): Promise<ApiAnswer> => {
     // The token goes to the host and the API discovery names (Spacelift's is on another host), as the binary sends it; never to a download elsewhere.
     const sameHost = [host, base ? new URL(base).host : host].includes(new URL(url).host);
     const headers: Record<string, string> = { accept: "application/vnd.api+json", ...(body ? { "content-type": "application/vnd.api+json" } : {}), ...(token && sameHost ? { authorization: `Bearer ${token}` } : {}) };
@@ -133,11 +165,12 @@ export function workspaceSource(backend: string, host: string, org: string, name
     }
     return { status: r.status, text: await r.text() };
   };
-  const json = (what: string, r: { status: number; text: string }): Json => {
-    if (r.status === 401 || r.status === 404) throw new ConfigError(`${location}: ${what} answered ${r.status}; ${token ? `the token in ${tokenVariable(host)} or credentials.tfrc.json may not read the workspace` : `the job has no token for ${host}: set ${tokenVariable(host)}`}`);
+  const tokenHint = (): string => (token ? `the token in ${tokenVariable(host)}${tokenEnv ? ` or ${tokenEnv}` : ""} or credentials.tfrc.json may not read it` : `there is no token for ${host}: set ${tokenVariable(host)}${tokenEnv ? ` or ${tokenEnv}` : ""}`);
+  const json = <T = Json>(what: string, r: ApiAnswer): T => {
+    if (r.status === 401 || r.status === 404) throw new ConfigError(`${location}: ${what} answered ${r.status}; ${tokenHint()}`);
     if (r.status >= 300) throw new ConfigError(`${location}: ${what} answered ${r.status}: ${r.text.slice(0, 200)}`);
     try {
-      return JSON.parse(r.text) as Json;
+      return JSON.parse(r.text) as T;
     } catch {
       throw new ConfigError(`${location}: ${what} answered with something that is not JSON`);
     }
@@ -156,6 +189,44 @@ export function workspaceSource(backend: string, host: string, org: string, name
     base = new URL(v2, `${origin}/`).toString().replace(/\/?$/, "/");
     return base;
   };
+  const list = async (what: string, url: string): Promise<{ data: ApiResource[]; included: ApiResource[] }> => {
+    const data: ApiResource[] = [];
+    const included: ApiResource[] = [];
+    for (let page = 1, guard = 0; page && guard < 1000; guard++) {
+      const u = new URL(url);
+      u.searchParams.set("page[number]", String(page));
+      u.searchParams.set("page[size]", "100");
+      const doc = json<{ data?: unknown; included?: unknown; meta?: { pagination?: { "next-page"?: number | null } } }>(what, await call(u.toString()));
+      if (!Array.isArray(doc.data)) throw new ConfigError(`${location}: ${what} answered with no list`);
+      data.push(...(doc.data as ApiResource[]));
+      if (Array.isArray(doc.included)) included.push(...(doc.included as ApiResource[]));
+      const next = doc.meta?.pagination?.["next-page"];
+      page = typeof next === "number" && next > page ? next : 0;
+    }
+    return { data, included };
+  };
+  return { host, hasToken: token !== undefined, call, json, api, list };
+}
+
+/** A workspace's state over the TFE API, as the remote backend and the cloud block read it. */
+export function workspaceSource(backend: string, host: string, org: string, name: string, env: NodeJS.ProcessEnv, fetchFn: StoreFetch = fetch as unknown as StoreFetch): ExternalSource {
+  const location = `${backend}://${host}/${org}/${name}`;
+  const origin = `https://${host}`;
+  const { call, api } = tfeClient(host, location, env, fetchFn);
+  const json = (what: string, r: ApiAnswer): Json => {
+    // The state read's own wording: the workspace, not "it".
+    if (r.status === 401 || r.status === 404) {
+      const token = tokenFor(host, env);
+      throw new ConfigError(`${location}: ${what} answered ${r.status}; ${token ? `the token in ${tokenVariable(host)} or credentials.tfrc.json may not read the workspace` : `the job has no token for ${host}: set ${tokenVariable(host)}`}`);
+    }
+    if (r.status >= 300) throw new ConfigError(`${location}: ${what} answered ${r.status}: ${r.text.slice(0, 200)}`);
+    try {
+      return JSON.parse(r.text) as Json;
+    } catch {
+      throw new ConfigError(`${location}: ${what} answered with something that is not JSON`);
+    }
+  };
+  let id: string | undefined;
   const workspace = async (): Promise<string> => {
     if (id) return id;
     const b = await api();
