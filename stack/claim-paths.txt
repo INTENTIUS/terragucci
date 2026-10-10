@@ -20,6 +20,7 @@ packages/terragucci/src/image-digests.json ALL
 packages/terragucci/src/render-terragrunt.ts tg-* steward
 packages/terragucci/src/atmos.ts          atmos-*
 packages/terragucci/src/terragrunt.ts     tg-* atmos-waves
+packages/terragucci/src/tg-stacks.ts      tg-*
 packages/terragucci/src/render-agent.ts   comment-agent drift-agent
 packages/terragucci/src/agent-comment.ts  comment-agent drift-agent
 packages/terragucci/src/drift-agent.ts    drift-agent
@@ -147,6 +148,7 @@ stack/fixtures/cdf-race                   cdf-*
 stack/fixtures/terraform-lock             boot report drift
 stack/binary-tree.py                      boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan
 stack/fixtures/atmos-two-stacks          atmos-*
+stack/fixtures/tg-stack                  tg-stack-*
 stack/fixtures/atmos-reads               atmos-upstream-wait
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/linked-states              linked-*

@@ -58,7 +58,7 @@ import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
-import { detectShape, type RootInit } from "./shape";
+import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
@@ -600,9 +600,8 @@ export async function unitPlace(repo: string, unit: string, binary: string, env:
 }
 
 /** Each root's place: a unit's as Terragrunt prepares it, a plain root's where it is. */
-async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv): Promise<Map<string, Place>> {
+async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv, shape: Shape): Promise<Map<string, Place>> {
   const out = new Map<string, Place>();
-  const shape = detectShape(repo, resolveRepo({}));
   for (const root of roots) {
     // Each root with its own role, when `oidc.roles` names one (./roles.ts); a unit is prepared under it too.
     const renv = rootRoleEnv(env, root);
@@ -717,10 +716,13 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   const env = options.env ?? process.env;
   const log = options.log ?? (() => {});
   const roots = [...new Set(m.kind === "backends" ? m.backends.map((b) => b.root) : m.kind === "revert" ? m.restores.map((r) => r.root) : m.moves.flatMap((x) => [x.from, x.to]))].sort();
+  // A unit an explicit stack generates is generated first, as a wave generates it.
+  const shape = detectShape(repo, resolveRepo({}));
+  await shape.prepareRoots({ roots, binary: options.binary, ...(options.terragrunt?.path ? { terragrunt: options.terragrunt.path } : {}), ...(options.terragrunt?.exec ? { exec: options.terragrunt.exec } : {}) });
   const problems = roots.map((r) => refusal(repo, r)).filter((x): x is string => x !== undefined);
   if (problems.length > 0) throw new ConfigError(`migration ${m.name} cannot run:\n  ${problems.join("\n  ")}`);
   mkdirSync(options.work, { recursive: true });
-  const places = await placesOf(repo, roots, options, env);
+  const places = await placesOf(repo, roots, options, env, shape);
   const before = new Map<string, StateFile | null>();
   const objects = new Map<string, StateObject>();
   const versions = new Map<string, string | undefined>();

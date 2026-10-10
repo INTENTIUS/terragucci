@@ -19,7 +19,7 @@ import { workspaceEnv, workspaceInit } from "../backend";
 import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { parseTerragruntReport, terragruntEnv } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
 import { terragruntRenderArgs } from "@intentius/chant-lexicon-terraform/terragrunt/mocks";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
@@ -35,8 +35,9 @@ import { applyLayers, detectBinary, driftRefusal, findRoots, globMatch, liveRoot
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
-import { discoverUnits, generateStacks, refineWaves, unitWaves, walkUnits } from "../terragrunt";
-import { detectShape } from "../shape";
+import { discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
+import { detectShape, type Shape } from "../shape";
+import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { findIssue, ForgeError, type Fetch } from "../forge";
@@ -606,7 +607,7 @@ async function planUnits(
       const path = part.member.member;
       const result = results.get(path);
       const preview = provisional.has(path);
-      const unit = { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
+      const unit = { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
       const file = join(dirOf(groups, path, groups[0]!.workDir), "json", path, "tfplan.json");
       const bin = tools.get(path)?.report;
       const read = reads.get(path) ?? [];
@@ -669,7 +670,7 @@ async function planUnits(
   /** A unit that did not plan for a reason of its own (a step, a pin): no plan, the error. */
   const unitFailed = (path: string, error: string, number: number, preview: boolean): void => {
     run.set(path, { wave: number });
-    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
+    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
   };
 
   const allWaiting: string[] = [];
@@ -735,7 +736,7 @@ async function planUnits(
           const error = (e as Error).message;
           for (const path of units) {
             run.set(path, { wave: layer.number });
-            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
+            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
           }
           log(`wave ${layer.number}: ${error}`);
           units = [];
@@ -907,7 +908,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
   const shape = detectShape(repo, settings);
-  if (options.terragrunt ?? shape.engine === "terragrunt") return runTerragruntStage(repo, settings, options, env, log, drift, configPath);
+  if (options.terragrunt ?? shape.engine === "terragrunt") return runTerragruntStage(repo, settings, shape, options, env, log, drift, configPath);
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
   const full = options.layers ?? applyLayers(repo, all);
   const layers = full
@@ -1288,6 +1289,7 @@ interface Planned {
 async function runTerragruntStage(
   repo: string,
   settings: ReturnType<typeof resolveRepo>,
+  shape: Shape,
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
@@ -1311,7 +1313,7 @@ async function runTerragruntStage(
     discovered = found.source === "terragrunt find";
   } else {
     // The pipeline names the waves, so discovery does not run; an explicit stack's units are still generated before they plan.
-    const stacks = await generateStacks(repo, { binary, ...tool });
+    const stacks = await shape.prepareRoots({ binary, ...tool });
     if (stacks.length) log(`generated the units of ${stacks.length} explicit stack${stacks.length === 1 ? "" : "s"}: ${stacks.join(", ")}`);
   }
   let waves = options.layers ?? unitWaves(units!, canary);
@@ -1364,7 +1366,7 @@ async function runTerragruntStage(
       const r = await pins!(unit);
       if (r.refused.length) {
         log(`${unit}: refused by modules.require: attested`);
-        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
+        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { ...unitStack(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
       } else if (r.verified.length) log(`${unit}: attested ${r.verified.join("; ")}`);
     }
     const refused = new Set(refusedUnits.map((u) => u.path));
@@ -1389,6 +1391,7 @@ async function runTerragruntStage(
     const graph = units ?? walkUnits(repo, settings.terragrunt?.exclude);
     /** One checkout's units planned: the repo's, or a branch's worktree's, with its own pins and its own explicit stacks. */
     const planIn = async (dir: string, own: UnitLayer[], sub: string): Promise<Awaited<ReturnType<typeof planUnits>>> => {
+      // shape: another checkout's own stacks, which the repo's shape does not describe.
       if (dir !== repo) await generateStacks(dir, { binary, ...tool });
       const tools = new UnitBinaries(dir, binary, settings.version, terragrunt, env, options.installer);
       return planUnits(dir, own, binary, sub, {
@@ -1412,7 +1415,7 @@ async function runTerragruntStage(
       planned = mergePlanned(parts);
       for (const [u, why] of sources.failed) {
         log(`${u}: not checked, its branch could not be checked out`);
-        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { ...unitStack(u), selection: everyUnit, provisional: false, run_result: "not run" } });
       }
     }
     const { inputs, plans, redacted, mockReads } = planned;
@@ -1430,7 +1433,7 @@ async function runTerragruntStage(
       if (drift) {
         // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.
         const error = "its upstream has no outputs yet, so Terragrunt would plan it on mock_outputs";
-        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { ...unitStack(u), selection: everyUnit, provisional: false, run_result: "not run" } });
         continue;
       }
       defer(u, [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort(), "would read mock_outputs");
