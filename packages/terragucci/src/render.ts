@@ -190,6 +190,8 @@ export interface PipelineInput {
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
+  /** An Atmos repo: every job installs this Atmos release, which its synth (`terragucci atmos write`) runs. */
+  atmos?: { version: string };
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
   notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
@@ -1789,7 +1791,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const decideEnv = responds(input.respond, "description") ? decideSecret : {};
   const driftDecideEnv = responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
   const bumpOn = responds(input.respond, "version-bump");
-  const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
+  const installs = [
+    ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : []),
+    ...(input.atmos ? [{ tool: "atmos" as Tool, version: input.atmos.version }] : []),
+  ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;

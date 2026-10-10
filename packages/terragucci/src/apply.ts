@@ -120,7 +120,7 @@ import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { stateVersion } from "./backend";
+import { stateVersion, workspaceEnv } from "./backend";
 import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
@@ -600,7 +600,8 @@ async function planRoot(repo: string, binaries: RootBinaries, root: string, work
 async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps): Promise<PlannedRoot> {
   const dir = join(repo, root);
   // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
-  const env = rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root);
+  // An Atmos instance names its workspace (./atmos.ts): it plans and applies there, not in default.
+  const env = workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir);
   const planFile = join(work, `${i}.tfplan`);
   const expected = binaries.expected(root);
   const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
@@ -614,7 +615,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
   if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
   const base = { ...failed, binary, bin };
-  const stepEnv = ws ? { ...ws, env: rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root) } : undefined;
+  const stepEnv = ws ? { ...ws, env: workspaceEnv(rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir) } : undefined;
   let stepError = await rootSteps(repo, base, stepEnv, "before-init");
   if (stepError) return { ...base, error: stepError };
   const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
@@ -645,7 +646,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
 }
 
 async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, ws?: WaveSteps): Promise<boolean> {
-  const stepEnv = ws ? { ...ws, env: rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR }, p.root) } : undefined;
+  const stepEnv = ws ? { ...ws, env: workspaceEnv(rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR }, p.root), join(repo, p.root)) } : undefined;
   const before = await rootSteps(repo, p, stepEnv, "before-apply", p.planFile);
   if (before) {
     console.log(`FAILED ${p.root}: nothing applied`);
