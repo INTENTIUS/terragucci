@@ -98,7 +98,7 @@ Each is plain HCL in `fmt`'s layout, and its first line says terragucci wrote it
 
 A level changes only what it names. Backend arguments and provider settings merge key by key, nested maps included. A level that names another backend type replaces the backend. `null` drops what an earlier level set: `backend: null`, `providers: { aws.dr: null }`, `required_version: null` or `disable_init: null`.
 
-In a control repo, `defaults.generate` comes first, then the project's own `generate`.
+In a [control repo](/terragucci/concepts/control-repo/), `defaults.generate` comes first, then the project's own `generate`.
 
 ## Providers
 

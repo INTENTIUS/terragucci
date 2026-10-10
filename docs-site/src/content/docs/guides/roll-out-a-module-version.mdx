@@ -97,7 +97,7 @@ Every root that pins the module moved to the new version through one pull reques
    | 3 | a pull request waits for a merge or an apply |
    | 1 | the rollout stopped |
 
-   From a control repo, wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave. `rollouts` is a single repo's key, since a project's pipeline sees only its own roots; in a control repo, run `terragucci respond rollout --mode apply` on a schedule of your own.
+   From a [control repo](/terragucci/concepts/control-repo/), wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave. `rollouts` is a single repo's key, since a project's pipeline sees only its own roots; in a control repo, run `terragucci respond rollout --mode apply` on a schedule of your own.
 
 </Steps>
 
