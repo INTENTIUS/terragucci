@@ -144,6 +144,18 @@ export function blastLines(report: Report, name: (root: string) => string = (r) 
     t += `- ${who}${d.wave !== undefined ? ` (wave ${d.wave})` : ""} ${how}${d.planned ? "" : "; not planned in this run"}\n`;
   }
   if (b.downstream.length > BLAST_LISTED) t += `- and ${b.downstream.length - BLAST_LISTED} more in the report's JSON\n`;
+  const by = b.resources ?? [];
+  if (by.length > 0) {
+    t += `\n**By resource:**\n\n`;
+    for (const r of by.slice(0, BLAST_LISTED)) {
+      t += `- ${code(r.address)} in ${code(r.root)} (${r.actions.join(", ")}) reaches:\n`;
+      for (const x of r.reaches.slice(0, BLAST_LISTED)) {
+        t += `  - ${code(x.address)}${x.root === r.root ? "" : ` in ${code(x.root)}`}${x.through ? `, through output ${code(x.through.output)} of ${code(x.through.root)}` : ""}\n`;
+      }
+      if (r.reaches.length > BLAST_LISTED) t += `  - and ${r.reaches.length - BLAST_LISTED} more in the report's JSON\n`;
+    }
+    if (by.length > BLAST_LISTED) t += `- and ${by.length - BLAST_LISTED} more changed resources in the report's JSON\n`;
+  }
   return t;
 }
 
