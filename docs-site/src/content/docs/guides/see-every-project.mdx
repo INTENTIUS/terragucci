@@ -1,7 +1,7 @@
 ---
 title: See every project in one page
 description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
-claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph, tg-estate-graph, behold-view]
+claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph, tg-estate-graph, behold-view, cdf-record-versions]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-every-project/.
   In this control repo, add the scheduled estate job the page gives for my forge,
@@ -234,6 +234,8 @@ Each `tf-apply` wave also records what it did to each resource of the roots it a
 | the commit, the wave, its report and the root's plan digest | the wave's report |
 
 Without the audit trail (step 5) the history lists every apply but names nobody. A wave no gate held has no approver.
+
+For a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each wave also lists the past versions of each record it changed with `choudoufu live-history`: version id, time, and whether it is current or deleted, never a value. The page shows the count beside the resource. A `local` or `kubernetes` record store keeps none, and the page says so. Listing takes `s3:ListBucketVersions` on the record store bucket; when the root's identity lacks it, the history shows choudoufu's error.
 
 ## State versions
 

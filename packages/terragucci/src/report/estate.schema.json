@@ -306,7 +306,13 @@
         "address": { "type": "string" },
         "type": { "type": "string" },
         "provider": { "type": "string" },
-        "history": { "type": "string", "description": "Its section of history.html, when an apply changed it." }
+        "history": { "type": "string", "description": "Its section of history.html, when an apply changed it." },
+        "record_versions": {
+          "type": "object",
+          "description": "A choudoufu record's past versions, from its history: count when the store keeps them, kept false when it keeps none (local, kubernetes), error when they were not listed.",
+          "required": ["kept"],
+          "properties": { "kept": { "type": "boolean" }, "count": { "type": "integer" }, "error": { "type": "string" } }
+        }
       }
     }
   }

@@ -21,7 +21,7 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 | State | one record per resource in an S3 backend, and a tag on each resource; the state file is a cache | your backend | your backend | each unit's backend |
 | What `tf-check` runs | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` |
 | What the report times | each resource; [slow provider calls](/terragucci/reference/observability/#report-contents), [summed timings](/terragucci/reference/observability/#report-contents) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend | per-resource timings: not reported (Terraform sends no traces) | each resource | each unit, from Terragrunt's run report |
-| CI image | `terragucci-choudoufu`, choudoufu 0.24.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
+| CI image | `terragucci-choudoufu`, choudoufu 0.25.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
 | Version pin | `version` only | `version`, `.terraform-version`, or an exact `required_version`; per root too | `version`, `.opentofu-version`, or an exact `required_version`; per root too | `terragrunt.version`, or an exact `terragrunt_version_constraint`; per unit too, with the binary's pins |
 
 A pin the image does not carry is installed in the job and checked against the release's SHA256SUMS. Images are pinned by digest.

@@ -92,6 +92,8 @@ export interface EstateInventoryRoot {
 /** A resource on the page, and its section of history.html when an apply changed it. */
 export interface EstateResource extends ReportResource {
   history?: string;
+  /** A choudoufu record's past versions, from its history: how many, that the store keeps none, or why they were not listed. */
+  record_versions?: { kept: boolean; count?: number; error?: string };
 }
 
 /** A project's resources: how many, how many of each type, and each root's list. */
@@ -483,6 +485,14 @@ function applyingBars(p: EstateProject): string {
 /** A provider's source address without the public registry's host. */
 const providerName = (p: string): string => p.replace(/^registry\.(terraform\.io|opentofu\.org)\//, "");
 
+/** Beside a choudoufu resource: its record's version count, linked to the list, or that the store keeps none, or that they were not listed. */
+function versionsNote(v: NonNullable<EstateResource["record_versions"]>, history: string | undefined): string {
+  if (v.error !== undefined) return `<small class="versions" data-versions="error" title="${esc(v.error)}">versions not listed</small>`;
+  if (!v.kept) return `<small class="versions" data-versions="none">no past versions kept</small>`;
+  const n = v.count ?? 0;
+  return `<small class="versions" data-versions="${n}">${link(history, `${n} ${n === 1 ? "version" : "versions"}`)}</small>`;
+}
+
 /** The resources section: per project its counts by type, then each root's resources. A filter box narrows the rows once scripts run. */
 function resourcesSection(estate: Estate, now: Date): string {
   const projects = estate.projects.filter((p) => p.inventory);
@@ -492,7 +502,7 @@ function resourcesSection(estate: Estate, now: Date): string {
     const types = inv.types.map((t) => `<code>${esc(t.type)}</code> ${t.count}`).join(", ");
     const roots = inv.roots.map((r) => {
       const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${r.resources.length} ${r.resources.length === 1 ? "resource" : "resources"}, ${link(r.report, `${r.wave !== undefined ? `wave ${r.wave}` : "applied"}`)} ${short(r.commit)} ${when(r.finished, now)}</th></tr>`;
-      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td>${link(x.history, `<code>${esc(x.address)}</code>`)}</td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
+      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td>${link(x.history, `<code>${esc(x.address)}</code>`)}${x.record_versions ? ` ${versionsNote(x.record_versions, x.history)}` : ""}</td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
       return `<tbody class="inv" data-root="${esc(r.root)}">${head}${rows.join("")}</tbody>`;
     });
     return `<h3>${link(p.index, esc(p.project))}: ${inv.resources} ${inv.resources === 1 ? "resource" : "resources"} in ${inv.roots.length} ${inv.roots.length === 1 ? "root" : "roots"}</h3>

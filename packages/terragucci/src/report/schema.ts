@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 31;
+export const REPORT_MINOR = 32;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -400,6 +400,33 @@ export interface ReportAppliedChange {
   attributes: string[];
   /** Where a moved resource was. */
   previous_address?: string;
+  /** For a choudoufu root: its record's versions once the apply finished, from `choudoufu live-history` (minor 32). */
+  record_versions?: ReportRecordVersions;
+}
+
+/**
+ * A choudoufu record's versions, newest first, as `choudoufu live-history
+ * -json` lists them (minor 32): each version's id, when it was written, and
+ * whether it is current or a delete marker; never what it holds. `kept` is
+ * false for a store that keeps none (`local`, `kubernetes`). `error` is
+ * live-history's error as it printed it, when it could not list them, such as
+ * an identity without s3:ListBucketVersions.
+ */
+export interface ReportRecordVersions {
+  kept?: boolean;
+  /** The record store's type: `s3`, `local` or `kubernetes`. */
+  store?: string;
+  versions?: ReportRecordVersion[];
+  error?: string;
+  /** When they were listed. */
+  read: string;
+}
+
+export interface ReportRecordVersion {
+  version_id: string;
+  last_modified: string;
+  current: boolean;
+  deleted: boolean;
 }
 
 /** One resource a root holds (minor 14): its address, type and provider, never a value. */

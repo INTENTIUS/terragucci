@@ -23,6 +23,8 @@ import {
   type ReportPolicy,
   type ReportRootPolicy,
   type ReportStateVersion,
+  type ReportRecordVersions,
+  type ReportAppliedChange,
   type ReportRootBinary,
   type ReportStep,
   type ReportRead,
@@ -60,6 +62,8 @@ export interface RootInput {
   applied?: boolean;
   /** The state version the root's backend holds after the apply. */
   state?: ReportStateVersion;
+  /** A choudoufu root's record versions after the apply, by the address the apply changed. */
+  recordVersions?: ReadonlyMap<string, ReportRecordVersions>;
   /** The steps that ran for it. */
   steps?: ReportStep[];
   /** The roots whose state it reads, and which outputs it planned on. */
@@ -286,7 +290,7 @@ export function buildReport(input: BuildInput): Report {
       fold: why.length > 0 ? "open" : "folded",
       why,
       ...(src.policy ? { policy: src.policy } : {}),
-      ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: planAppliedChanges(src.plan) } : {}),
+      ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: withRecordVersions(planAppliedChanges(src.plan), src.recordVersions) } : {}),
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
@@ -381,4 +385,13 @@ export function buildReport(input: BuildInput): Report {
     ...(input.tips ? { tips: input.tips } : {}),
     ...(input.policy ? { policy: input.policy } : {}),
   };
+}
+
+/** Each change with its record's versions, when the apply listed them. */
+function withRecordVersions(changes: ReportAppliedChange[], versions: ReadonlyMap<string, ReportRecordVersions> | undefined): ReportAppliedChange[] {
+  if (!versions || versions.size === 0) return changes;
+  return changes.map((c) => {
+    const v = versions.get(c.address);
+    return v ? { ...c, record_versions: v } : c;
+  });
 }

@@ -113,7 +113,7 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import { binaryText, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
+import { binaryText, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
@@ -144,6 +144,8 @@ import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
 import { readRecords, recordStoreOf } from "./cdf-records";
+import { recordVersions, versionsLine } from "./cdf-history";
+import { planAppliedChanges } from "./report/history";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -979,6 +981,8 @@ interface WaveRun {
   applied?: Set<string>;
   /** The state version each applied root's backend holds afterwards, by root. */
   states?: Map<string, ReportStateVersion>;
+  /** Each applied choudoufu root's record versions, by the address its apply changed, by root. */
+  recordVersions?: Map<string, Map<string, ReportRecordVersions>>;
   /** A wave split across jobs that decided and left the applies to its shares: its report stays with the job, and the shares' go to the bucket. */
   decided?: boolean;
   /** The share of a wave split across jobs this job applies. */
@@ -1134,8 +1138,9 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       const deps = unitDeps?.get(p.root)?.length ? { dependencies: unitDeps.get(p.root) } : {};
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps, ...deps };
       const state = w.states?.get(p.root);
+      const versions = w.recordVersions?.get(p.root);
       const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...deps };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
     }),
     waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
     redacted,
@@ -1367,6 +1372,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   finishApplied(repo, label, w, ok.includes(false) ? "failed" : "applied", options.now);
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
+  w.recordVersions = await listRecordVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
   if (ok.includes(false)) {
     w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
     console.log(`${label}: an apply failed`);
@@ -1451,6 +1457,29 @@ async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: 
     out.set(p.root, await stateVersion(join(repo, p.root), p.env));
   });
   logStateVersions(applied.map((p) => p.root), out);
+  return out;
+}
+
+/**
+ * The past versions of each record a choudoufu root's apply changed
+ * (./cdf-history.ts), listed by `choudoufu live-history` in the root under the
+ * identity its records are read with, one line per root. A listing that
+ * fails keeps its error and never fails the wave.
+ */
+async function listRecordVersions(repo: string, applied: PlannedRoot[], limit: number): Promise<Map<string, Map<string, ReportRecordVersions>>> {
+  const out = new Map<string, Map<string, ReportRecordVersions>>();
+  await eachLimited(applied, limit, async (p) => {
+    if (!p.plan || applyScope(p.bin.name ?? p.binary) !== "resource") return;
+    const dir = join(repo, p.root);
+    const { estate } = estateOf(dir);
+    if (!estate) return;
+    const addresses = planAppliedChanges(p.plan).map((c) => c.address);
+    if (addresses.length === 0) return;
+    const byAddress = new Map<string, ReportRecordVersions>();
+    for (const a of addresses) byAddress.set(a, await recordVersions(p.binary, dir, a, estate, p.env));
+    out.set(p.root, byAddress);
+    console.log(`${p.root}: record versions: ${[...byAddress].map(([a, v]) => `${a} ${versionsLine(v)}`).join("; ")}`);
+  });
   return out;
 }
 
@@ -1620,6 +1649,7 @@ async function runShare(
   }
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
+  w.recordVersions = await listRecordVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
   if (ok.includes(false)) {
     w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
     console.log(`${label}: an apply failed`);
