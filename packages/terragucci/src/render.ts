@@ -190,6 +190,8 @@ export interface PipelineInput {
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
+  /** An Atmos repo: every job installs this Atmos release, which its synth (`terragucci atmos write`) runs. */
+  atmos?: { version: string };
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
   notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
@@ -461,7 +463,7 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
   const loop = rootPins
     ? [
@@ -476,6 +478,8 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
       ];
   return [
     "set -eu",
+    // An Atmos repo: its stack manifests must pass Atmos's own validation before the instances are written from them.
+    ...(atmos ? ['ATMOS_TELEMETRY_ENABLED=false atmos validate stacks || { echo "terragucci: atmos validate stacks failed" >&2; exit 1; }'] : []),
     ...(synth
       ? [
           synthScript(synth),
@@ -1801,11 +1805,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const decideEnv = responds(input.respond, "description") ? decideSecret : {};
   const driftDecideEnv = responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
   const bumpOn = responds(input.respond, "version-bump");
-  const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
+  const installs = [
+    ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : []),
+    ...(input.atmos ? [{ tool: "atmos" as Tool, version: input.atmos.version }] : []),
+  ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.

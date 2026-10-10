@@ -1,0 +1,23 @@
+# The Atmos fixture: two stacks, dev and prod, each with vpc and app, app
+# depending on vpc. State is in floci's S3, in the bucket the catalog names
+# (@BUCKET@, which each claim fills in), one workspace per instance.
+base_path: "."
+
+components:
+  terraform:
+    base_path: components/terraform
+    apply_auto_approve: false
+    deploy_run_init: true
+    init_run_reconfigure: true
+    auto_generate_backend_file: true
+
+stacks:
+  base_path: stacks
+  included_paths:
+    - "deploy/**/*"
+  excluded_paths:
+    - "catalog/**/*"
+  name_template: "{{ .vars.stage }}"
+
+logs:
+  level: Warning

@@ -1,0 +1,11 @@
+import:
+  - catalog/defaults
+
+vars:
+  stage: prod
+
+components:
+  terraform:
+    app:
+      vars:
+        replicas: 3

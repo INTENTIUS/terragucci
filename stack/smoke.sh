@@ -242,6 +242,14 @@ provider-calls|with binary: choudoufu the report lists the slowest provider call
 summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
 foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
 tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
+atmos-waves|init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate|
+atmos-workspace|each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply|
+atmos-affected|a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other|
+atmos-from-plan|an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved|
+atmos-upstream-wait|an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied|
+atmos-check|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
+atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
+atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
 provider-project|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
@@ -7231,6 +7239,517 @@ claim_tg_layers() {
   done
   drop_work "$work"
   [ $rc = 0 ] && log "live/net, live/app and live/edge went out in three waves, each after an approval of its own digest"
+  return $rc
+}
+
+# ── Atmos instances ───────────────────────────────────────────────────────
+# stack/fixtures/atmos-two-stacks: stacks dev and prod, each with vpc and app,
+# app depending on vpc through dependencies.components. Its state is in a
+# floci bucket of each claim's own (@BUCKET@ in the catalog), one Terraform
+# workspace per instance. The jobs install the pinned Atmos release; init
+# here runs the host's build of it (atmos_host), fetched once and checked
+# against the release's SHA256SUMS.
+
+ATMOS_SMOKE_VERSION="$(sed -n 's/^export const ATMOS_VERSION = "\(.*\)";$/\1/p' "$HERE/../packages/terragucci/src/atmos.ts")"
+
+atmos_host() { # -> the path of the host's atmos at the pinned release
+  local os arch dir file v="$ATMOS_SMOKE_VERSION"
+  case "$(uname -s)" in Darwin) os=darwin ;; *) os=linux ;; esac
+  case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
+  dir="$HERE/.state/atmos-$v"; file="atmos_${v}_${os}_${arch}"
+  if [ ! -x "$dir/atmos" ]; then
+    mkdir -p "$dir" || return 1
+    curl -fsSL -o "$dir/$file.$$" "https://github.com/cloudposse/atmos/releases/download/v$v/$file" || return 1
+    curl -fsSL -o "$dir/SHA256SUMS" "https://github.com/cloudposse/atmos/releases/download/v$v/atmos_${v}_SHA256SUMS" || return 1
+    [ "$(grep " \*\?$file\$" "$dir/SHA256SUMS" | cut -d' ' -f1)" = "$(shasum -a 256 "$dir/$file.$$" | cut -d' ' -f1)" ] \
+      || { echo "[smoke atmos] $file does not match the release's SHA256SUMS" >&2; return 1; }
+    chmod +x "$dir/$file.$$" && mv "$dir/$file.$$" "$dir/atmos" || return 1
+  fi
+  echo "$dir/atmos"
+}
+
+atmos_bucket() { # bucket -> an empty bucket in floci
+  local key
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$1" || true
+  for key in $(curl -fsS "$FLOCI/$1?list-type=2" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/$1/$key" || true
+  done
+}
+
+atmos_fill() { # tree, bucket -> the fixture's catalog names the bucket
+  local f="$1/stacks/catalog/defaults.yaml"
+  sed "s#@BUCKET@#$2#" "$f" > "$f.new" && mv "$f.new" "$f"
+}
+
+atmos_applied() { # bucket -> the instances whose state holds a resource, <workspace>/<component>, space-separated; a state in the default workspace as default/<key>
+  # workspace select -or-create writes an empty state, so a key alone does not mean an apply.
+  local key
+  for key in $(curl -fsS "$FLOCI/$1?list-type=2" | grep -o '<Key>[^<]*\.tfstate</Key>' | sed -E 's#</?Key>##g'); do
+    curl -fsS "$FLOCI/$1/$key" 2>/dev/null | jq -e '(.resources // []) | length > 0' >/dev/null 2>&1 || continue
+    awk -F/ 'NF == 3 && $3 == "terraform.tfstate" { print $2 "/" $1; next } { print "default/" $0 }' <<<"$key"
+  done | sort | tr '\n' ' '
+}
+
+claim_atmos_waves() {
+  # Push the fixture, gate: always. init names the four instances and cuts two
+  # waves from dependencies.components: dev/vpc and prod/vpc, then dev/app and
+  # prod/app. Wave 1 waits, so nothing has state. Approve wave 1 and push again:
+  # both vpc instances apply and wave 2 waits at its own gate. Approve wave 2
+  # and push again: both app instances apply after the vpc they depend on.
+  # BREAK: init runs a bundle that drops each instance's dependencies, so all
+  # four instances share one wave and the apps go out with the vpcs.
+  log() { echo "[smoke atmos-waves] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/atmos-waves" bucket=atmos-waves sha applied logs rc=0 k want wf TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_ATMOS
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" atmos.ts 'f.dependencies = [...deps].sort();' 'f.dependencies = [];' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  gated_repo atmos-waves atmos-two-stacks || { drop_work "$work"; return 1; }
+  atmos_fill "$work/tree" "$bucket"
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  sha="$(push_tree "$work/tree" "$repo" main "atmos-waves: first")"
+  wait_run "$repo" "$sha"
+  applied="$(atmos_applied "$bucket")"
+  logs="$(print_logs "$repo" "$RUN_ID")"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "an instance applied before any wave was approved"; rc=1; }
+  grep -q "chant approve tf-apply wave-1 --plan" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  for k in 1 2; do
+    [ $rc = 0 ] || break
+    gated_approve atmos-waves "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "atmos-waves: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(atmos_applied "$bucket")"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+    case "$k" in
+      1) want="dev/vpc prod/vpc " ;;
+      2) want="dev/app dev/vpc prod/app prod/vpc " ;;
+    esac
+    [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
+    if [ "$k" = 1 ]; then
+      grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+    else
+      [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once both waves were approved"; rc=1; }
+    fi
+  done
+  grep -q -- "-auto-approve" <<<"$logs" && { log "a job ran an apply with -auto-approve"; rc=1; }
+  for k in 1 2; do
+    grep -q "^  apply-wave-$k:" "$wf" || { log "init wrote no apply-wave-$k job"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "dev/vpc and prod/vpc went out in wave 1, dev/app and prod/app after them in wave 2, each wave after an approval of its own digest"
+  return $rc
+}
+
+claim_atmos_workspace() {
+  # The fixture in the tofu CI image, as the apply jobs run it: the job
+  # installs Atmos, writes the instances, and applies wave 1 (both vpc
+  # instances, one component) then wave 2 (both apps). Each instance's state
+  # must sit under its own workspace key (<component>/<stack>/terraform.tfstate,
+  # the stack being the workspace Atmos names), none under the default
+  # workspace's key, each holding its own stage; and a tf-plan of all four
+  # afterwards must find no change in any.
+  # BREAK: a bundle whose rootWorkspace reads no workspace, so every instance
+  # runs in default and the two instances of a component share one state.
+  log() { echo "[smoke atmos-workspace] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=atmos-workspace layers code=0 rc=0 applied s c got r
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" backend.ts '  return ws || undefined;' '  return undefined;' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  mkdir -p "$work/repo"
+  cp -R "$HERE/fixtures/atmos-two-stacks/." "$work/repo/"
+  atmos_fill "$work/repo" "$bucket"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke atmos-workspace"
+  layers='dev/vpc,prod/vpc;dev/app,prod/app'
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin \
+    "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "LAYERS=$layers" -e "ATMOS_RELEASE=$ATMOS_SMOKE_VERSION" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" sh -c 'set -e
+      dir="$(terragucci install atmos "$ATMOS_RELEASE")"; export PATH="$dir:$PATH"
+      terragucci atmos write
+      terragucci stage tf-apply --wave 1 --layers "$LAYERS" --binary tofu --gate never
+      terragucci stage tf-apply --wave 2 --layers "$LAYERS" --binary tofu --gate never
+      terragucci stage tf-plan --layers "$LAYERS" --binary tofu --out terragucci-replan' >"$work/job.log" 2>&1 || code=$?
+  sed 's/^/[job] /' "$work/job.log" >&2
+  clean_mounted "$work/repo" "$image"
+  [ "$code" = 0 ] || { log "the job exited $code"; rc=1; }
+  applied="$(atmos_applied "$bucket")"
+  log "state for: ${applied:-nothing}"
+  [ "$applied" = "dev/app dev/vpc prod/app prod/vpc " ] || { log "expected one state per instance, each under its own workspace key"; rc=1; }
+  for s in dev prod; do
+    for c in vpc app; do
+      got="$(curl -fsS "$FLOCI/$bucket/$c/$s/terraform.tfstate" 2>/dev/null | jq -r '.resources[0].instances[0].attributes.input.value // empty' 2>/dev/null || true)"
+      case "$got" in "$s:"*) ;; *) log "$s/$c's state holds '${got:-nothing}', not its own stage"; rc=1 ;; esac
+    done
+  done
+  r="$work/repo/terragucci-replan/report.json"
+  got="$(jq '[.roots[] | select(.status == "planned" and (.changes | length) == 0)] | length' "$r" 2>/dev/null || echo 0)"
+  [ "$got" = 4 ] || { log "the plan after the apply found $got of four instances with no change"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "dev and prod instances of vpc and app each applied in their own workspace, none in default, and planned no change after"
+  return $rc
+}
+
+# A CI image that runs a BREAK bundle: this tree's tofu image with its bundle
+# swapped, tagged under a suffix of its own. The claim exports that suffix, so
+# push_tree points the pushed pipeline at it and the forge's jobs run the
+# broken code. The tag follows the bundle, so a rerun reuses the image.
+break_image() { # bundle -> prints the image suffix (-t<12 hex>)
+  local base tag suffix ctx
+  base="$(image_tag tofu)"
+  docker image inspect "$base" >/dev/null 2>&1 || { echo "[smoke] no CI image $base" >&2; return 1; }
+  suffix="-t$(shasum -a 256 "$1" | cut -c1-12)"
+  tag="$(perl -pe 's/-t[0-9a-f]{12}$//' <<<"$base")$suffix"
+  if ! docker image inspect "$tag" >/dev/null 2>&1; then
+    ctx="$(mktemp -d "${TMPDIR:-/tmp}/tgs-brk.XXXXXX")" || return 1
+    cp "$1" "$ctx/terragucci.mjs" || return 1
+    printf 'FROM %s\nCOPY --chmod=0755 terragucci.mjs /usr/local/bin/terragucci\n' "$base" > "$ctx/Dockerfile"
+    docker build -q -t "$tag" "$ctx" >/dev/null || { echo "[smoke] the BREAK image $tag did not build" >&2; return 1; }
+  fi
+  echo "$suffix"
+}
+
+atmos_plan_log() { # repo, run id -> the plan job's whole log
+  local id
+  id="$(api "$URL/api/v1/repos/$1/actions/runs/$2/jobs" | jq -r '.[] | select(.name == "plan") | .id' | head -1)"
+  [ -n "$id" ] && api "$URL/api/v1/repos/$1/actions/jobs/$id/logs" 2>/dev/null || true
+}
+
+claim_atmos_affected() {
+  # The fixture on main, then a pull request that gives prod's vpc another
+  # cidr. The plan job writes the instances at the base too and compares
+  # them: prod/vpc differs, so it plans, and prod/app plans after it, since
+  # its dependencies.components names vpc. dev/vpc and dev/app are the same
+  # at the base, and no changed instance is their dependency, so neither plans.
+  # BREAK: the jobs run an image whose stage leaves out the Atmos
+  # dependencies, so prod/app does not plan.
+  log() { echo "[smoke atmos-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/atmos-affected" bucket=atmos-affected sha head pr plan_log rc=0 r TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" report/stage.ts 'env, log, atmosDependencies(repo, all));' 'env, log, new Map());' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  gated_repo atmos-affected atmos-two-stacks || { drop_work "$work"; return 1; }
+  atmos_fill "$work/tree" "$bucket"
+  sha="$(push_tree "$work/tree" "$repo" main "atmos-affected: two stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  printf '    vpc:\n      vars:\n        cidr: 10.9.0.0/16\n' >> "$work/tree/stacks/deploy/prod.yaml"
+  head="$(push_tree "$work/tree" "$repo" change "atmos-affected: prod's vpc moves")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "atmos-affected: prod's vpc moves")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    plan_log="$(atmos_plan_log "$repo" "$RUN_ID")"
+    grep -E 'synth at the base|every root: |affected: |(dev|prod)/(vpc|app): (Plan|No changes)' <<<"$plan_log" >&2 || true
+    [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }
+    for r in prod/vpc prod/app; do
+      grep -q "$r: Plan:" <<<"$plan_log" || { log "the pull request did not plan $r"; rc=1; }
+    done
+    for r in dev/vpc dev/app; do
+      grep -qE "$r: (Plan:|No changes)" <<<"$plan_log" && { log "the pull request planned $r, which the change does not reach"; rc=1; }
+    done
+    grep -q "affected: prod/app depends on prod/vpc" <<<"$plan_log" || { log "the plan does not say prod/app plans because it depends on prod/vpc"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "a change to prod's vpc planned prod/vpc and prod/app, its dependent, and neither dev instance"
+  return $rc
+}
+
+claim_atmos_from_plan() {
+  # The fixture on main, gate: always; wave 1 (dev/vpc, prod/vpc) waits.
+  # Approve it, then give prod's vpc another cidr and push: wave 1 plans
+  # again, its digest is not the approved one, so it applies nothing and
+  # names prod/vpc. Approve the new plans and push again: wave 1 applies the
+  # plan whose digest was approved, so prod/vpc's state holds the new cidr.
+  # BREAK: the jobs run an image whose gate takes any approval as one of
+  # this digest, so the re-planned wave applies under the old approval.
+  log() { echo "[smoke atmos-from-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/atmos-from-plan" bucket=atmos-from-plan sha applied logs got rc=0 TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply.ts '    if (samePlanDigest(r.planDigest, digest)) {' '    if (true) {' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  gated_repo atmos-from-plan atmos-two-stacks || { drop_work "$work"; return 1; }
+  atmos_fill "$work/tree" "$bucket"
+  sha="$(push_tree "$work/tree" "$repo" main "atmos-from-plan: first")"
+  wait_run "$repo" "$sha"
+  applied="$(atmos_applied "$bucket")"
+  [ -z "$applied" ] || { log "an instance applied before wave 1 was approved"; rc=1; }
+  [ $rc = 0 ] && { gated_approve atmos-from-plan 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    printf '    vpc:\n      vars:\n        cidr: 10.9.0.0/16\n' >> "$work/tree/stacks/deploy/prod.yaml"
+    sha="$(push_tree "$work/tree" "$repo" main "atmos-from-plan: prod's vpc moves after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(atmos_applied "$bucket")"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    log "after the change: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "wave 1 applied after its plans changed"; rc=1; }
+    grep -q "changed after it was approved, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not refuse as changed"; rc=1; }
+    grep -q "planned differently since: prod/vpc" <<<"$logs" || { log "the refusal does not name prod/vpc"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve atmos-from-plan 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "atmos-from-plan: after the new plans were approved")"
+    wait_run "$repo" "$sha"
+    applied="$(atmos_applied "$bucket")"
+    log "after approving the new plans: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "dev/vpc prod/vpc " ] || { log "expected wave 1, dev/vpc and prod/vpc, to apply"; rc=1; }
+    got="$(curl -fsS "$FLOCI/$bucket/vpc/prod/terraform.tfstate" 2>/dev/null | jq -r '.resources[0].instances[0].attributes.input.value // empty' 2>/dev/null || true)"
+    [ "$got" = "prod:10.9.0.0/16" ] || { log "prod/vpc's state holds '${got:-nothing}', not the approved plan's prod:10.9.0.0/16"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 refused the plans that moved after approval, then applied the plans whose digest was approved"
+  return $rc
+}
+
+claim_atmos_upstream_wait() {
+  # stack/fixtures/atmos-reads: each stack's app reads vpc's cidr with
+  # !terraform.state, so app is a wave after vpc. On main wave 1 waits, so
+  # nothing has state. A pull request that changes dev's app plans it in the
+  # plan job: dev/vpc has no state, so dev/app is held back, never planned
+  # on a stand-in. Then wave 1 and wave 2 are approved on main: dev/app
+  # applies with the cidr dev/vpc's state holds.
+  # BREAK: the jobs run an image that neither counts the read as a state read
+  # nor waits for a missing output, so dev/app plans on null, Atmos's stand-in
+  # for an upstream nothing applied.
+  log() { echo "[smoke atmos-upstream-wait] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/atmos-upstream-wait" bucket=atmos-upstream-wait sha head pr plan_log applied got k rc=0 TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" \
+      atmos.ts '    if (reads.length > 0) out.set(r, new Set(reads.map((x) => x.upstream)));' '' \
+      atmos.ts '    if (!v) {' '    if (false) {' \
+      atmos.ts '    values[read.var] = v.value;' '    values[read.var] = v ? v.value : null;' \
+      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  gated_repo atmos-upstream-wait atmos-reads || { drop_work "$work"; return 1; }
+  atmos_fill "$work/tree" "$bucket"
+  sha="$(push_tree "$work/tree" "$repo" main "atmos-upstream-wait: app reads vpc")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  printf '\ncomponents:\n  terraform:\n    app:\n      vars:\n        replicas: 2\n' >> "$work/tree/stacks/deploy/dev.yaml"
+  head="$(push_tree "$work/tree" "$repo" change "atmos-upstream-wait: dev's app grows")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "atmos-upstream-wait: dev's app grows")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    plan_log="$(atmos_plan_log "$repo" "$RUN_ID")"
+    grep -E 'affected: |held back|(dev|prod)/(vpc|app): (Plan|No changes)' <<<"$plan_log" >&2 || true
+    grep -q "dev/app: held back, dev/vpc has no state yet" <<<"$plan_log" || { log "dev/app was not held back for dev/vpc"; rc=1; }
+    grep -qE "dev/app: (Plan:|No changes)" <<<"$plan_log" && { log "dev/app planned before dev/vpc had state"; rc=1; }
+  fi
+  for k in 1 2; do
+    [ $rc = 0 ] || break
+    gated_approve atmos-upstream-wait "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "atmos-upstream-wait: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(atmos_applied "$bucket")"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+  done
+  if [ $rc = 0 ]; then
+    [ "$applied" = "dev/app dev/vpc prod/app prod/vpc " ] || { log "expected every instance to apply once both waves were approved"; rc=1; }
+    got="$(curl -fsS "$FLOCI/$bucket/app/dev/terraform.tfstate" 2>/dev/null | jq -r '.resources[0].instances[0].attributes.input.value.vpc // empty' 2>/dev/null || true)"
+    [ "$got" = "10.0.0.0/16" ] || { log "dev/app applied with vpc '${got:-null}', not dev/vpc's cidr"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "dev/app was held back while dev/vpc had no state, then applied on the cidr dev/vpc's state holds"
+  return $rc
+}
+
+claim_atmos_check() {
+  # The fixture with a catalog manifest no stack imports, whose metadata.type
+  # is not one Atmos knows. The push's check job runs atmos validate stacks
+  # before it writes the instances, which fails on that manifest, so the
+  # check fails and says so with Atmos's own error.
+  # BREAK: init runs a bundle that leaves atmos validate stacks out of the
+  # check job, so the check fails only later, in the write.
+  log() { echo "[smoke atmos-check] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/atmos-check" bucket=atmos-check sha logs rc=0 TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_ATMOS
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" render.ts '    ...(atmos ? [' '    ...(false ? [' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  gated_repo atmos-check atmos-two-stacks || { drop_work "$work"; return 1; }
+  atmos_fill "$work/tree" "$bucket"
+  grep -q "atmos validate stacks" "$work/tree/.forgejo/workflows/terragucci.yml" || log "the check job runs no atmos validate stacks"
+  printf 'components:\n  terraform:\n    eks:\n      metadata:\n        type: bogus\n' > "$work/tree/stacks/catalog/eks.yaml"
+  sha="$(push_tree "$work/tree" "$repo" main "atmos-check: a manifest Atmos refuses")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  logs="$(run_logs "$repo" "$RUN_ID")"
+  grep -E "atmos validate stacks|metadata.type|synth command failed" <<<"$logs" | head -8 >&2 || true
+  [ "$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "check") | .status' | head -1)" = failure ] || { log "the check job did not fail on the manifest"; rc=1; }
+  grep -q "terragucci: atmos validate stacks failed" <<<"$logs" || { log "the check job did not fail in atmos validate stacks"; rc=1; }
+  grep -q "catalog/eks.yaml.*metadata.type" <<<"$logs" || { log "the check job does not show Atmos's error for catalog/eks.yaml"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the check job ran atmos validate stacks, which failed it on catalog/eks.yaml with Atmos's own error"
+  return $rc
+}
+
+claim_atmos_version() {
+  # The fixture with atmos.version set to 1.230.0, a release before the one
+  # terragucci pins. init writes every job's install of that release, and the
+  # install line, run in the tofu CI image, puts that Atmos on the path.
+  # BREAK: init runs a bundle that ignores atmos.version, so the jobs install
+  # the pinned release.
+  log() { echo "[smoke atmos-version] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image want=1.230.0 wf install got n rc=0 TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_ATMOS
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" init.ts 'version: settings.atmos?.version ?? ATMOS_VERSION' 'version: ATMOS_VERSION' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/atmos-two-stacks/." "$work/tree/"
+  printf 'atmos:\n  version: %s\n' "$want" >> "$work/tree/terragucci.yml"
+  git -C "$work/tree" init -q -b main
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  n="$(grep -o 'terragucci install atmos [0-9][0-9.]*' "$wf" | grep -c " $want\$" || true)"
+  log "jobs that install atmos $want: $n; any other release: $(grep -o 'terragucci install atmos [0-9][0-9.]*' "$wf" | grep -vc " $want\$" || true)"
+  [ "$n" -gt 0 ] || { log "no job installs atmos $want"; rc=1; }
+  grep -o 'terragucci install atmos [0-9][0-9.]*' "$wf" | grep -qv " $want\$" && { log "a job installs another Atmos release"; rc=1; }
+  install="$(grep -m1 -o 'terragucci install atmos [0-9][0-9.]*' "$wf")"
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  got="$(run_copied --rm -v "$JOB_CACHE_VOLUME:/cache" -e TOFU_INSTALL_DIR=/cache/bin -e "INSTALL=$install" "$image" \
+    sh -c 'dir="$($INSTALL 2>/dev/null)" && cd /tmp && PATH="$dir:$PATH" ATMOS_TELEMETRY_ENABLED=false atmos version 2>/dev/null' | tr -d '\r' | sed -n 's/.*Atmos \([0-9][0-9.]*\) on .*/\1/p' | head -1)"
+  log "the job's install line puts atmos ${got:-nothing} on the path"
+  [ "$got" = "$want" ] || { log "expected atmos $want"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "atmos.version $want reached every job's install, and that release is what the install puts on the path"
+  return $rc
+}
+
+claim_atmos_roles() {
+  # The fixture with oidc.roles by stack: dev/* and prod/* each a plan and an
+  # apply role. config check lists each role with its stack's instances and
+  # their states, <component>/<stack>/terraform.tfstate, and warns about
+  # nothing. Then wave 1 (dev/vpc, prod/vpc) applies in the tofu CI image
+  # with the apply roles init wrote and a stand-in OIDC token floci's STS
+  # answers: a step before plan prints each instance's AWS_ROLE_ARN, so
+  # dev/vpc runs as dev-apply and prod/vpc as prod-apply.
+  # floci grants every role, so the claim shows which role each instance runs
+  # as, not that IAM refuses another stack's state.
+  # BREAK: a bundle whose roles match no instance, so both run with the job's
+  # own keys.
+  log() { echo "[smoke atmos-roles] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=atmos-roles out line roles code=0 rc=0 s acct="arn:aws:iam::000000000000:role" TERRAGUCCI_ATMOS
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" roles.ts '  const role = roleOf(root, rolesFromEnv(env));' '  const role = roleOf("", rolesFromEnv(env));' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  atmos_bucket "$bucket"
+  mkdir -p "$work/repo"
+  cp -R "$HERE/fixtures/atmos-two-stacks/." "$work/repo/"
+  atmos_fill "$work/repo" "$bucket"
+  cat >> "$work/repo/terragucci.yml" <<YML
+oidc:
+  roles:
+    "dev/*": { plan: $acct/dev-plan, apply: $acct/dev-apply }
+    "prod/*": { plan: $acct/prod-plan, apply: $acct/prod-apply }
+steps:
+  - name: role
+    run: echo "role-check \$TG_ROOT \$AWS_ROLE_ARN"
+    before: plan
+YML
+  git -C "$work/repo" init -q -b main
+  (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  out="$(cd "$work/repo" && "$TERRAGUCCI" config check --json 2>/dev/null)" || { log "config check exited $?"; rc=1; }
+  jq -c '.results | {warnings, state_access: [.state_access[]? | {role, roots, states}]}' <<<"$out" >&2
+  [ "$(jq -r '.results.warnings // [] | length' <<<"$out")" = 0 ] || { log "config check warns: $(jq -c '.results.warnings' <<<"$out")"; rc=1; }
+  for s in dev prod; do
+    jq -e --arg b "$bucket" --arg r "$acct/$s-apply" --arg s "$s" '[.results.state_access[] | select(.role == $r and .stage == "apply")] == [{role: $r, stage: "apply", environment: ($s + "/*"), roots: [$s + "/app", $s + "/vpc"], states: ["s3://" + $b + "/app/" + $s + "/terraform.tfstate", "s3://" + $b + "/vpc/" + $s + "/terraform.tfstate"], reads: []}]' <<<"$out" >/dev/null \
+      || { log "config check does not list $s-apply with $s's instances and their states alone"; rc=1; }
+  done
+  line="$(grep -o "export TERRAGUCCI_ROOT_ROLES='[^']*dev-apply[^']*'" "$work/repo/.forgejo/workflows/terragucci.yml" | head -1)"
+  roles="${line#export TERRAGUCCI_ROOT_ROLES=\'}"; roles="${roles%\'}"
+  [ -n "$roles" ] || { log "the apply job carries no TERRAGUCCI_ROOT_ROLES"; rc=1; }
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke atmos-roles"
+  if [ $rc = 0 ]; then
+    node -e 'const b=(o)=>Buffer.from(JSON.stringify(o)).toString("base64url");const t=Math.floor(Date.now()/1000);process.stdout.write(b({alg:"RS256",typ:"JWT"})+"."+b({iss:"https://token.actions.githubusercontent.com",sub:"repo:smoke/atmos-roles:ref:refs/heads/main",aud:"sts.amazonaws.com",iat:t,nbf:t,exp:t+3600})+".c21va2U")' > "$work/repo/.oidc-token"
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "ATMOS_RELEASE=$ATMOS_SMOKE_VERSION" -e "TERRAGUCCI_ROOT_ROLES=$roles" \
+      -e AWS_WEB_IDENTITY_TOKEN_FILE=/repo/.oidc-token -e AWS_ROLE_SESSION_NAME=smoke -e AWS_ENDPOINT_URL_STS=http://floci:4566 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" sh -c 'set -e
+        dir="$(terragucci install atmos "$ATMOS_RELEASE")"; export PATH="$dir:$PATH"
+        terragucci atmos write
+        terragucci stage tf-apply --wave 1 --layers "dev/vpc,prod/vpc;dev/app,prod/app" --binary tofu --gate never --base HEAD' >"$work/job.log" 2>&1 || code=$?
+    sed 's/^/[job] /' "$work/job.log" >&2
+    clean_mounted "$work/repo" "$image"
+    [ "$code" = 0 ] || { log "the wave exited $code"; rc=1; }
+    for s in dev prod; do
+      grep -q "role-check $s/vpc $acct/$s-apply\$" "$work/job.log" || { log "$s/vpc did not run as $s-apply"; rc=1; }
+    done
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "config check listed each stack's role with its instances' states, and each stack's vpc applied as its own stack's role"
   return $rc
 }
 
@@ -16994,6 +17513,14 @@ provider-calls       weight=90
 summed-timings       weight=90
 foreign-checkout     ex after=boot weight=150
 tg-layers            runner self! weight=300
+atmos-waves          runner self! weight=350
+atmos-workspace      self! weight=150
+atmos-affected       runner self! weight=250
+atmos-from-plan      runner self! weight=350
+atmos-upstream-wait  runner self! weight=400
+atmos-check          runner self! weight=150
+atmos-version        self! weight=90
+atmos-roles          self! weight=150
 policy-source        self! weight=150
 reconcile-parallelism weight=120
 provider-project self! weight=90
