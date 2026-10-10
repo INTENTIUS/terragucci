@@ -430,10 +430,12 @@ export const estateRecords = (estate: string): string => `tofu-records/${estate}
 
 /**
  * A root's state as stateOf reads it, and under choudoufu its estate: the
- * records of the estate its `live` block owns as its own state, and each
+ * records of the estate its `live` block owns as its own state (over the
+ * `terraform.tfstate` a root with no backend block would keep), and each
  * `terraform_estate_outputs` read as a read of that estate's records.
  */
-function withEstate(dir: string, s: { own?: StateRef; reads: RemoteRead[] }): { own?: StateRef; reads: RemoteRead[] } {
+function withEstate(repo: string, root: string, s: { own?: StateRef; reads: RemoteRead[] }): { own?: StateRef; reads: RemoteRead[] } {
+  const dir = join(repo, root);
   const { estate } = estateOf(dir);
   const reads = [...s.reads];
   for (const f of tfFiles(dir)) {
@@ -444,7 +446,9 @@ function withEstate(dir: string, s: { own?: StateRef; reads: RemoteRead[] }): { 
       if (e) reads.push({ name: m[1]!, key: estateRecords(e), repeated: false });
     }
   }
-  return { own: s.own ?? (estate ? { key: estateRecords(estate) } : undefined), reads };
+  const implicit = addressed("local", () => undefined, root).ref;
+  const own = estate && (!s.own || (implicit && sameState(s.own, implicit))) ? { key: estateRecords(estate) } : s.own;
+  return { own, reads };
 }
 
 /**
@@ -455,7 +459,7 @@ function withEstate(dir: string, s: { own?: StateRef; reads: RemoteRead[] }): { 
  * across projects.
  */
 export function rootStates(repo: string, roots: string[]): Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }> {
-  const states = new Map(roots.map((r) => [r, withEstate(join(repo, r), stateOf(repo, r))]));
+  const states = new Map(roots.map((r) => [r, withEstate(repo, r, stateOf(repo, r))]));
   const held = [...states.values()].flatMap((s) => (s.own ? [s.own] : []));
   const out = new Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }>();
   for (const [root, { own, reads }] of states) {
