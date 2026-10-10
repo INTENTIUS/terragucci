@@ -787,10 +787,10 @@
       "claim": "pr-apply-lock",
       "says": "with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
       "forge": "gitlab",
-      "commit": "1813d451"
+      "commit": "4b61c25b"
     },
     {
       "claim": "pr-apply-stale",
@@ -1482,7 +1482,7 @@
       "verdict": "pass",
       "break": "caught",
       "forge": "gitlab",
-      "commit": "1813d451"
+      "commit": "4b61c25b"
     },
     {
       "claim": "tg-lock-fanout",
