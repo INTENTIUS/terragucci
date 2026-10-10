@@ -1,7 +1,7 @@
 ---
 title: Move resources between roots
 description: Split a root in two, merge two roots, or hand a resource to another root, with a migration file in the pull request, proved with no change, approved by digest and written under the state lock.
-claims: [migrate-split, migrate-resume, migrate-backend, migrate-revert, cdktn-migrate, tg-migrate-split]
+claims: [migrate-split, migrate-resume, migrate-backend, migrate-backend-tfe, migrate-revert, cdktn-migrate, tg-migrate-split]
 prompt: |
   Read https://intentius.io/terragucci/guides/move-resources-between-roots/.
   In this repo, move the resource blocks I name from their root to the root I name, write the migration file the page describes for that move, and open a pull request.
@@ -31,7 +31,7 @@ State contents stay in your backend and the job's temporary directory. The recor
 | You need | Why |
 |---|---|
 | Terraform or OpenTofu roots, CDK Terrain stacks, whose roots are `cdktf.out/stacks/<stack>` holding `cdk.tf.json`, or Terragrunt units | a unit is prepared by Terragrunt (`terragrunt run -- init`), and the job then reads and writes its state in the directory Terragrunt runs it in, with the inputs Terragrunt gives it; a move can go between two units, or between a unit and a plain root |
-| An `s3` backend with `use_lockfile = true`, or a `local` backend, in every root the move touches | the job holds the S3 lock file while it writes; a root with a `cloud` block, or another backend, is refused |
+| An `s3` backend with `use_lockfile = true`, or a `local` backend, in every root the move touches | the job holds the S3 lock file while it writes; a root whose code has a `cloud` block, or another backend, is refused; a backend move reads from a workspace or a state file |
 | Bucket versioning on, for S3 | each version id before is the version to go back to; see [Find the state version an apply left](/terragucci/guides/find-a-state-version/) |
 | An apply identity that can write the state objects and their `.tflock` files | the same rights `use_lockfile` already needs |
 | A pipeline `terragucci init` wrote after the first migration file was added | on GitHub under `gate: never`, the apply jobs get `contents: write` to record the migration's gate on `chant/lifecycle` only then; `config check` and the plan job refuse a repo whose pipeline lacks it |
@@ -109,6 +109,8 @@ backends:
 ```
 
 The plan job plans the root against the old backend's state with no change; the digest covers that state's version and digest. Wave 1 waits for the approval as for any migration. Once approved, it takes the lock files of the old and new state, checks that neither moved, then writes the state to the backend the code names, which must hold none for the root. The old state stays where it was; delete it once the move is verified.
+
+A root on HCP Terraform, Scalr, OTF or env zero's backend moves the same way, with `backend: cloud` (or `remote`) naming the workspace, and the token in `TF_TOKEN_<host>`. The job holds the workspace's lock while it writes. State exported from another platform moves with `backend: file`. [Migration files](/terragucci/reference/migration-files/#workspaces) lists the keys.
 
 ## Put a migration back
 
