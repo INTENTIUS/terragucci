@@ -250,6 +250,7 @@ atmos-upstream-wait|an Atmos instance whose stack reads an unapplied instance wi
 atmos-check|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
 atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
 atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
+atmos-refuse|config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
 provider-project|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
@@ -7760,6 +7761,56 @@ YML
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "config check listed each stack's role with its instances' states, and each stack's vpc applied as its own stack's role"
+  return $rc
+}
+
+claim_atmos_refuse() {
+  # The fixture with a drift schedule and no respond.drift. config check and
+  # init each refuse the drift pull request, the default response, as a config
+  # error worded for Atmos (the value belongs in the stack's vars or the
+  # component), never about synth; with respond.drift: attribute init writes
+  # the drift job. With the instances written, respond tips proposes lock files
+  # for the two components git holds, not the four written instances, and a
+  # canary of instances.
+  # BREAK: config check and init run a bundle whose refusal table leaves the
+  # Atmos drift pull request out, so config check passes the schedule.
+  log() { echo "[smoke atmos-refuse] $*" >&2; }
+  local work out tips rc=0 TERRAGUCCI="$TERRAGUCCI" TERRAGUCCI_ATMOS
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
+  export TERRAGUCCI_ATMOS
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" refusals.ts '"drift-pr": ATMOS_DRIFT_PR, ' '' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/atmos-two-stacks/." "$work/tree/"
+  printf 'url: https://forge.test/acme/infra\ndrift: "0 6 * * *"\n' >> "$work/tree/terragucci.yml"
+  git -C "$work/tree" init -q -b main
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" config check 2>&1)"; then
+    log "config check passed the drift pull request in an Atmos repo"; rc=1
+  else
+    grep -q "config.respond.drift: .*stack's vars or the component" <<<"$out" || { log "config check did not refuse it in Atmos's words: $out"; rc=1; }
+    grep -q "synth" <<<"$out" && { log "config check talks about synth: $out"; rc=1; }
+  fi
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" init 2>&1)"; then
+    log "init accepted the drift pull request in an Atmos repo"; rc=1
+  else
+    grep -q "respond.drift: .*stack's vars or the component" <<<"$out" || { log "init did not refuse it in Atmos's words: $out"; rc=1; }
+  fi
+  printf 'respond:\n  drift: attribute\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init refused respond.drift: attribute"; rc=1; }
+  grep -q "tf-drift" "$work/tree/.forgejo/workflows/terragucci.yml" 2>/dev/null || { log "the pipeline has no drift job"; rc=1; }
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m fixture
+  (cd "$work/tree" && "$TERRAGUCCI" atmos write >/dev/null) || { log "atmos write failed"; rc=1; }
+  tips="$(cd "$work/tree" && "$TERRAGUCCI" respond tips --binary tofu 2>&1)" || { log "respond tips failed: $tips"; rc=1; }
+  log "respond tips: $(tr '\n' ' ' <<<"$tips")"
+  grep -q "for 2 root(s)" <<<"$tips" || { log "the lock file tip does not name the two components"; rc=1; }
+  grep -q "canary wave: dev/app, dev/vpc" <<<"$tips" || { log "the canary tip does not name instances"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "config check and init refused the drift pull request in Atmos's words, attribute wrote the drift job, and tips went to the components"
   return $rc
 }
 
@@ -17708,6 +17759,7 @@ atmos-upstream-wait  runner self! weight=400
 atmos-check          runner self! weight=150
 atmos-version        self! weight=90
 atmos-roles          self! weight=150
+atmos-refuse         weight=60
 policy-source        self! weight=150
 reconcile-parallelism weight=120
 provider-project self! weight=90

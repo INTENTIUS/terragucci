@@ -67,11 +67,13 @@ import {
   loadConfig,
   resolveRepo,
   ttlMs,
+  type Binary,
   type ForgeName,
   type ResolvedSettings,
   type TerragucciConfig,
 } from "./config";
-import { applyLayers, backendBlock, detectBinary, findRoots, globMatch } from "./detect";
+import { applyLayers, backendBlock, findRoots, globMatch } from "./detect";
+import { detectShape, type Shape } from "./shape";
 import { call, type Fetch } from "./forge";
 import { unitPlace } from "./migrate";
 import { RootBinaries } from "./pins";
@@ -82,7 +84,7 @@ import { runFacts } from "./report/stage";
 import { updateJson } from "./report/store";
 import { rootRoleEnv } from "./roles";
 import { sealRefusal } from "./seal";
-import { detectTerragrunt, discoverUnits, generateStacks, unitWaves } from "./terragrunt";
+import { discoverUnits, generateStacks, unitWaves } from "./terragrunt";
 
 export const EPHEMERAL_OP = "tf-ephemeral";
 export const EPHEMERAL_LEDGER = `_gates/${EPHEMERAL_OP}.jsonl`;
@@ -465,6 +467,15 @@ interface Ready {
   actor: string;
 }
 
+/**
+ * The binary a copy runs when the job passes none: terragucci.yml's, else the
+ * one init detects for the repo's shape, as every other job runs (a Terragrunt
+ * repo's from its version files and the path, never a fixed tofu).
+ */
+export function copyBinary(repo: string, settings: ResolvedSettings, shape: Shape = detectShape(repo, settings)): Binary {
+  return settings.binary ?? shape.binary(shape.engine === "terragrunt" ? [] : findRoots(repo, settings.ephemeral?.roots)).value;
+}
+
 /** The settings at base, refused as a config error where a copy cannot be made. */
 async function ready(repo: string, options: EphemeralOptions): Promise<Ready> {
   const env = options.env ?? process.env;
@@ -482,11 +493,14 @@ async function ready(repo: string, options: EphemeralOptions): Promise<Ready> {
   const settings = resolveRepo(config);
   const e = settings.ephemeral;
   if (!e || !Array.isArray(e.roots) || e.roots.length === 0) throw new ConfigError(`terragucci.yml${options.base ? ` at ${options.base}` : ""} names no ephemeral roots; set ephemeral.roots`);
-  const terragrunt: UnitCopy | undefined = settings.terragrunt !== undefined || detectTerragrunt(repo) ? { terragrunt: options.terragrunt ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt" } : undefined;
+  const shape = detectShape(repo, settings);
+  const refused = shape.refuses("ephemeral");
+  if (refused) throw new ConfigError(`ephemeral: ${refused}`);
+  const terragrunt: UnitCopy | undefined = shape.engine === "terragrunt" ? { terragrunt: options.terragrunt ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt" } : undefined;
   const forge: ForgeName = settings.forge ?? (env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
-  const binary = options.binary ?? settings.binary ?? (terragrunt ? "tofu" : detectBinary(repo, findRoots(repo, e.roots)).value);
+  const binary = options.binary ?? copyBinary(repo, settings, shape);
   const actor = options.actor || env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || "terragucci";
-  return { settings, roots: e.roots, ...(terragrunt ? { terragrunt } : {}), ...(settings.synth ? { synth: settings.synth } : {}), ttl: ttlMs(e.ttl ?? EPHEMERAL_TTL) ?? ttlMs(EPHEMERAL_TTL)!, forge, binary, ...(configPath ? { configPath } : {}), env, log, exec: options.exec ?? runBinary, actor };
+  return { settings, roots: e.roots, ...(terragrunt ? { terragrunt } : {}), ...(shape.prepare ? { synth: shape.prepare } : {}), ttl: ttlMs(e.ttl ?? EPHEMERAL_TTL) ?? ttlMs(EPHEMERAL_TTL)!, forge, binary, ...(configPath ? { configPath } : {}), env, log, exec: options.exec ?? runBinary, actor };
 }
 
 function readRecords(repo: string): EphemeralRecord[] {
@@ -774,6 +788,7 @@ async function destroyCopy(repo: string, r: Ready, pr: number, reason: "closed" 
     }
     if (r.terragrunt) {
       try {
+        // shape: the copy's checkout, whose stacks are generated from its own commit.
         await generateStacks(code.dir, { binary: r.binary, terragrunt: r.terragrunt.terragrunt });
       } catch (e) {
         r.log(`${label}: ${(e as Error).message}`);

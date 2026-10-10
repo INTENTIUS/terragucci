@@ -17,6 +17,8 @@ import { pathToFileURL } from "node:url";
 import { parseYAML } from "@intentius/chant/yaml";
 import { parseReportsBucket, type BucketRef } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
+import { declaredKind, shapeProblems } from "./refusals";
+export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_GENERATE, SYNTH_ROLLOUTS } from "./refusals";
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
@@ -679,7 +681,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
   }
   stringList(s.roots, `${where}.roots`, problems);
-  if (s.roots !== undefined && s.terragrunt !== undefined) problems.push(`${where}.roots: ${ROOTS_NOT_TERRAGRUNT}`);
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
@@ -729,7 +730,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }
-  if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
+  // What the shape these keys declare refuses (./refusals.ts); config check adds the shape detection finds in the repo.
+  problems.push(...shapeProblems(declaredKind(s as ProjectSettings), s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
   if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
   if (s.ephemeral !== undefined) checkEphemeral(s.ephemeral, `${where}.ephemeral`, problems, s);
@@ -808,7 +810,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.oidc !== undefined) checkOidc(s.oidc, `${where}.oidc`, problems);
-  if (isObject(s.oidc) && s.oidc.roles !== undefined && s.terragrunt !== undefined) problems.push(`${where}.oidc.roles: roles by root glob are for plain roots; in a Terragrunt repo, set terragrunt.credentials`);
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -1016,41 +1017,15 @@ export interface RegistrySettings {
   download?: "tarball" | "git-tags" | "oci";
 }
 
-/** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
 /** Why `waves.jobs` is refused on GitLab: a split wave's shares hold one apply lock between them on GitHub and Forgejo, and GitLab's apply jobs take a resource group one job at a time. */
 export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and Forgejo; GitLab runs one apply job at a time in its resource group, so leave waves.jobs unset there";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
-/** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
-/** Why `roots` is refused in an Atmos repo. */
-export const ROOTS_NOT_ATMOS = "an Atmos repo's roots are the instances atmos describe stacks lists, so remove roots and leave an instance out with metadata.enabled: false";
-export const ROOTS_NOT_TERRAGRUNT = "a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude";
+/** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
-
-/**
- * What `synth` rules out, each because it would edit the roots the synth
- * command writes. Those files are output, not in git: a change to them is
- * lost at the next synth, and their source is the app's code (a CDK Terrain
- * app's TypeScript), which terragucci does not edit.
- */
-export const SYNTH_DRIFT_PR_SHORT = "synth writes the roots, so a live value belongs in the app that writes them, which terragucci does not edit";
-export const SYNTH_DRIFT_PR = "the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them, so the value belongs in the app that writes them, which terragucci does not edit; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
-export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there";
-
-/**
- * Why `generate` is refused with `synth`: the roots are the synth command's
- * output, so a file generate wrote into one is gone at the next synth, and the
- * app already says what generate would, through its constructs.
- */
-export const SYNTH_GENERATE = "with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct (S3Backend, GcsBackend, AzurermBackend, LocalBackend, HttpBackend, PgBackend, ConsulBackend, CosBackend, OssBackend, SwiftBackend, or CloudBackend and RemoteBackend for HCP Terraform), each provider with its provider construct, and required_version with the stack's addOverride(\"terraform.required_version\", ...); a file generate wrote into a synthesized root is gone at the next synth and would declare a second backend beside the app's, so set these in the app and leave generate unset";
 
 /** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, a rollouts schedule, and generate. */
 export function synthProblems(s: ProjectSettings, where: string): string[] {
-  if (!s.synth) return [];
-  const out: string[] = [];
-  if (s.generate !== undefined) out.push(`${where}.generate: ${SYNTH_GENERATE}`);
-  if (s.drift && responseTo(s, "drift") === "pull-request") out.push(`${where}.respond.drift: ${SYNTH_DRIFT_PR}`);
-  if (s.rollouts && responseTo(s, "rollout") !== "off") out.push(`${where}.rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
-  return out;
+  return s.synth ? shapeProblems("synth", s, where) : [];
 }
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */

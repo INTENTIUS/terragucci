@@ -215,7 +215,7 @@ describe("a unit an explicit stack generates", () => {
     const ran: string[][] = [];
     const exec: TerragruntExec = async (_c, args) => (ran.push([...args]), { code: 0, stdout: "", stderr: "" });
     const files = new Map<string, string>();
-    const r = await codifyUnitDrift(tmp(), "live/stk/.terragrunt-stack/base", drifted as never, unitRunner("tofu", {}, { exec }), files);
+    const r = await codifyUnitDrift(tmp(), "live/stk/.terragrunt-stack/base", drifted as never, unitRunner("tofu", {}, { exec }), files, "live/stk/terragrunt.stack.hcl");
     expect(r.codified).toEqual([]);
     expect(r.left).toEqual([{ root: "live/stk/.terragrunt-stack/base", address: "terraform_data.this", reason: "live/stk/terragrunt.stack.hcl generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template" }]);
     expect(files.size).toBe(0);

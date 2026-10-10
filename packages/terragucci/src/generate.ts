@@ -32,12 +32,13 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { ConfigError, SYNTH_GENERATE, type ResolvedSettings } from "./config";
+import { ConfigError, type ResolvedSettings } from "./config";
 import { KEY_ATTRIBUTE, SUFFIX_READ } from "./ephemeral";
 import { findRoots, globMatch } from "./detect";
 import { IDENT, isMap, overlayLevel, type GenerateLevel, type GenerateSettings } from "./generate-config";
 import { versionGlobs } from "./pins";
-import { detectTerragrunt, hclBlocks, walkUnits } from "./terragrunt";
+import { detectShape } from "./shape";
+import { hclBlocks, walkUnits } from "./terragrunt";
 import { explicitStackUnits, generatingStack } from "./tg-stacks";
 
 export { checkGenerate, combineGenerate, type GenerateLevel, type GenerateSettings } from "./generate-config";
@@ -263,12 +264,17 @@ export function generateRoots(repo: string, settings: ResolvedSettings): string[
 
 /**
  * What generate would write, file by file, without writing it. Throws a
- * ConfigError with synth, whose app sets what generate would write, and for
- * settings that cannot be written.
+ * ConfigError where the repo's shape refuses generate (synth, whose app sets
+ * what generate would write, and Atmos, whose stacks do), and for settings
+ * that cannot be written.
  */
 export function planGenerate(repo: string, settings: ResolvedSettings): GeneratePlan {
-  if (settings.synth && settings.generate) throw new ConfigError(`generate: ${SYNTH_GENERATE}`);
-  if (detectTerragrunt(repo)) return planTerragrunt(repo, settings);
+  const shape = detectShape(repo, settings);
+  const noSynth = settings.synth ? shape.refuses("synth") : undefined;
+  if (noSynth) throw new ConfigError(`synth: ${noSynth}`);
+  const refused = settings.generate ? shape.refuses("generate") : undefined;
+  if (refused) throw new ConfigError(`generate: ${refused}`);
+  if (shape.kind === "terragrunt") return planTerragrunt(repo, settings, shape.terragrunt?.stacks ?? []);
   const gen = settings.generate ?? {};
   const roots = settings.generate ? generateRoots(repo, settings) : [];
   const files: FileChange[] = [];
@@ -423,14 +429,14 @@ function backendConfig(backend: NonNullable<RootSettings["backend"]>): string {
 }
 
 /** generate in a Terragrunt repo: terragucci.hcl, and why a unit or another file would keep it from taking effect. */
-function planTerragrunt(repo: string, settings: ResolvedSettings): GeneratePlan {
+function planTerragrunt(repo: string, settings: ResolvedSettings, stacks: readonly string[]): GeneratePlan {
   const path = join(repo, TERRAGRUNT_FILE);
   const before = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
   const files: FileChange[] = [];
   const foreign: string[] = [];
   const gen = settings.generate;
   // A stack's units from its stack file, generated or not; the walk finds them only once they are.
-  const generated = gen ? explicitStackUnits(repo, detectTerragrunt(repo)?.stacks ?? []) : []; // shape: the stacks come with the repo's shape
+  const generated = gen ? explicitStackUnits(repo, stacks) : [];
   const units = gen ? [...walkUnits(repo, settings.terragrunt?.exclude).map((u) => u.path).filter((u) => generatingStack(u) === undefined), ...generated.map((g) => g.unit)].sort() : [];
   const notes: string[] = [];
   for (const u of Object.keys(gen?.roots ?? {})) {
