@@ -245,6 +245,8 @@ const REFUSED: Record<ReportRefusal["reason"], string> = {
   review: "changed-after-review",
   override: "changed-after-override",
   policy: "denied-by-policy",
+  held: "held-by-another-apply",
+  superseded: "superseded-by-a-newer-push",
 };
 
 /**
@@ -423,7 +425,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
       kind: "refused",
       who: refused.by ?? null,
       result: REFUSED[refused.reason],
-      detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules }),
+      detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules, holder: refused.holder }),
     };
   }
   const failed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).map((r) => r.path);
