@@ -416,6 +416,7 @@ chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outg
 chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
 linked-plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
 linked-plan-local|two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer|
+resource-blast|a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output|
 linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
 plan-no-lock|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
 sensitive-redacted|a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket|
@@ -1874,6 +1875,77 @@ claim_linked_plan_local() {
   jq -e '[.roots[] | select(.unknown_reads or .unaddressed)] == []' "$r" >/dev/null || { log "the report names a state the code does not address: $(jq -c '[.roots[] | {path, unknown_reads, unaddressed}]' "$r")"; rc=1; }
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "net and app, on the local backend, ordered into waves 1 and 2 from their code, and app planned on net's planned outputs"
+  return $rc
+}
+
+claim_resource_blast() {
+  # The resource-blast fixture: queue (a jobs queue, its policy, a
+  # dead-letter queue, each ARN an output) and worker (a function reading
+  # jobs_arn through terraform_remote_state, the mapping that feeds it, and a
+  # log group reading only dead_arn), both applied on floci, their state
+  # files under state/. A change gives the jobs queue a longer visibility
+  # timeout, and tf-plan runs as a pull request's plan against the base. Its
+  # note lists, under aws_sqs_queue.jobs, the policy in queue and the function
+  # and mapping in worker through jobs_arn, and not the log group.
+  # BREAK: the bundle's walk stops at the changed root, so the note names
+  # worker as a root downstream and none of its resources.
+  log() { echo "[smoke resource-blast] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle r note by root base code=0 rc=0 name="rb-$STAMP${BREAK:+b}"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" report/resource-blast.ts '        for (const reader of readersOf(up)) {' '        for (const reader of readersOf(up).slice(0, 0)) {' || { drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree/state"
+  cp -R "$HERE/fixtures/resource-blast/." "$work/tree/"
+  for root in queue worker; do
+    perl -pi -e "s/NAME/$name/g" "$work/tree/$root/main.tf"
+    cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$work/tree/$root/"
+  done
+  for root in queue worker; do
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w "/repo/$root" "${AWS_DOCKER_ENV[@]}" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $root"; drop_work "$work" "$image"; return 1; }
+  done
+  [ -s "$work/tree/state/queue.tfstate" ] && [ -s "$work/tree/state/worker.tfstate" ] || { log "the applies left no state under state/"; drop_work "$work" "$image"; return 1; }
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "resource-blast: base"
+  base="$(git -C "$work/tree" rev-parse HEAD)"
+  perl -pi -e 's/visibility_timeout_seconds = 30/visibility_timeout_seconds = 60/' "$work/tree/queue/main.tf"
+  git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "resource-blast: a longer visibility timeout"
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TG_BASE=$base" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan >&2 || code=$?
+  clean_mounted "$work/tree" "$image"
+  r="$work/tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "tf-plan exited $code and wrote no report"; drop_work "$work" "$image"; return 1; }
+  note="$(cat "$work/tree/terragucci-report/note.md" 2>/dev/null || true)"
+  log "the blast radius: $(jq -c '.blast' "$r")"
+  # shellcheck disable=SC2016 # the backticks are the note's markdown
+  grep -qF -- '(wave 2) reads `queue`' <<<"$note" || { log "the note does not name worker downstream of queue"; rc=1; }
+  # shellcheck disable=SC2016
+  grep -qF -- '- `aws_sqs_queue.jobs` in `queue` (update) reaches:' <<<"$note" || { log "the note lists nothing under the changed queue"; rc=1; }
+  # shellcheck disable=SC2016
+  grep -qF -- '  - `aws_sqs_queue_policy.jobs`' <<<"$note" || { log "the note does not list the queue's policy, in its own root"; rc=1; }
+  # shellcheck disable=SC2016
+  grep -qF -- '  - `aws_lambda_function.worker` in `worker`, through output `jobs_arn` of `queue`' <<<"$note" || { log "the note does not list the function that reads the queue's ARN in worker"; rc=1; }
+  # shellcheck disable=SC2016
+  grep -qF -- '  - `aws_lambda_event_source_mapping.jobs` in `worker`, through output `jobs_arn` of `queue`' <<<"$note" || { log "the note does not list the mapping that reads the queue's ARN in worker"; rc=1; }
+  # The note's records list every resource of worker; the list by resource is what must leave the log group out.
+  by="$(awk '/^\*\*By resource:\*\*/ { on = 1; next } on && /^(#|\*\*)/ { exit } on' <<<"$note")"
+  if grep -qF 'aws_cloudwatch_log_group.dead' <<<"$by"; then log "the list by resource names the log group, which reads only dead_arn"; rc=1; fi
+  jq -e '[.blast.resources[]? | select(.address == "aws_sqs_queue.jobs") | .reaches[] | select(.root == "worker") | .address] == ["aws_lambda_event_source_mapping.jobs", "aws_lambda_function.worker"]' "$r" >/dev/null \
+    || { log "report.json's blast.resources does not hold the function and the mapping in worker: $(jq -c '.blast.resources' "$r")"; rc=1; }
+  [ $rc = 0 ] || printf '%s\n' "$note" | grep -A12 -F 'Blast radius' >&2 || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the note lists, under the changed queue, its policy and the function and mapping that read its ARN in worker, and not the log group"
   return $rc
 }
 
@@ -19820,6 +19892,7 @@ waves           runner self! weight=200
 linked-states   runner self! weight=260
 linked-plan     self! weight=90
 linked-plan-local self! weight=90
+resource-blast  weight=150
 refuse          runner self! weight=200
 sealed          runner self! weight=200
 publish         runner self! registry! weight=200
