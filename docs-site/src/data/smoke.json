@@ -871,7 +871,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1468a6e6"
+      "commit": "bf5dd40e"
     },
     {
       "claim": "plan-lock-release",
