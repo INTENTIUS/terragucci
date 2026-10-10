@@ -39,6 +39,8 @@ jobs:
           sudo mv /tmp/just /usr/local/bin/just
           just --version
       - name: Build the site
+        env:
+          PUBLIC_POSTHOG_KEY: '${{ vars.PUBLIC_POSTHOG_KEY }}'
         run: just site
       - name: Upload the artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
