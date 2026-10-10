@@ -25,7 +25,7 @@ import { ConfigError, type RolePair, type TerragruntSettings } from "./config";
 import { generateStacks, STACK_DIR } from "./tg-stacks";
 
 // An explicit stack's pieces live in ./tg-stacks.ts; these names stay importable from here.
-export { ensureGenerated, generateStacks, generatingStack, stackFile, stackOfUnit, STACK_DIR, unitStack } from "./tg-stacks";
+export { generateStacks, generatingStack, stackFile, stackOfUnit, STACK_DIR, unitStack } from "./tg-stacks";
 
 /** The files that mark a Terragrunt repo, in the order detection looks for them. */
 export const TERRAGRUNT_MARKERS = ["root.hcl", "terragrunt.hcl", "terragrunt.stack.hcl"] as const;

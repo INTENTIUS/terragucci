@@ -4,18 +4,19 @@
  * generates each, and how to generate them before they are read. Plain
  * Terragrunt units are ./terragrunt.ts's.
  *
- *   prepare      generateStacks, ensureGenerated
+ *   prepare      generateStacks (Shape.prepareRoots)
  *   discover     explicitStackUnits (from the stack files, before Terragrunt runs)
- *   edit target  generatingStack, stackFile: a generated unit is changed in its stack file or template
+ *   edit target  generatingStack, stackFile (Shape.sourceOf): a generated unit is changed in its stack file or template
  *   report       stackOfUnit, unitStack
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findTerragruntStackFiles, readTerragruntStackFile } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 import { checkTerragruntVersion, type TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit as parentOfUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { terragruntExec } from "./binary-env";
 import { ConfigError } from "./config";
+import { STACK_NESTED_GENERATE } from "./refusals";
 
 /** Where `terragrunt stack generate` writes a stack's units, beside its `terragrunt.stack.hcl`. */
 export const STACK_DIR = ".terragrunt-stack";
@@ -82,14 +83,6 @@ export async function generateStacks(repo: string, options: { terragrunt?: strin
 }
 
 /**
- * Generate the repo's explicit stacks when any of `units` is one of their
- * units and is not generated yet, so it can be prepared where it runs.
- */
-export async function ensureGenerated(repo: string, units: readonly string[], options: { terragrunt?: string; binary?: string; exec?: TerragruntExec } = {}): Promise<void> {
-  if (units.some((u) => generatingStack(u) !== undefined && !existsSync(join(repo, u, "terragrunt.hcl")))) await generateStacks(repo, options);
-}
-
-/**
  * The units a repo's explicit stacks generate, read from each
  * `terragrunt.stack.hcl` without running Terragrunt, so generate keys them in
  * terragucci.hcl before they exist. Each with the template it is copied from
@@ -110,7 +103,7 @@ export function explicitStackUnits(repo: string, stacks: readonly string[]): { u
         const src = at ? /^\s*source\s*=\s*"\$\{get_repo_root\(\)\}\/([^"$]*)"/m.exec(next < 0 ? rest : rest.slice(0, next)) : null;
         if (src) b.template = src[1].replace("//", "/").replace(/\/+$/, "");
       }
-      if (b.type === "stack") throw new ConfigError(`${file}: stack "${b.name}" nests a stack, and generate reads the units a stack file names in its unit blocks; only Terragrunt can list a nested stack's units, so give each unit its own unit block, or leave generate unset`);
+      if (b.type === "stack") throw new ConfigError(`${file}: stack "${b.name}" nests a stack, and ${STACK_NESTED_GENERATE}`);
       out.push({ unit: b.generated, file, name: b.name, ...(b.template !== undefined ? { template: b.template } : {}) });
     }
   }

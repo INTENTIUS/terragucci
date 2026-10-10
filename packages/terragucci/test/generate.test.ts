@@ -275,9 +275,11 @@ terraform {
       expect(hcl).toContain('config  = { path = "/s/live/prod/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate" }');
     });
 
-    it("is refused with synth, naming the CDK Terrain constructs that set what it would write", () => {
+    it("is refused with synth: a Terragrunt repo's units are its own, and with synth alone generate names the CDK Terrain constructs", () => {
       const dir = tgRepo();
-      expect(() => planGenerate(dir, { ...settingsOf(dir), synth: "npx cdktn synth" })).toThrow(/^generate: with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct \(S3Backend, GcsBackend, AzurermBackend, LocalBackend/);
+      expect(() => planGenerate(dir, { ...settingsOf(dir), synth: "npx cdktn synth" })).toThrow(/^synth: synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth/);
+      const plain = tmp();
+      expect(() => planGenerate(plain, { ...resolveRepo({}), generate: { required_version: ">= 1.6" }, synth: "npx cdktn synth" })).toThrow(/^generate: with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct \(S3Backend, GcsBackend, AzurermBackend, LocalBackend/);
       expect(() => validateConfig({ synth: "npx cdktn synth", generate: { required_version: ">= 1.6" } }, "t")).toThrow(/config\.generate: with synth .*leave generate unset/);
     });
 

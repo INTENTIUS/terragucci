@@ -25,6 +25,8 @@ import {
   walkUnits,
 } from "../src/terragrunt";
 import { explicitStacksLine } from "../src/report/views";
+import { detectShape } from "../src/shape";
+import { resolveRepo } from "../src/config";
 import type { Report } from "../src/report/schema";
 import { rc } from "./report-fixtures";
 import { git, tmp, write } from "./helpers";
@@ -172,6 +174,19 @@ describe("detection", () => {
       { path: "live/stk/.terragrunt-stack/base", dependencies: [] },
       { path: "live/stk/.terragrunt-stack/top", dependencies: ["live/stk/.terragrunt-stack/base"] },
     ]);
+  });
+
+  it("the Terragrunt shape sends an edit to a generated unit to its stack file, and prepares the stack only when a unit is not generated yet", async () => {
+    const repo = write(tmp(), { "root.hcl": "", "live/stk/terragrunt.stack.hcl": "", "live/dev/app/terragrunt.hcl": unit() });
+    const shape = detectShape(repo, resolveRepo({}));
+    expect(shape.sourceOf("live/stk/.terragrunt-stack/base")).toBe("live/stk/terragrunt.stack.hcl");
+    expect(shape.sourceOf("live/dev/app")).toBe("live/dev/app");
+    const ran: string[][] = [];
+    const exec: TerragruntExec = async (_c, args) => (ran.push([...args]), { code: 0, stdout: args[0] === "--version" ? "terragrunt version v1.1.6" : "", stderr: "" });
+    expect(await shape.prepareRoots({ roots: ["live/dev/app"], exec })).toEqual([]);
+    expect(ran).toEqual([]);
+    await shape.prepareRoots({ roots: ["live/stk/.terragrunt-stack/base"], exec });
+    expect(ran.some((a) => a[0] === "stack" && a[1] === "generate")).toBe(true);
   });
 
   it("the plan note names each explicit stack and the units it generates", () => {

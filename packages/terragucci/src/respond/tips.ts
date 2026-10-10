@@ -104,8 +104,11 @@ export const SYNTH_TIPS_LEFT = "left out with synth: the provider pin and lock f
  * The tips' proposals, one pull request each, and the tips left out. With
  * `synth` only the canary tip is proposed: it edits terragucci.yml, which git
  * holds, and the others would edit files the next synth writes again.
+ * `roots` are the directories a pin or a lock file goes in; `waveRoots`, when
+ * they differ (an Atmos repo's instances, whose `roots` are their components),
+ * the roots the canary names.
  */
-export function tipProposals(repo: string, roots: string[], binary: string, opts: { canary?: string[]; platforms?: string[]; synth?: boolean }): { proposals: Proposal[]; left: string[] } {
+export function tipProposals(repo: string, roots: string[], binary: string, opts: { canary?: string[]; platforms?: string[]; synth?: boolean; waveRoots?: string[] }): { proposals: Proposal[]; left: string[] } {
   const out: Proposal[] = [];
   const left = opts.synth ? [SYNTH_TIPS_LEFT] : [];
   if (!opts.synth) for (const [provider, row] of pinFromLock(repo, roots)) {
@@ -134,8 +137,10 @@ export function tipProposals(repo: string, roots: string[], binary: string, opts
         }),
     });
   }
-  if (!opts.canary?.length && roots.length > 1) {
-    const canary = canaryFor(roots);
+  // The canary names roots the waves run, which are not the directories edited where they differ (an Atmos instance and its component).
+  const waveRoots = opts.waveRoots ?? roots;
+  if (!opts.canary?.length && waveRoots.length > 1) {
+    const canary = canaryFor(waveRoots);
     const edit = addCanary(repo, canary);
     if ("file" in edit) {
       out.push({
