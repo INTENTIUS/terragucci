@@ -278,6 +278,7 @@ cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that cha
 cdf-concurrency-time|with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
+cdf-live-progress|with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
 apply-stand-down|a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root|
@@ -378,6 +379,8 @@ state-edges|the estate page lists a root that reads the state of another with it
 migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
 migrate-backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
 migrate-backend-tfe|a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded|
+migrate-backend-pg|a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was|
+migrate-backend-k8s|a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was|
 migrate-revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
 migrate-resume-never|with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1|
 migrate-split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
@@ -9647,14 +9650,17 @@ HCL
 # One stage run in a checkout, in the CI image of BIN (choudoufu or tofu),
 # with its S3 calls sent to the proxy, as the container NAME. OVERRIDE, when
 # not empty, is a Linux build mounted over the image's binary. The run's
-# output goes to LOG. With CDF_RUN_AFTER set to a URL, the container starts
-# and waits (up to ten minutes) for that URL to answer before the stage
-# starts, so the stage begins at a moment another run marks.
+# output goes to LOG. CDF_BUNDLE, when set, is mounted in place of the CLI
+# bundle, and CDF_ENV holds extra KEY=VALUE pairs for the run, space-separated.
+# With CDF_RUN_AFTER set to a URL, the container starts and waits (up to ten
+# minutes) for that URL to answer before the stage starts, so the stage begins
+# at a moment another run marks.
 cdf_run() { # dir log name bin override stage-args...
-  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0
+  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="${CDF_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}" rc=0 kv
   local -a mount=() cmd=(terragucci stage)
   shift 5
   [ -n "$over" ] && mount=(-v "$over:/usr/local/bin/$bin:ro")
+  for kv in ${CDF_ENV:-}; do mount+=(-e "$kv"); done
   [ -z "${CDF_RUN_AFTER:-}" ] || cmd=(sh -c 'node -e "(async () => { for (let i = 0; i < 3000; i++) { const r = await fetch(process.argv[1]).catch(() => undefined); if (r && r.ok) return; await new Promise((s) => setTimeout(s, 200)); } process.exit(1); })()" "$0" && exec terragucci stage "$@"' "$CDF_RUN_AFTER")
   run_copied --rm --name "$name" --network "${TG_NETWORK:-terragucci}" -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" ${mount[@]+"${mount[@]}"} \
     -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
@@ -10092,6 +10098,86 @@ HCL
   fi
   cdf_down "$work"
   [ $rc = 0 ] && log "the killed wave left a record for first, whose apply had returned, and none for second; the next plan creates second only"
+  return $rc
+}
+
+claim_cdf_live_progress() {
+  # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
+  # the choudoufu CI image with a reports bucket: first, and second, which
+  # depends on first and whose local-exec provisioner leaves a mark in the
+  # wave's container and then sleeps. Once the mark is there, first's apply
+  # has returned and second's is running. While second sleeps, the wave's
+  # run view in the bucket (run.json and run.html) must show first done and
+  # second in flight, and the job's terragucci-report/progress.json the same:
+  # the progress is read from the record store as the apply runs.
+  # BREAK: the wave's bundle reads the records only when the apply ends, so
+  # mid-apply the run view still shows first in flight and second waiting.
+  log() { echo "[smoke cdf-live-progress] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate bucket=terragucci-smoke-progress pid i keys key view="" html="" local_p="" got rc=0 CDF_BUNDLE="" CDF_ENV="TG_PROGRESS_SECONDS=1"
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    break_bundle "$work/break.mjs" apply-progress.ts 'this.every();' '' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+    CDF_BUNDLE="$work/break.mjs"
+  fi
+  estate="smoke-progress-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  curl -s -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  rows_estate "$work/a" "$estate" "$(cat <<'HCL'
+resource "terraform_data" "first" {
+  input = "first"
+}
+
+resource "terraform_data" "second" {
+  input      = "second"
+  depends_on = [terraform_data.first]
+
+  provisioner "local-exec" {
+    command = "touch /repo/second-started && sleep 900"
+  }
+}
+HCL
+)"
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$bucket" "$estate" >"$work/a/terragucci.yml"
+  printf 'second-started\n' >>"$work/a/.gitignore"
+  git -C "$work/a" init -q -b main && git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate" \
+    || { log "could not commit the estate"; cdf_down "$work"; return 1; }
+  ( CDF_BUNDLE="$CDF_BUNDLE" CDF_ENV="$CDF_ENV" cdf_run "$work/a" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate never ) >/dev/null 2>&1 &
+  pid=$!
+  # The checkout is copied into the container (run_copied), so the mark is looked for there.
+  started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
+  for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if ! started; then
+    log "second's provisioner never started"; tail -20 "$work/apply.log" >&2
+    docker rm -f "$CDF_ALIAS-apply" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; cdf_down "$work"; return 1
+  fi
+  # second sleeps for 15 minutes: give the run view up to 30 seconds to show first done.
+  for i in $(seq 1 30); do
+    key="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$estate/" | grep -o '<Key>[^<]*/runs/[^<]*/run.json</Key>' | sed -E 's#</?Key>##g' | head -1)"
+    if [ -n "$key" ]; then
+      view="$(curl -fsS "$FLOCI/$bucket/$key" 2>/dev/null || true)"
+      got="$(jq -r '[.waves[0].progress.resources[]? | "\(.address)=\(.status)"] | sort | join(" ")' <<<"$view" 2>/dev/null || true)"
+      [ "$got" = "terraform_data.first=done terraform_data.second=in-flight" ] && break
+    fi
+    sleep 1
+  done
+  log "the run view while second applies: wave $(jq -r '.waves[0].state' <<<"$view" 2>/dev/null || echo none), ${got:-no progress}"
+  [ -n "$key" ] && html="$(curl -fsS "$FLOCI/$bucket/${key%run.json}run.html" 2>/dev/null || true)"
+  local_p="$(docker exec "$CDF_ALIAS-apply" cat /repo/terragucci-report/progress.json 2>/dev/null | jq -r '[.resources[] | "\(.address)=\(.status)"] | sort | join(" ")' 2>/dev/null || true)"
+  log "progress.json in the job while second applies: ${local_p:-none}"
+  docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+  grep 'progress' "$work/apply.log" | sed 's/^/  /' >&2 || true
+  [ "$got" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply the run view does not show first done and second in flight"; rc=1; }
+  grep -q 'data-status="done" data-address="terraform_data.first"' <<<"$html" && grep -q 'data-status="in-flight" data-address="terraform_data.second"' <<<"$html" \
+    || { log "mid-apply run.html does not show first done and second in flight"; rc=1; }
+  [ "$local_p" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply terragucci-report/progress.json does not show first done and second in flight"; rc=1; }
+  cdf_down "$work"
+  [ $rc = 0 ] && log "while second applied, the run view, its page and the job's progress.json showed first done and second in flight, read from the records"
   return $rc
 }
 
@@ -18406,6 +18492,176 @@ claim_migrate_backend_tfe() {
   return $rc
 }
 
+claim_migrate_backend_pg() {
+  # A Postgres of the claim's own (tgpg-<stamp>) holds the states, its
+  # password in PGPASSWORD and never in the code. Root app holds
+  # terraform_data.keep and terraform_data.moved, its pg backend in schema
+  # tgold, applied by wave 1. A commit points the backend at schema tgnew and
+  # adds migrations/move-app.yml, whose from is the pg backend in tgold.
+  # Wave 1 reads the old state with state pull, proves the move and waits;
+  # smoke-approver approves the digest and wave 1 runs again: the binary
+  # writes the state into tgnew with state push under the backend's advisory
+  # lock, and the wave applies no change. tgnew's row holds both resources,
+  # tgold's row is the one it was, no advisory lock is left, and the record
+  # names both pg addresses with no version id.
+  # BREAK: after the approval tgold's row is written again with the next
+  # serial, so wave 1 refuses (exit 4) naming app, writing nothing.
+  log() { echo "[smoke migrate-backend-pg] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="migrate-backend-pg-$STAMP" name="tgpg-$STAMP" pass="smoke-pg-$STAMP" pg="" conn i digest record was
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  pg="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" -e "POSTGRES_PASSWORD=$pass" -e POSTGRES_DB=app public.ecr.aws/docker/library/postgres:16)" || { log "Postgres did not start"; rc=1; }
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 60); do docker exec "$pg" pg_isready -q -h 127.0.0.1 -U postgres -d app 2>/dev/null && break; sleep 1; done
+    docker exec "$pg" pg_isready -q -h 127.0.0.1 -U postgres -d app || { log "Postgres never took connections"; rc=1; }
+  fi
+  psql_app() { docker exec "$pg" psql -U postgres -d app -tAc "$1"; }
+  conn="postgres://postgres@$name:5432/app?sslmode=disable"
+  pg_root() { # schema
+    mkdir -p "$work/wave/app"
+    printf 'terraform {\n  backend "pg" {\n    conn_str    = "%s"\n    schema_name = "%s"\n  }\n}\n' "$conn" "$1" > "$work/wave/app/main.tf"
+    for n in keep moved; do printf '\nresource "terraform_data" "%s" {\n  input = "mg-%s-%s"\n}\n' "$n" "$STAMP" "$n" >> "$work/wave/app/main.tf"; done
+  }
+  # The job's password, as libpq reads it.
+  local -a AWS_DOCKER_ENV=(${AWS_DOCKER_ENV[@]+"${AWS_DOCKER_ENV[@]}"} -e "PGPASSWORD=$pass")
+  mkdir -p "$work/wave"
+  pg_root tgold
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" first app
+    [ "$AUDIT_CODE" = 0 ] || { log "the first apply of app exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    pg_root tgnew
+    mkdir -p "$work/wave/migrations"
+    printf 'backends:\n  - root: app\n    from:\n      backend: pg\n      config:\n        conn_str: %s\n        schema_name: tgold\n' "$conn" > "$work/wave/migrations/move-app.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app's state to schema tgnew"
+    migrate_wave "$work" waits app
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the move"; rc=1; }
+    digest="$(sed -n 's/^migration move-app waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  fi
+  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver move-app "$digest" || { log "could not approve the move"; rc=1; }; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    psql_app "update tgold.states set data = jsonb_set(data::jsonb, '{serial}', to_jsonb((data::jsonb->>'serial')::int + 1))::text where name = 'default'" >/dev/null || { log "could not write tgold's row again"; rc=1; }
+  fi
+  [ $rc = 0 ] && was="$(psql_app "select md5(data) from tgold.states where name = 'default'")"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies app
+    [ "$AUDIT_CODE" = 4 ] && grep -q "the states moved since: app" "$work/applies.log" && log "wave 1 refused: tgold's row moved since the approval"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the move planned changes"; rc=1; }
+    [ "$(psql_app "select data from tgnew.states where name = 'default'" | jq -r '[.resources[].name] | join(",")')" = "keep,moved" ] || { log "tgnew does not hold app's two resources"; rc=1; }
+    [ "$(psql_app "select md5(data) from tgold.states where name = 'default'")" = "$was" ] || { log "tgold's row changed"; rc=1; }
+    [ "$(psql_app "select count(*) from pg_locks where locktype = 'advisory'")" = 0 ] || { log "an advisory lock is left"; rc=1; }
+    record="$(cat "$work/wave/terragucci-report/migrations/move-app.json" 2>/dev/null)"
+    jq -c '{status, change, roots: [.roots[] | {root, backend, location, source, before, after}]}' <<<"$record" >&2
+    [ "$(jq -r '[.status, .change, .roots[0].location, .roots[0].source.location, (.roots[0].source.version_id // "none"), (.roots[0].after.version_id // "none")] | join(" ")' <<<"$record")" = "applied backends pg:$name:5432/app/tgnew.states pg:$name:5432/app/tgold.states none none" ] \
+      || { log "the record does not name both pg addresses with no version id"; rc=1; }
+    if grep -q "mg-$STAMP-\|$pass" <<<"$record"; then log "an input value or the password reached the record"; rc=1; fi
+  fi
+  [ -n "$pg" ] && { docker container remove --force "$pg" >/dev/null 2>&1 || true; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app's state moved from schema tgold to tgnew with no change, written by the binary under the advisory lock, the old row left as it was"
+  return $rc
+}
+
+claim_migrate_backend_k8s() {
+  # A Kubernetes API of the claim's own: k3s's control plane alone
+  # (tgk8s-<stamp>, no agent, no privileges), its kubeconfig given to the job
+  # in KUBE_CONFIG_PATH. Root app holds terraform_data.keep and
+  # terraform_data.moved, its kubernetes backend with secret_suffix old,
+  # applied by wave 1. A commit sets secret_suffix to new and adds
+  # migrations/move-app.yml, whose from is the kubernetes backend with
+  # suffix old. Wave 1 reads the old Secret with state pull, proves the move
+  # and waits; smoke-approver approves the digest and wave 1 runs again: the
+  # binary writes Secret tfstate-default-new with state push under its Lease,
+  # and the wave applies no change. The new Secret holds both resources, the
+  # old one is the one it was, no Lease is held, and the record names both
+  # kubernetes addresses with no version id.
+  # BREAK: after the approval the old Secret is written again with the next
+  # serial, so wave 1 refuses (exit 4) naming app, writing nothing.
+  log() { echo "[smoke migrate-backend-k8s] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="migrate-backend-k8s-$STAMP" name="tgk8s-$STAMP" k8s="" i digest record was holder
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  k8s="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" rancher/k3s:v1.33.6-k3s1 server --disable-agent --disable=traefik,servicelb,metrics-server,local-storage,coredns --tls-san="$name")" || { log "k3s did not start"; rc=1; }
+  kc() { docker exec "$k8s" kubectl "$@"; }
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 90); do kc get namespace default >/dev/null 2>&1 && break; sleep 1; done
+    kc get namespace default >/dev/null 2>&1 || { log "the Kubernetes API never answered"; rc=1; }
+  fi
+  mkdir -p "$work/wave" "$work/kube"
+  [ $rc = 0 ] && { docker exec "$k8s" cat /etc/rancher/k3s/k3s.yaml | sed "s#https://127.0.0.1:6443#https://$name:6443#" > "$work/kube/config" || { log "could not read the kubeconfig"; rc=1; }; }
+  # The job's view of the API: its kubeconfig, never in the code.
+  local -a AWS_DOCKER_ENV=(${AWS_DOCKER_ENV[@]+"${AWS_DOCKER_ENV[@]}"} -e KUBE_CONFIG_PATH=/kube/config -v "$work/kube:/kube:ro")
+  k8s_root() { # secret_suffix
+    mkdir -p "$work/wave/app"
+    printf 'terraform {\n  backend "kubernetes" {\n    namespace     = "default"\n    secret_suffix = "%s"\n  }\n}\n' "$1" > "$work/wave/app/main.tf"
+    for n in keep moved; do printf '\nresource "terraform_data" "%s" {\n  input = "mg-%s-%s"\n}\n' "$n" "$STAMP" "$n" >> "$work/wave/app/main.tf"; done
+  }
+  secret_state() { # suffix -> the state the Secret holds, as JSON
+    kc get secret "tfstate-default-$1" -o jsonpath='{.data.tfstate}' | base64 -d | gunzip
+  }
+  k8s_root old
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" first app
+    [ "$AUDIT_CODE" = 0 ] || { log "the first apply of app exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    k8s_root new
+    mkdir -p "$work/wave/migrations"
+    printf 'backends:\n  - root: app\n    from:\n      backend: kubernetes\n      config:\n        namespace: default\n        secret_suffix: old\n' > "$work/wave/migrations/move-app.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app's state to secret_suffix new"
+    migrate_wave "$work" waits app
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the move"; rc=1; }
+    digest="$(sed -n 's/^migration move-app waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  fi
+  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver move-app "$digest" || { log "could not approve the move"; rc=1; }; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    { secret_state old | jq -c '.serial += 1' | gzip -c | base64 | tr -d '\n' > "$work/next.b64" && [ -s "$work/next.b64" ] \
+      && kc patch secret tfstate-default-old --type merge -p "{\"data\":{\"tfstate\":\"$(cat "$work/next.b64")\"}}" >/dev/null; } || { log "could not write the old Secret again"; rc=1; }
+  fi
+  [ $rc = 0 ] && was="$(secret_state old | shasum | cut -d' ' -f1)"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies app
+    [ "$AUDIT_CODE" = 4 ] && grep -q "the states moved since: app" "$work/applies.log" && log "wave 1 refused: the old Secret moved since the approval"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the move planned changes"; rc=1; }
+    [ "$(secret_state new | jq -r '[.resources[].name] | join(",")')" = "keep,moved" ] || { log "the new Secret does not hold app's two resources"; rc=1; }
+    [ "$(secret_state old | shasum | cut -d' ' -f1)" = "$was" ] || { log "the old Secret changed"; rc=1; }
+    holder="$(kc get lease lock-tfstate-default-new -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)"
+    [ -z "$holder" ] || { log "the new state's Lease is still held by $holder"; rc=1; }
+    record="$(cat "$work/wave/terragucci-report/migrations/move-app.json" 2>/dev/null)"
+    jq -c '{status, change, roots: [.roots[] | {root, backend, location, source, before, after}]}' <<<"$record" >&2
+    [ "$(jq -r '[.status, .change, .roots[0].location, .roots[0].source.location, (.roots[0].source.version_id // "none"), (.roots[0].after.version_id // "none")] | join(" ")' <<<"$record")" = "applied backends kubernetes:default/new kubernetes:default/old none none" ] \
+      || { log "the record does not name both kubernetes addresses with no version id"; rc=1; }
+    if grep -q "mg-$STAMP-" <<<"$record"; then log "an input value reached the record"; rc=1; fi
+  fi
+  [ -n "$k8s" ] && { docker container remove --force "$k8s" >/dev/null 2>&1 || true; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app's state moved from Secret suffix old to new with no change, written by the binary under its Lease, the old Secret left as it was"
+  return $rc
+}
+
 claim_migrate_revert() {
   # mono holds keep and moved (state in a versioned bucket); a migration splits
   # moved out to split and applies under smoke-approver's approval, as in
@@ -20840,6 +21096,7 @@ cdf-concurrency-time weight=250
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
 cdf-killed-records   weight=90
+cdf-live-progress    weight=90
 apply-per-root       runner self! weight=300
 apply-stand-down     runner self! weight=300
 cdf-rows-overlap     runner self! weight=250
@@ -20938,6 +21195,8 @@ migrate-split        weight=200
 cdktn-migrate        weight=200
 migrate-backend      weight=200
 migrate-backend-tfe  weight=200
+migrate-backend-pg   weight=200
+migrate-backend-k8s  weight=250
 migrate-revert       weight=250
 migrate-resume       runner self! weight=300
 migrate-resume-never runner self! weight=300
