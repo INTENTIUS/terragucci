@@ -24,6 +24,21 @@ export const workflow = new Workflow({
   concurrency: { group: "nightly", "cancel-in-progress": false },
 });
 
+// Docker Hub limits anonymous pulls per IP, and runners share IPs: pull
+// through Google's Docker Hub mirror, which falls back to Docker Hub for an
+// image it does not hold. The same step as ci/pipeline.ts's prelude.
+const dockerMirror = () =>
+  new Step({
+    name: "Pull Docker Hub images through a mirror",
+    run: [
+      "conf=/etc/docker/daemon.json",
+      "{ sudo cat \"$conf\" 2>/dev/null || echo '{}'; } | jq '. + {\"registry-mirrors\": [\"https://mirror.gcr.io\"]}' > \"$RUNNER_TEMP/daemon.json\"",
+      "sudo cp \"$RUNNER_TEMP/daemon.json\" \"$conf\"",
+      "sudo systemctl restart docker",
+      "docker info --format '{{.RegistryConfig.Mirrors}}'",
+    ].join("\n"),
+  });
+
 export const gitlab = new Job({
   "runs-on": "ubuntu-latest",
   timeoutMinutes: 90,
@@ -32,6 +47,21 @@ export const gitlab = new Job({
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     installJust(),
     new Step({ name: "Install", run: "npm ci" }),
+    dockerMirror(),
+    // The daemon's mirror is not enough for GitLab: a run fell back to Docker
+    // Hub with the mirror set and met its pull limit. Pull the profile's
+    // Docker Hub images from the mirror by name and tag them, so compose finds
+    // them present and pulls nothing from Docker Hub.
+    new Step({
+      name: "Pull the gitlab profile's Docker Hub images from the mirror",
+      run: [
+        `for img in $(docker compose -f stack/docker-compose.yml --profile gitlab config --images); do`,
+        `  host="\${img%%/*}"`,
+        `  if [ "$host" = "$img" ]; then ref="library/$img"; else ref="$img"; case "$host" in *.*|*:*|localhost) continue ;; esac; fi`,
+        `  { docker pull -q "mirror.gcr.io/$ref" && docker tag "mirror.gcr.io/$ref" "$img"; } || echo "the mirror has no $img; compose pulls it"`,
+        `done`,
+      ].join("\n"),
+    }),
     new Step({ name: "Start the gitlab profile", run: "just stack-up gitlab" }),
     new Step({ name: "Run the gitlab claims", run: "just validate-forge gitlab" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),
@@ -56,7 +86,7 @@ export const sandbox = new Job({
       env: token,
       run: [
         `if [ -z "$TERRAGUCCI_SANDBOX_TOKEN" ]; then`,
-        `  echo "::error::The repo secret TERRAGUCCI_SANDBOX_TOKEN is not set. Add a token that can push to INTENTIUS/terragucci-sandbox and administer it: a fine-grained token on that repo with Administration, Contents, Workflows, Pull requests, Issues and Actions read and write and Commit statuses read, or a classic token with repo and workflow, from an admin of the repo."`,
+        `  echo "::error::The repo secret TERRAGUCCI_SANDBOX_TOKEN is not set. Add a token that can push to INTENTIUS/terragucci-sandbox and administer it: a fine-grained token on that repo with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or a classic token with repo and workflow, from an admin of the repo."`,
         `  exit 1`,
         `fi`,
       ].join("\n"),
@@ -65,6 +95,7 @@ export const sandbox = new Job({
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     installJust(),
     new Step({ name: "Install", run: "npm ci" }),
+    dockerMirror(),
     new Step({
       name: "Use the newest published release",
       run: `echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"`,
