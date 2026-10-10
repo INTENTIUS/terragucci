@@ -28,7 +28,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
    | Run from | Projects | Ledger read from | Reports read from | Record written to |
    |---|---|---|---|---|
-   | a control repo | its `projects:` | each project's repo: its `url`, else `https://<key>`, with the forge token when the job has one | each project's `reports` | `defaults.reports` |
+   | a [control repo](/terragucci/concepts/control-repo/) | its `projects:` | each project's repo: its `url`, else `https://<key>`, with the forge token when the job has one | each project's `reports` | `defaults.reports` |
    | one repo | the checkout's own | `origin` | the repo's `reports` | the same bucket |
 
 2. Give the job what it reads. On top of the estate job's identity:

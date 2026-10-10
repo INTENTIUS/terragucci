@@ -1,0 +1,96 @@
+---
+title: Control repo
+description: One terragucci.yml that lists every project and the defaults they share, turned into a reviewed pull request in each project that changes.
+claims: [reconcile, reconcile-mixed, reconcile-parallelism, policy-source, rollout-control, estate-control, audit-control, provider-project]
+---
+
+import ControlRepo from '../../../components/ControlRepo.astro';
+
+Twenty repos with twenty pipelines drift apart: one runs an older binary, one skips the shared policy, one never got the drift schedule. A control repo keeps them alike without editing each one. You change one file, and every project that changes gets a pull request its own team merges.
+
+<ControlRepo />
+
+## Contents
+
+The control repo's `terragucci.yml` lists the projects and what they share.
+
+```yaml
+defaults:
+  binary: tofu
+  policy:
+    source: git+https://github.com/acme/policy.git@v3
+projects:
+  github.com/acme/infra:
+    roots: ["envs/*/*"]
+  gitlab.example.com/platform/network:
+    drift: "17 4 * * *"
+  codeberg.org/acme/edge: {}
+```
+
+| Key | Holds |
+|---|---|
+| `projects` | each repo by `<host>/<owner>/<name>` (a GitLab group path works too), with the keys that differ for it; a repo left out is never touched |
+| `defaults` | the settings every project gets: any key but `url`, which names one repo, and `rollouts` |
+| a project's `forge`, `url`, `token_env` | the forge of a host terragucci cannot name, a clone URL off https or the default port, the variable that holds its token |
+
+A project's settings are terragucci's built-in defaults, then `defaults`, then the project's own keys. The maps `env`, `oidc`, `policy`, `waves`, `apply`, `respond`, `terragrunt` and `generate` merge key by key; every other key is replaced whole. `config check` refuses a top-level key outside `defaults` and `projects`, and `defaults` with no `projects`. [Keys](/terragucci/reference/config/#keys) lists each one, and [Manage the control repo with Terraform](/terragucci/guides/manage-the-control-repo-with-terraform/) writes the file with a provider instead.
+
+## Reconcile
+
+`terragucci reconcile` clones each project and writes its pipeline in the clone, as `init` would with the project's settings.
+
+| Run | Result per project |
+|---|---|
+| `reconcile`, the preview | unchanged or would change, the files, and setup tips; nothing is written |
+| `reconcile --mode apply` | for a project that changes, a commit on `terragucci/pipeline` and a pull request (a merge request on GitLab), opened or updated; an unchanged project gets none |
+
+`--mode apply` never writes a default branch and runs no `terraform apply`. One project failing does not stop the others; the command names it and exits 1. A later run opens a pull request only where something changed.
+
+The pull request carries:
+
+| File | Holds |
+|---|---|
+| the pipeline file for the project's forge | the keys flags and the job carry, such as `binary`, `version`, `apply`, `locks`, `oidc`, `notify` |
+| `terragucci.yml`, marked as written by `reconcile` | the keys the jobs read from the repo, such as `policy`, `reports`, `approval`, `gate`, `parallelism` |
+| each root's backend, provider and version files | with [`generate`](/terragucci/guides/generate-root-files/#in-a-control-repo) set |
+
+[A file for many repos](/terragucci/reference/config/#a-file-for-many-repos) sorts every key into the two ways.
+
+## Project side
+
+| Stays in each project | Detail |
+|---|---|
+| the roots, state and backend | `reconcile` writes only the files above |
+| the merge | the project's team reviews and merges the pull request |
+| plan, approvals and apply | the project's own pipeline runs them, and approvals land on its own [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+| its own `terragucci.yml` | kept; when a key the jobs read differs from the control repo's, `reconcile` fails that project and names the key |
+
+`unlock-state` and `ephemeral` run in a project's checkout, never in the control repo.
+
+## Across projects
+
+| From the control repo | Does |
+|---|---|
+| `reconcile` | one pipeline pull request per project that changes |
+| [`defaults.policy.source`](/terragucci/reference/policy/#from-a-control-repo) | one policy repo, at a pinned ref, for every project |
+| [`rollout`](/terragucci/guides/roll-out-a-module-version/) | wave 1 holds every project's canaries, then each project in config order, a pull request per project per wave; `respond rollout --mode apply` on a schedule continues it |
+| [`estate`](/terragucci/guides/see-every-project/) | one page from each project's own reports bucket, written under `defaults.reports` |
+| [`audit`](/terragucci/reference/audit-trail/) | each project's approvals from its repo and its reports, in one record under `defaults.reports` |
+
+## Mixed forges
+
+One file can list projects on GitHub, GitLab and Forgejo. The host names the forge (`github.com`, `gitlab.com`, `codeberg.org`, and hosts starting `github.`, `gitlab.`, `forgejo.` or `gitea.`); set `forge` for any other. Each forge's token comes from `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, or the variable a project's `token_env` names.
+
+## Fit
+
+| You have | Use |
+|---|---|
+| one repo | its own `terragucci.yml` and `init`; `reconcile` refuses a file with no `projects` |
+| several repos that should share a binary, policy, gates or reports | a control repo |
+| a project that needs a different value | the key under that project, not `defaults` |
+| a repo terragucci should not touch | leave it out of `projects` |
+
+## Next
+
+- [Govern many repos from one place](/terragucci/guides/govern-many-repos/) sets one up.
+- [Manage the control repo with Terraform](/terragucci/guides/manage-the-control-repo-with-terraform/)

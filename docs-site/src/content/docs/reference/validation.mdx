@@ -17,7 +17,7 @@ A local check must pass, and also fail when broken on purpose.
 
 ## The per-forge claims
 
-Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
+Each claim also runs with its property broken, and must then fail. `reconcile` follows a [control repo](/terragucci/concepts/control-repo/)'s pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
 
 The github.com claims run the newest published release against real GitHub pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account, with these limits:
 
