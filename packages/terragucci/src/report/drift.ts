@@ -20,6 +20,41 @@ export function driftPlan(plan: unknown): unknown {
   return { ...p, resource_changes: Array.isArray(p.resource_drift) ? p.resource_drift : [] };
 }
 
+const FLIP: Record<string, string> = { create: "delete", delete: "create" };
+
+/**
+ * A full plan of a root under live resource markers, as drift: choudoufu
+ * refuses a refresh-only plan there, and every plan of such a root reads the
+ * live system, so what the plan would change is what moved outside it. Each
+ * change it proposes becomes a `resource_drift` entry seen from the other
+ * side: the code's value before, the live value after, a resource the plan
+ * would create one that no longer exists, and one it would destroy one that
+ * exists outside the code. A replacement is a change.
+ */
+export function liveDrift(plan: unknown): unknown {
+  if (plan === null || typeof plan !== "object" || Array.isArray(plan)) return plan;
+  const p = plan as Json;
+  const changes = Array.isArray(p.resource_changes) ? (p.resource_changes as Json[]) : [];
+  const resource_drift = changes
+    .filter((r) => r.mode !== "data")
+    .flatMap((r) => {
+      const ch = (r.change ?? {}) as Json;
+      const actions = Array.isArray(ch.actions) ? (ch.actions as string[]) : [];
+      if (actions.length === 0 || actions.every((a) => a === "no-op" || a === "read")) return [];
+      const action = actions.length === 1 ? (FLIP[actions[0]!] ?? actions[0]!) : "update";
+      const live = (ch.before ?? null) as Json | null;
+      let code = (ch.after ?? null) as Json | null;
+      // A value the plan knows only after the apply is not a difference: the live one stands for it.
+      const unknown = ch.after_unknown !== null && typeof ch.after_unknown === "object" ? (ch.after_unknown as Json) : {};
+      if (code && live) code = { ...code, ...Object.fromEntries(Object.keys(unknown).filter((k) => unknown[k] === true && k in live).map((k) => [k, live[k]])) };
+      return [{
+        ...r,
+        change: { actions: [action], before: code, after: live, before_sensitive: ch.after_sensitive ?? false, after_sensitive: ch.before_sensitive ?? false },
+      }];
+    });
+  return { ...p, resource_drift };
+}
+
 /** How many resources a refresh-only plan found drifted. */
 export function driftCount(plan: unknown): number {
   const list = plan !== null && typeof plan === "object" ? (plan as Json).resource_drift : undefined;
