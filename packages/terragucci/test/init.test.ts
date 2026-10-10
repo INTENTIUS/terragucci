@@ -37,18 +37,12 @@ describe("init", () => {
     expect(first.files.find((f) => f.path.endsWith(file))?.status).toBe("created");
   });
 
-  it("drift with binary: choudoufu is a config error naming the roots under live resource markers, and runs for roots without them", async () => {
+  it("drift with binary: choudoufu runs for roots under live resource markers and for roots without them", async () => {
     const live = `terraform {\n  live {\n    estate = "shop-app"\n  }\n}\n\nresource "terraform_data" "x" {\n  input = 1\n}\n`;
     const stock = `terraform {\n  backend "s3" {\n    bucket = "b"\n    key    = "net.tfstate"\n  }\n}\n`;
     const repo = (files: Record<string, string>) => write(withRemote("https://codeberg.org/acme/infra.git"), files);
-    await expect(init(repo({ "terragucci.yml": 'binary: choudoufu\ndrift: "0 6 * * *"\n', "app/main.tf": live, "net/main.tf": stock }), { dryRun: true })).rejects.toThrow(
-      /drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and app keeps its resources under them/,
-    );
-    // The sidecar form counts too.
-    await expect(init(repo({ "terragucci.yml": 'binary: choudoufu\ndrift: "0 6 * * *"\n', "net/main.tf": stock, "net/estate.chdf.hcl": 'estate = "net"\n' }), { dryRun: true })).rejects.toThrow(/and net keeps its resources under them/);
-    // choudoufu roots with a backend, and tofu with a live block, keep drift.
-    await expect(init(repo({ "terragucci.yml": 'binary: choudoufu\ndrift: "0 6 * * *"\n', "net/main.tf": stock }), { dryRun: true })).resolves.toBeDefined();
-    await expect(init(repo({ "terragucci.yml": 'binary: tofu\ndrift: "0 6 * * *"\n', "app/main.tf": live }), { dryRun: true })).resolves.toBeDefined();
+    await expect(init(repo({ "terragucci.yml": 'binary: choudoufu\ndrift: "0 6 * * *"\n', "app/main.tf": live, "net/main.tf": stock }), { dryRun: true })).resolves.toBeDefined();
+    await expect(init(repo({ "terragucci.yml": 'binary: choudoufu\ndrift: "0 6 * * *"\n', "net/main.tf": stock, "net/estate.chdf.hcl": 'estate = "net"\n' }), { dryRun: true })).resolves.toBeDefined();
   });
 
   it("own_jobs refuses a missing file, a file that holds no jobs, and a name terragucci gives a job", async () => {

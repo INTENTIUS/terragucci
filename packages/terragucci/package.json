@@ -18,7 +18,8 @@
       "types": "./dist/types.d.ts"
     },
     "./report.schema.json": "./dist/report.schema.json",
-    "./notify.schema.json": "./dist/notify.schema.json"
+    "./notify.schema.json": "./dist/notify.schema.json",
+    "./terragucci.schema.json": "./dist/terragucci.schema.json"
   },
   "files": [
     "dist",
