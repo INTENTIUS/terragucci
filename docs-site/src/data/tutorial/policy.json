@@ -1,10 +1,10 @@
 {
   "step": "policy",
-  "source_hash": "c6909fe377b97186",
+  "source_hash": "be9f7c9320e2bc21",
   "commands": [],
   "shots": {
-    "note-light": "00ec3354582677c3",
-    "note-dark": "42c6b7d935527790",
+    "note-light": "1eeee112e4dd2a73",
+    "note-dark": "0b3ffbf9b4ce98a7",
     "log-light": "71c4cc9e031f02f6",
     "log-dark": "87b7642e841d9eb4"
   }
