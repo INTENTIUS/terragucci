@@ -208,6 +208,8 @@ policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the 
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
 import-terrateam|terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks|
+import-spacelift|terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask|
+import-env0|terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval|
 import-hcp|terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask|
 import-scalr|terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group|
 import-tg-scale|terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own|
@@ -4626,6 +4628,205 @@ YAML
   [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves depends_on asks for, $want"; rc=1; }
   drop_work "$tree"
   [ $rc = 0 ] && log "the imported pipeline applies dev, then staging's platform, then prod's platform with staging's services, then prod's services"
+  return $rc
+}
+
+claim_import_spacelift() {
+  # The example as a Spacelift repo would have it: an admin stack's code
+  # (spacelift/stacks.tf, no provider block, so it is not a root) declaring a
+  # stack per root on OpenTofu 1.13.1, two dependencies the state reads do not
+  # give (staging's platform on dev's platform and orders, prod's platform on
+  # staging's platform), a context every stack gets with a secret and a plain
+  # variable, and a .spacelift/config.yml with a before_plan hook for prod's
+  # payments. `terragucci import spacelift` writes terragucci.yml from them and
+  # names what it cannot map; `config check` passes; and `init --dry-run` finds
+  # the example's 15 roots and cuts them into the waves the dependencies ask
+  # for. BREAK: the written waves block, the dependency mapping, is dropped
+  # before init, so staging no longer waits for dev.
+  log() { echo "[smoke import-spacelift] $*" >&2; }
+  local tree out rc=0 got roots canary env svc
+  local want="envs/dev/platform|envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search|envs/staging/platform|envs/prod/platform,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search|envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search"
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  mkdir -p "$tree/spacelift" "$tree/.spacelift"
+  for env in dev staging prod; do
+    for svc in platform email orders payments search; do
+      cat >> "$tree/spacelift/stacks.tf" <<TF
+resource "spacelift_stack" "${env}_${svc}" {
+  name                    = "${env}-${svc}"
+  repository              = "shop"
+  branch                  = "main"
+  project_root            = "envs/${env}/${svc}"
+  terraform_workflow_tool = "OPEN_TOFU"
+  terraform_version       = "1.13.1"
+  autodeploy              = true
+  manage_state            = false
+}
+
+TF
+    done
+  done
+  cat >> "$tree/spacelift/stacks.tf" <<'TF'
+resource "spacelift_stack_dependency" "staging_platform_on_dev_platform" {
+  stack_id            = spacelift_stack.staging_platform.id
+  depends_on_stack_id = spacelift_stack.dev_platform.id
+}
+
+resource "spacelift_stack_dependency" "staging_platform_on_dev_orders" {
+  stack_id            = spacelift_stack.staging_platform.id
+  depends_on_stack_id = spacelift_stack.dev_orders.id
+}
+
+resource "spacelift_stack_dependency" "prod_platform_on_staging_platform" {
+  stack_id            = spacelift_stack.prod_platform.id
+  depends_on_stack_id = spacelift_stack.staging_platform.id
+}
+
+resource "spacelift_context" "shop" {
+  name   = "shop"
+  labels = ["autoattach:*"]
+}
+
+resource "spacelift_environment_variable" "team" {
+  context_id = spacelift_context.shop.id
+  name       = "TF_VAR_team"
+  value      = "shop"
+  write_only = false
+}
+
+resource "spacelift_environment_variable" "api_key" {
+  context_id = spacelift_context.shop.id
+  name       = "TF_VAR_api_key"
+  value      = var.api_key
+}
+TF
+  cat > "$tree/.spacelift/config.yml" <<'YAML'
+version: "1"
+stacks:
+  prod-payments:
+    before_plan:
+      - tofu fmt -check
+YAML
+  # The example's own terragucci.yml gives way to the imported one.
+  out="$(cd "$tree" && "$TERRAGUCCI" import spacelift --force --forge forgejo 2>&1)" || { log "import failed: $out"; return 1; }
+  grep -q '^  spacelift_stack_dependency.prod_platform_on_staging_platform (Order): waves.after: envs/prod/platform after envs/staging/platform' <<<"$out" \
+    || { log "the import did not write prod's platform after staging's platform into waves.after"; rc=1; }
+  grep -q '^  spacelift_environment_variable.api_key (Variables): pass.secrets: TF_VAR_api_key' <<<"$out" || { log "the import did not list the write-only variable as a secret to create"; rc=1; }
+  grep -q '^  stacks.prod-payments.before_plan (Hooks): steps: before: plan for envs/prod/payments' <<<"$out" || { log "the import did not make the hook a step for prod's payments"; rc=1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^waves:/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; return 1; }
+  out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; return 1; }
+  roots="$(jq -r '[.results.roots[].path] | sort | join(",")' <<<"$out")"
+  [ "$roots" = "$(cd "$tree" && find envs -mindepth 2 -maxdepth 2 -type d | sort | paste -sd, -)" ] || { log "init found the roots $roots, not the stacks' project roots"; rc=1; }
+  canary="$(jq -r '.results.files[] | select(.path | test("workflows")) | .content' <<<"$out" | grep -o -- "--canary '[^']*'" | head -1 | sed -E "s/--canary '([^']*)'/\1/")"
+  got="$(jq -r --arg c "$canary" '($c | split(",") | map(select(. != ""))) as $c
+    | .results.layers as $l
+    | ([$l[] | map(select(. as $r | $c | index($r)))] + [$l[] | map(select(. as $r | $c | index($r) | not))])
+    | map(select(length > 0) | sort | join(",")) | join("|")' <<<"$out")"
+  [ "$got" = "$want" ] || { log "the pipeline applies $got, not the waves the stack dependencies ask for, $want"; rc=1; }
+  drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline applies dev, then staging's platform, then prod's platform with staging's services, then prod's services"
+  return $rc
+}
+
+claim_import_env0() {
+  # The example as an env zero repo would have it: admin code
+  # (env0/environments.tf, no provider block) with an OpenTofu 1.13.1
+  # template and an environment per root, each waiting for an approval, the
+  # dev environments in a project whose policy gives a 2-d TTL, and a
+  # sensitive variable; an env0.yml custom flow in prod's payments; and an
+  # env0-discovery.yml that adds a drift schedule to prod's search.
+  # `terragucci import env0` writes terragucci.yml from them; `config check`
+  # passes; and `init --dry-run` finds the 15 roots, writes the ephemeral
+  # workflow for dev's roots, and passes --gate always to every wave. BREAK:
+  # the written ephemeral and gate keys are dropped before init, so no
+  # ephemeral workflow is written and the waves apply without an approval.
+  log() { echo "[smoke import-env0] $*" >&2; }
+  local tree out rc=0 roots env svc project eph wf
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  mkdir -p "$tree/env0"
+  cat > "$tree/env0/environments.tf" <<'TF'
+resource "env0_project" "dev" {
+  name = "dev"
+}
+
+resource "env0_project" "live" {
+  name = "live"
+}
+
+resource "env0_project_policy" "dev" {
+  project_id  = env0_project.dev.id
+  default_ttl = "2-d"
+  max_ttl     = "1-w"
+}
+
+resource "env0_configuration_variable" "api_key" {
+  name         = "api_key"
+  type         = "terraform"
+  value        = var.api_key
+  is_sensitive = true
+}
+
+TF
+  for env in dev staging prod; do
+    project=live; [ "$env" = dev ] && project=dev
+    for svc in platform email orders payments search; do
+      cat >> "$tree/env0/environments.tf" <<TF
+resource "env0_template" "${env}_${svc}" {
+  name             = "${env}-${svc}"
+  repository       = "https://example.com/shop"
+  type             = "opentofu"
+  path             = "envs/${env}/${svc}"
+  opentofu_version = "1.13.1"
+}
+
+resource "env0_environment" "${env}_${svc}" {
+  name                       = "${env}-${svc}"
+  project_id                 = env0_project.${project}.id
+  template_id                = env0_template.${env}_${svc}.id
+  approve_plan_automatically = false
+}
+
+TF
+    done
+  done
+  cat > "$tree/envs/prod/payments/env0.yml" <<'YAML'
+version: 2
+deploy:
+  steps:
+    opentofuPlan:
+      before:
+        - tofu fmt -check
+YAML
+  cat > "$tree/env0-discovery.yml" <<'YAML'
+environments:
+  prod-search:
+    name: prod-search
+    projectName: live
+    templateName: prod-search
+    driftDetectionCron: "0 5 * * *"
+YAML
+  out="$(cd "$tree" && "$TERRAGUCCI" import env0 --force --forge forgejo 2>&1)" || { log "import failed: $out"; return 1; }
+  grep -q '^  env0_environment.dev_orders: dev-orders (TTL): ephemeral.roots: envs/dev/orders, ttl: 2d' <<<"$out" || { log "the import did not make dev's orders an ephemeral root"; rc=1; }
+  grep -q '^  env0_configuration_variable.api_key (Variables): pass.secrets: TF_VAR_api_key' <<<"$out" || { log "the import did not list the sensitive variable as a secret to create"; rc=1; }
+  grep -q '^  envs/prod/payments/env0.yml: deploy.steps.opentofuPlan.before (Hooks): steps: before: plan for envs/prod/payments' <<<"$out" || { log "the import did not make the custom flow a step for prod's payments"; rc=1; }
+  grep -q '^  environments.prod-search.driftDetectionCron (Drift): drift: "0 5 \* \* \*"' <<<"$out" || { log "the import did not take the discovery file's drift schedule"; rc=1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^(ephemeral|gate):/{skip=1; next} skip && /^  /{next} {skip=0; print}' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  (cd "$tree" && "$TERRAGUCCI" config check >/dev/null 2>&1) || { log "config check failed on the imported terragucci.yml"; return 1; }
+  out="$(cd "$tree" && "$TERRAGUCCI" init --dry-run --forge forgejo --json 2>/dev/null)" || { log "init --dry-run failed on the imported terragucci.yml"; return 1; }
+  roots="$(jq -r '[.results.roots[].path] | sort | join(",")' <<<"$out")"
+  [ "$roots" = "$(cd "$tree" && find envs -mindepth 2 -maxdepth 2 -type d | sort | paste -sd, -)" ] || { log "init found the roots $roots, not the environments' template paths"; rc=1; }
+  eph="$(jq -r '[.results.files[] | select(.path | test("terragucci-ephemeral"))] | length' <<<"$out")"
+  [ "$eph" = 1 ] || { log "init wrote no ephemeral workflow for the environments with a TTL"; rc=1; }
+  wf="$(jq -r '.results.files[] | select(.path == ".forgejo/workflows/terragucci.yml") | .content' <<<"$out")"
+  grep -q -- '--gate always' <<<"$wf" || { log "the pipeline's waves do not wait for an approval, as every environment did"; rc=1; }
+  drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline plans the 15 environments' roots, keeps an ephemeral copy of dev's, and holds every wave for an approval"
   return $rc
 }
 
@@ -21430,6 +21631,8 @@ comment-plan    runner self! weight=150
 comment-atlantis runner self! weight=150
 import-atlantis ex after=boot weight=150
 import-terrateam weight=30
+import-spacelift weight=30
+import-env0     weight=30
 import-hcp      weight=60
 import-scalr    weight=60
 import-tg-scale weight=30

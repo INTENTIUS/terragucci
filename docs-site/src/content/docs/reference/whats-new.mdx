@@ -21,6 +21,7 @@ Release `0.4.4` is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub rele
 | A [choudoufu](/terragucci/concepts/glossary/#choudoufu) wave's run view shows each resource done, in flight or waiting while it applies, read from the estate's records (`cdf-live-progress`) | [Progress](/terragucci/concepts/waves-and-approvals/#progress) |
 | `generate.disable_init: false` writes `disable_init = false` in `terragucci.hcl`, and the apply job has Terragrunt create the state bucket | [Generate backend and provider files](/terragucci/guides/generate-root-files/#bucket-bootstrap) |
 | `terragucci import terrateam` writes `terragucci.yml` from a `.terrateam/config.yml`, with `depends_on` as waves | [Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam) |
+| `terragucci import spacelift` and `import env0` write `terragucci.yml` from `.spacelift/config.yml` and `spacelift_*` resources, or from `env0-discovery.yml`, `env0.yml` and `env0_*` resources: stacks and environments as roots, hooks as steps, dependencies as waves, TTLs as ephemeral roots, secrets by name | [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import) |
 | The plan note's blast radius lists each changed resource and the resources that depend on it, in its root and in roots that read an output it reaches | [Resources in the radius](/terragucci/concepts/waves-and-approvals/#resources-in-the-radius) |
 
 ## Security

@@ -81,6 +81,8 @@ The approval mode decides what else `init` writes.
 terragucci import atlantis [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import digger [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import spacelift [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+terragucci import env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
 terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
 ```
 
@@ -105,6 +107,8 @@ It exits 2 when the file is missing or not YAML, or when `terragucci.yml` exists
 `import terrateam` writes no `roots`, since terragucci detects the directories Terrateam plans, and names each `dirs` key that matches no root. It reads `depends_on` against the roots' `terraform_remote_state` reads and writes `waves.canary` for an order the reads do not give ([Terrateam](/terragucci/guides/coming-from-atlantis-or-opentaco/#terrateam)). A `run` hook or workflow step becomes a [step](/terragucci/guides/run-steps/). Run [`init`](#init) next to write the pipeline.
 
 `import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 2 on a repo with no Terragrunt or a legacy `config.yml`.
+
+`import spacelift` reads `.spacelift/config.yml` (or the file named) and every `spacelift_*` resource in the repo's `.tf` files; `import env0` reads `env0-discovery.yml` (or the file named), each `env0.yml` custom flow and every `env0_*` resource. Either runs on the admin code alone when the file is missing. They map by the concepts table of [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import), keep `apply.when: merge` unless `--apply-when` says otherwise, since both platforms apply a tracked branch after a push, and name each stack or environment whose state the platform manages.
 
 ### From a platform's workspaces
 

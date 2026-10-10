@@ -2,7 +2,7 @@
  * The terragucci command.
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
- *   terragucci import atlantis|digger|terrateam [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
+ *   terragucci import atlantis|digger|terrateam|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
@@ -126,7 +126,7 @@ import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
-  terragucci import atlantis|digger|terrateam [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
+  terragucci import atlantis|digger|terrateam|spacelift|env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
   terragucci import hcp|otf|scalr [--hostname <host>] [--organization <org>] [--environment <env>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
@@ -308,7 +308,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(describeWorkspaceImport(result));
           return 0;
         }
-        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\`, \`terragucci import terrateam [.terrateam/config.yml]\` or \`terragucci import terragrunt-scale [.gruntwork]\``);
+        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(", ")}: \`terragucci import atlantis [atlantis.yaml]\`, \`terragucci import digger [digger.yml]\`, \`terragucci import terrateam [.terrateam/config.yml]\`, \`terragucci import terragrunt-scale [.gruntwork]\`, \`terragucci import spacelift [.spacelift/config.yml]\` or \`terragucci import env0 [env0-discovery.yml]\``);
         if (extra !== undefined) throw new ConfigError("import reads one file");
         const forge = str(flags, "forge");
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
