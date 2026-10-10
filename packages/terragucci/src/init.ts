@@ -29,7 +29,7 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { detectBinary, detectForge, detectVersion, driftRefusal, liveRoots, type RootReason } from "./detect";
+import { detectBinary, detectForge, detectVersion, type RootReason } from "./detect";
 import { BINARY, detectShape, refuseProblems } from "./shape";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
@@ -217,8 +217,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu, and an Atmos instance's are its component's.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, shape.binary(roots));
 
-  const noDrift = settings.drift && !tgMode ? driftRefusal(binary.value, liveRoots(repo, roots)) : undefined;
-  if (noDrift) throw new ConfigError(noDrift);
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || !BINARY[binary.value].releaseInRequiredVersion ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.

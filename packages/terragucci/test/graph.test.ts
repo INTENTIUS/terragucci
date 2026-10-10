@@ -57,6 +57,25 @@ describe("each root's state and its reads outside the project", () => {
   });
 });
 
+describe("under choudoufu, each root's estate and its reads of estates outside the project", () => {
+  it("names the records of the estate a live block owns, and the estate output reads no root of the repo owns", () => {
+    const live = (estate: string): string => `terraform {\n  live {\n    estate = "${estate}"\n\n    record_store "s3" {\n      bucket = "records"\n    }\n  }\n}\n`;
+    const out = (name: string, estate: string): string => `data "terraform_estate_outputs" "${name}" {\n  estate = "${estate}"\n  names  = ["x"]\n}\n`;
+    const repo = write(tmp(), {
+      "net/main.tf": live("shop-net"),
+      "app/main.tf": live("shop-app") + out("net", "shop-net") + out("dns", "shared-dns"),
+    });
+    const s = rootStates(repo, ["net", "app"]);
+    expect(s.get("net")).toEqual({ state: { key: "tofu-records/shop-net" }, external: [] });
+    expect(s.get("app")).toEqual({ state: { key: "tofu-records/shop-app" }, external: [{ data: "dns", key: "tofu-records/shared-dns" }] });
+    // Another project's root that owns shared-dns is the one app reads.
+    const views = (project: string, view: RunView): ProjectIndex => ({ project, base: `${project}/`, reports: [apply(project, view.commit)], run: view });
+    const shop = runSkeleton("forge/acme/shop", "a1", [["net"], ["app"]], new Map([["app", new Set(["net"])]]), s);
+    const dns = runSkeleton("forge/acme/dns", "d1", [["zone"]], new Map(), rootStates(write(tmp(), { "zone/main.tf": live("shared-dns") }), ["zone"]));
+    expect(buildEstate([views("forge/acme/shop", shop), views("forge/acme/dns", dns)], NOW).graph!.edges).toContainEqual({ from: { project: "forge/acme/dns", root: "zone" }, to: { project: "forge/acme/shop", root: "app" } });
+  });
+});
+
 const NOW = new Date("2026-10-09T12:00:00.000Z");
 const apply = (project: string, commit: string): IndexEntry => ({
   project,

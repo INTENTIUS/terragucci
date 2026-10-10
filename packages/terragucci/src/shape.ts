@@ -108,7 +108,8 @@ export interface Shape {
  * What each binary can do, where the code paths differ by binary.
  * choudoufu pins the OpenTofu language it forks in required_version, not a
  * release of its own; it has no `test`; under live resource markers it
- * refuses the refresh-only plan drift runs; and its applies are kept apart
+ * refuses the refresh-only plan drift runs, so drift plans such a root in
+ * full (`refreshOnlyOnLiveRoots`, liveDrift in ./report/drift.ts); and its applies are kept apart
  * per resource, where every other binary's are kept apart per root by the
  * backend's state lock (`applyScope`, ./apply-rows.ts).
  */
@@ -117,6 +118,12 @@ export const BINARY: Record<Binary, { releaseInRequiredVersion: boolean; test: b
   terraform: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root" },
   choudoufu: { releaseInRequiredVersion: false, test: false, refreshOnlyOnLiveRoots: false, applyScope: "resource" },
 };
+
+/** Whether drift plans a root under live resource markers in full, since the binary refuses a refresh-only plan there. */
+export function fullDriftPlans(binary: string): boolean {
+  const name = binary.split("/").pop()!;
+  return Object.hasOwn(BINARY, name) && !BINARY[name as Binary].refreshOnlyOnLiveRoots;
+}
 
 const NO_ROOTS = "found no roots: no directory has Terraform files with a backend or a provider block";
 
