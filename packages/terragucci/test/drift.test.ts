@@ -7,7 +7,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { findIssue, type Fetch } from "../src/forge";
-import { driftPlan, renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
+import { driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
 import { buildReport } from "../src/report/build";
 import { renderHtml } from "../src/report/html";
 import { renderNote } from "../src/report/views";
@@ -23,8 +23,8 @@ const drifted = plan([codeChange], { resource_drift: [queueGone, tagsMoved] });
 const clean = plan([codeChange], { resource_drift: [] });
 
 /** A `tofu` that records its calls and shows the plan each root's directory holds. */
-function fakeTofu(dir: string): string {
-  const path = join(dir, "tofu");
+function fakeTofu(dir: string, name = "tofu"): string {
+  const path = join(dir, name);
   writeFileSync(path, `#!/bin/sh
 chdir="\${1#-chdir=}"; shift
 echo "$chdir $*" >> "${dir}/calls.log"
@@ -51,16 +51,54 @@ describe("driftPlan", () => {
   });
 });
 
+describe("liveDrift", () => {
+  it("reads a full plan's changes from the other side: code before, live after, a create as gone, a destroy as outside the code", () => {
+    const p = plan([
+      rc("a.upd", ["update"], { v: "live", arn: "x" }, { v: "code", arn: null }, { after_unknown: { arn: true }, before_sensitive: { s: true }, after_sensitive: {} }),
+      rc("a.gone", ["create"], null, { v: "code" }),
+      rc("a.extra", ["delete"], { v: "live" }, null),
+      rc("a.rep", ["delete", "create"], { v: "live" }, { v: "code" }),
+      rc("a.same", ["no-op"], { v: 1 }, { v: 1 }),
+      rc("data.x.y", ["read"], null, {}, { mode: "data" }),
+    ]);
+    const d = (liveDrift(p) as { resource_drift: { address: string; change: { actions: string[]; before: unknown; after: unknown; before_sensitive: unknown; after_sensitive: unknown } }[] }).resource_drift;
+    expect(d.map((e) => [e.address, e.change.actions[0]])).toEqual([["a.upd", "update"], ["a.gone", "delete"], ["a.extra", "create"], ["a.rep", "update"]]);
+    const upd = d[0]!.change;
+    // A value known only after the apply is not drift: the live one stands for it.
+    expect(upd.before).toEqual({ v: "code", arn: "x" });
+    expect(upd.after).toEqual({ v: "live", arn: "x" });
+    expect(upd.after_sensitive).toEqual({ s: true });
+    expect(liveDrift(null)).toBeNull();
+  });
+});
+
 describe("terragucci stage tf-drift", () => {
-  it("refuses choudoufu roots under live resource markers as a config error, before any plan", async () => {
+  it("plans a choudoufu root under live resource markers in full and reads its changes as drift; a stock root stays refresh-only", { timeout: 60_000 }, async () => {
+    const bin = tmp();
+    const live = plan([
+      rc("aws_sqs_queue.jobs", ["update"], { name: "jobs", visibility_timeout_seconds: 77 }, { name: "jobs", visibility_timeout_seconds: 30 }),
+      rc("aws_sqs_queue.dead", ["create"], null, { name: "dead" }),
+      rc("terraform_data.same", ["no-op"], { input: 1 }, { input: 1 }),
+    ]);
     const repo = write(tmp(), {
       "terragucci.yml": 'binary: choudoufu\nroots: ["envs/*"]\n',
       "envs/app/main.tf": `terraform {\n  live {\n    estate = "app"\n  }\n}\n`,
+      "envs/app/plan.json": JSON.stringify(live),
       "envs/net/main.tf": "",
+      "envs/net/plan.json": JSON.stringify(clean),
     });
-    await expect(runStage("tf-drift", repo, { env: { PATH: process.env.PATH } }, () => {})).rejects.toThrow(
-      /drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and envs\/app keeps its resources under them/,
-    );
+    const result = await runStage("tf-drift", repo, { binary: fakeTofu(bin, "choudoufu"), env: { PATH: process.env.PATH } }, () => {});
+    const calls = readFileSync(join(bin, "calls.log"), "utf-8").split("\n").filter((l) => / plan /.test(l));
+    expect(calls.find((c) => c.includes("envs/app"))).not.toContain("-refresh-only");
+    expect(calls.find((c) => c.includes("envs/net"))).toContain("-refresh-only");
+    const app = result.report.roots.find((r) => r.path === "envs/app")!;
+    expect(app.changes.map((c) => [c.address, c.action])).toEqual([["aws_sqs_queue.dead", "delete"], ["aws_sqs_queue.jobs", "update"]].sort());
+    expect(app.changes.find((c) => c.action === "update")!.attributes.map((a) => a.path)).toEqual(["visibility_timeout_seconds"]);
+    expect(result.report.roots.find((r) => r.path === "envs/net")!.changes).toEqual([]);
+    // The issue names the root and the attribute that moved.
+    const issue = readFileSync(join(result.dir, "issue.md"), "utf-8");
+    expect(issue).toContain("`envs/app`");
+    expect(issue).toContain("`visibility_timeout_seconds`");
   });
 
   it("plans refresh-only, names the root and the queue, and ignores the code change on main", { timeout: 60_000 }, async () => {

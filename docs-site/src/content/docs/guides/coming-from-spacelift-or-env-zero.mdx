@@ -1,6 +1,6 @@
 ---
 title: Coming from Spacelift or env zero
-description: Each Spacelift and env zero concept, the terragucci key or job that does the same work, how to move managed state into your own bucket by hand, and what has no equivalent.
+description: Each Spacelift and env zero concept, the terragucci key or job that does the same work, how to move managed state into your own bucket, and what has no equivalent.
 claims: [pass-secrets, runner-label]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-spacelift-or-env-zero/.
@@ -23,7 +23,7 @@ Each stack or environment becomes a root with its own state in your bucket. The 
 |---|---|---|
 | Stack | environment | a [root](/terragucci/concepts/glossary/#root): one directory, one state |
 | Several stacks on one project root | several environments from one template | a directory per stack or environment, each with its backend key and `terraform.tfvars`, calling a shared module |
-| Managed state | env zero's remote backend | a key in your S3 bucket, moved [by hand](#state-move) |
+| Managed state | env zero's remote backend | a key in your S3 bucket, moved by a [backend move](#state-move) |
 | Your own backend | your own S3 backend | the same backend; nothing moves |
 | Context: environment variables | variables | [`env`](/terragucci/reference/config/#keys) for values; CI secrets named under [`pass`](#variables) for the rest |
 | Context: mounted files | | files committed in the root, such as `terraform.tfvars` |
@@ -76,7 +76,9 @@ Each stack or environment becomes a root with its own state in your bucket. The 
 
 ## State move
 
-terragucci's own [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) reads only `s3` and `local` sources, so managed state comes out by hand, with Terraform or OpenTofu (`tofu` in place of `terraform`). A stack or environment already on your own backend skips this.
+A [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) writes managed state to your bucket, approved by digest like any migration. For env zero it reads the environment's state over the remote backend's API: `backend: remote`, `hostname: backend.api.env0.com`, the organization ID and the workspace. For Spacelift it reads a state file you pulled, with `backend: file`. [Migration files](/terragucci/reference/migration-files/#workspaces) lists the keys. A stack or environment already on your own backend skips this.
+
+By hand, with Terraform or OpenTofu (`tofu` in place of `terraform`):
 
 <Tabs>
 <TabItem label="Spacelift">
@@ -208,7 +210,7 @@ pass:
 
 | On the platform | In terragucci today |
 |---|---|
-| State move | by hand, as above; no importer reads managed state |
+| State move | a backend move or by hand, as above |
 | Stack and environment settings | no importer reads `.spacelift/config.yml`, `env0.yml` or the platforms' APIs; `terragucci.yml` is written by hand or by an agent from this page |
 | Tasks (ad hoc commands) | none; state changes come through pull requests |
 | Drift reconciliation | the drift job reports and opens a pull request for drift on a literal; it never applies to put the code back |

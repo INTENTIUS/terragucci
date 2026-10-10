@@ -313,11 +313,11 @@ function checkout(files: Record<string, string>): { repo: string; bare: string }
 }
 
 /** A stand-in binary: init passes, the refresh-only plan's JSON is `driftJson`. */
-function fakeBinary(driftJson: unknown): string {
+function fakeBinary(driftJson: unknown, name = "tf"): string {
   const dir = tmp();
   writeFileSync(join(dir, "plan.json"), JSON.stringify(driftJson));
-  const bin = join(dir, "tf");
-  writeFileSync(bin, `#!/bin/sh\ncase "$2" in\n  init) exit 0 ;;\n  plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done; exit 0 ;;\n  show) cat ${JSON.stringify(join(dir, "plan.json"))} ;;\nesac\n`);
+  const bin = join(dir, name);
+  writeFileSync(bin, `#!/bin/sh\necho "$*" >> ${JSON.stringify(join(dir, "calls.log"))}\ncase "$2" in\n  init) exit 0 ;;\n  plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done; exit 0 ;;\n  show) cat ${JSON.stringify(join(dir, "plan.json"))} ;;\nesac\n`);
   chmodSync(bin, 0o755);
   return bin;
 }
@@ -352,6 +352,18 @@ describe("respond: running a response", () => {
     expect(git(bare, "show", "terragucci/drift:app/main.tf")).toContain("visibility_timeout_seconds = 45 # seconds");
     expect(git(bare, "rev-parse", "main")).toBe(git(repo, "rev-parse", "HEAD"));
     expect(forge.calls.filter((c) => c.startsWith("POST"))).toEqual(["POST https://forge.test/api/v1/repos/acme/infra/pulls"]);
+  });
+
+  it("drift: a choudoufu root under live resource markers plans in full, and the live value is written", async () => {
+    const live = ROOT.replace(/^/, 'terraform {\n  live {\n    estate = "app"\n  }\n}\n\n');
+    const { repo } = checkout({ "app/main.tf": live });
+    const full = { resource_changes: [{ address: "aws_sqs_queue.jobs", mode: "managed", type: "aws_sqs_queue", name: "jobs", change: { actions: ["update"], before: { visibility_timeout_seconds: 45 }, after: { visibility_timeout_seconds: 30 }, after_unknown: {} } }] };
+    const bin = fakeBinary(full, "choudoufu");
+    const r = await respond("drift", repo, { binary: bin });
+    expect(r.proposals).toEqual([{ branch: "terragucci/drift", title: "Codify drift", files: ["app/main.tf"], state: "would-open" }]);
+    const plans = readFileSync(join(bin, "..", "calls.log"), "utf-8").split("\n").filter((l) => / plan /.test(l));
+    expect(plans.length).toBeGreaterThan(0);
+    for (const p of plans) expect(p).not.toContain("-refresh-only");
   });
 
   it("drift: with synth the pull request is refused, naming why", async () => {

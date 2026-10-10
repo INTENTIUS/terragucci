@@ -103,7 +103,7 @@ The table covers AWS provider errors and Terraform's state lock message; any oth
 
 ## Drift
 
-A refresh-only plan finds the drift, and the pull request writes the live value where the root's own resource block holds a literal. Merging it accepts the outside change, so read it first.
+A refresh-only plan finds the drift (a full plan on a [choudoufu](/terragucci/concepts/glossary/#choudoufu) root under live resource markers), and the pull request writes the live value where the root's own resource block holds a literal. Merging it accepts the outside change, so read it first.
 
 Other changes are only reported:
 
