@@ -387,6 +387,8 @@ migrate-backend|a migration moves the state of a root to a new bucket: proved wi
 migrate-backend-tfe|a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded|
 migrate-backend-pg|a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was|
 migrate-backend-k8s|a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was|
+migrate-backend-consul|a migration moves the state of a root between two consul paths: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its session lock, the old key left as it was|
+migrate-backend-http|a migration moves the state of a root between two http backend addresses: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the lock of the server, the old state left as it was|
 migrate-revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
 migrate-resume-never|with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1|
 migrate-split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
@@ -19268,6 +19270,172 @@ claim_migrate_backend_k8s() {
   return $rc
 }
 
+claim_migrate_backend_consul() {
+  # A Consul of the claim's own (tgconsul-<stamp>, one agent in dev mode).
+  # Root app holds terraform_data.keep and terraform_data.moved, its consul
+  # backend at path tgold/app, applied by wave 1. A commit points the backend
+  # at path tgnew/app and adds migrations/move-app.yml, whose from is the
+  # consul backend at tgold/app. Wave 1 reads the old state with state pull,
+  # proves the move and waits; smoke-approver approves the digest and wave 1
+  # runs again: the binary writes the state to tgnew/app with state push
+  # under the backend's session lock, and the wave applies no change.
+  # tgnew/app holds both resources, tgold/app is the value it was, no lock
+  # key is left, and the record names both consul addresses with no version
+  # id.
+  # BREAK: after the approval tgold/app is written again with the next
+  # serial, so wave 1 refuses (exit 4) naming app, writing nothing.
+  log() { echo "[smoke migrate-backend-consul] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="migrate-backend-consul-$STAMP" name="tgconsul-$STAMP" consul="" i digest record was
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  consul="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" public.ecr.aws/hashicorp/consul:1.20 agent -dev -client=0.0.0.0)" || { log "Consul did not start"; rc=1; }
+  ckv() { docker exec "$consul" consul kv "$@"; }
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 60); do ckv get -recurse >/dev/null 2>&1 && break; sleep 1; done
+    ckv get -recurse >/dev/null 2>&1 || { log "Consul never answered"; rc=1; }
+  fi
+  consul_root() { # path
+    mkdir -p "$work/wave/app"
+    printf 'terraform {\n  backend "consul" {\n    address = "%s:8500"\n    scheme  = "http"\n    path    = "%s"\n  }\n}\n' "$name" "$1" > "$work/wave/app/main.tf"
+    for n in keep moved; do printf '\nresource "terraform_data" "%s" {\n  input = "mg-%s-%s"\n}\n' "$n" "$STAMP" "$n" >> "$work/wave/app/main.tf"; done
+  }
+  mkdir -p "$work/wave"
+  consul_root tgold/app
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" first app
+    [ "$AUDIT_CODE" = 0 ] || { log "the first apply of app exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    consul_root tgnew/app
+    mkdir -p "$work/wave/migrations"
+    printf 'backends:\n  - root: app\n    from:\n      backend: consul\n      config:\n        address: %s:8500\n        scheme: http\n        path: tgold/app\n' "$name" > "$work/wave/migrations/move-app.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app's state to path tgnew/app"
+    migrate_wave "$work" waits app
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the move"; rc=1; }
+    digest="$(sed -n 's/^migration move-app waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  fi
+  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver move-app "$digest" || { log "could not approve the move"; rc=1; }; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    { ckv get tgold/app | jq -c '.serial += 1' > "$work/next.json" && [ -s "$work/next.json" ] \
+      && docker exec -i "$consul" consul kv put tgold/app - < "$work/next.json" >/dev/null; } || { log "could not write tgold/app again"; rc=1; }
+  fi
+  [ $rc = 0 ] && was="$(ckv get tgold/app | shasum | cut -d' ' -f1)"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies app
+    [ "$AUDIT_CODE" = 4 ] && grep -q "the states moved since: app" "$work/applies.log" && log "wave 1 refused: tgold/app moved since the approval"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the move planned changes"; rc=1; }
+    [ "$(ckv get tgnew/app | jq -r '[.resources[].name] | join(",")')" = "keep,moved" ] || { log "tgnew/app does not hold app's two resources"; rc=1; }
+    [ "$(ckv get tgold/app | shasum | cut -d' ' -f1)" = "$was" ] || { log "tgold/app changed"; rc=1; }
+    # The binary deletes the lock key when it lets the lock go; its session expires with its TTL.
+    [ "$(ckv get -keys -separator= tg | sort | tr '\n' ' ')" = "tgnew/app tgold/app " ] || { log "a lock is left: $(ckv get -keys -separator= tg | tr '\n' ' ')"; rc=1; }
+    record="$(cat "$work/wave/terragucci-report/migrations/move-app.json" 2>/dev/null)"
+    jq -c '{status, change, roots: [.roots[] | {root, backend, location, source, before, after}]}' <<<"$record" >&2
+    [ "$(jq -r '[.status, .change, .roots[0].location, .roots[0].source.location, (.roots[0].source.version_id // "none"), (.roots[0].after.version_id // "none")] | join(" ")' <<<"$record")" = "applied backends consul:$name:8500/tgnew/app consul:$name:8500/tgold/app none none" ] \
+      || { log "the record does not name both consul addresses with no version id"; rc=1; }
+    if grep -q "mg-$STAMP-" <<<"$record"; then log "an input value reached the record"; rc=1; fi
+  fi
+  [ -n "$consul" ] && { docker container remove --force "$consul" >/dev/null 2>&1 || true; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app's state moved from tgold/app to tgnew/app with no change, written by the binary under its session lock, the old key left as it was"
+  return $rc
+}
+
+claim_migrate_backend_http() {
+  # An http state server of the claim's own (stack/fixtures/http-backend/
+  # http-state.mjs in the CI image, tghttp-<stamp>), which locks each path
+  # with LOCK and UNLOCK and refuses a write to a locked path that does not
+  # carry the lock's ID. Root app holds terraform_data.keep and
+  # terraform_data.moved, its http backend at /state/old (its lock address
+  # the same), applied by wave 1. A commit points the backend at /state/new
+  # and adds migrations/move-app.yml, whose from is the http backend at
+  # /state/old. Wave 1 reads the old state with state pull, proves the move
+  # and waits; smoke-approver approves the digest and wave 1 runs again: the
+  # binary writes /state/new with state push under its lock, and the wave
+  # applies no change. /state/new holds both resources, every write to it
+  # came under the lock, /state/old is the state it was, no lock is held,
+  # and the record names both http addresses with no version id.
+  # BREAK: after the approval /state/old is written again with the next
+  # serial, so wave 1 refuses (exit 4) naming app, writing nothing.
+  log() { echo "[smoke migrate-backend-http] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="migrate-backend-http-$STAMP" name="tghttp-$STAMP" srv="" ctl="" port i digest record was
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/http" "$work/wave"
+  cp "$HERE/fixtures/http-backend/http-state.mjs" "$work/http/" || return 1
+  srv="$(run_copied -d --name "$name" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::8080 -v "$work/http:/http:ro" "$image" node /http/http-state.mjs)" || { log "the http state server did not start"; rc=1; }
+  if [ $rc = 0 ]; then
+    port="$(docker port "$srv" 8080/tcp | head -1 | sed 's/.*://')"
+    ctl="http://127.0.0.1:$port"
+    for i in $(seq 1 30); do curl -fsS -o /dev/null "$ctl/_status" 2>/dev/null && break; sleep 1; done
+    curl -fsS -o /dev/null "$ctl/_status" || { log "the http state server never answered on $ctl"; rc=1; }
+  fi
+  http_root() { # path
+    mkdir -p "$work/wave/app"
+    printf 'terraform {\n  backend "http" {\n    address        = "http://%s:8080/state/%s"\n    lock_address   = "http://%s:8080/state/%s"\n    unlock_address = "http://%s:8080/state/%s"\n  }\n}\n' "$name" "$1" "$name" "$1" "$name" "$1" > "$work/wave/app/main.tf"
+    for n in keep moved; do printf '\nresource "terraform_data" "%s" {\n  input = "mg-%s-%s"\n}\n' "$n" "$STAMP" "$n" >> "$work/wave/app/main.tf"; done
+  }
+  http_root old
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" first app
+    [ "$AUDIT_CODE" = 0 ] || { log "the first apply of app exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    http_root new
+    mkdir -p "$work/wave/migrations"
+    printf 'backends:\n  - root: app\n    from:\n      backend: http\n      config:\n        address: http://%s:8080/state/old\n        lock_address: http://%s:8080/state/old\n        unlock_address: http://%s:8080/state/old\n' "$name" "$name" "$name" > "$work/wave/migrations/move-app.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app's state to /state/new"
+    migrate_wave "$work" waits app
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the move"; rc=1; }
+    digest="$(sed -n 's/^migration move-app waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  fi
+  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver move-app "$digest" || { log "could not approve the move"; rc=1; }; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    { curl -fsS "$ctl/state/old" | jq -c '.serial += 1' | curl -fsS -o /dev/null -X POST --data-binary @- "$ctl/state/old"; } || { log "could not write /state/old again"; rc=1; }
+  fi
+  [ $rc = 0 ] && was="$(curl -fsS "$ctl/state/old" | shasum | cut -d' ' -f1)"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies app
+    [ "$AUDIT_CODE" = 4 ] && grep -q "the states moved since: app" "$work/applies.log" && log "wave 1 refused: /state/old moved since the approval"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the move planned changes"; rc=1; }
+    [ "$(curl -fsS "$ctl/state/new" | jq -r '[.resources[].name] | join(",")')" = "keep,moved" ] || { log "/state/new does not hold app's two resources"; rc=1; }
+    [ "$(curl -fsS "$ctl/state/old" | shasum | cut -d' ' -f1)" = "$was" ] || { log "/state/old changed"; rc=1; }
+    curl -fsS "$ctl/_writes" | jq -c '[.[] | select(.path == "/state/new")]' >&2
+    [ "$(curl -fsS "$ctl/_writes" | jq '[.[] | select(.path == "/state/new")] | length > 0 and all(.locked)')" = true ] || { log "/state/new was written outside its lock"; rc=1; }
+    [ "$(curl -fsS "$ctl/_locks")" = "[]" ] || { log "a lock is still held: $(curl -fsS "$ctl/_locks")"; rc=1; }
+    record="$(cat "$work/wave/terragucci-report/migrations/move-app.json" 2>/dev/null)"
+    jq -c '{status, change, roots: [.roots[] | {root, backend, location, source, before, after}]}' <<<"$record" >&2
+    [ "$(jq -r '[.status, .change, .roots[0].location, .roots[0].source.location, (.roots[0].source.version_id // "none"), (.roots[0].after.version_id // "none")] | join(" ")' <<<"$record")" = "applied backends http:http://$name:8080/state/new http:http://$name:8080/state/old none none" ] \
+      || { log "the record does not name both http addresses with no version id"; rc=1; }
+    if grep -q "mg-$STAMP-" <<<"$record"; then log "an input value reached the record"; rc=1; fi
+  fi
+  [ -n "$srv" ] && { docker container remove --force "$srv" >/dev/null 2>&1 || true; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app's state moved from /state/old to /state/new with no change, written by the binary under its lock, the old state left as it was"
+  return $rc
+}
+
 claim_migrate_revert() {
   # mono holds keep and moved (state in a versioned bucket); a migration splits
   # moved out to split and applies under smoke-approver's approval, as in
@@ -21809,6 +21977,8 @@ migrate-backend      weight=200
 migrate-backend-tfe  weight=200
 migrate-backend-pg   weight=200
 migrate-backend-k8s  weight=250
+migrate-backend-consul weight=200
+migrate-backend-http weight=200
 migrate-revert       weight=250
 migrate-resume       runner self! weight=300
 migrate-resume-never runner self! weight=300

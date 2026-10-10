@@ -54,7 +54,7 @@ For these backends, the job reads the state through the root with the old backen
 
 ### Unversioned backends
 
-The `pg` and `kubernetes` backends keep no versions. A state moves from or to either one, and a move between roots works on them. The `consul` and `http` backends (other than GitLab-managed state) take the same path but have no claim yet.
+The `pg`, `kubernetes`, `consul` and `http` backends (an `http` backend other than GitLab-managed state) keep no versions. A state moves from or to any of them, and a move between roots works on them.
 
 ```yaml
 backends:
