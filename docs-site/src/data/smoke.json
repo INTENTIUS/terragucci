@@ -2102,6 +2102,22 @@
       "commit": "2bdb05f3"
     },
     {
+      "claim": "migrate-backend-consul",
+      "says": "a migration moves the state of a root between two consul paths: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its session lock, the old key left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5ca8858a"
+    },
+    {
+      "claim": "migrate-backend-http",
+      "says": "a migration moves the state of a root between two http backend addresses: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the lock of the server, the old state left as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5ca8858a"
+    },
+    {
       "claim": "migrate-revert",
       "says": "terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left",
       "needs": null,
