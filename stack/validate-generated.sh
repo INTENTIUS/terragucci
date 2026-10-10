@@ -281,6 +281,9 @@ run_check() { # repo prepare-fn bad-fn pattern what-it-names
 run_apply() { # repo prepare-fn bucket...
   local repo="$1" prep="$2" b f sha code; shift 2
   forge_reset_repo "$repo"
+  # A choudoufu wave pushes the rows it holds to chant/lifecycle; on GitLab
+  # that push takes GITLAB_TOKEN, as gate-wait's pending record does.
+  if [ "$FORGE" = gitlab ] && [ "$prep" = prepare_cdf ]; then forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"; fi
   for b in "$@"; do
     curl -s -o /dev/null -X DELETE "$FLOCI/$b" || true
     [ "$(bucket_code "$b")" = 404 ] || fail "could not clear $b from floci before the run"
