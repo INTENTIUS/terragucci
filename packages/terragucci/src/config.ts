@@ -492,7 +492,9 @@ export interface ProjectSettings {
  * roots `roots` matches, applied from its head under the state key with
  * `-pr-<n>` added (ephemeral.ts). Closing the pull request, or `ttl` passing
  * since its last apply, destroys the copy through a planned destroy that the
- * audit trail lists. Plain roots only, without synth.
+ * audit trail lists. A Terragrunt unit's copy takes the suffix through its
+ * remote_state key, which reads TERRAGUCCI_EPHEMERAL_SUFFIX; with synth the
+ * command writes the roots in the copy's checkout first.
  */
 export interface EphemeralSettings {
   /** Root globs. */
@@ -515,10 +517,6 @@ export function ttlMs(ttl: string): number | undefined {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 }
 
-/** Why ephemeral environments are refused in a Terragrunt repo. */
-export const EPHEMERAL_NOT_TERRAGRUNT = "a Terragrunt unit's state key comes from its remote_state block, which terragucci does not rewrite, and its units apply with one run --all; ephemeral copies plain roots, so leave ephemeral unset";
-/** Why ephemeral environments are refused with synth. */
-export const EPHEMERAL_NOT_SYNTH = "with synth the roots are written by the command in each job, and git holds no root a pull request's copy could be made from; leave ephemeral unset";
 /** Why ephemeral environments are refused on GitLab with gitlab.token: protected. */
 export const EPHEMERAL_NOT_PROTECTED = "a merge request pipeline applies the copy and records it on chant/lifecycle with the project token, and with gitlab.token: protected no merge request pipeline holds it; leave ephemeral unset or the token unprotected";
 
@@ -1026,10 +1024,18 @@ export const SYNTH_DRIFT_PR_SHORT = "synth writes the roots, so a live value bel
 export const SYNTH_DRIFT_PR = "the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them, so the value belongs in the app that writes them, which terragucci does not edit; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
 export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there";
 
-/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, and a rollouts schedule. */
+/**
+ * Why `generate` is refused with `synth`: the roots are the synth command's
+ * output, so a file generate wrote into one is gone at the next synth, and the
+ * app already says what generate would, through its constructs.
+ */
+export const SYNTH_GENERATE = "with synth the roots are written by the synth command, and the app sets what generate would write through its constructs: the backend with a backend construct (S3Backend, GcsBackend, AzurermBackend, LocalBackend, HttpBackend, PgBackend, ConsulBackend, CosBackend, OssBackend, SwiftBackend, or CloudBackend and RemoteBackend for HCP Terraform), each provider with its provider construct, and required_version with the stack's addOverride(\"terraform.required_version\", ...); a file generate wrote into a synthesized root is gone at the next synth and would declare a second backend beside the app's, so set these in the app and leave generate unset";
+
+/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, a rollouts schedule, and generate. */
 export function synthProblems(s: ProjectSettings, where: string): string[] {
   if (!s.synth) return [];
   const out: string[] = [];
+  if (s.generate !== undefined) out.push(`${where}.generate: ${SYNTH_GENERATE}`);
   if (s.drift && responseTo(s, "drift") === "pull-request") out.push(`${where}.respond.drift: ${SYNTH_DRIFT_PR}`);
   if (s.rollouts && responseTo(s, "rollout") !== "off") out.push(`${where}.rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
   return out;
@@ -1131,8 +1137,6 @@ function checkEphemeral(e: unknown, where: string, problems: string[], s: Record
   }
   if (e.ttl !== undefined && !(typeof e.ttl === "string" && ttlMs(e.ttl) !== undefined)) problems.push(`${where}.ttl must be a duration in minutes, hours or days, such as 30m, 24h or 3d`);
   if (e.sweep !== undefined && !(Number.isInteger(e.sweep) && (e.sweep as number) >= 5 && (e.sweep as number) <= 60)) problems.push(`${where}.sweep must be a whole number of minutes from 5 to 60`);
-  if (s.terragrunt !== undefined) problems.push(`${where}: ${EPHEMERAL_NOT_TERRAGRUNT}`);
-  if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(`${where}: ${EPHEMERAL_NOT_SYNTH}`);
   if (s.forge === "gitlab" && isObject(s.gitlab) && s.gitlab.token === "protected") problems.push(`${where}: ${EPHEMERAL_NOT_PROTECTED}`);
 }
 
