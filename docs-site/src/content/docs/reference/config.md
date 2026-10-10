@@ -147,6 +147,8 @@ dashboards: true
 | `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
 | `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers`, `required_version` and, for Terragrunt units, `disable_init` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
+| `pass` | none | `secrets` and `vars`: names of CI secrets and variables that the jobs that plan, apply and check drift get as environment variables of the same name, such as `TF_VAR_db_password`; never their values. On GitLab every job has the CI/CD variables already, so the key changes nothing there; see [Secrets and variables](#secrets-and-variables) |
+| `runner` | the forge's: `ubuntu-latest` on GitHub, `docker` on Forgejo, no tags on GitLab | the runner each job runs on: a label, a list of labels, or on GitHub `group` with optional `labels`; or `default`, `plan`, `apply` and `drift`, each one of those. Written as `runs-on` on GitHub and Forgejo and `tags` on GitLab; see [Runners](#runners) |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, by forge | the forge token `reconcile`, `rollout` and `respond --mode apply` use |
@@ -326,6 +328,34 @@ Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant
 terragucci runs no CLI workspaces, so a copy uses a state key suffix instead. A suffixed key is a separate state, and its lock file and the bucket listing show it by name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
 
 In a Terragrunt repo `roots` names units, and each unit's `remote_state` key must read `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`, which the job sets to `-pr-<n>`; a unit whose prepared backend does not carry the suffix fails the job with a config error before anything plans. The `terragucci.hcl` that `generate` writes reads it already. With `synth`, the job runs the command in the pull request's checkout before it finds the roots, and again on the applied commit before a destroy. `config check` refuses `ephemeral` on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The default branch supplies these settings, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
+
+## Runners
+
+```yaml
+runner:
+  default: [self-hosted, linux]
+  apply: [self-hosted, prod]   # the jobs that hold the apply role
+```
+
+A job runs on its stage's runner, or `default` when its stage has none; [Runners](/terragucci/reference/pipeline/#runners) lists the jobs in each stage. `runner: self-hosted` puts every job on one label. A list asks for a runner that carries every label in it.
+
+| Forge | What `init` writes | Not accepted |
+|---|---|---|
+| GitHub | `runs-on`: the label, the list, or `group` and `labels` | |
+| Forgejo | `runs-on`: the label or the list as given; GitHub's hosted labels, such as `ubuntu-latest`, become `docker` | `group` |
+| GitLab | `tags`: the label or the list | `group` |
+
+A project's `runner` in a control repo replaces the defaults' whole. Run `npx terragucci init` after a change; [Self-hosted runners](/terragucci/guides/add-to-a-repo/#self-hosted-runners) covers what the runner needs.
+
+## Secrets and variables
+
+```yaml
+pass:
+  secrets: [TF_VAR_db_password]
+  vars: [TF_VAR_region]
+```
+
+Each name reaches the plan, apply and drift jobs as an environment variable of that name, read from `secrets.<name>` or `vars.<name>`; [Secrets and variables you pass](/terragucci/reference/environment/#secrets-and-variables-you-pass) lists the jobs. `config check` refuses a value in place of a name, a name listed twice or also set in `env`, and a name the forge or terragucci keeps for itself: one that starts with `GITHUB_`, `GITEA_`, `FORGEJO_`, `TG_` or `TERRAGUCCI_`, and `TF_IN_AUTOMATION` and `TF_INPUT`.
 
 ## Jobs of your own
 

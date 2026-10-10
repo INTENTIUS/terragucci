@@ -98,6 +98,21 @@ Set these on the plan job when `reports.bucket` is set, and in the environment `
 
 The drift job also gets `notify.slack` and `notify.teams`. The apply jobs get `notify.relay`, a name rather than a secret, as `TERRAGUCCI_RELAY`.
 
+## Secrets and variables you pass
+
+```yaml
+pass:
+  secrets: [TF_VAR_db_password]
+  vars: [TF_VAR_region]
+```
+
+| Forge | The job's environment |
+|---|---|
+| GitHub, Forgejo | `TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}` and `TF_VAR_region: ${{ vars.TF_VAR_region }}` in plan, re-plan, every apply job, `apply-comment`, `confirm`, `resume`, drift, and the ephemeral job and its sweep |
+| GitLab | unchanged: every job reads the project's CI/CD variables by name already |
+
+The pipeline holds the names alone. The check job, the note jobs, `fmt`, `tips`, `publish` and the agent jobs get none. The plan job runs a pull request's code, so a passed secret reaches that code, as the providers' credentials do; a fork's pull request gets no plan job. Forgejo keeps a secret's or variable's name in capitals and reads it in any case, so the job gets `TF_VAR_db_password` spelled as the root's variable is.
+
 ## The relay
 
 [`terragucci relay`](/terragucci/guides/approve-from-chat/) reads these from its own environment, in your cloud. No generated job gets them.
