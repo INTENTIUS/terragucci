@@ -319,3 +319,30 @@ code, pre, kbd, samp {
 	border-radius: 0.5rem;
 	background: #000;
 }
+
+/* Sidebar: a step smaller, and the tutorial's minutes as quiet grey text, not blue blocks. */
+.sidebar-content a {
+	font-size: var(--sl-text-sm);
+}
+.sidebar-content .sl-badge {
+	font-family: var(--sl-font);
+	font-size: 0.68rem;
+	font-weight: 500;
+	color: var(--sl-color-gray-3);
+	background: none;
+	border: 1px solid var(--tg-rule);
+	border-radius: 999px;
+	padding: 0 0.4rem;
+}
+
+/* On a phone a wide table scrolls in its box, so its columns keep readable widths. */
+@media (max-width: 40rem) {
+	.sl-markdown-content table:not(.not-content, .not-content *) {
+		display: block;
+		overflow-x: auto;
+		font-size: 0.8rem;
+	}
+	.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
+		min-width: 7.5rem;
+	}
+}

@@ -28,7 +28,7 @@ const pillars = [
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
-		<Taco scale={2} class="hero-taco" />
+		<a class="hero-link" href={`${base}/getting-started/`} aria-label="The docs"><Taco scale={2} class="hero-taco" /></a>
 		<h1 class="wordmark">TERRAGUCCI</h1>
 		<p class="claim">Sophisticated automation for Terraform</p>
 	</section>
@@ -56,6 +56,13 @@ const pillars = [
 		gap: 0.9rem;
 		padding-block: clamp(1.5rem, 4vw, 2.5rem) 1rem;
 		text-align: center;
+	}
+	.hero-link {
+		line-height: 0;
+		transition: transform 0.2s;
+	}
+	.hero-link:hover {
+		transform: translateY(-2px);
 	}
 	.tg-landing :global(.hero-taco img) {
 		width: 96px;
