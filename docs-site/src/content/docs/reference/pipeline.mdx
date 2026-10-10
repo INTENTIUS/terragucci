@@ -47,6 +47,12 @@ Neither approves anything; the wave's gate decides again against the plans it ma
 
 GitHub and Forgejo schedule it as the cron `*/<apply.resume>`: `60` runs hourly, and a value that does not divide 60 also runs on the hour. Each run costs a short job even when nothing waits.
 
+## Stopped applies
+
+A gated wave whose approved apply was killed or failed plans again when it next runs. Under [choudoufu](/terragucci/concepts/glossary/#choudoufu), every resource whose apply returned already has its record, so the plan holds only the rest. The wave applies it under the same approval when each change is one the approval covered, unchanged, and every other approved change is done in the records. Otherwise it waits for an approval of the plans it makes. choudoufu's apply still re-reads each resource before it writes.
+
+The resume job applies the rest of a killed apply once the run that applied is gone. A failed apply resumes when its job runs again. With stock OpenTofu or Terraform, a plan that differs from the approved one needs its own approval.
+
 ## Apply from a comment
 
 On GitHub and Forgejo, `/terragucci apply` on a merged pull request runs `apply-comment` from the default branch's workflow. It takes the push lock and runs `tf-apply` on the merge commit with the apply role. Forgejo's job also skips a merge commit that a later apply superseded.

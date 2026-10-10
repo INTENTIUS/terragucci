@@ -34,9 +34,9 @@ packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
 packages/terragucci/src/apply-rows.ts     apply-per-root cdf-rows-* apply-serial apply-stand-down
+packages/terragucci/src/apply.ts          cdf-resume boot waves publish-attest apply-serial apply-per-root cdf-rows-* pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init waves-after cdf-live-progress apply-stand-down cdf-concurrency*
 packages/terragucci/src/apply-progress.ts cdf-live-progress estate
 packages/terragucci/src/cdf-records.ts    cdf-live-progress
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial apply-per-root cdf-rows-* pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches apply-branches-drift ephemeral-* atmos-* terramate-* tg-generate-init waves-after cdf-live-progress apply-stand-down cdf-concurrency*
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate tg-generate
 packages/terragucci/src/state-address.ts  boot affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges ephemeral-* atmos-affected atmos-upstream-wait atmos-roles terramate-affected terramate-sharing state-versions migrate-split migrate-backend migrate-revert unlock-state state-export atmos-* waves-after
@@ -78,7 +78,9 @@ packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-call
 # Approvals.
 packages/terragucci/src/approval.ts       sealed* ledger-default approval-* approve-command pr-review* signer-trust pending-expiry tg-sealed tg-gate-* waves refuse
 packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan resume-approve signer-trust pending-expiry tg-sealed tg-gate-* migrate-resume migrate-resume-never mcp-last-apply
-packages/terragucci/src/resume.ts         resume-* migrate-resume migrate-resume-never
+packages/terragucci/src/resume.ts         resume-* migrate-resume migrate-resume-never cdf-resume
+packages/terragucci/src/remainder.ts      cdf-resume
+packages/terragucci/src/records.ts        cdf-resume
 packages/terragucci/src/seal.ts           sealed* approval-at-base approve-command signer-trust tg-sealed
 packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate review-*
 
