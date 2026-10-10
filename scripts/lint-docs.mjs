@@ -49,6 +49,15 @@ const missing = (what, expected, found, page) => {
 }
 
 // Dashboards: the files the renderer writes against every "<number> dashboards" in the docs.
+// The docs are written in American English: a British spelling is a finding.
+{
+  const british = { licence: "license", behaviour: "behavior", colour: "color", favour: "favor", organisation: "organization", catalogue: "catalog", centre: "center", honour: "honor", defence: "defense" };
+  const re = new RegExp(`\\b(${Object.keys(british).join("|")})(s|d)?\\b`, "gi");
+  for (const file of ["README.md", "AGENTS.md", "packages/terragucci/README.md", ...collect(DOCS.slice(0, -1))]) {
+    for (const m of read(file).matchAll(re)) problems.push(`${file}: "${m[0]}" is British spelling; write "${british[m[1].toLowerCase()]}${m[2] ?? ""}"`);
+  }
+}
+
 {
   const rendered = JSON.parse(read("packages/terragucci/src/dashboards/rendered.json"));
   const count = new Set(rendered.files.map((f) => f.path).filter((p) => /^grafana\/dashboards\/.+\.json$/.test(p))).size;

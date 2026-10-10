@@ -119,7 +119,7 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
 
 A command that fails ends the job; the plan job also sets `terragucci/plan` to failure. Without `synth`, a pipeline whose roots are not on disk stops with `found no roots`.
 
-| Behaviour | With `synth` |
+| Behavior | With `synth` |
 |---|---|
 | Which stacks a pull request plans | the ones the change affects; see below |
 | Format check | the `.tf`, `.tofu` and `.tfvars` files git tracks, one directory at a time, so the packages `npm ci` installs are left out |
