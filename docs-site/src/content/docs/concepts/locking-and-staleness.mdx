@@ -40,7 +40,7 @@ An apply that does not go through the pipeline, such as `choudoufu apply` on a l
 
 ## Stock and choudoufu
 
-Stock is a state file behind a lock, as Terraform and OpenTofu keep it; choudoufu is an estate with a [record store](#record-writes).
+Terraform and OpenTofu (stock) keep a state file behind a lock. choudoufu keeps an estate with a [record store](#record-writes).
 
 | | Stock | choudoufu |
 |---|---|---|
@@ -57,7 +57,7 @@ The state file is a cache: never the record of what you own, and losing it costs
 
 ## Record writes
 
-Each resource has its own record in the estate's record store bucket. Every record write is one conditional S3 `PutObject`, so the cloud's API settles two runs that reach one resource:
+The estate's record store bucket holds one record per resource, and every write to it is one conditional S3 `PutObject`. The cloud's API therefore settles two runs that reach one resource:
 
 | Record write | Condition | When another run got there first |
 |---|---|---|
@@ -66,7 +66,7 @@ Each resource has its own record in the estate's record store bucket. Every reco
 
 ## Live resource markers
 
-Each resource carries its identity as tags, written in its create call, or just after it for the few types whose create takes no tags.
+Each resource carries its identity as tags. The create call writes them; for the few types whose create takes no tags, the next call does.
 
 | Tag | Holds |
 |---|---|

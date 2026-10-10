@@ -48,7 +48,7 @@ An open change that applies from its head in the same waves and gates as a merge
    The token is optional. Without it the merge uses the job's own token and starts no `confirm`; the next push confirms it.
    </TabItem>
    <TabItem label="GitLab">
-   The token is required, with `merge: manual` too: the `comments` job starts the apply pipeline on the default branch with it, and only a token allowed to merge there may. Add `forge: gitlab` and `comments:` beside the block.
+   It is required, under `merge: manual` too. The `comments` job starts the apply pipeline on the default branch with it, and only a token allowed to merge there may. Add `forge: gitlab` and `comments:` beside the block.
 
    | Variable setting | Value |
    |---|---|
@@ -60,7 +60,7 @@ An open change that applies from its head in the same waves and gates as a merge
    Under Settings, CI/CD, Variables, the minimum role allowed to use pipeline variables must include that token's role: the apply pipeline is started with variables naming the merge request.
    </TabItem>
    <TabItem label="Forgejo">
-   The token is required. Forgejo refuses a merge made with the job's own token.
+   It is required, since Forgejo refuses a merge made with the job's own token.
    </TabItem>
    </Tabs>
 
@@ -79,7 +79,11 @@ An open change that applies from its head in the same waves and gates as a merge
 
    <Shot step="pr-apply" view="stale" alt="terragucci's reply on a Forgejo pull request: pull request 1 is not up to date with main, since its head does not contain main's newest commit; merge main into it or rebase it, and comment again once its plan passes" />
 
-   [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, `terragucci/plan` must pass on the head, the change must leave the pipeline file alone, and no other open pull request may hold a lock on a root it reaches.
+   [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, the comment also needs:
+
+   - `terragucci/plan` passing on the head
+   - the pipeline file left unchanged
+   - each root the change reaches free of another open pull request's lock
 
 5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives the command that approves it ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)). Then comment `/terragucci apply` again.
 
@@ -103,7 +107,7 @@ An open change that applies from its head in the same waves and gates as a merge
    </TabItem>
    </Tabs>
 
-   After the merge, `confirm` plans every root, or every unit in a Terragrunt repo. Its `terragucci/apply` status passes when nothing plans a change.
+   After the merge, `confirm` plans every root (every unit in a Terragrunt repo). Its `terragucci/apply` status passes when nothing plans a change.
 
 </Steps>
 
@@ -119,11 +123,11 @@ GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothi
 | 4 | `mr-apply` | applies the head wave by wave with the apply role, behind the same gates, and replies |
 | 5 | `pr-merge`, with `merge: auto` | merges once the reply says every wave applied |
 
-`approved` counts an approval given after the merge request's latest push, by a Developer or above other than its author. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
+`approved` needs an approval given after the latest push by a Developer or above who is not the author. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
 
 ## Config source
 
-An open change's apply reads its settings from the default branch, so edits to `terragucci.yml` in the change count only once it merges.
+The apply of an open change takes its settings from the default branch. Edits to `terragucci.yml` in the change count only once it merges.
 
 | Setting | Read from |
 |---|---|
@@ -138,7 +142,7 @@ An unreadable default-branch config fails the wave before anything applies.
 
 ## Locks
 
-These locks are on roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), a killed apply leaves no state lock behind ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
+Pull request locks hold roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), a killed apply leaves no state lock behind ([Locking and staleness with choudoufu](/terragucci/concepts/locking-and-staleness/)).
 
 | Event | Lock |
 |---|---|
@@ -155,9 +159,9 @@ A second pull request that reaches a locked root is refused, and `/terragucci un
 
 <Shot step="pr-apply" view="unlock" alt="terragucci's reply to /terragucci unlock on pull request 1: it released the locks pull request 1 held on canary/one, for terragucci-admin" />
 
-A change refused by a plan lock is not queued. Comment `/terragucci plan` on it once the holder merges, closes or is unlocked.
+A plan lock refusal is not queued: comment `/terragucci plan` on the refused change after the holder's locks are released.
 
-In a Terragrunt repo the locks are on units, worked out from git without running Terragrunt:
+In a Terragrunt repo the locks are on units. terragucci works them out from git without running Terragrunt:
 
 | The change touches | Locked |
 |---|---|

@@ -29,7 +29,7 @@ just see-runs
 
 <Captured step="see-runs" />
 
-It runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set:
+It runs three stages on a copy of the example, with `OTEL_EXPORTER_OTLP_ENDPOINT` set:
 
 | Stage | Run | Result |
 |---|---|---|
@@ -49,11 +49,11 @@ Each stage run is one span counted by stage and outcome. The plan and drift runs
 
 <Shot step="see-runs" view="waves" alt="The Rollouts and waves dashboard: one wave waiting, wave 2 of the example, and how long it has waited" />
 
-No wave was refused or failed. A wave waiting longer than `wave_wait` (four hours by default) fires `TerragucciWaveWaiting`.
+No wave was refused or failed. Past `wave_wait` (four hours by default), a waiting wave fires `TerragucciWaveWaiting`.
 
 ## Drift
 
-The drift run finds the deleted queue in staging orders, and floci's missing tags on every root. Once the drift's age passes `drift_age` (a day), `TerragucciDriftOld` fires.
+The `tf-drift` run finds the deleted queue in staging orders, and floci's missing tags on every root. `TerragucciDriftOld` fires once the drift is older than `drift_age` (a day).
 
 ## Runs
 

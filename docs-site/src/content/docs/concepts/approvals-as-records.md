@@ -23,10 +23,10 @@ A pushed line counts and binds the plans under the default `approval: ledger`. A
 | `pr-review` | a line names the digest, or the merged pull request's head was approved by a writer other than its author (on GitLab, after its latest push) and the wave plans what the review saw | `terragucci.yml` at base |
 | `sealed` | a line names the digest and its seal, made by `chant approve --sign`, verifies against `.chant/allowed_signers` (or the file `.chant/trust.json` names) | `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) and the signers file at base |
 
-These files come from the applied commit's first parent, so a change cannot judge itself, except a multi-commit rebase merge: merge or squash those. [`agent-push`](/terragucci/reference/pipeline/#paths-an-agent-cannot-change) refuses edits to these files. Block force pushes and deletion on `chant/lifecycle` ([per forge](/terragucci/guides/approve-a-wave/#push-access-to-chantlifecycle)).
+These files come from the applied commit's first parent, so a change cannot judge itself. Only a multi-commit rebase merge breaks that rule; merge or squash those. [`agent-push`](/terragucci/reference/pipeline/#paths-an-agent-cannot-change) refuses edits to these files. Block force pushes and deletion on `chant/lifecycle` ([per forge](/terragucci/guides/approve-a-wave/#push-access-to-chantlifecycle)).
 
 ## Next
 
 - [Waves and approvals](/terragucci/concepts/waves-and-approvals/)
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
-- [The audit trail](/terragucci/reference/audit-trail/): the approvals and applies, overrides and refused waves of all your projects in one record
+- [The audit trail](/terragucci/reference/audit-trail/): one record of every project's approvals and applies, with its overrides and refused waves

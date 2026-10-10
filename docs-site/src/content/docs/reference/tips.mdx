@@ -5,15 +5,15 @@ description: The advice terragucci gives on how a repo is set up, and the rule b
 
 import Shot from '../../../components/Shot.astro';
 
-Tips show in the [plan report](/terragucci/reference/report/#tips), the pull request note and the `terragucci reconcile` dry run; `tips: false` turns them off.
+Each tip shows in the [plan report](/terragucci/reference/report/#tips) and its pull request note, and in the `terragucci reconcile` dry run; `tips: false` turns them off.
 
-A tip never fails a run, changes a gate or enters a digest.
+They only advise. None fails a run or changes a gate, and no digest includes one.
 
 <Shot step="tips" view="note" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting the tips on how the roots are set up" optional />
 
 <Shot step="tips" view="report" alt="The Tips section of the HTML report, from its heading through its last tip: terragucci-floating-range for envs/dev/search among them, each tip linked to its rule's page" optional />
 
-Code tips come from `chant lint`. They and the [shared-module tip](#terragucci-shared-module) need `npm i -D @cdktn/hcl2json`; without it the job log says they were left out.
+Code tips come from `chant lint`. Those and the [shared-module tip](#terragucci-shared-module) need `npm i -D @cdktn/hcl2json`; without it the job log says they were left out.
 
 ## Code tips
 
@@ -57,10 +57,10 @@ A hundred or more roots are planned on every change. Publish and pin shared modu
 
 ## Plan tips
 
-These read a root's plan, so they show only in the plan report and its note.
+Plan tips read a root's plan and show only in the plan report and its note.
 
 ### terragucci-moved
 
-A plan destroys one resource and creates another of the same type and provider, both in the root module and neither with a `count` or `for_each` key, and every value the create knows before apply equals the destroyed resource's: the block was renamed. A `moved` block makes the plan move it instead. `terragucci respond tips --report <dir> --branch <branch> --mode apply` opens a pull request into the branch that adds it ([Responses](/terragucci/reference/responses/#tips-fmt-and-release-notes)).
+A plan destroys one resource and creates another of the same type and provider, both in the root module and neither with a `count` or `for_each` key, and every value the create knows before apply equals the destroyed resource's: the block was renamed. Adding a `moved` block makes the plan move it instead. `terragucci respond tips --report <dir> --branch <branch> --mode apply` opens a pull request into the branch that adds it ([Responses](/terragucci/reference/responses/#tips-fmt-and-release-notes)).
 
-Values known only after apply, and sensitive ones, are not compared. A destroy that matches more than one create, or a create more than one destroy, gets no tip.
+Values known only after apply, and sensitive ones, are not compared. No tip is given when a destroy matches more than one create, or a create more than one destroy.

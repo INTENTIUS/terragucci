@@ -33,7 +33,7 @@ When roots pin a published version, a module change reaches no root until a pin 
    just example change pin
    ```
 
-   It tags `modules/service` at `1.0.0` with `tf-publish` and pins the twelve service roots to that tag on main. It publishes the changed module as `1.1.0`, then runs `terragucci rollout modules/service --mode apply`. Here `apply` means opening the pull request; no `terraform apply` runs until it merges.
+   It tags `modules/service` at `1.0.0` with `tf-publish` and pins the twelve service roots to that tag on main. The changed module then goes out as `1.1.0`, and `terragucci rollout modules/service --mode apply` runs. Here `apply` means opening the pull request; no `terraform apply` runs until it merges.
 
    <Captured step="pin" />
 

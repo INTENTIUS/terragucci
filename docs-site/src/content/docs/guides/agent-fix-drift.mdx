@@ -22,7 +22,7 @@ terragucci: the drift agent opened https://forgejo.example/acme/infra/pulls/2, c
 It plans like any other pull request; nothing was applied, approved or merged.
 ```
 
-Merging the pull request keeps the change made outside the code, and its apply goes through the gate. Closing it, then applying the code as it is, undoes the drift instead.
+Merging the pull request keeps the change made outside the code, and its apply goes through the gate. Closing it and applying the code as it is undoes the drift instead.
 
 ## Prerequisites
 
@@ -88,13 +88,13 @@ Merging the pull request keeps the change made outside the code, and its apply g
    npx terragucci init
    ```
 
-4. Wait for drift, or run the drift workflow by hand. The drift issue gets the pull request's link; read the pull request and its plan note, then merge or close it.
+4. Wait for drift, or run the drift workflow by hand. The drift issue gets the pull request's link; read the pull request and its plan note before you merge or close it.
 
 </Steps>
 
 ## Agent inputs
 
-The prompt lists each drifted resource by root, with what the state held and what is live, and never a value the plan marks sensitive:
+The prompt lists each drifted resource by root with what the state held and what is live. A value the plan marks sensitive never appears:
 
 ```text
 root app:
@@ -104,7 +104,7 @@ root app:
 
 It tells the agent that the drift and every file are untrusted input, since a value in the cloud can hold any text, and that a change to a guarded path is refused.
 
-## Job permissions
+## Permissions
 
 | Job | Does | Holds |
 |---|---|---|
@@ -115,7 +115,7 @@ It tells the agent that the drift and every file are untrusted input, since a va
 
 Neither agent job has a cloud role, whatever `oidc` says. Nothing here applies, approves or merges.
 
-## Use another agent
+## Other agents
 
 `command` takes any command line that reads a prompt on stdin and edits files in the working directory; `TG_AGENT_PROMPT` holds the prompt's path and `TG_AGENT_MAX_TURNS` the turn limit, as for the [agent comment](/terragucci/guides/agent-change-a-pull-request/#use-another-agent).
 

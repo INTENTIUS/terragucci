@@ -116,7 +116,7 @@ Every `index.json` in the bucket is `terragucci.report-index/v1` (JSON Schema `d
 | `destroys`, `destroys_total` | up to 50 destroys and replacements, and how many there are when the row lists fewer |
 | `commit_url`, `pull_request`, `pull_request_url`, `job_url`, `trace_url` | links |
 
-[`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, `terragucci.estate/v1` (`dist/estate.schema.json`), from those rows and each project's newest run view:
+From those rows and each project's newest run view, [`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, schema `terragucci.estate/v1` (`dist/estate.schema.json`):
 
 | Field | What it holds |
 |---|---|
@@ -154,7 +154,7 @@ Its `changes.json`, `terragucci.changes/v1` (`dist/changes.schema.json`), has on
 
 ## State versions
 
-A project's `states.json` holds the version ids its roots' applies left, without any state's contents; its `schema` is `terragucci.state-versions/v1`, checked by `dist/state-versions.schema.json`. When a wave uploads its report, every root it applied adds its version, unless the root already lists that version. A root keeps its newest 20.
+A project's `states.json` holds the version ids its roots' applies left (never a state's contents); its `schema` is `terragucci.state-versions/v1`, checked by `dist/state-versions.schema.json`. When a wave uploads its report, every root it applied adds its version, unless the root already lists that version. A root keeps its newest 20.
 
 | Field | What it holds |
 |---|---|

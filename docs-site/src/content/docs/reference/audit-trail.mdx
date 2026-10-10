@@ -13,7 +13,7 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-`terragucci audit` writes each approval, apply, policy override and refused wave across your projects as one JSON line in your reports bucket, built from two records you already own: the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo, and the wave reports in your bucket. No terragucci server or account holds a copy.
+`terragucci audit` writes the record as JSON lines in your reports bucket. It reads the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo and the wave reports in the bucket; no terragucci server or account holds a copy.
 
 ## Write it
 
@@ -28,7 +28,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
    | Run from | Projects | Ledger read from | Reports read from | Record written to |
    |---|---|---|---|---|
-   | a control repo | its `projects:` | each project's repo: its `url`, else `https://<key>`, with the forge token when the job has one | each project's `reports` | `defaults.reports` |
+   | a [control repo](/terragucci/concepts/control-repo/) | its `projects:` | each project's repo: its `url`, else `https://<key>`, with the forge token when the job has one | each project's `reports` | `defaults.reports` |
    | one repo | the checkout's own | `origin` | the repo's `reports` | the same bucket |
 
 2. Give the job what it reads. On top of the estate job's identity:
@@ -39,7 +39,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
    | `<prefix>/<project>/**/tf-apply-wave-*/report.json` | every apply and its result, every refused wave |
    | `<prefix>/audit.jsonl`, and writes it, `audit.html` and `audit.json` | the record, its page and its summary |
 
-   The forge token is read from the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`; read access to the repo is all it needs.
+   The forge token is the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, with read access to the repo.
 
 3. Read the log:
 
@@ -54,7 +54,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
    https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/audit.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
    ```
 
-   Exit code 1 when a project's ledger or index could not be read; the page names it, and the entries that could be read still land.
+   A project whose ledger or index cannot be read makes the job exit 1 and is named on the page. The entries it could read still land.
 
 </Steps>
 
@@ -70,7 +70,7 @@ The estate page links `audit.html` once `audit.json` is beside it, and its [reso
 
 ## Entry fields
 
-Every line is `terragucci.audit/v1`, whose JSON Schema ships in the package as `dist/audit.schema.json`, with these fields in this order:
+Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.schema.json`), and holds these fields in this order:
 
 | Field | What it holds |
 |---|---|
