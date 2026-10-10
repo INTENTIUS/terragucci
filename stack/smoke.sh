@@ -367,6 +367,7 @@ state-export|terragucci state export records a request, waits for an approval by
 state-edges|the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again|
 migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
 migrate-backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
+migrate-backend-tfe|a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded|
 migrate-revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
 migrate-resume-never|with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1|
 migrate-split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
@@ -17183,6 +17184,95 @@ claim_migrate_backend() {
   return $rc
 }
 
+claim_migrate_backend_tfe() {
+  # Root app holds terraform_data.keep and terraform_data.moved, applied by
+  # wave 1 into a bucket of the claim's own, which gives a real state. A TFE
+  # API (stack/fixtures/tfe-api/tfe.mjs, HTTPS with a certificate the job
+  # trusts through NODE_EXTRA_CA_CERTS) serves that state as the current
+  # version of workspace acme/app-prod, sv-0002, over sv-0001, the same
+  # resources at the serial before. A
+  # commit points app's backend block at tgmt-new-<stamp> and adds
+  # migrations/move-app.yml, whose from is a cloud workspace on that host.
+  # Wave 1 reads the workspace with the token in TF_TOKEN_<host>, proves the
+  # move and waits; smoke-approver approves the digest and wave 1 runs again:
+  # it locks the workspace, finds sv-0002 still current, writes the state to
+  # the new bucket and unlocks; the wave applies no change. The record names
+  # the source cloud://<host>/acme/app-prod at sv-0002, and the workspace
+  # keeps both versions, unlocked.
+  # BREAK: after the approval the API drops sv-0002, so sv-0001 is current
+  # and wave 1 refuses (exit 4) naming app, writing nothing.
+  log() { echo "[smoke migrate-backend-tfe] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="migrate-backend-tfe-$STAMP" seed="tgmt-seed-$STAMP" new="tgmt-new-$STAMP" host="tgtfe$$x$RANDOM" token="smoke-tfe-$STAMP" mock="" ctl="" port i digest record status
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  versioned_bucket "$seed" && versioned_bucket "$new" || { log "could not create the state buckets"; return 1; }
+  mkdir -p "$work/wave" "$work/tfe"
+  cp "$HERE/fixtures/tfe-api/tfe.mjs" "$work/tfe/" || return 1
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" \
+    -keyout "$work/tfe/key.pem" -out "$work/tfe/cert.pem" >/dev/null 2>&1 || { log "openssl could not make the API's certificate"; return 1; }
+  mock="$(run_copied -d --name "$host" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::8080 -e "TOKEN=$token" -v "$work/tfe:/tfe:ro" "$image" node /tfe/tfe.mjs)" || { log "the TFE API did not start"; return 1; }
+  port="$(docker port "$mock" 8080/tcp | head -1 | sed 's/.*://')"
+  ctl="http://127.0.0.1:$port"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "$ctl/status" 2>/dev/null && break; sleep 1; done
+  curl -fsS -o /dev/null "$ctl/status" || { log "the TFE API never answered on $ctl"; rc=1; }
+  migrate_root "$work" "$seed" app keep moved
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" first app
+    [ "$AUDIT_CODE" = 0 ] || { log "the first apply of app exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    curl -fsS "$FLOCI/$seed/app.tfstate" -o "$work/app.tfstate" || rc=1
+    jq -c '.serial -= 1' "$work/app.tfstate" | curl -fsS -o /dev/null -X POST --data-binary @- "$ctl/versions" || rc=1
+    curl -fsS -o /dev/null -X POST --data-binary @"$work/app.tfstate" "$ctl/versions" || rc=1
+    [ $rc = 0 ] || log "could not give the workspace its versions"
+  fi
+  # The job's view of the API: its token, and the certificate it trusts.
+  local -a AWS_DOCKER_ENV=(${AWS_DOCKER_ENV[@]+"${AWS_DOCKER_ENV[@]}"} -e "TF_TOKEN_$host=$token" -e NODE_EXTRA_CA_CERTS=/tfe-ca/cert.pem -v "$work/tfe:/tfe-ca:ro")
+  if [ $rc = 0 ]; then
+    migrate_root "$work" "$new" app keep moved
+    mkdir -p "$work/wave/migrations"
+    printf 'backends:\n  - root: app\n    from:\n      backend: cloud\n      config:\n        hostname: %s\n        organization: acme\n        workspaces:\n          name: app-prod\n' "$host" > "$work/wave/migrations/move-app.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app's state from the workspace to $new"
+    migrate_wave "$work" waits app
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the move"; rc=1; }
+    digest="$(sed -n 's/^migration move-app waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  fi
+  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver move-app "$digest" || { log "could not approve the move"; rc=1; }; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    curl -fsS -o /dev/null -X DELETE "$ctl/versions/last" || { log "could not drop the workspace's current version"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies app
+    [ "$AUDIT_CODE" = 4 ] && grep -q "the states moved since: app" "$work/applies.log" && log "wave 1 refused: the workspace's current version is not the one approved"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the move planned changes"; rc=1; }
+    [ "$(curl -fsS "$FLOCI/$new/app.tfstate" | jq -r '[.resources[].name] | join(",")')" = "keep,moved" ] || { log "the new bucket does not hold app's two resources"; rc=1; }
+    record="$(cat "$work/wave/terragucci-report/migrations/move-app.json" 2>/dev/null)"
+    jq -c '{status, change, roots: [.roots[] | {root, location, source, after: .after.version_id}]}' <<<"$record" >&2
+    [ "$(jq -r '[.status, .change, .roots[0].source.location, .roots[0].source.version_id] | join(" ")' <<<"$record")" = "applied backends cloud://$host/acme/app-prod sv-0002" ] \
+      || { log "the record does not name the workspace and the version it read"; rc=1; }
+    status="$(curl -fsS "$ctl/status")"
+    jq -c '{locked, versions, calls: [.calls[] | select(test("actions"))]}' <<<"$status" >&2
+    [ "$(jq -r '[.locked, (.versions | join(",")), ([.calls[] | select(test("actions/(un)?lock$")) | sub(".*/"; "")] | join(","))] | join(" ")' <<<"$status")" = "false sv-0001,sv-0002 lock,unlock" ] \
+      || { log "the workspace was not locked once and unlocked, or its versions changed"; rc=1; }
+    if grep -q "mg-$STAMP-\|$token" <<<"$record"; then log "an input value or the token reached the record"; rc=1; fi
+  fi
+  [ -n "$mock" ] && { docker rm -f "$mock" >/dev/null 2>&1 || true; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app's state moved from the workspace to $new with no change under the workspace lock, its versions left as they were, the version read recorded"
+  return $rc
+}
+
 claim_migrate_revert() {
   # mono holds keep and moved (state in a versioned bucket); a migration splits
   # moved out to split and applies under smoke-approver's approval, as in
@@ -19703,6 +19793,7 @@ state-edges          weight=250
 migrate-split        weight=200
 cdktn-migrate        weight=200
 migrate-backend      weight=200
+migrate-backend-tfe  weight=200
 migrate-revert       weight=250
 migrate-resume       runner self! weight=300
 migrate-resume-never runner self! weight=300

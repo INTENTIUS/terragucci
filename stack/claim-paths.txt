@@ -55,7 +55,8 @@ packages/terragucci/src/reconcile.ts      reconcile reconcile-mixed reconcile-pa
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-* behold-view query-sql
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export ephemeral-*
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export atmos-*
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr
+packages/terragucci/src/state-source.ts   migrate-backend-tfe
+packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-backend-tfe migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export tg-ephemeral-pr
 packages/terragucci/src/generate reconcile tg-generate cdktn-generate tg-ephemeral-pr tg-generate-init
 packages/terragucci/src/config-schema.ts   config-ts role-refused state-roles sealed-migrate atmos-roles atmos-refuse decide-backends import-terrateam
 packages/terragucci/src/terragucci.schema.json config-ts
@@ -160,6 +161,7 @@ stack/fixtures/atmos-reads               atmos-upstream-wait
 stack/fixtures/terramate-stacks          terramate-waves terramate-affected terramate-stale terramate-pr-apply-lock
 stack/fixtures/terramate-sharing         terramate-sharing
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
+stack/fixtures/tfe-api                   migrate-backend-tfe
 stack/fixtures/linked-states              linked-*
 stack/fixtures/local-states               linked-plan-local
 stack/fixtures/tg-preview                 tg-preview*
