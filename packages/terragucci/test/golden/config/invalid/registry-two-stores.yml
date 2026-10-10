@@ -1,0 +1,6 @@
+modules:
+  registry:
+    bucket: s3://a
+    dir: public
+    url: https://modules.example.com
+    namespace: acme

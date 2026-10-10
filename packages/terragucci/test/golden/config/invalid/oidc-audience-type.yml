@@ -1,0 +1,4 @@
+oidc:
+  audience: 5
+  roles:
+    "envs/**": { plan: p, apply: a }
