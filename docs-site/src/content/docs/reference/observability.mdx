@@ -57,6 +57,8 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
 
+<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" />
+
 The binary exports to a loopback receiver, OTLP over HTTP only, which forwards batches to your collector.
 
 ## Timings
