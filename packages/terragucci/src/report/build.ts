@@ -14,7 +14,7 @@ import { costMember } from "./cost";
 import { changeKind, foldChange } from "./highlight";
 import { planAppliedChanges } from "./history";
 import { planResources } from "./inventory";
-import { isObject } from "./redact";
+import { isObject, scrubSecrets, sensitiveStrings } from "./redact";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
   type ReportUnit,
@@ -63,6 +63,8 @@ export interface RootInput {
   steps?: ReportStep[];
   /** The roots whose state it reads, and which outputs it planned on. */
   reads?: ReportRead[];
+  /** A Terragrunt unit's dependencies, by path. */
+  dependencies?: string[];
 }
 
 export interface WaveInput {
@@ -87,6 +89,8 @@ export interface WaveInput {
   reads?: number[];
   /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
   replansAfter?: number[];
+  /** A `tf-apply` wave of Terragrunt units: its plans against the pull request's preview of them. */
+  preview?: ReportWave["preview"];
 }
 
 export interface BuildInput {
@@ -224,6 +228,8 @@ export function buildReport(input: BuildInput): Report {
   const roots: ReportRoot[] = doc.members.map((m) => {
     const src = byPath.get(m.member)!;
     const raw = rawChanges(src.plan);
+    // A value the plan marks sensitive in one attribute can sit unmarked in another, so it is cut from every attribute.
+    const secrets = src.plan !== undefined ? sensitiveStrings(src.plan) : [];
     const counts: ReportRoot["counts"] = {};
     const changes: ReportChange[] = [];
     for (const e of doc.entries) {
@@ -233,7 +239,7 @@ export function buildReport(input: BuildInput): Report {
       if (r?.mode === "ephemeral" || e.address.startsWith("ephemeral.")) continue;
       counts[e.action] = (counts[e.action] ?? 0) + 1;
       if (e.action === "no-op" && r?.importing === undefined) continue;
-      const c = reportChange(e, r, src.preventDestroy ?? new Set());
+      const c = reportChange({ ...e, attributes: scrubSecrets(e.attributes, secrets) }, r, src.preventDestroy ?? new Set());
       changes.push(c);
       // An import is named whether it leaves the object as found or also
       // updates it; a destroy, replace or forget of it is named as that.
@@ -279,6 +285,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
+      ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
     };
   });
 
@@ -344,6 +351,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.state ? { state: w.state } : {}),
       ...(w.reads?.length ? { reads: w.reads } : {}),
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
+      ...(w.preview ? { preview: w.preview } : {}),
     };
   });
 

@@ -102,7 +102,7 @@ describe("validation", () => {
     [{ defaults: { terragrunt: { parallelism: -1 } }, projects: { "github.com/a/b": {} } }, /defaults\.terragrunt\.parallelism/],
     [{ parallelism: 0 }, /config\.parallelism must be a whole number of 1 or more/],
     [{ parallelism: "8" }, /config\.parallelism must be a whole number of 1 or more/],
-    [{ apply: "pull-request" }, /config\.apply must be a map \(settings: when, merge, merge_token_env, requires, resume\)/],
+    [{ apply: "pull-request" }, /config\.apply must be a map \(settings: when, merge, merge_token_env, requires, resume, branches\)/],
     [{ apply: { when: "pull-request", requires: ["reviewed"] } }, /config\.apply\.requires must be a list of approved, mergeable, undiverged, checks/],
     [{ apply: { when: "pull-request", requires: "approved" } }, /config\.apply\.requires must be a list/],
     [{ apply: { when: "pull-request", requires: ["approved", "approved"] } }, /config\.apply\.requires names a requirement twice/],

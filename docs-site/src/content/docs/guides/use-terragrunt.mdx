@@ -1,7 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-terragrunt/.
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
@@ -35,15 +35,17 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
    npx terragucci init --dry-run
    ```
 
-   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
+   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. An explicit stack (`terragrunt.stack.hcl`) is generated with `terragrunt stack generate` before discovery, so its units are found and cut into waves like any other; every job generates it again, so the generated `.terragrunt-stack` directories stay out of the repo. Generating a stack needs Terragrunt on the path, and without it `init` stops with an error naming the stack file.
 
    Without Terragrunt on the path, `init` reads the units' `dependency` and `dependencies` paths to cut the waves; the apply jobs check them with `terragrunt find`.
 
-2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath:
+2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath, `tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu):
 
    ```yaml
    binary: tofu
    ```
+
+   With `choudoufu` the jobs run in the choudoufu image and install Terragrunt beside it.
 
 3. Tune it, if you need to. An optional `terragrunt:` block sets version, parallelism, roles by unit path, excluded units and how dependents are planned; see [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block).
 
@@ -69,13 +71,21 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 |---|---|
 | Which units a change reaches | Terragrunt's own change detection, plus files a module reads with `file()`, modules called from inside modules, and stack templates |
 | Units that depend on a changed unit | a later wave than the unit they read from |
-| `mock_outputs` | a unit whose plan would read mock values waits for its upstream to apply, so no approval covers a made-up value |
+| `mock_outputs` | a unit whose plan would read mock values waits for its upstream to apply, so no approval covers a made-up value. In a pull request it plans on its upstream's planned outputs instead, when they are known ([below](#what-a-pull-request-shows-of-later-layers)) |
 | Each wave | one dependency layer, canary layers first, in its own apply job. One `terragrunt run --all` saves the plans and a second applies them. The last job also runs any layer added since `init` |
 | The gate | as for plain roots, one gate per wave; the set digest covers the units whose plan changes a resource or an output |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
 | `/terragucci apply` | on a merged pull request (GitHub, Forgejo, and GitLab with `comments:` set) reruns its waves from the merge commit behind the same gate, with [these refusals](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request); it approves nothing |
 | When a change applies | after it merges, by default. With `apply.when: pull-request` (GitHub, Forgejo, and GitLab with `comments:` set), `/terragucci apply` on the approved open pull request applies its waves of units from the head: [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) |
 | Locks before merge | on units: a changed unit and the units whose `dependency` blocks name it; a change outside every unit's directory locks every unit ([Locks](/terragucci/guides/apply-before-merge/#locks)) |
+| `cost` | each unit's saved plan is priced, and `approve_above` holds a wave as it holds a wave of roots ([Estimate the cost of a change](/terragucci/guides/estimate-cost/)) |
+| `steps` | each moment runs once around the wave's `run --all`, in every unit the step's `roots` globs match; `after: init` is refused, since Terragrunt inits each unit inside the plan ([Run steps around a stage](/terragucci/guides/run-steps/#in-a-terragrunt-repo)) |
+| `waves.jobs` | a wide wave's job plans every unit and decides the gate; each share job plans and applies its own units with `run --all --filter` ([A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
+| State versions | each unit's state version is recorded after its wave applies, its backend read from the unit's `remote_state` block ([Find the state version an apply left](/terragucci/guides/find-a-state-version/)) |
+| A failed format check on a branch | the `fmt` job runs `terragrunt hcl fmt` and the binary's `fmt`, and pushes the commit to the branch |
+| Drift | the drift job reports drift by unit; its pull request writes a drifted value into the unit's own `inputs` in `terragrunt.hcl` where its module reads that variable, and `respond.drift: attribute` names who changed it ([Drift](/terragucci/reference/responses/#drift)) |
+| Moving resources between units | a migration file names units as it names roots; Terragrunt prepares each unit, and the move goes through the same gate ([Move resources between roots](/terragucci/guides/move-resources-between-roots/)) |
+| A version per unit | a unit's `.opentofu-version` or `.terraform-version`, a `version` map glob, or an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` picks its releases; each is installed in the job, and a wave runs as one `run --all` per pair of releases ([A version per root](/terragucci/reference/config/#a-version-per-root)) |
 
 A wave of units the gate holds waits as a wave of roots does, naming its units, its set digest and the approve command:
 
@@ -87,10 +97,10 @@ terragucci applies a change one dependency layer at a time, and every layer appl
 
 <Steps>
 
-1. The layer's wave plans its units with one `terragrunt run --all`, saving each unit's plan. Units of later layers are not planned yet.
+1. The layer's wave plans its units with one `terragrunt run --all`, saving each unit's plan. Units of later layers are not planned for real yet; the pull request only previewed them.
 2. The wave takes the set digest over the saved plans that change a resource or an output, and the gate holds it until an approval of that digest.
 3. A second `run --all` applies exactly those saved plans. Nothing is planned again between the approval and the apply.
-4. The next layer's wave then plans against the state the layer before it left, and waits at its own gate. Its approval covers that real plan, not a plan made before its upstream applied.
+4. The next layer's wave then plans against the state the layer before it left, and waits at its own gate. Its approval covers that real plan, not the preview made before its upstream applied.
 
 </Steps>
 
@@ -99,6 +109,30 @@ terragucci applies a change one dependency layer at a time, and every layer appl
 | every unit applies at once | one dependency layer per wave, each behind its own gate |
 | a plan made at apply time | the saved plans the approval names, applied as they were |
 | a downstream unit planned against values its upstream has not produced yet | planned against the state its upstream left; a plan that would read `mock_outputs` fails its wave |
+
+## What a pull request shows of later layers
+
+A pull request's plan plans the units of every layer the change reaches. A unit whose `dependency` block reads a unit planned in an earlier layer of the same plan is planned on the outputs that plan makes, not on the ones the upstream last applied. terragucci gives Terragrunt those values as the answer to the binary's `output -json` for the upstream, so Terragrunt evaluates the unit's `dependency` blocks, includes and inputs itself.
+
+| A unit that reads | In the pull request's plan |
+|---|---|
+| outputs its upstream's plan knows | planned on those values; the note lists it under the units planned on another's planned outputs, and the report's `roots[].reads` says `planned` |
+| an output its upstream knows only once it applies | not planned. The note names the output and the wave that settles it: ``reads `out` of live/app, unknown until wave 2 applies``. Its wave plans again once that wave applied, and the note gives no digest for it |
+| an upstream that has no plan in this run: it failed, or waits for its own upstream | not planned, and the note says which upstream |
+| an upstream whose plan changes no output, or that the change does not reach | planned on the upstream's applied outputs, which stand |
+
+No unit is planned on a stand-in for a value nobody knows yet, and none on `mock_outputs`. A unit whose plan reads its upstream without asking the binary, as Terragrunt does with `TG_DEPENDENCY_FETCH_OUTPUT_FROM_STATE`, is not shown as a preview, and the note says so.
+
+With a base branch, the plan covers the units the change reaches. Their dependents are listed as planned once what they wait for applies; with `dependents: plan` they are previewed the same way, layer by layer, provisional and outside every digest.
+
+After the merge, each wave still plans again on the state the waves before it left, and its gate binds that plan. When a unit's plan then differs from the preview in the merged pull request's plan note, the wave says so before it prints its approve command, naming each resource and attribute that moved:
+
+```text
+wave 2 of 3: pull request 12 previewed live/app on the planned outputs of the waves before; this unit plans differently now:
+wave 2 of 3:   live/app: terraform_data.this (update): input differs from the preview
+```
+
+The wave's report keeps the comparison in `waves[].preview`, and its note shows it.
 
 ## Next
 

@@ -111,6 +111,7 @@ export default defineConfig({
 								{ label: 'Re-plan from a comment', slug: 'guides/re-plan-from-a-comment' },
 								{ label: 'Apply a pull request before it merges', slug: 'guides/apply-before-merge' },
 								{ label: 'Move resources between roots', slug: 'guides/move-resources-between-roots' },
+								{ label: 'Release a state lock a killed job left', slug: 'guides/release-a-state-lock' },
 							],
 						},
 						{
@@ -120,6 +121,8 @@ export default defineConfig({
 								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
 								{ label: 'Find the state version an apply left', slug: 'guides/find-a-state-version' },
+								{ label: 'Export a state version', slug: 'guides/export-a-state-version' },
+								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 							],
 						},
@@ -127,6 +130,7 @@ export default defineConfig({
 							label: 'Set it up your way',
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
+								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
@@ -142,7 +146,9 @@ export default defineConfig({
 							items: [
 								{ label: 'Set up with a coding agent', slug: 'getting-started/agents' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
+								{ label: 'Read the estate over MCP', slug: 'guides/agent-read-over-mcp' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
+								{ label: 'Have an agent fix drift', slug: 'guides/agent-fix-drift' },
 								{ label: 'Have a model review a pull request', slug: 'guides/agent-review-a-pull-request' },
 							],
 						},
@@ -185,7 +191,7 @@ export default defineConfig({
 				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Validation', slug: 'reference/validation' },
 				{ label: 'Scale', slug: 'reference/scale' },
-				{ label: 'What is new in 0.4.3', slug: 'reference/whats-new' },
+				{ label: 'Changes in 0.4.4', slug: 'reference/whats-new' },
 			],
 		}),
 	],

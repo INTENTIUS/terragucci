@@ -10,6 +10,9 @@ import { gzipSync } from "node:zlib";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+// One set of options for the shipped bundle, the origin/main baseline and a
+// smoke claim's BREAK bundle (stack/break-bundle.mjs).
+import { bundleOptions as options } from "./cli-bundle.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = join(root, "packages/terragucci");
@@ -27,43 +30,6 @@ const cleanStage = () => rmSync(stage, { recursive: true, force: true });
 process.on("exit", cleanStage);
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
 
-// The dashboards template (src/dashboards/rendered.json, terragucci#163) goes
-// into the bundle gzipped: as a JS literal it is a fifth of the bundle, and
-// only an init with `dashboards:` reads it.
-const gzippedJson = {
-  name: "gzipped-json",
-  setup(b) {
-    b.onLoad({ filter: /[\\/]src[\\/]dashboards[\\/]rendered\.json$/ }, (args) => {
-      const packed = gzipSync(JSON.stringify(JSON.parse(readFileSync(args.path, "utf8"))), { level: 9 }).toString("base64");
-      return {
-        loader: "js",
-        contents: `import { gunzipSync } from "node:zlib";\nexport default JSON.parse(gunzipSync(Buffer.from(${JSON.stringify(packed)}, "base64")).toString("utf8"));\n`,
-      };
-    });
-  },
-};
-
-// One set of options for the shipped bundle and for the origin/main baseline.
-const options = (pkgDir) => ({
-  entryPoints: [join(pkgDir, "src/cli.ts")],
-  bundle: true,
-  platform: "node",
-  format: "esm",
-  target: "node22",
-  external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
-  banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
-  legalComments: "none",
-  // Folds constants, drops dead branches and whitespace, and shortens names. The
-  // linked source map ships beside the bundle: run with
-  // `node --enable-source-maps` to read a stack trace against the sources.
-  minifySyntax: true,
-  minifyWhitespace: true,
-  minifyIdentifiers: true,
-  keepNames: false,
-  logLevel: "warning",
-  plugins: [gzippedJson],
-});
-
 const result = await build({
   ...options(pkg),
   outfile: join(stage, "terragucci.mjs"),
@@ -78,8 +44,8 @@ writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
 
 // The JSON Schemas of what terragucci writes, published so a reader can validate
-// terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1 and terragucci.run/v1.
-for (const f of ["report.schema.json", "report-index.schema.json", "estate.schema.json", "audit.schema.json", "inventory.schema.json", "changes.schema.json", "history.schema.json", "dora.schema.json", "state-versions.schema.json", "run.schema.json"]) {
+// terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1, terragucci.run/v1 and terragucci.state-edges/v1.
+for (const f of ["report.schema.json", "report-index.schema.json", "estate.schema.json", "audit.schema.json", "inventory.schema.json", "changes.schema.json", "history.schema.json", "dora.schema.json", "state-versions.schema.json", "run.schema.json", "state-edges.schema.json"]) {
   copyFileSync(join(pkg, "src/report", f), join(stage, f));
 }
 // The generic webhook's event, terragucci.notify/v1, for a receiver to validate.

@@ -110,6 +110,21 @@ describe("reconcile", () => {
     expect(second.calls).toEqual([]);
   });
 
+  it("own_jobs: a project's jobs of its own, named in the control repo or in a file of the project's, go into its pipeline, and once merged it is in line", async () => {
+    const bare = bareFrom(write(twoRootRepo(), { "ci/own-jobs.yml": "from-file:\n  runs-on: ubuntu-latest\n  steps:\n    - run: echo file\n" }));
+    const inline = { "from-control": { "runs-on": "ubuntu-latest", steps: [{ run: "echo control" }] } };
+    for (const own_jobs of ["ci/own-jobs.yml", inline] as const) {
+      const config = validateConfig({ defaults: { binary: "tofu" }, projects: { "github.com/acme/infra": { url: bare, own_jobs } } }, "t");
+      const out = await reconcile(config, { mode: "apply", fetch: recordingFetch().fetch, env });
+      expect(out[0].status).toBe("pull-request");
+      const pipeline = git(bare, "show", `${BRANCH}:.github/workflows/terragucci.yml`);
+      expect(pipeline).toContain(typeof own_jobs === "string" ? "  from-file:\n" : "  from-control:\n");
+      git(bare, "update-ref", "refs/heads/main", `refs/heads/${BRANCH}`);
+      const again = recordingFetch();
+      expect((await reconcile(config, { mode: "apply", fetch: again.fetch, env }))[0].status).toBe("unchanged");
+    }
+  });
+
   it("a GitLab project's own .gitlab-ci.yml gains the include and keeps its jobs, and once merged is in line", async () => {
     const own = "unit-tests:\n  script:\n    - echo own\n";
     const bare = bareFrom(write(twoRootRepo(), { ".gitlab-ci.yml": own }));

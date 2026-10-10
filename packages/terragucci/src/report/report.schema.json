@@ -78,7 +78,16 @@
             "properties": {
               "name": { "type": "string" },
               "version": { "type": "string" },
-              "pin": { "type": "string" }
+              "pin": { "type": "string" },
+              "terragrunt": {
+                "description": "A Terragrunt unit: the Terragrunt release that ran it, and terragrunt_version_constraint when the unit pinned it (minor 24).",
+                "type": "object",
+                "required": ["version"],
+                "properties": {
+                  "version": { "type": "string" },
+                  "pin": { "type": "string" }
+                }
+              }
             }
           },
           "terragrunt": {
@@ -201,6 +210,11 @@
               }
             }
           },
+          "dependencies": {
+            "description": "A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads, as plain paths in its terragrunt.hcl (minor 23). Absent when it names none.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "state": {
             "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
             "type": "object",
@@ -305,7 +319,26 @@
           },
           "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed." },
           "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
-          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." }
+          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." },
+          "preview": {
+            "type": "object",
+            "required": ["pull_request", "units"],
+            "description": "A tf-apply wave of Terragrunt units: its plans against the preview of them the merged pull request's plan note showed (minor 25).",
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "units": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["unit"],
+                  "properties": {
+                    "unit": { "type": "string" },
+                    "differences": { "type": "array", "items": { "type": "string" }, "description": "How its plan differs from the preview. Absent when it plans as previewed." }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -351,6 +384,28 @@
         "warnings": { "type": "integer" },
         "overridden": { "type": "array", "items": { "type": "string" }, "description": "The denied roots an override stands for (minor 10)." },
         "overriders": { "type": "array", "items": { "type": "string" }, "description": "Who may override a denial, from policy.override at base (minor 10)." }
+      }
+    },
+    "blast": {
+      "description": "A tf-plan run's blast radius (minor 22): the roots whose plan changes a resource or an output, and every root of the repo that reads their state through terraform_remote_state, followed through, nearest first. Absent when no root's plan changes anything, on a Terragrunt repo, and on other stages.",
+      "type": "object",
+      "required": ["roots", "downstream"],
+      "properties": {
+        "roots": { "type": "array", "items": { "type": "string" } },
+        "downstream": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "reads", "depth", "planned"],
+            "properties": {
+              "root": { "type": "string" },
+              "reads": { "type": "array", "items": { "type": "string" }, "description": "The roots in the radius whose state it reads." },
+              "depth": { "type": "integer", "minimum": 1, "description": "1 when it reads a changed root's state itself, 2 when it reads such a reader's, and so on." },
+              "wave": { "type": "integer", "description": "The apply wave it is in." },
+              "planned": { "type": "boolean", "description": "Whether this run planned it." }
+            }
+          }
+        }
       }
     },
     "cost": {
