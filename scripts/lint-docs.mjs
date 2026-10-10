@@ -119,6 +119,19 @@ const missing = (what, expected, found, page) => {
   }
 }
 
+// A reader approves with `terragucci approve`, which runs chant itself. Prose that tells a reader to
+// run `chant approve` sends them to a second install; only the upgrade note on the what's-new page
+// names it. Recorded tool output (docs-site/src/data) quotes what a run printed and is not prose.
+{
+  const walk = (path) => (statSync(path).isDirectory() ? readdirSync(path).sort().flatMap((e) => walk(join(path, e))) : [path]);
+  for (const file of ["README.md", ...walk("docs-site/src/content"), ...walk("docs-site/src/components")]) {
+    if (!/\.(mdx?|astro)$/.test(file) || file.endsWith("reference/whats-new.mdx")) continue;
+    read(file).split("\n").forEach((line, i) => {
+      if (/chant approve/.test(line)) problems.push(`${file}:${i + 1}: "chant approve"; a reader runs \`terragucci approve\``);
+    });
+  }
+}
+
 for (const p of problems) console.log(`FAIL  ${p}`);
 
 const files = roots.flatMap(collect);
