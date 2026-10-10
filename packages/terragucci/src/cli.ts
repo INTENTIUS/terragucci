@@ -35,17 +35,17 @@
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
- *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes]   (answer the `/terragucci` merge request notes since the last polls, and with --plan-notes post the plan notes first; run by the comments schedule's job)
- *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
- *   terragucci comment --agent push --change <dir> [--policy-dir <dir>]   (push the agent's change to the pull request's head branch)
+ *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls, and with --plan-notes post the plan notes first; run by the comments schedule's job)
+ *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo|gitlab]   (read a `/terragucci agent <ask>` comment)
+ *   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge gitlab]   (push the agent's change to the pull request's head branch)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]   (locks: plan: lock the roots a pull request's head reaches, or release them; run by the generated pipeline)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
- *   terragucci review prompt --report <dir> [--instructions <path>]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
- *   terragucci review post --dir <dir>   (post the review as a note on the pull request; run by the review-note job)
+ *   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
+ *   terragucci review post --dir <dir> [--forge gitlab]   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *   terragucci notify drift [--report <dir>]   (post the drift job's findings to Slack and Teams, with a Re-plan button; run by the generated pipeline)
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
@@ -62,12 +62,14 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
+import { gitlabApi } from "./comment-apply-gitlab";
+import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
 import { approve, overrideDenial } from "./approve";
@@ -131,15 +133,15 @@ const USAGE = `usage:
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
-  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes]
-  terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
-  terragucci comment --agent push --change <dir> [--policy-dir <dir>]
+  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes] [--agent on] [--review]
+  terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
+  terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
-  terragucci review prompt --report <dir> [--instructions <path>]
-  terragucci review post --dir <dir>
+  terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]
+  terragucci review post --dir <dir> [--forge gitlab]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci notify drift [--report <dir>]
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
@@ -198,7 +200,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -485,6 +487,28 @@ export async function main(argv: string[]): Promise<number> {
         const agent = str(flags, "agent") ?? "off";
         const policyDir = str(flags, "policy-dir") ?? "policy";
         if (!["off", "on", "run", "push"].includes(agent)) throw new ConfigError("comment's --agent is off, on, run or push");
+        // GitLab's agent pipeline: the agent job reads the ask, and agent-push lands the change (gitlab-agent.ts).
+        if (forge === "gitlab" && agent === "run" && flags.poll !== true) {
+          const out = str(flags, "out");
+          const prompt = str(flags, "prompt");
+          if (!out || !prompt) throw new ConfigError("comment --forge gitlab --agent run needs --out <file> and --prompt <file>");
+          const decision = await readGitLabAgentAsk(gitlabApi(process.env, process.env.TG_TOKEN, fetch), process.env);
+          writeDecision(resolve(cwd, out), decision);
+          if (decision.go && decision.ask) writePrompt(resolve(cwd, prompt), { ask: decision.ask, pr: decision.pr!, head: decision.head!, user: decision.user!, policyDir, what: `merge request !${decision.pr}` });
+          if (decision.fail) {
+            console.error(`terragucci comment: failed, no agent: ${decision.reason}`);
+            return 1;
+          }
+          console.log(`terragucci comment: ${decision.go ? "" : "no agent: "}${decision.reason}`);
+          return 0;
+        }
+        if (forge === "gitlab" && agent === "push" && flags.poll !== true) {
+          const change = str(flags, "change");
+          if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
+          const pushed = await pushGitLabAgentChange({ change: resolve(cwd, change), policyDir });
+          console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
+          return pushed.fail ? 1 : 0;
+        }
         if (flags.poll === true || forge === "gitlab") {
           // GitLab: no event file, so the comments schedule's job polls the merge requests' notes.
           if (forge !== "gitlab" || flags.poll !== true) throw new ConfigError("comment --poll is GitLab's: run it as comment --forge gitlab --poll --layers <a,b;c>");
@@ -492,12 +516,14 @@ export async function main(argv: string[]): Promise<number> {
           const when = str(flags, "when") ?? "merge";
           if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment's --when is merge or pull-request");
           const requires = requiresOf(str(flags, "requires"), "comment");
-          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(flags["plan-notes"] === true ? { planNotes: true } : {}) });
+          if (agent !== "off" && agent !== "on") throw new ConfigError("comment --forge gitlab --poll's --agent is off or on");
+          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(flags["plan-notes"] === true ? { planNotes: true } : {}), ...(agent === "on" ? { agent: true } : {}), ...(flags.review === true ? { review: true } : {}) });
           for (const p of poll.plans ?? []) console.log(`terragucci comment: !${p.mr} plan: ${p.reason}`);
+          for (const r of poll.reviews ?? []) console.log(`terragucci comment: !${r.mr} review: ${r.reason}`);
           for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
           if (poll.outcomes.length === 0 && !poll.fail) console.log("terragucci comment: no new /terragucci notes");
           if (poll.fail) console.error(`terragucci comment: failed: ${poll.fail}`);
-          return poll.fail || poll.outcomes.some((n) => n.fail) || (poll.plans ?? []).some((p) => p.fail) ? 1 : 0;
+          return poll.fail || poll.outcomes.some((n) => n.fail) || (poll.plans ?? []).some((p) => p.fail) || (poll.reviews ?? []).some((r) => r.fail) ? 1 : 0;
         }
         if (agent === "push") {
           const change = str(flags, "change");
@@ -711,6 +737,24 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "review": {
         const sub = args[0];
+        const reviewForge = str(flags, "forge");
+        if (reviewForge !== undefined && !["github", "forgejo", "gitlab"].includes(reviewForge)) throw new ConfigError("review's --forge is github, forgejo or gitlab");
+        if (sub === "prompt" && reviewForge === "gitlab") {
+          // GitLab's review pipeline names the merge request and head in its variables (gitlab-agent.ts).
+          const report = resolve(cwd, str(flags, "report") ?? "terragucci-report");
+          const { written: w, report: said } = await writeGitLabReviewPrompt({ report, instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS });
+          console.log(`terragucci review: ${said}`);
+          console.log(`terragucci review: wrote the prompt for merge request !${w.pr} at ${w.head.slice(0, 8)}; instructions: ${w.instructions === "default" ? "the default branch's" : "none on the default branch"}${w.changed ? ", which this merge request changes" : ""}`);
+          return 0;
+        }
+        if (sub === "post" && reviewForge === "gitlab") {
+          const dir = str(flags, "dir");
+          if (!dir) throw new ConfigError("review post needs --dir <dir>");
+          const at = resolve(cwd, dir);
+          const posted = await postGitLabReview({ dir: at, read: (name) => (existsSync(join(at, name)) ? readFileSync(join(at, name), "utf-8") : "") });
+          console.log(`terragucci review: ${posted.reason}`);
+          return posted.posted ? 0 : 1;
+        }
         if (sub === "prompt") {
           const report = resolve(cwd, str(flags, "report") ?? "terragucci-report");
           // The review workflow's event names the pull request; its plan report comes from the pipeline's run of the head.
@@ -778,7 +822,7 @@ export async function main(argv: string[]): Promise<number> {
           // A repo's forge, when the config does not name it, is the one init would detect.
           // Migrations need a generated pipeline whose apply jobs may write chant/lifecycle.
           problems.push(...migrationPipelineProblems(dirname(resolve(path))));
-          if (config.apply?.when === "pull-request" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") {
+          if (!config.forge && (config.apply?.when === "pull-request" || config.agent?.comment || config.review?.agent) && detectForge(dirname(resolve(path)))?.value === "gitlab") {
             problems.push(...gitlabPrApplyProblems(config as Record<string, unknown>, "config"));
           }
         } catch (e) {

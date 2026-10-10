@@ -16410,14 +16410,16 @@ FORGEJO_CLAIMS="$CLAIMS"
 if [ "$SMOKE_FORGE" = gitlab ]; then
   CLAIMS="$GITLAB_CLAIMS"
   CLAIM_GROUPS="$GITLAB_CLAIM_GROUPS"
-  SMOKE_LOCK_DIR="${SMOKE_LOCK_DIR:-$HERE/gitlab/.state/locks}"
 fi
 # Every worktree of the repo drives the one stack, so they share one lock
 # directory: the main worktree's (git's common dir), not each tree's own.
+# The lab is one too (compose project tglab), so its locks are shared the same
+# way, in a directory of their own beside the stack's.
 SMOKE_LOCKS_DEFAULT="$HERE/.state/locks"
 if common="$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" && [ -d "$(dirname "$common")/stack" ]; then
   SMOKE_LOCKS_DEFAULT="$(dirname "$common")/stack/.state/locks"
 fi
+[ "$SMOKE_FORGE" != gitlab ] || SMOKE_LOCKS_DEFAULT="$SMOKE_LOCKS_DEFAULT/gitlab"
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$SMOKE_LOCKS_DEFAULT}"
 
 # ── the stack lock: one lock per shared resource ──
