@@ -97,7 +97,8 @@ export function stateAccess(repo: string, roots: string[], oidc: OidcSettings): 
   }
   const pairOf = (env: string): RolePair => (env === DEFAULT_ENV ? { plan: oidc.plan_role!, apply: oidc.apply_role! } : roles[env]!);
   const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
-  const deps = rootDependencies(repo, roots);
+  // State files only: a choudoufu estate's outputs are records, not a state the role reaches.
+  const deps = rootDependencies(repo, roots, { estates: false });
   const envs = [...new Set([...envOf.values()].filter((e): e is string => e !== undefined))];
   // Every environment configured, also one no root is in yet.
   for (const g of globs) if (!envs.includes(g)) envs.push(g);

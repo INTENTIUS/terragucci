@@ -65,6 +65,21 @@ export SMOKE_ONLY
 SMOKE_FORGE="${SMOKE_FORGE:-forgejo}"
 case "$SMOKE_FORGE" in forgejo|gitlab) ;; *) echo "smoke: SMOKE_FORGE is forgejo or gitlab, not '$SMOKE_FORGE'" >&2; exit 2 ;; esac
 export SMOKE_FORGE
+# The binary the core claims run on (BINARY_CLAIMS, below CLAIMS): tofu, the
+# default and every claim's, or terraform or choudoufu, which run the core
+# claims alone, each on its binary, with the fixtures written for it
+# (binary-tree.py). Their rows in smoke.json carry binary: <name>.
+SMOKE_BINARY="${SMOKE_BINARY:-tofu}"
+case "$SMOKE_BINARY" in tofu|terraform|choudoufu) ;; *) echo "smoke: SMOKE_BINARY is tofu, terraform or choudoufu, not '$SMOKE_BINARY'" >&2; exit 2 ;; esac
+if [ "$SMOKE_BINARY" != tofu ] && { [ "$SMOKE_FORGE" != forgejo ] || [ -n "${SMOKE_AWS:-}" ]; }; then
+  echo "smoke: SMOKE_BINARY=$SMOKE_BINARY runs on Forgejo and floci only" >&2; exit 2
+fi
+export SMOKE_BINARY
+# The example the claims read: example on Forgejo with names under shop-, or
+# for another binary its own copy (example.sh's TG_EXAMPLE_BINARY).
+EX_REPO=example; EX_SHOP=shop; EX_TAG=""
+case "$SMOKE_BINARY" in terraform) EX_TAG=tf ;; choudoufu) EX_TAG=cdf ;; esac
+[ -z "$EX_TAG" ] || { EX_REPO="example-$SMOKE_BINARY"; EX_SHOP="shop$EX_TAG"; }
 # A claim's function is claim_<name> on Forgejo and gitlab_claim_<name> on GitLab.
 CLAIM_FN=claim_
 [ "$SMOKE_FORGE" = gitlab ] && CLAIM_FN=gitlab_claim_
@@ -383,7 +398,17 @@ ephemeral-ttl|with ephemeral naming canary/* and a TTL of one minute, a run of t
 tg-ephemeral-pr|in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record|
 cdktn-ephemeral|with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record|
 cdktn-generate|with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend|
-cdktn-linked|a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown|'
+cdktn-linked|a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown|
+image|with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies|
+env|with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state|
+local-plan|terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0|'
+
+# The core claims, which SMOKE_BINARY=terraform and SMOKE_BINARY=choudoufu run
+# on that binary, each a row of its own in smoke.json.
+BINARY_CLAIMS='boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan'
+# A core claim that shows something else on a binary, because the feature is
+# refused there as a config error: <binary> <claim>|what its row shows.
+BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -404,6 +429,17 @@ claim_boot() {
   log() { echo "[smoke boot] $*" >&2; }
   local skip=""
   [ -n "${BREAK:-}" ] && skip="envs/prod/email"
+  # Another binary boots its own copy of the example (example-<binary>, its
+  # names under shop<tag>-), so the example itself is left as it is.
+  if [ "$SMOKE_BINARY" != tofu ]; then
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    bin_prepare || return 1
+    wipe_example || return 1
+    TG_EXAMPLE_BINARY="$SMOKE_BINARY" TG_EXAMPLE_ENDPOINT="${CDF_ALIAS:+http://$CDF_ALIAS:4566}" TG_SKIP_ROOT="$skip" "$HERE/example.sh" up >&2 || return 1
+    TG_EXAMPLE_BINARY="$SMOKE_BINARY" "$HERE/example.sh" verify >&2
+    return
+  fi
   if (. "$HERE/lib.sh") >/dev/null 2>&1; then
     # shellcheck source=lib.sh
     . "$HERE/lib.sh"
@@ -418,12 +454,14 @@ claim_boot() {
 # The plain example's repo, its buckets (and their objects), queues and
 # tables, and its state under envs/ in the state bucket. Nothing else on floci
 # is touched: the Terragrunt example's names start with shop-tg-.
+# Under SMOKE_BINARY the binary's copy: its repo, names and state (EX_REPO,
+# EX_SHOP), and under choudoufu its estates' records.
 wipe_example() {
-  local mine='^shop-(dev|staging|prod)-' b k u t n left i
+  local mine="^$EX_SHOP-(dev|staging|prod)-" state="$EX_SHOP-terraform-state" b k u t n left i
   sqs_json() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: $1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
-  api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/example" 2>/dev/null || true
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$EX_REPO" 2>/dev/null || true
   for i in $(seq 1 30); do
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$USER/example")" = 404 ] && break
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$USER/$EX_REPO")" = 404 ] && break
     sleep 1
   done
   if [ -n "${SMOKE_AWS:-}" ]; then
@@ -444,14 +482,22 @@ wipe_example() {
   for t in $(sqs_json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?' | grep -E "$mine" || true); do
     sqs_json DynamoDB_20120810.DeleteTable "$(jq -cn --arg t "$t" '{TableName: $t}')" >/dev/null || true
   done
-  for k in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=envs/" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true); do
-    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$k" || true
+  for k in $(curl -fsS "$FLOCI/$state?list-type=2&prefix=envs/" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/$state/$k" || true
   done
+  if [ "$SMOKE_BINARY" = choudoufu ]; then
+    for b in tofu-records tofu-outputs tofu-hints tofu-receipts tofu-located tofu-residue tofu-provisioned; do
+      for k in $(curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=$b/$EX_SHOP--" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true); do
+        curl -s -o /dev/null -X DELETE "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$k" '$k | split("/") | map(@uri) | join("/")')" || true
+      done
+    done
+  fi
   # Anything left would make the apply meet a resource it did not create.
   left="$( { curl -fsS "$FLOCI/" | grep -o '<Name>[^<]*</Name>' | sed -E 's#</?Name>##g' | grep -E "$mine"
     sqs_json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]? | split("/") | last' | grep -E "$mine"
     sqs_json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?' | grep -E "$mine"
-    curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=envs/" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'
+    curl -fsS "$FLOCI/$state?list-type=2&prefix=envs/" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'
+    [ "$SMOKE_BINARY" != choudoufu ] || curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=tofu-records/$EX_SHOP--" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'
   } 2>/dev/null || true)"
   n="$(grep -c . <<<"$left" || true)"
   [ "$n" = 0 ] || { log "the wipe left $n of the example's objects in floci: $(tr '\n' ' ' <<<"$left")"; return 1; }
@@ -609,6 +655,61 @@ TF
 
 CHANT="$HERE/../node_modules/.bin/chant"
 
+# ── the core claims on another binary (SMOKE_BINARY) ──────────────────────
+# Under SMOKE_BINARY=terraform or choudoufu the core claims (BINARY_CLAIMS)
+# write their trees for that binary (binary-tree.py) and run its CI image.
+# choudoufu keeps no state file: each root is an estate whose records are in
+# the record store bucket CDF_RECORDS, which choudoufu addresses
+# virtual-hosted (<bucket>.<endpoint host>), so a claim's jobs and stage runs
+# reach floci through a proxy of the claim's own (cdf_proxy_up), which the
+# tree names in env: AWS_ENDPOINT_URL_S3. Each tree's estates are named
+# <claim>-<time>--<root, / as -->, new on every run, so no run reads the
+# records another left.
+bin_image() { image_tag "$SMOKE_BINARY"; }
+BIN_ESTATES=""
+bin_prepare() { # -> under choudoufu, the record store bucket and the claim's proxy, which AWS_DOCKER_ENV then names
+  [ "$SMOKE_BINARY" = choudoufu ] || return 0
+  [ -z "${CDF_PROXY:-}" ] || return 0
+  local d
+  d="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$d"
+  cdf_bucket || { echo "could not set up the record store bucket $CDF_RECORDS" >&2; return 1; }
+  cdf_proxy_up "$d" || { echo "the record store proxy did not start" >&2; return 1; }
+  AWS_DOCKER_ENV=(-e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1)
+}
+bin_tree() { # dir, estate prefix, [binary-tree.py flags] -> the tree written for SMOKE_BINARY; sets BIN_ESTATES
+  [ "$SMOKE_BINARY" != tofu ] || return 0
+  local dir="$1" prefix="$2"
+  shift 2
+  local -a endpoint=()
+  [ "$SMOKE_BINARY" = choudoufu ] && [ -n "${CDF_ALIAS:-}" ] && endpoint=(--endpoint "http://$CDF_ALIAS:4566")
+  python3 "$HERE/binary-tree.py" "$dir" "$SMOKE_BINARY" "$prefix" --records "$CDF_RECORDS" ${endpoint[@]+"${endpoint[@]}"} "$@" >/dev/null || return 1
+  BIN_ESTATES="$prefix"
+}
+# Under another binary, that a report's roots all ran it.
+bin_ran() { # report.json
+  [ "$SMOKE_BINARY" != tofu ] || return 0
+  local got
+  got="$(jq -r '[.roots[].binary.name // "none"] | unique | join(",")' "$1" 2>/dev/null || echo none)"
+  [ "$got" = "$SMOKE_BINARY" ] || { echo "the report's roots ran ${got:-nothing}, not $SMOKE_BINARY" >&2; return 1; }
+}
+# Under another binary, that init wrote the pipeline in its CI image.
+bin_pipeline() { # pipeline file
+  [ "$SMOKE_BINARY" != tofu ] || return 0
+  grep -q "image: ghcr.io/intentius/terragucci-$SMOKE_BINARY:" "$1" || { echo "the pipeline does not run in the $SMOKE_BINARY image" >&2; return 1; }
+}
+# The input the terraform_data of a root of BIN_ESTATES holds in its record, empty when it has none.
+bin_record_input() { # root
+  local estate="$BIN_ESTATES--${1//\//--}" k
+  k="$(curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=tofu-records/$estate/terraform_data/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' | head -1)"
+  [ -n "$k" ] || return 0
+  curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$k" '$k | split("/") | map(@uri) | join("/")')" 2>/dev/null | jq -r '.object.attrs.input // empty | if type == "object" then .value else . end' 2>/dev/null || true
+}
+# The roots of BIN_ESTATES that hold a record of a terraform_data, space-separated.
+bin_recorded() {
+  curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=tofu-records/$BIN_ESTATES--" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' \
+    | grep '/terraform_data/' | sed -E "s#^tofu-records/$BIN_ESTATES--([^/]*)/.*#\\1#; s#--#/#g" | sort -u | tr '\n' ' '
+}
+
 gated_repo() { # name [fixture] [approval] -> a fresh repo $USER/<name>, the fixture (default gated-waves) in $work/tree with its pipeline, no state under <name>/
   local name="$1" fixture="${2:-gated-waves}" approval="${3:-}" key
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
@@ -627,18 +728,21 @@ gated_repo() { # name [fixture] [approval] -> a fresh repo $USER/<name>, the fix
   cp -R "$HERE/fixtures/$fixture/." "$work/tree/"
   find "$work/tree" \( -name main.tf -o -name root.hcl \) -exec sed -i.bak "s#@PREFIX@#$name#" {} \;
   find "$work/tree" -name '*.bak' -delete
+  bin_prepare && bin_tree "$work/tree" "$name-$(date +%s)" || { log "the tree was not written for $SMOKE_BINARY"; return 1; }
   # With approval: sealed, init lists every wave gate under identity.gates, and
   # an approval counts only when its seal verifies against the signers file at
   # base. Without it (ledger, the default) any approval of the digest counts.
   [ -z "$approval" ] || echo "approval: $approval" >> "$work/tree/terragucci.yml"
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  bin_pipeline "$work/tree/.forgejo/workflows/terragucci.yml" || return 1
   # The approver's key goes in the signers file; an agent's never does.
   ssh-keygen -q -t ed25519 -N "" -C smoke-approver -f "$work/approver" || return 1
   mkdir -p "$work/tree/.chant"
   echo "smoke-approver $(cut -d' ' -f1,2 "$work/approver.pub")" > "$work/tree/.chant/allowed_signers"
 }
 
-gated_applied() { # name -> the roots with state under <name>/, space-separated
+gated_applied() { # name -> the roots with state under <name>/, space-separated (under choudoufu, with records)
+  if [ "$SMOKE_BINARY" = choudoufu ]; then bin_recorded; return 0; fi
   curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$1/" | grep -o '<Key>[^<]*\.tfstate</Key>' \
     | sed -E "s#</?Key>##g; s#^$1/##; s#\.tfstate\$##" | sort | tr '\n' ' '
 }
@@ -1940,7 +2044,7 @@ REPORT_ARGS=()
 # runner works both out once and passes them down in SMOKE_<NAME>_IMAGE.
 image_tag() { # name
   local cached
-  case "$1" in tofu) cached="${SMOKE_TOFU_IMAGE:-}" ;; terragrunt) cached="${SMOKE_TG_IMAGE:-}" ;; *) cached="" ;; esac
+  case "$1" in tofu) cached="${SMOKE_TOFU_IMAGE:-}" ;; terragrunt) cached="${SMOKE_TG_IMAGE:-}" ;; terraform) cached="${SMOKE_TF_IMAGE:-}" ;; choudoufu) cached="${SMOKE_CDF_IMAGE:-}" ;; *) cached="" ;; esac
   if [ -n "$cached" ]; then echo "$cached"; return 0; fi
   (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk -v n="$1" '$1 == n { print $2 }')
 }
@@ -1970,7 +2074,8 @@ break_bundle() { # out, then file find replace, once or more
 report_run() {
   local work="$1"; shift
   local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p rc=0
-  image="$(image_tag tofu)"
+  image="$(bin_image)"
+  bin_prepare || return 1
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   build_cli || return 1
   cp -R "${REPORT_TREE:-$EXAMPLE}/." "$work/"
@@ -1985,7 +2090,11 @@ report_run() {
   for p in "$@"; do git -C "$work" apply "$EXAMPLE/changes/$p.patch" || return 1; done
   [ -n "${REPORT_EDIT:-}" ] && { (cd "$work" && eval "$REPORT_EDIT") || return 1; }
   [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
-  git -C "$work" remote add origin "http://forgejo:3000/$USER/example.git"
+  # Another binary reads its own copy of the example, written as boot wrote
+  # it, after the patches (written for the example itself) are in.
+  if [ -z "${REPORT_TREE:-}" ]; then bin_tree "$work" "$EX_SHOP" --names "$EX_TAG" || return 1
+  else bin_tree "$work" "report-$(date +%s)" || return 1; fi
+  git -C "$work" remote add origin "http://forgejo:3000/$USER/$EX_REPO.git"
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost commit -qm "smoke report $(date +%s%N)"
   if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_bucket "$REPORT_BUCKET" || true
   else curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true; fi
@@ -2016,16 +2125,18 @@ report_run() {
 # root's resources, instead of re-applying all 15 through the pipeline.
 apply_roots() { # root...
   local work image root
-  image="$(image_tag tofu)"
+  image="$(bin_image)"
+  bin_prepare || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   cp -R "$EXAMPLE/." "$work/"
+  bin_tree "$work" "$EX_SHOP" --names "$EX_TAG" || { drop_work "$work"; return 1; }
   if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_example "$work" || return 1; smoke_aws_queue_settle; fi
   for root in "$@"; do
     run_copied --rm --network terragucci -v "$work:/repo" -w "/repo/$root" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" \
-      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
-      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { drop_work "$work"; return 1; }
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "BIN=$SMOKE_BINARY" \
+      "$image" sh -c '"$BIN" init -input=false -no-color >/dev/null && "$BIN" apply -auto-approve -input=false -no-color' >&2 || { drop_work "$work"; return 1; }
   done
   drop_work "$work"
 }
@@ -2049,6 +2160,7 @@ claim_report() {
     REPORT_CONFIG="$cfg" report_run "$work/run$i" module-bump destroy || true
     dir="$work/run$i/terragucci-report"
     [ -f "$dir/report.json" ] && [ -f "$dir/report.html" ] || { log "run $i wrote no report"; rc=1; break; }
+    bin_ran "$dir/report.json" || rc=1
     commits+=("$(git -C "$work/run$i" rev-parse HEAD)")
     n="$(jq '[.roots[] | select(.status == "planned")] | length' "$dir/report.json")"
     [ "$n" -ge 15 ] || { log "run $i planned only $n roots"; rc=1; }
@@ -2338,6 +2450,42 @@ claim_highlight() {
   log "named $del (delete) and $rep (replace), both roots open; group $big folded"
 }
 
+drift_refused() {
+  # SMOKE_BINARY=choudoufu: a drift check is a refresh-only plan, which
+  # choudoufu refuses under live resource markers. The example written for
+  # choudoufu, every root under a live block and drift set, is a config
+  # error: init exits 2 and names the roots, and so does stage tf-drift in the
+  # choudoufu CI image, before any plan and with no report.
+  # BREAK: the roots keep their s3 backends (binary: choudoufu alone), so
+  # neither refuses.
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work out code=0 rc=0 want='drift runs a refresh-only plan, which choudoufu refuses under live resource markers, and envs/dev/email, envs/dev/orders, envs/dev/payments and 12 more keep their resources under them'
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/tree"
+  cp -R "$EXAMPLE/." "$work/tree/"
+  if [ -n "${BREAK:-}" ]; then
+    sed 's/^binary: .*/binary: choudoufu/' "$work/tree/terragucci.yml" > "$work/terragucci.yml.new" && mv "$work/terragucci.yml.new" "$work/tree/terragucci.yml"
+  else
+    bin_tree "$work/tree" "$EX_SHOP" --names "$EX_TAG" --keep-drift || { drop_work "$work"; return 1; }
+  fi
+  grep -q '^drift:' "$work/tree/terragucci.yml" || { log "the example sets no drift"; drop_work "$work"; return 1; }
+  git -C "$work/tree" init -q -b main && git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "drift refused"
+  out="$(cd "$work/tree" && "$TERRAGUCCI" init --dry-run --forge forgejo 2>&1)" || code=$?
+  log "init exited $code: $(tail -1 <<<"$out")"
+  [ "$code" = 2 ] || { log "init exited $code, not 2"; rc=1; }
+  grep -qF "$want" <<<"$out" || { log "init does not refuse drift naming the live roots"; rc=1; }
+  out="$(IN_IMAGE="$(bin_image)" in_image "$work/tree" sh -c 'terragucci stage tf-drift --binary choudoufu 2>&1; echo "exit=$?"' 2>&1)" || true
+  code="$(grep -o 'exit=[0-9]*' <<<"$out" | tail -1 | cut -d= -f2)"
+  log "stage tf-drift exited ${code:-nothing}: $(grep -v '^exit=' <<<"$out" | tail -1)"
+  [ "$code" = 2 ] || { log "stage tf-drift exited ${code:-nothing}, not 2"; rc=1; }
+  grep -qF "$want" <<<"$out" || { log "stage tf-drift does not refuse naming the live roots"; rc=1; }
+  [ ! -e "$work/tree/terragucci-report/report.json" ] || { log "stage tf-drift wrote a report: it planned"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "init and stage tf-drift refused drift on the live roots as a config error, before any plan"
+  return $rc
+}
+
 claim_drift() {
   # Staging orders' jobs queue is deleted from floci, outside Terraform. A
   # drift run, with an unapplied code change waiting on main, must report that
@@ -2350,28 +2498,38 @@ claim_drift() {
   # other drifted attribute to that known set. Because tag drift never clears
   # here, the close is shown on a scratch root that has no resources.
   # BREAK: the queue is not deleted, so there is no drift to name.
+  # Under choudoufu a drift check cannot run on the example's live roots, so
+  # the claim is that it is refused: drift_refused.
   log() { echo "[smoke drift] $*" >&2; }
+  [ "$SMOKE_BINARY" != choudoufu ] || { drift_refused; return; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work rc=0 dir issues n body root="envs/staging/orders" queue="shop-staging-orders-jobs"
+  local work rc=0 dir issues n body root="envs/staging/orders" queue="$EX_SHOP-staging-orders-jobs"
   [ -z "${SMOKE_AWS:-}" ] || queue="$SMOKE_AWS_PREFIX-$queue"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  open_issues() { api "$URL/api/v1/repos/$USER/example/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
+  open_issues() { api "$URL/api/v1/repos/$USER/$EX_REPO/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
   drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
     mkdir -p "$1"
     local REPORT_STAGE=tf-drift
-    local -a REPORT_ARGS=(--forge forgejo --report-url "http://forgejo:3000/$USER/example/actions")
-    local -a REPORT_EXTRA=(-e "GITHUB_REPOSITORY=$USER/example" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN")
+    local -a REPORT_ARGS=(--forge forgejo --report-url "http://forgejo:3000/$USER/$EX_REPO/actions")
+    local -a REPORT_EXTRA=(-e "GITHUB_REPOSITORY=$USER/$EX_REPO" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN")
     if [ -n "${REPORT_TREE:-}" ]; then report_run "$1"; else report_run "$1" one-root; fi
   }
   # Start with no drift issue open, so the claim reads only this run's.
   for n in $(open_issues | jq -r '.[].number'); do
-    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$USER/example/issues/$n"
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$USER/$EX_REPO/issues/$n"
   done
   local deleted=""
   if [ -z "${BREAK:-}" ]; then
     if [ -n "${SMOKE_AWS:-}" ]; then
       smoke_aws_delete_queue "$queue" || { drop_work "$work"; return 1; }
+    elif [ "$SMOKE_BINARY" != tofu ]; then
+      # drift.sh deletes the example's own queue; this is its copy's.
+      local url
+      url="$(floci_json AmazonSQS.GetQueueUrl "$(jq -cn --arg q "$queue" '{QueueName: $q}')" | jq -r '.QueueUrl // empty')" || url=""
+      [ -n "$url" ] || { log "$queue is not in floci; boot the example for $SMOKE_BINARY first"; drop_work "$work"; return 1; }
+      floci_json AmazonSQS.DeleteQueue "$(jq -cn --arg u "$url" '{QueueUrl: $u}')" >/dev/null || { drop_work "$work"; return 1; }
+      log "deleted $queue from floci, outside $SMOKE_BINARY"
     else
       TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { drop_work "$work"; return 1; }
     fi
@@ -2382,6 +2540,7 @@ claim_drift() {
     dir="$work/run1/terragucci-report"
     [ -f "$dir/report.json" ] || { log "no report"; return 1; }
     jq -e '.run.stage == "tf-drift"' "$dir/report.json" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
+    bin_ran "$dir/report.json" || rc=1
     # Exactly one object is gone, and it is this queue in this root.
     [ "$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")" = "$root module.service.aws_sqs_queue.jobs" ] \
       || { log "the deletes are not exactly $root's queue: $(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")"; rc=1; }
@@ -3715,28 +3874,34 @@ claim_policy_wave() {
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 rc=0 r q
   local engine="${SMOKE_POLICY_ENGINE:-conftest}" input="${SMOKE_POLICY_INPUT:-plan}" dir=policy
   [ "$input" = hcp ] && dir=policy-hcp
-  image="$(image_tag tofu)"
+  image="$(bin_image)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   cp -R "$HERE/fixtures/policy-wave/." "$work/"
   [ -z "${BREAK:-}" ] && printf 'policy:\n  engine: %s\n  path: %s\n  input: %s\n' "$engine" "$dir" "$input" >> "$work/terragucci.yml"
+  bin_tree "$work" "policy-wave-$(date +%s)" || { log "the tree was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy-wave"
   run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >&2 || code=$?
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary "$SMOKE_BINARY" --gate never >&2 || code=$?
   clean_mounted "$work" "$image"
   r="$work/terragucci-report/report.json"
   [ "$code" = 1 ] || { log "the wave exited $code, not 1: the policy did not refuse it"; rc=1; }
   if [ -f "$work/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$work/app/terraform.tfstate" >/dev/null 2>&1; then
     log "app has state: the wave applied it"; rc=1
   fi
+  # choudoufu's local record store: a record of the probe means it applied.
+  if [ -n "$(find "$work/app" -path '*/.tofu-records/*terraform_data*' -type f 2>/dev/null | head -1)" ]; then
+    log "app has a record of terraform_data.probe: the wave applied it"; rc=1
+  fi
   if [ ! -f "$r" ]; then
     log "the wave wrote no report"; rc=1
   else
+    bin_ran "$r" || rc=1
     q='.roots[] | select(.path == "app")'
     jq -e "$q | select(.status == \"failed\" and .policy.result == \"denied\")" "$r" >/dev/null || { log "app is not failed with policy.result denied in the report"; rc=1; }
     jq -e "$q | .policy.denials | any(test(\"terraform_data.probe: terraform_data is not allowed here\"))" "$r" >/dev/null || { log "the report does not name the denial under app"; rc=1; }
@@ -5671,6 +5836,7 @@ pr_say() { # repo, number, text -> prints the reply terragucci posts, once it ha
 }
 
 pr_state_input() { # name, root -> the input its terraform_data holds in the state (tofu writes it as {value, type}), empty when it has none
+  if [ "$SMOKE_BINARY" = choudoufu ]; then bin_record_input "$2"; return 0; fi
   curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty | if type == "object" then .value else . end' 2>/dev/null || true
 }
 
@@ -7929,7 +8095,7 @@ cdf_proxy_up() { # work
   local work="$1" port i
   CDF_ALIAS="tgs-records-$$-$RANDOM"
   mkdir -p "$work/proxy" && cp "$HERE/fixtures/cdf-race/s3-hold.mjs" "$work/proxy/" || return 1
-  CDF_PROXY="$(run_copied -d --name "$CDF_ALIAS" --network terragucci "--network-alias=$CDF_RECORDS.$CDF_ALIAS" \
+  CDF_PROXY="$(run_copied -d --name "$CDF_ALIAS" --network terragucci "--network-alias=$CDF_RECORDS.$CDF_ALIAS" "--network-alias=000000000000.$CDF_ALIAS" \
     -p 127.0.0.1::8080 -e "ALIAS=$CDF_ALIAS" -e UPSTREAM=floci:4566 -v "$work/proxy:/proxy:ro" \
     "$(image_tag choudoufu)" node /proxy/s3-hold.mjs)" || return 1
   port="$(docker port "$CDF_PROXY" 8080/tcp | head -1 | sed 's/.*://')"
@@ -15642,7 +15808,9 @@ claim_cost_gate() {
   cp "$HERE/fixtures/cost-policy/cost.mjs" "$tree/cost.mjs"
   printf 'binary: tofu\nforge: forgejo\ngate: never\ncost:\n  command: node cost.mjs\n' > "$tree/terragucci.yml"
   [ -n "${BREAK:-}" ] || printf '  approve_above: 15\n' >> "$tree/terragucci.yml"
+  bin_tree "$tree" "cost-gate-$(date +%s)" || { log "the tree was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  bin_pipeline "$tree/.forgejo/workflows/terragucci.yml" || { drop_work "$work"; return 1; }
   sha="$(push_tree "$tree" "$repo" main "cost-gate: two roots")" || rc=1
   [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
   if [ $rc = 0 ]; then
@@ -15906,6 +16074,146 @@ YAML
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the step held wave 1 at its gate under gate: never, and the approval of its digest let it apply"
+  return $rc
+}
+
+# A fresh repo with one root, app, whose terraform_data holds var.greeting and
+# whose state is in floci under <name>/, gate: never, and the lines on stdin
+# appended to its terragucci.yml; init has written its pipeline.
+one_root_repo() { # name
+  local name="$1" extra key
+  extra="$(cat)"
+  fresh_repo "$name" || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$USER/$name"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$name/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+  mkdir -p "$work/tree/app"
+  cat >"$work/tree/app/main.tf" <<HCL
+terraform {
+  backend "s3" {
+    bucket         = "shop-terraform-state"
+    key            = "$name/app.tfstate"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+variable "greeting" {
+  type    = string
+  default = "unset"
+}
+
+resource "terraform_data" "this" {
+  input = var.greeting
+}
+HCL
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\n%s\n' "$extra" > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+claim_image() {
+  # A one-root repo whose terragucci.yml names image: one built FROM this
+  # tree's tofu CI image with a file of its own, /etc/terragucci-smoke-image,
+  # and a step before apply that prints it. init writes that image into every
+  # job of the pipeline in place of terragucci's; the push to main passes
+  # check, the step prints the file in the apply job, and app applies.
+  # BREAK: terragucci.yml names no image, so the jobs run in terragucci's,
+  # which has no such file: the step fails and app never applies.
+  log() { echo "[smoke image] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/image" own="terragucci-smoke-own:$STAMP" mark="own image $STAMP" wf sha logs jobs n m cfg rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  printf 'FROM %s\nRUN echo "%s" > /etc/terragucci-smoke-image\n' "$(image_tag tofu)" "$mark" | docker build -q -t "$own" - >/dev/null \
+    || { log "could not build $own"; drop_work "$work"; return 1; }
+  cfg="$(printf 'steps:\n  - name: own-image\n    run: cat /etc/terragucci-smoke-image\n    before: apply')"
+  [ -n "${BREAK:-}" ] || cfg="$(printf 'image: %s\n%s' "$own" "$cfg")"
+  one_root_repo image <<<"$cfg" || { docker rmi -f "$own" >/dev/null 2>&1; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  n="$(grep -c '^    container:' "$wf" || true)"
+  m="$(grep -c "image: $own\$" "$wf" || true)"
+  log "the pipeline has $n jobs in a container, $m of them in $own"
+  if [ -z "${BREAK:-}" ] && { [ "$n" -lt 2 ] || [ "$n" != "$m" ]; }; then log "init did not write $own into every job"; rc=1; fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "image: one root")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
+    log "the push ran: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    [ "$(jq -r '.[] | select(.name == "check") | .status' <<<"$jobs")" = success ] || { log "check did not pass in $own"; rc=1; }
+    grep -qF "$mark" <<<"$logs" || { log "the step did not print the file of $own"; rc=1; }
+    [ "$(pr_state_input image app)" = unset ] || { log "app did not apply"; rc=1; }
+  fi
+  docker rmi -f "$own" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "every job ran in $own: check passed, the step printed its file and app applied"
+  return $rc
+}
+
+claim_env() {
+  # A one-root repo whose root reads var.greeting, unset by default, and
+  # whose terragucci.yml sets env: TF_VAR_greeting. init writes it into the
+  # pipeline's env, the push to main applies app, and the state holds the
+  # value env gave.
+  # BREAK: terragucci.yml sets no env, so app applies with the default.
+  log() { echo "[smoke env] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/env" value="from-env-$STAMP" cfg="" sha got rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  [ -n "${BREAK:-}" ] || cfg="$(printf 'env:\n  TF_VAR_greeting: %s' "$value")"
+  one_root_repo env <<<"$cfg" || { drop_work "$work"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    grep -qF "TF_VAR_greeting: $value" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init did not write TF_VAR_greeting into the pipeline"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "env: one root")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    [ "$RUN_STATUS" = success ] || { log "the push ended $RUN_STATUS"; rc=1; }
+  fi
+  got="$(pr_state_input env app)"
+  log "app's state holds ${got:-nothing}"
+  [ $rc = 0 ] && { [ "$got" = "$value" ] || { log "app does not hold $value, the value env gave"; rc=1; }; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "env reached the apply job: app holds $value"
+  return $rc
+}
+
+claim_local_plan() {
+  # terragucci plan, run as on a laptop: in a copy of the example with the
+  # one-root change (dev orders keeps jobs for seven days), from the tofu CI
+  # image with floci's keys, and --json. Each dev root plans against the
+  # state the example applied: dev orders plans one change, the other four
+  # plan none, and the envelope says exit 0 with all five.
+  # BREAK: the change is left out, so dev orders plans none.
+  log() { echo "[smoke local-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work out code=0 rc=0 got
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$EXAMPLE/." "$work/"
+  [ -n "${BREAK:-}" ] || git -C "$work" apply "$EXAMPLE/changes/one-root.patch" 2>/dev/null || (cd "$work" && patch -s -p1 <"$EXAMPLE/changes/one-root.patch") || { log "the one-root change does not apply"; drop_work "$work"; return 1; }
+  # Other claims plan the example too; a state lock one of them holds is waited for, as a person would.
+  local -a AWS_DOCKER_ENV=("${AWS_DOCKER_ENV[@]}" -e TF_CLI_ARGS_plan=-lock-timeout=180s)
+  out="$(in_image "$work" terragucci plan --root 'envs/dev/*' --json 2>"$work.err")" || code=$?
+  log "terragucci plan exited $code: $(jq -c '[.results.roots[]? | "\(.root): \(.summary)"]' <<<"$out" 2>/dev/null || echo "$out" | tail -3)"
+  if [ "$code" != 0 ]; then
+    tail -20 "$work.err" >&2
+    # --json keeps a failed root's output out of the envelope; the text form says why.
+    in_image "$work" terragucci plan --root 'envs/dev/*' 2>&1 | grep -v '^\s*$' | tail -30 >&2 || true
+    log "terragucci plan exited $code, not 0"; rc=1
+  fi
+  got="$(jq -r '.results.roots | map(select(.ok)) | map(.root) | sort | join(",")' <<<"$out" 2>/dev/null || true)"
+  [ "$got" = "envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/platform,envs/dev/search" ] || { log "the planned roots are ${got:-none}, not the five dev roots"; rc=1; }
+  [ "$(jq -r '.results.roots[] | select(.root == "envs/dev/orders") | .summary' <<<"$out" 2>/dev/null)" = "Plan: 0 to add, 1 to change, 0 to destroy." ] || { log "dev orders did not plan its one change"; rc=1; }
+  [ "$(jq -r '[.results.roots[] | select(.root != "envs/dev/orders") | .summary] | unique | join(",")' <<<"$out" 2>/dev/null)" = "No changes. Your infrastructure matches the configuration." ] || { log "a dev root other than orders planned a change"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "dev orders planned its one change against the applied state, and the other four none"
   return $rc
 }
 
@@ -16841,10 +17149,17 @@ tg-ephemeral-pr      runner self! weight=300
 cdktn-ephemeral      runner self! weight=300
 cdktn-generate       weight=60
 cdktn-linked         self! weight=90
+image                runner self! weight=150
+env                  runner self! weight=150
+local-plan           ex after=boot weight=90
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
 FORGEJO_CLAIMS="$CLAIMS"
+# Under SMOKE_BINARY=terraform or choudoufu the claims are the core ones.
+if [ "$SMOKE_BINARY" != tofu ]; then
+  CLAIMS="$(awk -F'|' -v keep=" $(echo $BINARY_CLAIMS) " 'index(keep, " " $1 " ")' <<<"$CLAIMS")"
+fi
 # On GitLab the claims are GitLab's, with their own groups and locks: no lock
 # of a run on the validation stack holds up a run on the lab.
 if [ "$SMOKE_FORGE" = gitlab ]; then
@@ -16992,6 +17307,8 @@ fi
 group_tokens() { # claim -> its tokens, or the default for a claim with no line
   local line
   line="$(awk -v n="$1" '$1 == n { $1 = ""; print; exit }' <<<"$CLAIM_GROUPS")"
+  # Another binary's runs hold its own copy of the example, not the example.
+  [ "$SMOKE_BINARY" = tofu ] || line="$(sed -E "s/(^| )ex(!?)( |$)/\1ex-$SMOKE_BINARY\2\3/g" <<<"$line")"
   if [ -n "${line// /}" ]; then echo "$line"; else echo "stack! after=boot,tg-waves weight=1"; fi
 }
 
@@ -17195,7 +17512,8 @@ runner_prep() {
     export TG_IMAGE_SUFFIX
   fi
   SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
-  export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
+  SMOKE_TF_IMAGE="$(image_tag terraform)"; SMOKE_CDF_IMAGE="$(image_tag choudoufu)"
+  export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE SMOKE_TF_IMAGE SMOKE_CDF_IMAGE
   # The lab is never started here: GitLab is heavy, and `just gitlab-lab up`
   # is a choice. Its jobs run the lab's own image, the tofu image with this
   # tree's bundle (gitlab.sh image), so a GitLab run leaves the shared image
@@ -17283,6 +17601,7 @@ if [ -n "$SMOKE_ONLY" ]; then
   for n in $SMOKE_ONLY; do
     grep -q "^$n|" <<<"$CLAIMS" && continue
     if [ "$SMOKE_FORGE" = gitlab ]; then echo "smoke: no GitLab claim '$n' (GITLAB_CLAIMS in stack/smoke-gitlab.sh)" >&2
+    elif [ "$SMOKE_BINARY" != tofu ]; then echo "smoke: no $SMOKE_BINARY claim '$n'; SMOKE_BINARY runs$(printf ' %s' $BINARY_CLAIMS)" >&2
     else echo "smoke: unknown claim '$n'" >&2; fi
     exit 2
   done
@@ -17306,13 +17625,16 @@ if [ "${1:-}" = --record ]; then
     broken="$(cat "$SMOKE_LOG_DIR/$name.break.verdict" 2>/dev/null || true)"
     row="$(grep "^$name|" <<<"$CLAIMS")"
     says="$(cut -d'|' -f2 <<<"$row")"; issue="$(cut -d'|' -f3 <<<"$row")"
+    alt="$(grep "^$SMOKE_BINARY $name|" <<<"$BINARY_SAYS" | cut -d'|' -f2 || true)"
+    [ -z "$alt" ] || says="$alt"
     # A GitLab row names its forge; a row with none is Forgejo's, as the
-    # file's own forge says.
-    rows+=("$(jq -n --arg c "$name" --arg s "$says" --arg i "$issue" --arg p "$plain" --arg b "$broken" --arg f "${SMOKE_FORGE#forgejo}" '{
+    # file's own forge says. A row of another binary names it; a row with
+    # none is OpenTofu's.
+    rows+=("$(jq -n --arg c "$name" --arg s "$says" --arg i "$issue" --arg p "$plain" --arg b "$broken" --arg f "${SMOKE_FORGE#forgejo}" --arg bin "${SMOKE_BINARY#tofu}" '{
       claim: $c, says: $s, needs: (if $i == "" then null else $i end),
       verdict: ($p | capture("verdict=(?<v>[a-z]+)").v),
       break: (if $b == "" then null else ($b | capture("verdict=(?<v>[a-z]+)").v) end)
-    } + (if $f == "" then {} else {forge: $f} end)')")
+    } + (if $f == "" then {} else {forge: $f} end) + (if $bin == "" then {} else {binary: $bin} end)')")
   done
   # Leave the example booted and clean for whoever runs next. Each claim puts
   # back what it changed, so this boots afresh only when something was left.
@@ -17320,34 +17642,36 @@ if [ "${1:-}" = --record ]; then
   # the stack alone: runs from other worktrees share the locks and finish first.
   # Most records end with the example intact: verify only reads, so it needs
   # no lock, and only a broken example waits for the stack alone.
-  [ "$SMOKE_FORGE" != forgejo ] || "$HERE/example.sh" verify >&2 || with_lock stack settle_example
+  # Another binary's runs read their own copy of the example, which nothing else reads.
+  [ "$SMOKE_FORGE" != forgejo ] || [ "$SMOKE_BINARY" != tofu ] || "$HERE/example.sh" verify >&2 || with_lock stack settle_example
   disk_check "$disk_start"
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
-  # The rows' order: each Forgejo claim in CLAIMS order with its GitLab row
-  # after it, then the GitLab claims Forgejo has no row for.
-  order="$( { while IFS='|' read -r n _; do [ -n "$n" ] && printf 'forgejo %s\ngitlab %s\n' "$n" "$n"; done <<<"$FORGEJO_CLAIMS"
-    cut -d'|' -f1 <<<"$GITLAB_CLAIMS" | sed 's/^/gitlab /'; } | awk '!seen[$0]++' | jq -R . | jq -s .)"
-  if [ -n "$SMOKE_ONLY" ] || [ "$SMOKE_FORGE" != forgejo ]; then
+  # The rows' order: each Forgejo claim in CLAIMS order with its Terraform,
+  # choudoufu and GitLab rows after it, then the GitLab claims Forgejo has no
+  # row for. A row's key is its forge, its binary and its claim.
+  order="$( { while IFS='|' read -r n _; do [ -n "$n" ] && printf 'forgejo tofu %s\nforgejo terraform %s\nforgejo choudoufu %s\ngitlab tofu %s\n' "$n" "$n" "$n" "$n"; done <<<"$FORGEJO_CLAIMS"
+    cut -d'|' -f1 <<<"$GITLAB_CLAIMS" | sed 's/^/gitlab tofu /'; } | awk '!seen[$0]++' | jq -R . | jq -s .)"
+  if [ -n "$SMOKE_ONLY" ] || [ "$SMOKE_FORGE" != forgejo ] || [ "$SMOKE_BINARY" != tofu ]; then
     # Only these claims ran: their rows replace the old ones (the same claim
     # on the same forge) and every other row stays as the last record left it.
     # Each new row names the commit it ran on; the file's own commit is the
     # last full record's.
     [ -f "$out" ] || { echo "smoke: --only --record needs an existing $out" >&2; exit 2; }
     new="$(jq --arg commit "$(git -C "$HERE/.." rev-parse --short HEAD)" --argjson order "$order" \
-      --slurpfile old "$out" 'def key: (.forge // "forgejo") + " " + .claim;
+      --slurpfile old "$out" 'def key: (.forge // "forgejo") + " " + (.binary // "tofu") + " " + .claim;
         (map(. + {commit: $commit}) | map({key: key, value: .}) | from_entries) as $mine
         | ($old[0].claims | map({key: key, value: .}) | from_entries) as $was
         | [$order[] | ($mine[.] // $was[.]) | select(. != null)]' <<<"$new")"
     if [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then echo "unchanged $out" >&2; exit 0; fi
     jq --argjson c "$new" '.claims = $c' "$out" > "$out.tmp" && mv "$out.tmp" "$out"
-    echo "wrote the rows of $(echo ${SMOKE_ONLY:-$(names)} | wc -w | tr -d ' ') $SMOKE_FORGE claims into $out" >&2
+    echo "wrote the rows of $(echo ${SMOKE_ONLY:-$(names)} | wc -w | tr -d ' ') $SMOKE_FORGE $SMOKE_BINARY claims into $out" >&2
     exit 0
   fi
   # Every Forgejo claim ran; the rows of other forges stay as they were.
   if [ -f "$out" ]; then
-    new="$(jq --argjson order "$order" --slurpfile old "$out" 'def key: (.forge // "forgejo") + " " + .claim;
+    new="$(jq --argjson order "$order" --slurpfile old "$out" 'def key: (.forge // "forgejo") + " " + (.binary // "tofu") + " " + .claim;
       (map({key: key, value: .}) | from_entries) as $mine
-      | ($old[0].claims | map(select((.forge // "forgejo") != "forgejo")) | map({key: key, value: .}) | from_entries) as $was
+      | ($old[0].claims | map(select((.forge // "forgejo") != "forgejo" or (.binary // "tofu") != "tofu")) | map({key: key, value: .}) | from_entries) as $was
       | [$order[] | ($mine[.] // $was[.]) | select(. != null)]' <<<"$new")"
   fi
   # Same verdicts as the last record: keep it, date and all, so nothing diffs.

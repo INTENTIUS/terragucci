@@ -91,6 +91,21 @@ fi
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
 REPO="$USER/example"
+# TG_EXAMPLE_BINARY=terraform|choudoufu: the example written for that binary
+# (stack/binary-tree.py), as stack/smoke.sh's SMOKE_BINARY runs it: in a repo
+# of its own, example-<binary>, under names of its own, shop<tag>-..., so it
+# shares no resource, state or repo with the example. Under choudoufu each
+# root is the estate shopcdf--<root, / as -->, and TG_EXAMPLE_ENDPOINT is the
+# record store proxy the jobs reach floci through. Only up and verify run.
+EX_BINARY="${TG_EXAMPLE_BINARY:-}"
+EX_SHOP=shop
+if [ -n "$EX_BINARY" ]; then
+  tag="$(binary_tag "$EX_BINARY")" || fail "TG_EXAMPLE_BINARY is terraform or choudoufu, not '$EX_BINARY'"
+  case "$CMD" in up|verify) ;; *) fail "under TG_EXAMPLE_BINARY only 'up' and 'verify' run" ;; esac
+  REPO="$USER/example-$EX_BINARY"
+  EX_SHOP="shop$tag"
+fi
+export EX_SHOP
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-example.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -98,7 +113,7 @@ trap 'rm -rf "$WORK"' EXIT
 ensure_repo() {
   if ! api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null; then
     api -o /dev/null -H 'content-type: application/json' -X POST \
-      -d '{"name":"example","description":"The shop: 15 Terraform roots on floci, run by terragucci","private":false,"auto_init":false,"default_branch":"main"}' \
+      -d "{\"name\":\"${REPO#*/}\",\"description\":\"The shop: 15 Terraform roots on floci, run by terragucci\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" \
       "$URL/api/v1/user/repos"
   fi
   api -o /dev/null -H 'content-type: application/json' -X PATCH \
@@ -157,6 +172,11 @@ case "$CMD" in
     ensure_repo
     mkdir -p "$WORK/tree"
     cp -R "$EXAMPLE/." "$WORK/tree/"
+    if [ -n "$EX_BINARY" ]; then
+      python3 "$HERE/binary-tree.py" "$WORK/tree" "$EX_BINARY" "$EX_SHOP" --names "$tag" \
+        ${TG_EXAMPLE_ENDPOINT:+--endpoint "$TG_EXAMPLE_ENDPOINT"} >/dev/null || fail "the example was not written for $EX_BINARY"
+      (cd "$WORK/tree" && "$HERE/../node_modules/.bin/terragucci" init >/dev/null) || fail "init failed on the example for $EX_BINARY"
+    fi
     # BREAK support for the boot claim: skip one root's apply, so the pipeline
     # stays green and only the resource check can notice.
     if [ -n "${TG_SKIP_ROOT:-}" ]; then
@@ -188,7 +208,7 @@ PY
       trap 'rm -rf "$WORK"; smoke_aws_runner_down' EXIT
       smoke_aws_runner_up example || fail "the SMOKE_AWS runner did not start"
     else
-      curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+      curl -fsS -o /dev/null -X PUT "$FLOCI/$EX_SHOP-terraform-state"
     fi
     # The sha depends only on the example's contents, so a capture can rely on it.
     TG_FIXED_DATE=1 apply_main_tree "The shop's estate"
