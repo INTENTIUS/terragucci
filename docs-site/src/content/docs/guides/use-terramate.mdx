@@ -1,0 +1,129 @@
+---
+title: Use Terramate
+description: Add terragucci to a Terramate repo, where each stack is a root, its after and before decide the waves, and stale generated code fails the check.
+claims: [terramate-waves, terramate-affected, terramate-sharing, terramate-stale]
+prompt: |
+  Read https://intentius.io/terragucci/guides/use-terramate/.
+  Run `npx terragucci init --dry-run --json`, list the stacks and waves it found,
+  tell me about anything it refused and why, and open a pull request with the pipeline.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A pipeline whose roots are your [Terramate](https://terramate.io) stacks, applied in the order Terramate gives them, a layer at a time behind the same gate as plain roots.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| `terramate.tm.hcl` at the repo root, or a `stack.tm.hcl` below it | `init` detects Terramate from it |
+| Terramate on the path, or `TERRAGUCCI_TERRAMATE` naming it | `init` runs `terramate list` and `terramate experimental run-graph` |
+| Generated code committed and up to date | the jobs plan what git holds |
+| A remote backend for each stack, such as `s3` | each job starts from a fresh checkout |
+| terragucci installed ([Get your first plan note](/terragucci/getting-started/)) | `init` writes the pipeline |
+
+## Steps
+
+<Steps>
+
+1. Run init.
+
+   ```bash
+   npx terragucci init --dry-run
+   ```
+
+   It prints the stacks and how many waves they make:
+
+   ```text
+   found Terramate (terramate.tm.hcl): 3 stacks in 2 waves from terramate list and the stacks' order, ...
+   ```
+
+2. Write the pipeline.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   Commit it and open a pull request.
+
+</Steps>
+
+## Stacks
+
+| What | How |
+|---|---|
+| A root | a stack `terramate list` names that holds Terraform, by its directory, such as `stacks/app` |
+| A stack with no Terraform | not a root; the order through it is kept |
+| Leaving a stack out | a `.tmskip` file in its directory, as Terramate reads it |
+| `roots` and `synth` | refused: Terramate decides the stacks |
+
+## Waves
+
+```hcl
+stack {
+  id    = "app"
+  after = ["tag:net"]
+}
+```
+
+| What | How |
+|---|---|
+| Order | `after` and `before`, with stack paths, directories and `tag:` filters, as `terramate experimental run-graph` resolves them |
+| Nesting | a parent stack runs before the stacks under it |
+| An `input` block | puts the stack after the one it reads |
+| `terraform_remote_state` between stacks | puts the reader after the stack it reads, as for plain roots |
+| Each wave | one layer, in its own apply job behind its own gate |
+| A path in `after` or `before` that names no stack, or a cycle | `init` stops and names it; Terramate only warns about the path |
+| `waves.canary` | the canary stacks' layers go first |
+
+## Jobs
+
+Every job installs Terramate 0.17.3, checked against the release's `checksums.txt`, then runs `terragucci terramate generate` before it reads the stacks:
+
+| Step | |
+|---|---|
+| `terramate generate --detailed-exit-code` | when it would change a file, the job fails, naming the file; run `terramate generate` and commit, as `terramate run` asks too |
+| Edges | each stack's order and inputs, written to `.terragucci-terramate.json` beside it in the job |
+
+## Pull requests
+
+A pull request plans the stacks its diff touches, and every stack that runs after one of them.
+
+| A pull request that changes | Plans |
+|---|---|
+| `stacks/network` | `stacks/network`, then `stacks/app`, whose `after = ["tag:net"]` matches it |
+| a global in `terramate.tm.hcl`, with the generated code | every stack whose generated files changed, and the stacks after them |
+| a global, without the generated code | nothing: the check fails on the stale code |
+
+## Outputs sharing
+
+An `input` block reads another stack's output:
+
+```hcl
+input "net_name" {
+  backend       = "default"
+  from_stack_id = "network"
+  value         = outputs.name.value
+}
+```
+
+The job reads the upstream's outputs from its state, once it has a cloud credential, and fills the variable Terramate generated. While the upstream has no state, the stack is held back rather than planned on its `mock`, and the plan note says which stack it waits for. The `sharing_backend` command is not run; the stack's own binary reads the state.
+
+| `value` | Read |
+|---|---|
+| `outputs.<name>.value` | that output |
+| `outputs.<name>.value.key` or `["key"]` | a key inside it |
+| Anything else, such as a function call | refused; read the upstream with a `terraform_remote_state` data source |
+| A `from_stack_id` no stack has | refused |
+
+## Not read
+
+Terramate's `watch` files, scripts, `wants` and `wanted_by`, and Terramate Cloud. terragucci's own affected selection and [steps](/terragucci/guides/run-steps/) run instead. A drift pull request, `rollouts` and `generate` are refused, since their edits would land in code `terramate generate` owns; `respond.drift: attribute` names who changed each value in the drift issue.
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Use Atmos](/terragucci/guides/use-atmos/), the same model for component instances

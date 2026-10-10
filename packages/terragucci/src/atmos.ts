@@ -86,6 +86,9 @@ export interface AtmosRead {
 /** The file beside each instance naming its edges and its component's directory: `{ component, dependencies, reads }`. */
 export const EDGES_FILE = ".terragucci-atmos.json";
 
+/** The same file beside each Terramate stack, which `terragucci terramate generate` writes (./terramate.ts). */
+export const TERRAMATE_EDGES_FILE = ".terragucci-terramate.json";
+
 /** The varfile the stage writes with the values of an instance's reads, before it plans. */
 export const READS_VARFILE = "terragucci-atmos-reads.auto.tfvars.json";
 
@@ -382,8 +385,9 @@ export async function atmosWrite(repo: string, options: AtmosOptions = {}): Prom
 
 /** The edges `terragucci atmos write` left beside the instance at `dir`; undefined for a directory that is no instance. */
 export function atmosEdges(dir: string): { component?: string; dependencies: string[]; reads: AtmosRead[] } | undefined {
-  const file = join(dir, EDGES_FILE);
-  if (!existsSync(file)) return undefined;
+  // A Terramate stack's edges are in a file of their own, in the same form.
+  const file = [join(dir, EDGES_FILE), join(dir, TERRAMATE_EDGES_FILE)].find((f) => existsSync(f));
+  if (!file) return undefined;
   try {
     const v = JSON.parse(readFileSync(file, "utf-8")) as { component?: unknown; dependencies?: unknown; reads?: unknown };
     const dependencies = Array.isArray(v.dependencies) ? v.dependencies.filter((d): d is string => typeof d === "string") : [];
