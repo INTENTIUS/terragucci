@@ -48,7 +48,10 @@ gl-state-versions|on GitLab-managed state, each apply wave logs the state addres
 gl-state-export|terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle|
 gl-unlock-state|terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies|
 gl-ephemeral|the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was|
-gl-state-edges|a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output|'
+gl-state-edges|a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output|
+policy|a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial|
+affected|a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone|
+oidc|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
@@ -84,6 +87,9 @@ gl-state-export  weight=100
 gl-unlock-state  weight=100
 gl-ephemeral     weight=100
 gl-state-edges   runner weight=200
+policy           runner weight=150
+affected         runner weight=150
+oidc             runner weight=250
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -2297,5 +2303,241 @@ gitlab_claim_gl_state_edges() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "app's read of net's GitLab state by its address put app in wave 2, and it applied with net's output"
+  return $rc
+}
+
+# ── the sandbox's set on GitLab (#401) ────────────────────────────────────
+
+gitlab_claim_policy() {
+  # main turns on policy with stack/fixtures/policy-wave's plan.rego, which
+  # denies terraform_data. A merge request changes app and rewrites that
+  # policy to deny nothing: the plan job reads main's copy, so the merge
+  # request cannot allow itself. Its plan job fails, terragucci/plan on the
+  # head fails, app is failed in the plan job's report.json, and the plan
+  # note names the denial.
+  # BREAK: main's rule denies nothing, so app plans and the plan job passes.
+  log() { echo "[smoke gitlab policy] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project sha job planned status report note rc=0 denial="terraform_data.probe: terraform_data is not allowed here"
+  local allow='package main\n\nimport rego.v1\n\ndeny contains msg if {\n  input.the_merge_request_allows_itself\n  msg := "unreachable"\n}\n'
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project policy)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
+  mkdir -p "$work/tree/policy"
+  if [ -n "${BREAK:-}" ]; then
+    # shellcheck disable=SC2059 # the rule is the format
+    printf "$allow" > "$work/tree/policy/plan.rego"
+  else
+    cp "$HERE/fixtures/policy-wave/policy/plan.rego" "$work/tree/policy/"
+  fi
+  printf 'policy:\n  engine: conftest\n  path: policy\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed with the policy"; drop_work "$work"; return 1; }
+  gl_push "$work/tree" "$project" main "smoke: main [skip ci]" >/dev/null || { drop_work "$work"; return 1; }
+  echo 2 > "$work/tree/app/rev.txt"
+  # shellcheck disable=SC2059 # the rule is the format
+  printf "$allow" > "$work/tree/policy/plan.rego"
+  sha="$(gl_push "$work/tree" "$project" change "smoke: change app, and let it through")" || rc=1
+  if [ $rc = 0 ]; then
+    MR="$(gl_mr "$project" change "smoke policy")"
+    [ -n "$MR" ] && [ "$MR" != null ] || { log "no merge request for change"; rc=1; }
+  fi
+  [ $rc = 1 ] || gl_wait "$project" "$sha" merge_request_event || rc=1
+  if [ $rc = 0 ]; then
+    job="$(gl_job plan)"
+    planned="$(jq -r --arg j "$job" '.[] | select((.id | tostring) == $j) | .status' <<<"$PIPE_JOBS")"
+    log "plan (job $job): ${planned:-none}"
+    [ "$planned" = failed ] || { log "the policy did not fail the plan job"; rc=1; }
+    status="$(glapi "$(gl_p "$project")/repository/commits/$sha/statuses?name=terragucci/plan&all=true" \
+      | jq -r 'sort_by(.id) | last | if . == null then empty else "\(.status) \(.description // "")" end')"
+    log "terragucci/plan on ${sha:0:8}: ${status:-none}"
+    [ "${status%% *}" = failed ] || { log "terragucci/plan on the head did not fail"; rc=1; }
+    report="$work/report.json"
+    gl_artifact "$project" "$job" terragucci-report/report.json > "$report" 2>/dev/null || : > "$report"
+    jq -e '.roots[] | select(.path == "app" and .status == "failed")' "$report" >/dev/null || { log "app is not failed in the report"; rc=1; }
+    grep -qF "$denial" "$report" || { log "the report does not name the denial"; rc=1; }
+    note="$(gl_note "$project" "$MR")"
+    grep -qF "$denial" <<<"$note" || { log "the plan note on !$MR does not name the denial"; rc=1; }
+  fi
+  [ $rc = 0 ] || gl_trace "$project" "$(gl_job plan)" | grep -iE 'policy|denied|not allowed' | tail -5 >&2 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "merge request !$MR: main's policy denied app although the merge request rewrote it, the plan job and terragucci/plan failed, and the note names the denial"
+  return $rc
+}
+
+gitlab_claim_affected() {
+  # Two roots, app and other, alike but for their state keys. A merge request
+  # changes app alone. Its plan job selects against origin/main, the target
+  # branch: report.json plans app and not other, and the plan note's first
+  # line covers app alone.
+  # BREAK: the plan job unsets CI_MERGE_REQUEST_TARGET_BRANCH_NAME, so it has
+  # no base and plans every root.
+  log() { echo "[smoke gitlab affected] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project wf job report planned covered rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project affected)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
+  mkdir -p "$work/tree/other"
+  sed "s#$project/app.tfstate#$project/other.tfstate#" "$work/tree/app/main.tf" > "$work/tree/other/main.tf"
+  cp "$work/tree/app/rev.txt" "$work/tree/other/rev.txt"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed with two roots"; drop_work "$work"; return 1; }
+  wf="$work/tree/.gitlab/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    gl_before "$wf" plan "unset CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    grep -q 'unset CI_MERGE_REQUEST_TARGET_BRANCH_NAME' "$wf" || { log "could not break the plan job"; drop_work "$work"; return 1; }
+  fi
+  gl_planned_mr "$work/tree" "$project" "smoke affected" || rc=1
+  [ $rc = 1 ] || [ "$PIPE_STATUS" = success ] || { log "the merge request's pipeline ended $PIPE_STATUS"; rc=1; }
+  if [ $rc = 0 ]; then
+    job="$(gl_job plan)"
+    gl_trace "$project" "$job" | grep -E '^(every root|affected:)' | sed 's/^/  /' >&2 || true
+    report="$work/report.json"
+    gl_artifact "$project" "$job" terragucci-report/report.json > "$report" 2>/dev/null || : > "$report"
+    planned="$(jq -r '[.roots[] | select(.status == "planned") | .path] | sort | join(",")' "$report" 2>/dev/null || true)"
+    covered="$(gl_note "$project" "$MR" | head -1 | sed -nE 's/.*roots=([^ ]*) -->.*/\1/p')"
+    log "the report of job $job plans ${planned:-nothing}; the note covers ${covered:-nothing}"
+    [ "$planned" = app ] || { log "the plan job planned ${planned:-nothing}, not app alone"; rc=1; }
+    [ "$covered" = app ] || { log "the plan note covers ${covered:-nothing}, not app alone"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "merge request !$MR changed app: it planned app alone, and the note covers app alone"
+  return $rc
+}
+
+gitlab_claim_oidc() {
+  # oidc names a plan role and an apply role, and app, on a local backend,
+  # reads a data source whose program (probe.mjs) checks the job it runs in:
+  # the job's TERRAGUCCI_OIDC id_token, in AWS_WEB_IDENTITY_TOKEN_FILE, must
+  # verify against the lab's published keys and name this project, pipeline,
+  # job, commit and ref, for the audience sts.amazonaws.com, and AWS_ROLE_ARN
+  # must be the role of the job's kind. Nothing trades the token with STS.
+  # The merge request's plan job holds terragucci-plan, and main's
+  # apply-wave-1 terragucci-apply; each writes what it found to its report
+  # artifact.
+  # BREAK: plan_role and apply_role are swapped, so the plan job holds the
+  # apply role.
+  log() { echo "[smoke gitlab oidc] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project plan_role=terragucci-plan apply_role=terragucci-apply sha job planned applied rc=0
+  [ -n "${BREAK:-}" ] && plan_role=terragucci-apply apply_role=terragucci-plan
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project oidc)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  mkdir -p "$work/tree/app"
+  cat > "$work/tree/app/main.tf" <<'TF'
+terraform {
+  backend "local" {}
+
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.5"
+    }
+  }
+}
+
+data "external" "oidc" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "probe" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+
+output "oidc" {
+  value = data.external.oidc.result
+}
+TF
+  echo 1 > "$work/tree/app/rev.txt"
+  cat > "$work/tree/app/probe.mjs" <<'JS'
+// In a GitLab job: the token in AWS_WEB_IDENTITY_TOKEN_FILE must verify
+// against the keys the instance publishes and name this project, pipeline,
+// job, commit and ref, with the audience AWS reads, and the job's role must be
+// the one its kind gets (plan or apply). What it found goes to
+// terragucci-report/oidc-<plan|apply>.json, which the job keeps as an
+// artifact. Outside a job it checks nothing.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+import { resolve } from "node:path";
+const e = process.env;
+if (e.GITLAB_CI !== "true") { console.log(JSON.stringify({ job: "none" })); process.exit(0); }
+const kind = (e.AWS_ROLE_SESSION_NAME || "none").replace(/^terragucci-/, "");
+const out = resolve(e.CI_PROJECT_DIR || "..", "terragucci-report");
+const found = { kind, source: e.CI_PIPELINE_SOURCE, pipeline_id: e.CI_PIPELINE_ID, job_id: e.CI_JOB_ID, problems: [] };
+const done = (code) => {
+  mkdirSync(out, { recursive: true });
+  writeFileSync(resolve(out, `oidc-${kind}.json`), JSON.stringify(found, null, 2) + "\n");
+  if (code) { console.error("oidc probe: " + found.problems.join("; ")); process.exit(code); }
+  console.log(JSON.stringify({ sub: found.sub, role: found.role }));
+  process.exit(0);
+};
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) { found.problems.push("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the job took no role"); done(1); }
+const [h, p, s] = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim().split(".");
+if (!s) { found.problems.push("the token file holds no JWT"); done(1); }
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const head = dec(h), c = dec(p);
+const ISS = e.CI_SERVER_URL;
+try {
+  const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
+  // The lab advertises https endpoints but serves http, so the keys are read from the issuer's origin.
+  const jwks = new URL(new URL(conf.jwks_uri).pathname, ISS).href;
+  const jwk = (await (await fetch(jwks)).json()).keys.find((k) => k.kid === head.kid);
+  found.verified = head.alg === "RS256" && !!jwk
+    && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
+  if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${jwks}`);
+} catch (err) {
+  found.verified = false;
+  found.problems.push(`the keys of ${ISS} could not be read: ${err.message}`);
+}
+const want = {
+  iss: ISS, aud: "sts.amazonaws.com", project_path: e.CI_PROJECT_PATH, project_id: e.CI_PROJECT_ID,
+  pipeline_id: e.CI_PIPELINE_ID, pipeline_source: e.CI_PIPELINE_SOURCE, job_id: e.CI_JOB_ID, sha: e.CI_COMMIT_SHA,
+  sub: `project_path:${e.CI_PROJECT_PATH}:ref_type:branch:ref:${e.CI_COMMIT_REF_NAME}`,
+};
+for (const [k, v] of Object.entries(want)) if (String(c[k]) !== String(v)) found.problems.push(`${k} is ${c[k]}, not ${v}`);
+found.role = e.AWS_ROLE_ARN.split("/").pop();
+if (found.role !== "terragucci-" + kind) found.problems.push(`a ${kind} job holds ${found.role}`);
+Object.assign(found, { iss: c.iss, aud: c.aud, sub: c.sub, sha: c.sha });
+done(found.problems.length ? 1 : 0);
+JS
+  printf 'forge: gitlab\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/%s\n  apply_role: arn:aws:iam::000000000000:role/%s\n' \
+    "$plan_role" "$apply_role" > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  grep -A1 '^    TERRAGUCCI_OIDC:$' "$work/tree/.gitlab/terragucci.yml" | grep -q 'aud: sts.amazonaws.com' \
+    || { log "the pipeline asks for no TERRAGUCCI_OIDC token for sts.amazonaws.com"; drop_work "$work"; return 1; }
+  # What the probe found in a job, from its report artifact.
+  probe_found() { # job kind
+    gl_artifact "$project" "$1" "terragucci-report/oidc-$2.json" 2>/dev/null | jq -c . 2>/dev/null || true
+  }
+  # The probe passed, in a job of KIND, holding the role of KIND.
+  probe_ok() { # json kind
+    jq -e --arg k "$2" '.kind == $k and .verified == true and .problems == [] and .role == "terragucci-" + $k and .aud == "sts.amazonaws.com"' <<<"$1" >/dev/null 2>&1
+  }
+  gl_planned_mr "$work/tree" "$project" "smoke oidc" || rc=1
+  if [ $rc = 0 ]; then
+    job="$(gl_job plan)"
+    planned="$(probe_found "$job" plan)"
+    log "plan (job $job): ${planned:-the probe wrote nothing}"
+    probe_ok "$planned" plan || { log "the merge request's plan job did not hold a verified token for terragucci-plan"; rc=1; }
+    [ "$PIPE_STATUS" = success ] || { log "the merge request's pipeline ended $PIPE_STATUS"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(gl_push "$work/tree" "$project" main "oidc: apply")" || rc=1
+    [ $rc = 1 ] || gl_wait "$project" "$sha" push || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    job="$(gl_job apply-wave-1)"
+    applied="$(probe_found "$job" apply)"
+    log "apply-wave-1 (job $job): ${applied:-the probe wrote nothing}"
+    probe_ok "$applied" apply || { log "main's apply job did not hold a verified token for terragucci-apply"; rc=1; }
+    [ "$PIPE_STATUS" = success ] || { log "main's pipeline ended $PIPE_STATUS"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the plan job held $(jq -r '"\(.role) for \(.sub)"' <<<"$planned"), the apply job $(jq -r '"\(.role) for \(.sub)"' <<<"$applied"), each token verified against the lab's keys"
   return $rc
 }
