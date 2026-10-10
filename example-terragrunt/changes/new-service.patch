@@ -1,8 +1,8 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 016649e..238b599 100644
+index ee99d9b..51e2304 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
-@@ -142,7 +142,7 @@ jobs:
+@@ -152,7 +152,7 @@ jobs:
            if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
            set +e -uo pipefail
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
@@ -11,7 +11,7 @@ index 016649e..238b599 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
-@@ -264,7 +264,7 @@ jobs:
+@@ -274,7 +274,7 @@ jobs:
              console.log("terragucci: " + cmd + " failed: " + err.message);
              if (cmd === "oidc") process.exit(1);
            }' -- "$@"; }
@@ -20,7 +20,7 @@ index 016649e..238b599 100644
            read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
            EOF
-@@ -299,7 +299,7 @@ jobs:
+@@ -309,7 +309,7 @@ jobs:
            set +e -uo pipefail
            if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
@@ -29,7 +29,7 @@ index 016649e..238b599 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
-@@ -438,7 +438,7 @@ jobs:
+@@ -448,7 +448,7 @@ jobs:
              console.log("terragucci: " + cmd + " failed: " + err.message);
              if (cmd === "oidc") process.exit(1);
            }' -- "$@"; }
@@ -38,7 +38,7 @@ index 016649e..238b599 100644
            read -r TG_PR TG_SHA TG_WAVE <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
            EOF
-@@ -465,7 +465,7 @@ jobs:
+@@ -475,7 +475,7 @@ jobs:
              sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
            done
            trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
@@ -47,7 +47,7 @@ index 016649e..238b599 100644
            read -r again _ _ <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
            EOF
-@@ -479,7 +479,7 @@ jobs:
+@@ -489,7 +489,7 @@ jobs:
            for wave in $(seq 1 "$last"); do
              : >"$outcome"
              rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi
@@ -56,7 +56,7 @@ index 016649e..238b599 100644
              rc=${PIPESTATUS[0]}
              [ -s "$outcome" ] && wave="$(sed -n 's/^wave \([0-9]*\) .*/\1/p' "$outcome")"
              case "$rc" in
-@@ -604,7 +604,7 @@ jobs:
+@@ -614,7 +614,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -65,7 +65,7 @@ index 016649e..238b599 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these roots: plan notes that cover them are stale.
-@@ -636,7 +636,7 @@ jobs:
+@@ -646,7 +646,7 @@ jobs:
            tg status terragucci/apply pending "applying"
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -74,7 +74,7 @@ index 016649e..238b599 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -760,7 +760,7 @@ jobs:
+@@ -770,7 +770,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -83,7 +83,7 @@ index 016649e..238b599 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -884,7 +884,7 @@ jobs:
+@@ -894,7 +894,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -92,7 +92,7 @@ index 016649e..238b599 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -1008,7 +1008,7 @@ jobs:
+@@ -1018,7 +1018,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -101,7 +101,7 @@ index 016649e..238b599 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -1132,7 +1132,7 @@ jobs:
+@@ -1142,7 +1142,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"

@@ -15,14 +15,23 @@ on:
       - created
   schedule:
     - cron: '0 6 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The number of a pull request to re-plan
+        required: false
+        type: string
+      root:
+        description: One root of it to re-plan, a path from the repository root
+        required: false
+        type: string
 
 env:
   TF_IN_AUTOMATION: '1'
   TF_INPUT: '0'
 
 concurrency:
-  group: terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}
+  group: terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '') && format('comment-{0}', github.event.inputs.pr) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -182,9 +191,9 @@ jobs:
     runs-on: docker
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
-    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')
+    if: (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
     concurrency:
-      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}
+      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}
       cancel-in-progress: false
     outputs:
       go: '${{ steps.decide.outputs.go }}'
@@ -998,7 +1007,7 @@ jobs:
     runs-on: docker
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.4.4-tofu1.13.1@sha256:63bbdfe1cfd294a61cf6c6b5fbaa27ee35e3bed6c892493df5d0e86c06a41ce7
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'

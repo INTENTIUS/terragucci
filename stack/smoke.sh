@@ -169,6 +169,7 @@ tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
+reconcile-mixed|a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1|
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
 metrics|the metrics of a plan run reach Prometheus with the counts in its report|
 tg-zero-config|init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits|
@@ -308,6 +309,7 @@ blob-gcs-key|with a service_account key file the job writes the report and both 
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
 note-footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
+replan-dispatch|a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
 cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
 apply-outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
@@ -1581,6 +1583,80 @@ YML
     [ "$(curl -s -o /dev/null -w '%{http_code}' -I "$FLOCI/$b")" = 200 ] || { log "$b is not in floci"; return 1; }
   done
   log "one pull request on $repo, check green, merged, both roots applied in order; in-line unchanged"
+}
+
+claim_reconcile_mixed() {
+  # A control repo whose projects are on three forges: a Forgejo project on
+  # the stack and a GitHub project on stack/mock-github, each with one root
+  # and no pipeline, and a Forgejo project whose forge does not answer.
+  # terragucci reconcile --mode apply opens a real pull request on Forgejo
+  # with the pipeline init writes for Forgejo, and one on the mock with
+  # GitHub's, fails the third project by name, and exits 1.
+  # BREAK: the Forgejo project is listed as forge: github, so reconcile
+  # speaks GitHub's API to Forgejo and opens no pull request there.
+  log() { echo "[smoke reconcile-mixed] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/reconcile-mixed" forge=forgejo mock="tgs-mockgh-mixed-$STAMP" gh_token=tg-mock-github-token gh_repo=terragucci-admin/mixed
+  local port out n pr files i rc=0
+  [ -n "${BREAK:-}" ] && forge=github
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo reconcile-mixed || { drop_work "$work"; return 1; }
+  mkdir -p "$work/tree/app" "$work/control"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "probe" {}\n' > "$work/tree/app/main.tf"
+  push_tree "$work/tree" "$repo" main "reconcile-mixed: one root, no pipeline" >/dev/null || { drop_work "$work"; return 1; }
+  [ -n "$(remote_head "$repo" main)" ] || { log "main is not on Forgejo"; drop_work "$work"; return 1; }
+  # The GitHub project: the same tree on the mock, which serves git over HTTP and GitHub's REST paths under /api/v3.
+  docker run -d --rm --name "$mock" -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
+    -e PORT=8188 -e MOCK_TOKEN="$gh_token" -e "MOCK_PUBLIC_URL=http://127.0.0.1:8188" \
+    public.ecr.aws/docker/library/node:22-bookworm node /srv/server.mjs >/dev/null || { log "the mock did not start"; drop_work "$work"; return 1; }
+  port="$(docker port "$mock" 8188/tcp | head -1 | sed 's/.*://')"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "http://127.0.0.1:$port/__mock/health" 2>/dev/null && break; sleep 1; done
+  ghm() { curl -fsS -H "Authorization: Bearer $gh_token" -H 'content-type: application/json' "$@"; }
+  ghm -o /dev/null -d '{"name":"mixed","default_branch":"main"}' "http://127.0.0.1:$port/api/v3/user/repos" || { log "could not make the repo on the mock"; rc=1; }
+  git -C "$work/tree" push -q "http://x:$gh_token@127.0.0.1:$port/$gh_repo.git" HEAD:refs/heads/main 2>&1 | sed 's/^/  /' >&2 || true
+  ghm -o /dev/null "http://127.0.0.1:$port/api/v3/repos/$gh_repo/branches/main" || { log "main is not on the mock"; rc=1; }
+  cat > "$work/control/terragucci.yml" <<YML
+defaults:
+  binary: tofu
+projects:
+  localhost/$repo:
+    forge: $forge
+    url: $URL/$repo
+  github.com/$gh_repo:
+    url: http://127.0.0.1:$port/$gh_repo
+  forgejo.invalid/smoke/reconcile-mixed:
+    forge: forgejo
+    url: http://127.0.0.1:9/smoke/reconcile-mixed
+YML
+  if [ $rc = 0 ]; then
+    out="$(cd "$work/control" && FORGEJO_TOKEN="$TOKEN" GITHUB_TOKEN="$gh_token" "$TERRAGUCCI" reconcile --config terragucci.yml --mode apply 2>&1)"; n=$?
+    echo "$out" | sed 's/^/  /' >&2
+    [ "$n" = 1 ] || { log "reconcile exited $n, not 1"; rc=1; }
+    grep -q "^forgejo.invalid/smoke/reconcile-mixed: FAILED " <<<"$out" || { log "reconcile did not name the unreachable project as failed"; rc=1; }
+    # The Forgejo pull request, and the files it adds.
+    pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
+    if [ -z "$pr" ]; then
+      log "no pull request from terragucci/pipeline on Forgejo"; rc=1
+    else
+      files="$(api "$URL/api/v1/repos/$repo/pulls/$pr/files" | jq -r '[.[].filename] | sort | join(",")')"
+      log "Forgejo pull request $pr adds $files"
+      grep -q '.forgejo/workflows/terragucci.yml' <<<"$files" || { log "the Forgejo pull request does not add Forgejo's pipeline"; rc=1; }
+    fi
+    # The mock's pull request, and Forgejo's pipeline nowhere in its branch.
+    pr="$(ghm "http://127.0.0.1:$port/api/v3/repos/$gh_repo/pulls?state=open" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
+    if [ -z "$pr" ]; then
+      log "no pull request from terragucci/pipeline on the mock"; rc=1
+    else
+      git clone -q --branch terragucci/pipeline "http://127.0.0.1:$port/$gh_repo.git" "$work/gh" 2>/dev/null || true
+      log "GitHub pull request $pr on the mock; its branch has $(cd "$work/gh" 2>/dev/null && find .github .forgejo -type f 2>/dev/null | sort | tr '\n' ' ')"
+      [ -f "$work/gh/.github/workflows/terragucci.yml" ] && [ ! -e "$work/gh/.forgejo" ] || { log "the GitHub pull request does not carry GitHub's pipeline alone"; rc=1; }
+    fi
+  fi
+  docker stop "$mock" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "one control repo, three forges: Forgejo and GitHub each got a pull request with their own pipeline, the unreachable project failed by name, and reconcile exited 1"
+  return $rc
 }
 
 # ── the plan report ───────────────────────────────────────────────────────
@@ -6954,6 +7030,20 @@ lock_file() { # repo -> _locks/tf-apply.json on chant/lifecycle, empty when ther
   api "$URL/api/v1/repos/$1/raw/_locks%2Ftf-apply.json?ref=chant%2Flifecycle" 2>/dev/null || true
 }
 
+runs_done() { # repo, sha, event -> waits until the head has a run of event and every run on it has finished; prints each
+  local i runs=""
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    runs="$(api "$URL/api/v1/repos/$1/actions/runs?head_sha=$2" 2>/dev/null | jq -c '[.workflow_runs[] | {id, event: .trigger_event, status}]' 2>/dev/null || true)"
+    if jq -e --arg e "$3" 'any(.[]; .event == $e) and all(.[]; .status | IN("success", "failure", "cancelled", "skipped"))' <<<"${runs:-[]}" >/dev/null 2>&1; then
+      log "the runs on ${2:0:8}: $(jq -r 'map("\(.id) \(.event) \(.status)") | join(", ")' <<<"$runs")"
+      return 0
+    fi
+    sleep 3
+  done
+  log "the runs on ${2:0:8} did not finish: ${runs:-none}"
+  return 1
+}
+
 last_reply() { # repo, number -> the last reply terragucci posted on it
   api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
 }
@@ -6965,7 +7055,10 @@ claim_plan_lock() {
   # the reply names canary/one and A, planned by its author. /terragucci unlock
   # on A releases it, and /terragucci plan on B then takes it.
   # BREAK: locks: plan is left out of terragucci.yml, so there is no pr-lock
-  # job and B is never answered as locked.
+  # job and B is never answered as locked. With no job that could post
+  # terragucci/lock, the claim reads B's status once every run on B's head has
+  # finished, rather than waiting out the lock timeout for a status that
+  # cannot come.
   log() { echo "[smoke plan-lock] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -6989,7 +7082,12 @@ claim_plan_lock() {
     [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; rc=1; }
   fi
   pr_b="$(pr_open "$repo" change-b "plan-lock: b")" || { drop_work "$work"; return 1; }
-  got="$(wait_lock_status "$repo" "$head_b" failure)"
+  if [ -n "${BREAK:-}" ]; then
+    runs_done "$repo" "$head_b" pull_request || log "B's runs did not finish"
+    got="$(lock_status "$repo" "$head_b")"
+  else
+    got="$(wait_lock_status "$repo" "$head_b" failure)"
+  fi
   reply="$(last_reply "$repo" "$pr_b")"
   log "B ($pr_b): terragucci/lock ${got:-none}; reply: ${reply:-none}"
   [ "${got%% *}" = failure ] || { log "terragucci/lock on B did not fail"; rc=1; }
@@ -9697,6 +9795,81 @@ claim_note_footer() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "pull request $pr: the note ends with the footer, Forgejo renders its taco, and $img is a PNG"
+  return $rc
+}
+
+claim_replan_dispatch() {
+  # A scratch repo with two roots and a pull request that changes app. Once
+  # its own plan finished, a user who can only read dispatches the plan
+  # workflow with pr set: Forgejo refuses it with 403 and starts no run. The
+  # admin dispatches it with pr set: the run's replan job re-plans the pull
+  # request, posts a new terragucci/plan status on its head, and the
+  # replan-note job edits the same plan note, the only one on the pull
+  # request.
+  # BREAK: the replan job's condition loses its workflow_dispatch clause, so
+  # the dispatched run plans nothing and the note stays as it was.
+  log() { echo "[smoke replan-dispatch] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/replan-dispatch" wf head pr i before after note0 note1 run code reader="smoke-reader-dispatch" pass rc=0
+  local clause=" || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo replan-dispatch || return 1
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  workflow_dispatch:' "$wf" || { log "the pipeline has no workflow_dispatch trigger"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    # A dispatch runs the default branch's workflow, so the cut goes to main.
+    CLAUSE="$clause" perl -pe 's/\Q$ENV{CLAUSE}\E$// if /^    if: \(github\.event_name == .issue_comment/' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    awk '/^  replan:$/ { on = 1; next } on && /^    if: / { print; exit }' "$wf" | grep -q "workflow_dispatch" && { log "BREAK did not cut the dispatch clause from the replan job"; drop_work "$work"; return 1; }
+    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "replan-dispatch: no dispatch clause")" || return 1
+    wait_run "$repo" "$MAIN_SHA" || return 1
+  fi
+  echo 2 > "$work/tree/app/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" dispatch-change "replan-dispatch: change app")" || return 1
+  pr="$(pr_open "$repo" dispatch-change "replan-dispatch: change app")" || return 1
+  log "pull request $pr for ${head:0:8}"
+  # The pull request's own plan first: pending, then its verdict, and its note.
+  notes() { api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -c '[.[] | select(.body | startswith("<!-- terragucci:plan")) | {id, updated_at}]'; }
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(statuses_of "$repo" "$head" terragucci/plan)" -ge 2 ] && [ "$(notes | jq length)" = 1 ] && break
+    sleep 3
+  done
+  before="$(statuses_of "$repo" "$head" terragucci/plan)"
+  note0="$(notes)"
+  [ "$before" -ge 2 ] && [ "$(jq length <<<"$note0")" = 1 ] || { log "the pull request's own plan never finished with one note ($before statuses, notes $note0)"; drop_work "$work"; return 1; }
+  dispatch() { # curl auth args... -> the HTTP code; the body in $work/dispatch.json
+    curl -sS -o "$work/dispatch.json" -w '%{http_code}' "$@" -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg pr "$pr" '{ref: "main", inputs: {pr: $pr}, return_run_info: true}')" \
+      "$URL/api/v1/repos/$repo/actions/workflows/terragucci.yml/dispatches"
+  }
+  # A reader may not dispatch: Forgejo answers 403 and starts nothing.
+  pass="Smoke-$STAMP-r9"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$reader" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || { log "could not create $reader"; rc=1; }
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"read"}' "$URL/api/v1/repos/$repo/collaborators/$reader" || { log "could not add $reader as a reader"; rc=1; }
+  code="$(dispatch -u "$reader:$pass")"
+  log "a reader's dispatch: $code $(jq -r '.message // empty' "$work/dispatch.json" 2>/dev/null)"
+  [ "$code" = 403 ] || { log "Forgejo did not refuse the dispatch of a reader"; rc=1; }
+  # The admin's dispatch: a run of its own, whose replan job plans the pull request.
+  code="$(dispatch -H "Authorization: token $TOKEN")"
+  run="$(jq -r '.id // empty' "$work/dispatch.json" 2>/dev/null)"
+  [ "$code" = 201 ] && [ -n "$run" ] || { log "the dispatch answered $code with no run"; drop_work "$work"; return 1; }
+  ephemeral_wait "$repo" "$run"
+  log "run $run, jobs: $(api "$URL/api/v1/repos/$repo/actions/runs/$run/jobs" | jq -r 'map("\(.name) \(.status)") | join(", ")')"
+  for i in $(seq 1 20); do
+    after="$(statuses_of "$repo" "$head" terragucci/plan)"
+    note1="$(notes)"
+    [ "$after" -gt "$before" ] && [ "$note1" != "$note0" ] && break
+    sleep 3
+  done
+  log "terragucci/plan statuses on the head: $before before, $after after; plan notes $note0 then $note1"
+  [ "$after" -gt "$before" ] || { log "the dispatch posted no new terragucci/plan status on the head"; rc=1; }
+  [ "$(jq length <<<"$note1")" = 1 ] && [ "$(jq -r '.[0].id' <<<"$note1")" = "$(jq -r '.[0].id' <<<"$note0")" ] || { log "the re-plan did not keep one plan note"; rc=1; }
+  [ "$(jq -r '.[0].updated_at' <<<"$note1")" != "$(jq -r '.[0].updated_at' <<<"$note0")" ] || { log "the re-plan did not update the plan note"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "a reader's dispatch was refused; the admin's dispatch of pull request $pr re-planned it and updated its one note"
   return $rc
 }
 
@@ -16187,6 +16360,7 @@ traces          ex otel! after=boot weight=330
 highlight       ex after=boot weight=300
 tips            ex after=boot weight=300
 reconcile       runner self! weight=300
+reconcile-mixed self! weight=60
 rollout         runner self! weight=250
 fresh-plan      ex after=boot weight=250
 waves           runner self! weight=200
@@ -16332,6 +16506,7 @@ blob-gcs-key         gcs! weight=120
 blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
 note-footer          runner self! weight=150
+replan-dispatch      runner self! weight=150
 cdf-shared-bucket    weight=120
 cdktn-synth          runner self! weight=200
 audit                weight=150
