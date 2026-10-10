@@ -1742,6 +1742,22 @@
       "commit": "fd59fd2a"
     },
     {
+      "claim": "cdf-migrate",
+      "says": "with binary: choudoufu a migration moves a resource between two estates by rewriting its ownership tags: proved by both plans, approved by digest, after which the next plan of both shows no change and the move is on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "05533250"
+    },
+    {
+      "claim": "cdf-adopt",
+      "says": "with binary: choudoufu a migration adopts a root on s3 state into an estate: proved against the live system, approved by digest, its resources stamped with no change, and its old state left as the version it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "05533250"
+    },
+    {
       "claim": "cdktn-synth",
       "says": "with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches",
       "needs": null,
@@ -1939,7 +1955,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "bbf48896"
+    },
+    {
+      "claim": "migrate-backend-tfe",
+      "says": "a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bbf48896"
     },
     {
       "claim": "migrate-revert",
