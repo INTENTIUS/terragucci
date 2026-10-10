@@ -4730,7 +4730,8 @@ HCL
         live/prod/payments) want="$arn::333333333333:role/payments-$phase" ;;
         *) want="$arn::333333333333:role/pipelines-$phase" ;;
       esac
-      got="$(cd "$tree/$unit" && TERRAGUCCI_REPO="$tree" TERRAGUCCI_PHASE="$phase" TERRAGUCCI_TG_ROLES="$roles" AWS_WEB_IDENTITY_TOKEN_FILE="$tree/.oidc-token" "$TERRAGUCCI" auth-provider 2>/dev/null | jq -r '.awsRole.roleARN // "none"')"
+      # The repo as the unit's working directory resolves it: TMPDIR may sit behind a symlink, as /var does on macOS.
+      got="$(cd "$tree/$unit" && TERRAGUCCI_REPO="$(cd "$tree" && pwd -P)" TERRAGUCCI_PHASE="$phase" TERRAGUCCI_TG_ROLES="$roles" AWS_WEB_IDENTITY_TOKEN_FILE="$tree/.oidc-token" "$TERRAGUCCI" auth-provider 2>/dev/null | jq -r '.awsRole.roleARN // "none"')"
       [ "$got" = "$want" ] || { log "$phase: $unit assumes $got, not $want"; rc=1; }
     done
   done
