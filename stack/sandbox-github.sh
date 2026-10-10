@@ -71,6 +71,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
 CMD="${1:-}"; shift || true
+# Everything but minutes, shot and usage acts on the github.com sandbox; a person starts it (stack/human-gate.sh).
+case "$CMD" in up|change|merge|approve|plan-comment|pr-apply|drift|capture|prove|reset) . "$HERE/human-gate.sh"; human_gate "the github.com sandbox ($CMD), on GitHub-hosted runners, for up to an hour";; esac
 
 REPO="${TERRAGUCCI_SANDBOX_REPO:-INTENTIUS/terragucci-sandbox}"
 DIR="${TERRAGUCCI_SANDBOX_DIR:-${TMPDIR:-/tmp}/terragucci-sandbox}"

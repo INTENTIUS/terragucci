@@ -319,7 +319,7 @@ The page's "What is left" list shows the same cells, without the commands.
 
 Run it on demand, when the host is quiet. Review the rows and captures it writes, and commit them. A cell that reads "none" for a repo shape, or for a forge, needs a new claim first. `coverage-gaps` names which.
 
-Neither command runs in CI.
+Neither command runs in CI. Every test bench, `coverage-fill` included, asks a person to type `run` in their own terminal before it starts (`stack/human-gate.sh`). Without a terminal it stops with exit 3, so a coding agent cannot start one. The nightly, capture and scale workflows are disabled; `gh workflow enable <name>` turns one back on.
 
 ### The real-AWS pilot (SMOKE_AWS=1)
 

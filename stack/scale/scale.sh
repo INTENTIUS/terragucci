@@ -474,6 +474,8 @@ run_scale() { # scale
 }
 
 case "${1:-}" in
+  up|run) . "$HERE/../human-gate.sh"; human_gate "the scale bench on its own stack" ;; esac
+case "${1:-}" in
   up) up ;;
   down) down ;;
   run)
