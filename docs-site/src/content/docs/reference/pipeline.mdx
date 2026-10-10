@@ -13,14 +13,14 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 | Forge | Apply jobs wait in |
 |---|---|
 | GitHub | one concurrency group with `queue: max`; check that your GitHub Enterprise Server supports it |
-| GitLab | a resource group |
+| GitLab | a resource group; with `waves.jobs`, the lock on the remote |
 | Forgejo | a named group, plus a lock on the remote that a waiter takes over once the holder's run ends or its lease is two hours old |
 
 On Forgejo 16.0.5 and earlier, a run waiting in the group can stay waiting with the runner idle after the run ahead of it ends, when that run's last job was skipped or the run was cancelled before any job started. Forgejo hands the waiting job out once any other job in the instance ends, or once forgejo-runner restarts.
 
 | Rule | What happens |
 |---|---|
-| [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | on GitHub and Forgejo every apply job takes the lock on the remote, held by the run rather than by one job, so a wave's share jobs apply side by side outside the concurrency group while another push's apply waits; on GitHub the apply a comment starts and the resume job take it too |
+| [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | every apply job takes the lock on the remote, held by the run (on GitLab, the pipeline) rather than by one job, so a wave's share jobs apply side by side outside the concurrency group while another push's apply waits; on GitHub the apply a comment starts and the resume job take it too |
 | Stand-down | a wave whose commit is no longer the branch tip stands down, on GitHub and Forgejo |
 | Pull request locks | none under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks), from a pull request's first plan; under `apply.when: pull-request`, an applying pull request or one a writer comments `/terragucci lock` on locks the roots it reaches (in a Terragrunt repo, the units) |
 | Parallelism | `tf-plan`, `tf-drift` and `tf-apply` plan and apply a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise, and 16 units for Terragrunt's `run --all` on other backends |
@@ -66,9 +66,9 @@ Every comment command is checked before any credential is used. A failed check s
 | The head is in this repository, not a fork | yes | yes | yes | yes | yes | yes |
 | The pull request is open | yes | merged instead | yes | yes | yes | `plan`; merged instead for `apply`; open for `apply`, `lock` and `unlock` with `apply.when: pull-request` |
 | `apply.when` is `pull-request` | | | yes | yes | | `lock`, `unlock`, and `apply` on an open merge request |
-| `agent.comment` is set | | | | | yes | |
+| `agent.comment` is set | | | | | yes | `agent` |
 | The base is the default branch | | yes | yes | yes | | `apply` |
-| The head is not the default branch | | | | | yes | |
+| The head is not the default branch | | | | | yes | `agent` |
 | A named root is a root of the pipeline | yes | | | | | `plan` |
 | A named wave exists | | yes | yes | | | `apply` refuses `wave-<n>` |
 | The merge commit is still on the default branch | | yes | | | | |
@@ -293,7 +293,7 @@ GitLab expands the references in each job. This names one state, `infra`, for a 
 
 ### The agent comment
 
-With `agent.comment` set on GitHub or Forgejo, `/terragucci agent <ask>` on a pull request starts the two jobs below. Neither gets a cloud role.
+With `agent.comment` set, `/terragucci agent <ask>` on a pull request starts the two jobs below. Neither gets a cloud role. On GitLab the `comments` job answers the note and starts them in a pipeline of the default branch with `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE` and `TERRAGUCCI_AGENT_HEAD`; each job reads the merge request and the note from GitLab again, and the agent runs under `env -i` with the prompt, the turn limit and the model's key alone, since GitLab hands every job the project's variables.
 
 | Job | Token | Does |
 |---|---|---|
@@ -308,7 +308,7 @@ The push starts the pull request's plan job, which plans the change with its rea
 
 | Path | Where | Kind |
 |---|---|---|
-| `.github/`, `.forgejo/`, `.gitea/`, `.gitlab-ci.yml` | repo root | CI |
+| `.github/`, `.forgejo/`, `.gitea/`, `.gitlab/`, `.gitlab-ci.yml` | repo root | CI |
 | `terragucci.yml` (or `.yaml`, `.json`, `.ts`) | repo root | config |
 | [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/` | repo root | approvals |
 | the signers file `.chant/trust.json` names | where it points | approvals |
@@ -331,11 +331,12 @@ The pull request starts the plan job like any other, and its merge applies throu
 
 ### The review
 
-With `review.agent` set on GitHub or Forgejo, `init` writes a second workflow, `terragucci-review.yml`, beside the pipeline. The forge runs it from the default branch, so a pull request that edits it changes nothing until it merges.
+With `review.agent` set on GitHub or Forgejo, `init` writes a second workflow, `terragucci-review.yml`, beside the pipeline. The forge runs it from the default branch, so a pull request that edits it changes nothing until it merges. On GitLab the `review` and `review-note` jobs are in the pipeline file, and run only in the pipeline of the default branch that the `comments` job starts for a merge request's head once its plan job ended (`TERRAGUCCI_REVIEW_MR`, `TERRAGUCCI_REVIEW_HEAD`).
 
 | Forge | Runs on | Waits for the plan |
 |---|---|---|
 | GitHub | `workflow_run`, when the pipeline's `pull_request` run of a pull request from the repo completes, passed or failed | the run that started it has finished |
+| GitLab | the comments schedule's next run, for an open merge request from the project | its plan job has ended |
 | Forgejo | `pull_request_target` of a pull request from the repo (opened, reopened, synchronize); Forgejo has no `workflow_run` | the `review` job waits up to 30 minutes for the `plan` job of the pipeline's run of the head, then reviews without its report |
 
 Its two jobs get no cloud role.
@@ -345,7 +346,7 @@ Its two jobs get no cloud role.
 | `review` | the job's own: on GitHub it reads contents, actions and pull requests; the command's step runs without it | checks out the head with the whole history and no credentials kept; `terragucci review prompt` reads the pull request, fetches the plan job's report from the pipeline's run of the head, and writes the prompt from them and the diff, with the instructions from the default branch; runs the review command in the default branch's files with the prompt on stdin and the model's key in that step alone; keeps what it prints, its exit code, and the pull request, head and base it reviewed as the `terragucci-review-<head>` artifact |
 | `review-note` | the job's own, to comment | in a fresh container, `terragucci review post` posts the review as one note, or edits the note it posted before |
 
-The note's first line is a marker with the head and the risk, for people to read. A `tf-apply` wave reads the risk from the `terragucci-review-<head>` artifact instead, and only from a run of the default branch's review workflow, as [`input.review`](/terragucci/reference/policy/#review); on GitHub its job gets `actions: read` for that. [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) covers the setup.
+The note's first line is a marker with the head and the risk, for people to read. A `tf-apply` wave reads the risk from the `terragucci-review-<head>` artifact instead, and only from a run of the default branch's review workflow, as [`input.review`](/terragucci/reference/policy/#review); on GitHub its job gets `actions: read` for that. On GitLab the marker also names the review job, and the wave reads that job's `terragucci-review/` artifact once GitLab says the job is `review` in a pipeline of the default branch. [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) covers the setup.
 
 ### Terragrunt
 

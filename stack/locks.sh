@@ -9,6 +9,8 @@ SMOKE_LOCKS_DEFAULT="$HERE/.state/locks"
 if common="$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" && [ -d "$(dirname "$common")/stack" ]; then
   SMOKE_LOCKS_DEFAULT="$(dirname "$common")/stack/.state/locks"
 fi
+# The GitLab lab is one too (compose project tglab), with locks of its own beside the stack's.
+[ "${SMOKE_FORGE:-}" != gitlab ] || SMOKE_LOCKS_DEFAULT="$SMOKE_LOCKS_DEFAULT/gitlab"
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$SMOKE_LOCKS_DEFAULT}"
 
 # ── the stack lock: one lock per shared resource ──
