@@ -273,7 +273,7 @@ describe("version per root glob in terragucci.yml", () => {
     expect(problems({ version: { a: 1.1 } })).toMatch(/version\["a"\] must be a release version/);
     expect(problems({ version: { a: "latest" } })).toMatch(/version\["a"\] must be a release version/);
     expect(problems({ version: ["1.9.1"] })).toMatch(/version must be a release version, or a map/);
-    expect(problems({ binary: "choudoufu", version: { a: "0.23.0" } })).toMatch(/choudoufu runs one release/);
+    expect(problems({ binary: "choudoufu", version: { a: "0.24.0" } })).toMatch(/choudoufu runs one release/);
     expect(problems({ defaults: { version: { a: "1.9.1" } }, projects: { "github.com/o/r": {} } })).toMatch(/defaults\.version: a version per root glob goes in the project's own terragucci\.yml/);
   });
 });

@@ -1,7 +1,7 @@
 ---
 title: Locking and staleness with choudoufu
 description: What two applies of one estate, a killed apply and a stale plan do with choudoufu, beside a state file and its lock, each row with the check that proves it.
-claims: [apply-per-root, apply-serial, unlock-state, lock-wait, audit-refused, cdf-rows-overlap, cdf-rows-wait, cdf-rows-takeover, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket]
+claims: [apply-per-root, apply-serial, unlock-state, lock-wait, audit-refused, cdf-rows-overlap, cdf-rows-wait, cdf-rows-takeover, cdf-killed-records, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket]
 ---
 
 With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), changes to different resources of one estate apply at the same time, an overlapping change waits (or is refused) before it reaches the cloud, and a plan made stale by another apply is refused. Nothing is left to release.
@@ -16,7 +16,7 @@ Each row names the check that proves it: terragucci's on [Validation](/terragucc
 |---|---|---|
 | a run applying other resources of the estate | applies beside it (`cdf-rows-overlap`) | the same |
 | a run applying a resource it changes | waits for that run, then plans again and applies, with no call to the cloud while it waits (`cdf-rows-wait`) | refused at once; the reply names the run, and you comment `/terragucci apply` again once it is done |
-| a run that was killed while applying it | takes over what that run held, with nothing to release; the apply re-reads the live system and refuses a plan the killed run made stale (`cdf-rows-takeover`) | the same |
+| a run that was killed while applying it | takes over what that run held, with nothing to release; the apply re-reads the live system and refuses a plan the killed run made stale (`cdf-rows-takeover`), and what the killed run finished applying has its record (`cdf-killed-records`) | the same |
 
 Once the gate lets a wave through, and before its apply re-reads the live system, the wave holds each resource its plans create, update, delete, replace or forget. Data reads and resources with no change hold nothing. A resource is keyed by its estate and address, by the address it moved from, and for an update or a delete by the live object's ID, so two estates that manage one object meet on it.
 
@@ -34,7 +34,7 @@ Only choudoufu applies this way. Holding a resource means something only when it
 |---|---|---|
 | Writes | one record per resource, each write conditional | one state file, so the second apply waits for the state lock |
 | A plan another apply staled | refused only when one of its own changes moved | refused when anything in the root moved ("Saved plan is stale") |
-| A killed apply's work | marked in each create call, so the next run finds it | a resource created after the last state write is unknown to the next plan |
+| A killed apply's work | marked in each create call, and recorded when its apply returns, so the next run finds it | a resource created after the last state write is unknown to the next plan |
 
 An apply that does not go through the pipeline, such as `choudoufu apply` on a laptop, holds nothing, so the pipeline cannot wait for it; [the table below](#stock-and-choudoufu) says how the two settle. To keep the pipeline the only writer, give the apply role a trust policy that only your CI's identity on the default branch can assume ([credentials](/terragucci/reference/pipeline/#credentials)), and no person that role. A role scoped to one estate by its ownership tag ([live resource markers](#live-resource-markers)) confines each pipeline to its own estate.
 
@@ -45,9 +45,9 @@ Terraform and OpenTofu (stock) keep a state file behind a lock. choudoufu keeps 
 | | Stock | choudoufu |
 |---|---|---|
 | A killed apply | the state lock stays held until [`terragucci unlock-state`](/terragucci/guides/release-a-state-lock/) frees it after an approval (`unlock-state`) | no lock is held, so there is nothing to release, and `force-unlock` refuses ([claim 2](https://intentius.io/choudoufu/docs/claims/no-self-managed-locks/)) |
-| What a killed apply created | a resource created after the last state write is unknown to the next plan, and the re-run creates a second one ([claim 5](https://intentius.io/choudoufu/docs/claims/recovery-is-a-rerun/), its markers withheld) | a resource marked in its create call is named by the next plan and bound by the re-run, with no duplicate; [claim 42](https://intentius.io/choudoufu/docs/claims/a-killed-apply-hides-nothing/) names the types marked only after their create |
-| A stale saved plan | a wave applies only plans whose digest the approval covered (`audit-refused`) | the same, and the apply re-reads the live system: if one of the plan's changes moved in address, action, live object or value, it refuses and names it ([claim 15](https://intentius.io/choudoufu/docs/claims/apply-what-was-approved/)) |
-| Two applies that meet outside the pipeline, such as a laptop and CI | the second waits for the state lock (`lock-wait`) | on different resources, both land and neither waits (`cdf-concurrency`); on one record, one lands, the other fails naming it and overwrites nothing, and its re-plan shows the value that landed (`cdf-write-race`) |
+| What a killed apply created | a resource created after the last state write is unknown to the next plan, and the re-run creates a second one ([claim 5](https://intentius.io/choudoufu/docs/claims/recovery-is-a-rerun/), its markers withheld) | a resource marked in its create call is named by the next plan and bound by the re-run, with no duplicate; a resource whose apply returned before the kill already has its record, so the next plan leaves it alone (`cdf-killed-records`); [claim 42](https://intentius.io/choudoufu/docs/claims/a-killed-apply-hides-nothing/) names the types marked only after their create |
+| A stale saved plan | a wave applies only plans whose digest the approval covered (`audit-refused`) | the same, and the apply re-reads the live system: if one of the plan's changes moved in address, action, live object or value, it refuses and names it ([claim 15](https://intentius.io/choudoufu/docs/claims/apply-what-was-approved/)); for an attribute the cloud holds, such as a queue's visibility timeout, this re-read is what refuses the second of two saved plans ([an attribute the cloud holds](https://intentius.io/choudoufu/docs/model/concurrency/#an-attribute-the-cloud-holds)) |
+| Two applies that meet outside the pipeline, such as a laptop and CI | the second waits for the state lock (`lock-wait`) | on different resources, both land and neither waits (`cdf-concurrency`); on one record, one lands, the other fails naming it and overwrites nothing, and its re-plan shows the value that landed (`cdf-write-race`); on an attribute the cloud holds and no record keeps, two plain applies are last-writer-wins, and only applies of saved plans refuse ([an attribute the cloud holds](https://intentius.io/choudoufu/docs/model/concurrency/#an-attribute-the-cloud-holds)) |
 | Ownership | the root's state file | a tag on each resource; a role scoped by the estate tag is refused on another estate's resources (`cdf-iam`); one bucket for every estate (`cdf-shared-bucket`) |
 | Lock-wait metrics | with choudoufu as the binary, each wait is a `State lock wait` span in the report and `terragucci_lock_wait_seconds` (`lock-wait`) | none: no lock, and the report lists no waits (`cdf-concurrency`) |
 
