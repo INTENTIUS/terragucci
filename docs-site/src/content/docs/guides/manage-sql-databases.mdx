@@ -1,6 +1,6 @@
 ---
 title: Manage SQL databases
-description: SQL Yodeler runs a ClickHouse or Postgres schema through the same pull request flow as a Terraform root, from plan note to drift issue.
+description: A database unit runs a chant sql project's ClickHouse or Postgres schema through the same pull request flow as a Terraform root, from plan note to drift issue.
 claims: [sql-ch-plan, sql-ch-apply, sql-ch-drift, sql-pg-plan, sql-pg-apply, sql-pg-drift]
 draft: true
 prompt: |
@@ -14,7 +14,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
-SQL Yodeler is terragucci's database unit. A [chant](https://intentius.io/chant/) project that declares a ClickHouse or Postgres schema with the `sql` lexicon gets the pipeline a Terraform root gets:
+A database unit is a chant sql project: a [chant](https://intentius.io/chant/) project that declares a ClickHouse or Postgres schema with the `sql` lexicon. terragucci plans it with `chant sql plan`, applies it with the project's `ApplyOp` behind the wave's gate, and checks it for drift with `chant lifecycle diff`. It gets the pipeline a Terraform root gets:
 
 - a plan note on every pull request, with each change classified by what it does to the server;
 - an apply after the merge, behind the wave's gate, with the approval bound to the plan's digest;
@@ -35,7 +35,7 @@ A change the database cannot make in place is refused on the pull request, and n
 
 <Steps>
 
-1. Make a chant project for the database in a directory of its own, `db` here. Its `package.json` names chant and the `sql` lexicon, and a build script that writes `dist/schema.json`:
+1. Make a chant sql project for the database in a directory of its own, `db` here. Its `package.json` names chant and the `sql` lexicon at 0.112.1, the version the database unit is tested with, and a build script that writes `dist/schema.json`:
 
    ```json title="db/package.json"
    {
@@ -46,8 +46,8 @@ A change the database cannot make in place is refused on the pull request, and n
        "build": "chant build src --lexicon sql -o dist/schema.json"
      },
      "devDependencies": {
-       "@intentius/chant": "^0.112.0",
-       "@intentius/chant-lexicon-sql": "^0.112.0",
+       "@intentius/chant": "0.112.1",
+       "@intentius/chant-lexicon-sql": "0.112.1",
        "typescript": "^5.9.3"
      }
    }
@@ -181,3 +181,7 @@ The comparison is between the database and what main declares, so a change merge
 - The check job formats and validates Terraform roots. Run `npx chant lint` in the project to lint the schema.
 - `policy` and `cost` read Terraform plans, and leave units out.
 - An `ApplyOp` with a gate of its own stops at that gate, and the wave fails, saying so.
+
+## Versioned migrations
+
+A database unit applies the declared schema directly and keeps no migration history. [SQL Yodeler](https://intentius.io/sql-yodeler/) is the tool for versioned migrations, migration lint, data steps and its own approval flow; [its workflows page](https://intentius.io/sql-yodeler/workflows/) explains how its declarative and versioned paths differ.
