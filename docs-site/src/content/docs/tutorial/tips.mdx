@@ -13,7 +13,7 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
@@ -31,8 +31,8 @@ Dev search now lets the AWS provider float to any 6.x release (`~> 6.0`).
 | plan note | a line counting the tips |
 | report | a Tips section |
 
-<Shot step="tips" view="note" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting the tips on how the roots are set up" />
+<Recorded step="tips" view="note" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting the tips on how the roots are set up" optional />
 
-<Shot step="tips" view="report" alt="The Tips section of the HTML report, from its heading through its last tip: terragucci-floating-range for envs/dev/search among them, each tip linked to its rule's page" />
+<Recorded step="tips" view="report" alt="The Tips section of the HTML report, from its heading through its last tip: terragucci-floating-range for envs/dev/search among them, each tip linked to its rule's page" optional />
 
 Tips never fail a run or change a plan or its digest; `tips: false` removes them. [Tips](/terragucci/reference/tips/) lists the rules.

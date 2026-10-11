@@ -8,7 +8,6 @@ prompt: |
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
-import Shot from '../../../components/Shot.astro';
 
 With `policy` in `terragucci.yml`, `tf-plan` fails each planned root whose plan JSON your Rego denies.
 
@@ -179,8 +178,6 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 
 ## Denials
 
-<Shot step="policy" view="note" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
-
 | Case | Result |
 |---|---|
 | a root's policy denies it | the root fails and the job exits 1; the denials and their rule ids go to `roots[].policy` in the report |
@@ -283,8 +280,6 @@ terragucci reads `origin/<branch>`, and the checkout needs that ref fetched. `TG
 ### tf-check
 
 `tf-check` runs `conftest verify` or `opa test` on the base branch's policy and fails on a failing test. A directory with no `*_test.rego` is skipped.
-
-<Shot step="policy" view="log" alt="The failed check job in Forgejo, its check step open where conftest verify failed on the policy read from origin/main and named the test test_denies_an_instance" optional />
 
 ### tf-apply
 

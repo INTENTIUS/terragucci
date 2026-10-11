@@ -9,7 +9,6 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
 import { Steps } from '@astrojs/starlight/components';
 
 ## Result
@@ -60,11 +59,7 @@ Every root that pins the module moved to the new version through one pull reques
 
    `--mode apply` writes to the forge and runs no `terraform apply`; roots apply after the merge. It opens one pull request for the canary wave, or the first in dependency order. Only that wave's files change, and each pin keeps its shape.
 
-   <Shot step="pin" view="pull" alt="The description of the rollout's wave 1 pull request: modules/service 1.0.0 to 1.1.0 for the four dev service roots, and wave 2 opening once they have merged and applied" optional />
-
 4. Review and merge it. The apply stage runs on the merge commit.
-
-   <Shot step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" optional />
 
 5. Let the next wave open. With `rollouts` set, `init` writes a job that runs `terragucci respond rollout --mode apply` on that schedule:
 

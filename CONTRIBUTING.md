@@ -99,7 +99,6 @@ just ci-check    # fail if a committed workflow differs from its declaration
 |---|---|
 | `ci/pipeline.ts` | `.github/workflows/ci.yml` |
 | `pages/pipeline.ts` | `.github/workflows/pages.yml` |
-| `capture/pipeline.ts` | `.github/workflows/capture.yml` |
 | `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
 | `publish/pipeline.ts` | `.github/workflows/publish.yml` |
 | `ci-red/pipeline.ts` | `.github/workflows/ci-red.yml` |
@@ -165,7 +164,7 @@ To prove a change on the stack, run `just claims-affected` (or `just claims <nam
 | a docs page | the claims its `claims:` line newly lists |
 | anything else | the claims `stack/claim-paths.txt` names for its path, none when no line names it |
 
-The picked claims run plain and under `BREAK=1`, six at a time with the locks `CLAIM_GROUPS` gives them, and their rows replace theirs in `smoke.json`. A run whose log stops growing for `SMOKE_STALL_MIN` minutes (the claim timeout plus two, 17 by default) is stopped and fails as stalled, with its last lines and the stack's job containers printed. The full `just smoke-record` runs for a release. The tutorial's captures do not: a person refreshes them by hand when they choose (below), and neither a change nor a release waits on them. The capture workflow is disabled.
+The picked claims run plain and under `BREAK=1`, six at a time with the locks `CLAIM_GROUPS` gives them, and their rows replace theirs in `smoke.json`. A run whose log stops growing for `SMOKE_STALL_MIN` minutes (the claim timeout plus two, 17 by default) is stopped and fails as stalled, with its last lines and the stack's job containers printed. The full `just smoke-record` runs for a release. Captures do not. Only tutorial pages hold captures, each `optional`, and a person takes one by hand when a page needs it (below). Neither a change nor a release waits on a capture, and no workflow captures.
 
 ### Capturing one step or all of them
 
@@ -176,44 +175,55 @@ just capture check                 # one step; several names capture several
 just capture --reuse wave-refused  # one step on the example as it is running now
 ```
 
-A capture runs on the capture stack (`TG_STACK=capture`, `stack/instance.sh`): its own Forgejo, runner and floci on host ports 100 above the shared stack's, with a lock directory of its own, so the smoke claims never wait for a capture. It holds that stack alone (`stack!`), so two captures take turns. `TG_STACK=shared just capture <step>` captures on the shared stack instead, holding the claims' `stack!` lock as an exclusive claim does; the capture workflow does that, since its runner has one stack. `just capture-stack-down` removes the capture stack. A capture never tears its stack down: its boot makes the example's repo afresh and wipes floci (`just example up --fresh`), and the Forgejo every worktree's token works against stays up. Before the first step it checks that the CI image the example's pipeline pins has every `terragucci` command the pipeline runs; a pipeline ahead of its published image fails its plan-note job on every pull request, and every note picture would show a pull request without a note.
+A capture runs on the capture stack (`TG_STACK=capture`, `stack/instance.sh`): its own Forgejo, runner and floci on host ports 100 above the shared stack's, with a lock directory of its own, so the smoke claims never wait for a capture. It holds that stack alone (`stack!`), so two captures take turns. `TG_STACK=shared just capture <step>` captures on the shared stack instead, holding the claims' `stack!` lock as an exclusive claim does. `just capture-stack-down` removes the capture stack. A capture never tears its stack down: its boot makes the example's repo afresh and wipes floci (`just example up --fresh`), and the Forgejo every worktree's token works against stays up. Before the first step it checks that the CI image the example's pipeline pins has every `terragucci` command the pipeline runs; a pipeline ahead of its published image fails its plan-note job on every pull request, and every recorded note would be missing.
 
 The steps run in a fixed order (`STEPS` in `stack/tutorial-capture.sh`), each starting where the one before it left the example, so pull request and run numbers are the same on every capture. A step needs one of three things:
 
 | Needs | Steps | Captured alone, the script |
 |---|---|---|
 | `fresh` | boot | makes the example afresh, as the step itself does |
-| `chain` | first-pr, check, one-note, wave-waiting, wave-refused, pin | boots the example fresh and replays every step before it without recording anything, so its numbers match a full capture |
-| `booted` | report, drift, see-runs | resets a running example to its committed state, or boots one |
+| `chain` | first-pr, check, one-note, wave-waiting, wave-refused, approved (records nothing; it leaves the example where pin starts), pin | boots the example fresh and replays every step before it without recording anything, so its numbers match a full capture |
+| `booted` | drift, see-runs, tips | resets a running example to its committed state, or boots one |
 
 `--reuse` skips all of that. Use it when the example is already where the step expects it, and expect its pull request and run numbers to differ from a full capture's. A step whose claims do not pass in `smoke.json` is not captured; named alone, the command fails and says so.
 
-A step writes nothing when it took fewer screenshots than its `STEPS` row lists (a page it could not find): its files stay as committed, the step is named, and the capture fails at the end. A screenshot that differs from the committed one only in Forgejo's relative times ("2 minutes ago") is the same screenshot: `stack/png-same.mjs` compares the two with a tolerance (1% of pixels, `TERRAGUCCI_SHOT_TOLERANCE`), and the committed file and its hash stay.
+A step writes nothing when it recorded fewer views than its `STEPS` row lists (a note or a job it could not find): its files stay as committed, the step is named, and the capture fails at the end.
 
-Screenshots of a job log or a note are found from the forge, never from a fixed number: a job by the run on its branch's head commit (`run_on`, `job_page`), a note by its `<!-- terragucci:plan` marker (`note_page`), a pull request by the number the command printed. The check step is the exception: after the example's check job fails, its fmt job pushes `tofu fmt`'s fix to the branch, so the failed job is found from the push run on the commit the scenario pushed (`push_run`). A step checks what its pictures show before it takes them: a plan note needs its pull request's plan-note job to have passed and the note to be there (`note_ready`), and a pull request's run has to have ended as the page says; a step that fails its check writes nothing, and the capture fails at the end.
+Each view is recorded as text through the forge's API, never from a browser:
 
-Every picture is `stack/shot.mjs`'s (Node 22 or later, over Chrome's DevTools protocol), at `deviceScaleFactor` 2, cropped to an element's own box: a comment, a note, a pull request's description, a diff, a job's panel (from one log line to another with `--from` and `--until`), a report section, or a dashboard's panels. Its flags say what the page opens first (`--expand` a job step, `--open` a `<details>`, `--click` a button) and where the picture ends (`--fit`, `--through`, `--until`). Every hook must find what it names, or no picture is written. A picture more than half blank (rows of one colour in runs of 20 CSS pixels or more, `stack/png.mjs`) is refused and kept as `<name>.blank.png` to look at; a step that shows an airy page passes its own `--blank-max`. `scripts/png-compress.mjs` turns each picture into a palette PNG before its hash is recorded.
+| Kind | Views | Recorded from |
+|---|---|---|
+| `markdown` | plan notes, replies, issues, pull request descriptions | the comment's or the description's Markdown, and the forge's own rendering of it (Forgejo `POST /api/v1/markdown`), so the page shows what the forge shows |
+| `log` | job logs, `plan.txt` | the job's raw log, cut to the lines the page is about |
+| `diff` | a pull request's or a commit's files | the forge's `.diff` |
+| `html` | the report and the report index | the page floci serves, shown in a sandboxed frame |
+| `table` | commit statuses, a run's jobs, tags, the repo's files | the forge's API, in the columns the forge shows |
 
-The report step plans four scenarios of the example in its tofu CI image, each against its base commit, with `reports.bucket` naming the floci bucket `terragucci-reports`; the last is the module bump with the destroy beside it. Its four screenshots (that run's `report.html` from its destroys through its groups, its prod payments row, that root's `plan.txt`, and the project's `index.html`) are served by floci's S3 endpoint. The drift step deletes the queue, dispatches the pipeline's drift job through the Forgejo API and photographs the issue it keeps, then resets the example.
+Notes and jobs are found from the forge, never from a fixed number: a job by the run on its branch's head commit (`run_on`, `job_page`), a note by its `<!-- terragucci:plan` marker (`note_page`), a pull request by the number the command printed. The check step is the exception: after the example's check job fails, its fmt job pushes `tofu fmt`'s fix to the branch, so the failed job is found from the push run on the commit the scenario pushed (`push_run`). A step checks what it records before it records it: a plan note needs its pull request's plan-note job to have passed and the note to be there (`note_ready`), and a pull request's run has to have ended as the page says; a step that fails its check writes nothing, and the capture fails at the end.
+
+The tips step plans the float scenario with `reports.bucket` naming the floci bucket `terragucci-reports` and records that run's `report.html` at its Tips section, as floci's S3 endpoint serves it. The drift step deletes the queue, dispatches the pipeline's drift job through the Forgejo API and records the issue it keeps, then resets the example. The see-runs step records command output only: Grafana's panels have no text form, so the page describes them.
+
+The site's only pictures of a forge are the GitHub and GitLab settings that make `terragucci/plan` required (`docs-site/src/assets/forge/`, shown by `ForgePicture`). A person takes those by hand when the forge's page changes; no capture writes them.
 
 ### What makes a capture stale
 
-Each step writes only its own files: `docs-site/src/data/tutorial/<step>.json` and `docs-site/src/assets/tutorial/<step>-<view>-<theme>.png`. The JSON holds the commands and their normalized output, `source_hash` (a hash of every file under `example/`, with the image references in its pipeline left out, since a release moves them and no capture shows them) and `shots`, the hash of each screenshot it took. A step is rewritten, JSON and screenshots together, when its output or any screenshot differs byte for byte from what is committed. Otherwise its files are kept. Forgejo prints relative times, so a recapture usually rewrites the screenshots.
+Each step writes only its own file, `docs-site/src/data/tutorial/<step>.json`. It holds the commands and their normalized output, `source_hash` (a hash of every file under `example/`, with the image references in its pipeline left out, since a release moves them and no capture shows them) and `views`, each view the step recorded. A step is rewritten when anything in it differs from what is committed. Otherwise its file is kept.
 
-`just tutorial-check` holds every page that embeds a capture to these rules, step by step:
+`just tutorial-check` holds the pages to these rules:
+
+- only a tutorial page holds a `<Captured>` or a `<Recorded>`; any other page fails the check;
 
 - a `<Captured>` step is stale when its `source_hash` is not the hash of `example/` as it is now;
-- a `<Shot>` is stale when its step is, and wrong when the PNG on disk is not the one its step's JSON records.
+- a `<Recorded>` view is stale when its step is, and missing when its step's JSON has no such view.
 
-A missing capture or a wrong PNG fails the check. A stale one does not: captures are refreshed by hand, so the check prints one line naming the stale steps and passes. `just tutorial-check --strict` fails on each stale capture, page by page; run it before and after a recapture.
+Every capture on a tutorial page is `optional`: until it is taken the page renders without it. An optional capture never taken and a stale one do not fail the check; it prints one line naming the steps of each and passes. A capture without `optional` must exist. `just tutorial-check --strict` fails on each one not taken or stale, page by page; run it before and after a capture.
 
-Recapturing one step makes that step current and leaves every other step as it was: current if it was captured from the same `example/`, stale if not. Each step carries its own hash, so a fresh step cannot make another step look fresh, and a hand-copied or leftover PNG fails the check. After an edit under `example/`, every step is stale until someone recaptures it with `just tutorial-capture`, or `just capture` with each stale step the check names. `manifest.json` records the date, commit and tool versions of the last capture that changed anything. It is for contributors and the check does not read it.
+Recapturing one step makes that step current and leaves every other step as it was: current if it was captured from the same `example/`, stale if not. Each step carries its own hash, so a fresh step cannot make another step look fresh. After an edit under `example/`, every step is stale until someone recaptures it with `just tutorial-capture`, or `just capture` with each stale step the check names. `manifest.json` records the date, commit and tool versions of the last capture that changed anything. It is for contributors and the check does not read it.
 
-`<Shot optional>` and `<Captured optional>` let the site build before a step's first capture. The check still fails on them until the step is captured, since a missing capture is not a stale one.
 
 ### The example on GitLab
 
-`just example-gitlab` runs the same 15 roots on the stack's GitLab CE profile, applied to floci by GitLab CI, for GitLab screenshots. It is `stack/example-gitlab.sh`, which shares `stack/lib.sh` with the Forgejo example (`LIB_FORGE=gitlab`) and takes its merge request helpers from `stack/forge-gitlab.sh`.
+`just example-gitlab` runs the same 15 roots on the stack's GitLab CE profile, applied to floci by GitLab CI, for the docs' GitLab views. It is `stack/example-gitlab.sh`, which shares `stack/lib.sh` with the Forgejo example (`LIB_FORGE=gitlab`) and takes its merge request helpers from `stack/forge-gitlab.sh`.
 
 ```bash
 just example-gitlab up                  # boot the gitlab profile, push the example, apply every root
@@ -229,7 +239,7 @@ just example-gitlab plan-comment        # note /terragucci plan on change/one-ro
 just example-gitlab pr-apply            # apply before merge: a reviewer approves, /terragucci apply applies and merges
 ```
 
-The GitLab screenshots the docs place in their GitLab tabs (the plan note, the note after `/terragucci plan`, the failed check, the waiting wave's log, the drift issue, the replies of an apply before merge and the Pipelines must succeed setting, each light and dark) come from `just example-gitlab capture`, which writes `docs-site/src/data/tutorial/gitlab.json` and `docs-site/src/assets/tutorial/gitlab-*.png`. On the GitLab lab it is `TGLAB=1 just example-gitlab up`, then `TGLAB=1 just example-gitlab capture`, about 15 minutes; there the jobs run this tree's bundle in the lab's own image, as the GitLab claims do.
+The GitLab views the docs place in their GitLab tabs (the plan note, the note after `/terragucci plan`, the failed check, the waiting wave's log, the drift issue and the reply of an apply before merge) come from `just example-gitlab capture`, which records them as text in `docs-site/src/data/tutorial/gitlab.json`. On the GitLab lab it is `TGLAB=1 just example-gitlab up`, then `TGLAB=1 just example-gitlab capture`, about 15 minutes; there the jobs run this tree's bundle in the lab's own image, as the GitLab claims do.
 
 | Step | Took on an Apple silicon Mac, GitLab under emulation |
 |---|---|
@@ -254,26 +264,11 @@ What differs from the Forgejo example:
 
 The generated jobs push to `${CI_SERVER_PROTOCOL}://oauth2:...@${CI_SERVER_FQDN}/<project>.git`, the server's own protocol, host and port. The stack's GitLab serves plain http on `gitlab:8929`, which those variables carry, so the jobs need no address rewrite. A waiting wave fails its job with exit code 3 and fails `terragucci/apply`, so the pipeline ends.
 
-#### GitLab screenshots
+#### GitLab views
 
-```bash
-just example-gitlab shot /root/example/-/merge_requests/1 note-light.png light --scroll 'li.note' --match 'terragucci tf-plan' --fit 1
-just example-gitlab shot /root/example/-/merge_requests/1 note-dark.png dark --scroll 'li.note' --match 'terragucci tf-plan' --fit 1
-```
+`just example-gitlab capture` records the one GitLab view the tutorial shows, the plan note of a one-root merge request, and writes it as the tutorial step `gitlab` (`docs-site/src/data/tutorial/gitlab.json`), the way `just sandbox capture` writes `github`. The note is its Markdown and GitLab's rendering of it (`POST /api/v4/markdown`). A page uses it as `<Recorded step="gitlab" view="note" ... optional />`. `TGLAB=1` runs any of these commands on the GitLab lab instead of the gitlab profile.
 
-`shot` takes a GitLab path or URL, the PNG to write, `light` or `dark`, and any further `stack/shot.mjs` flags (`--height`, `--scroll`, `--match`, `--fit`). GitLab's color mode is a setting of the signed-in user and ignores the browser's `prefers-color-scheme`. So `shot` signs in as root (the session is kept in `stack/.state/gitlab-cookies`), sets the color mode and the syntax theme to light or dark through the preferences form, and hands the session to `shot.mjs --cookie`. Before the picture, `shot.mjs` waits for a GitLab page's spinners and skeletons to go.
-
-`just example-gitlab capture` takes the docs' GitLab views from a reset example, light and dark, and writes them as the tutorial step `gitlab` (`docs-site/src/data/tutorial/gitlab.json`, `docs-site/src/assets/tutorial/gitlab-<view>-<light|dark>.png`), the way `just sandbox capture` writes `github`. A page uses them as `<Shot step="gitlab" view="note" ... />`. `TGLAB=1` runs any of these commands on the GitLab lab instead of the gitlab profile.
-
-| View | Page | Shows |
-|---|---|---|
-| `required` | Settings, Merge requests | "Pipelines must succeed", turned on |
-| `note` | the one-root merge request | the plan note |
-| `check` | the failed check job of `change/unformatted`'s first push | the file `tofu fmt` names |
-| `waiting` | the waiting `apply-wave-N` job after `merge destroy` | the wave's `chant approve` command |
-| `drift` | the issue the drift schedule's run opened | staging orders' deleted queue |
-
-`GITLAB_HIDE` is the hide list, like the tutorial's `FORGEJO_HIDE`: the left sidebar and its toggle, broadcast messages and the instance's alert banners (the "add an SSH key" one), callouts and feature highlights. `GITLAB_STYLE` gives the content the sidebar's width. Both are defaults in `stack/example-gitlab.sh` and can be overridden from the environment. Gravatar is off on the stack, so avatars are GitLab's initials.
+The "Pipelines must succeed" setting the docs show is a picture taken by hand (`docs-site/src/assets/forge/gitlab-required-*.png`); `capture` turns the setting on while it runs, as on a reader's project.
 
 ### The smoke claims on GitLab
 
@@ -354,7 +349,7 @@ Wipes and checks use the aws CLI and match only prefixed names. boot's wipe dele
 
 ### The GitHub sandbox
 
-The docs' GitHub screenshots come from [INTENTIUS/terragucci-sandbox](https://github.com/INTENTIUS/terragucci-sandbox), a public repo on github.com run by `stack/sandbox-github.sh`. It needs no stack, no cloud account and no secret in the repo. It needs `gh`, `jq`, Python 3, Docker (for the roots' state and the screenshots) and `npm ci` (for chant).
+The docs' GitHub views come from [INTENTIUS/terragucci-sandbox](https://github.com/INTENTIUS/terragucci-sandbox), a public repo on github.com run by `stack/sandbox-github.sh`. It needs no stack, no cloud account and no secret in the repo. It needs `gh`, `jq`, Python 3, Docker (for the roots' state) and `npm ci` (for chant).
 
 ```bash
 just sandbox up                    # push the first commit if the repo is empty; --fresh replaces it
@@ -367,8 +362,6 @@ just sandbox approve               # chant approve --plan ... --sign, then re-ru
 just sandbox approve --hold        # approve only; then change and merge module-bump: wave 4 is refused
 just sandbox drift                 # delete a file staging orders keeps, run the drift job, wait for its issue
 just sandbox pr-apply              # apply before merge: /terragucci apply applies and merges a pull request
-just sandbox shot list             # the pages the steps recorded
-just sandbox shot all              # each one logged out, light and dark
 just sandbox reset                 # close the pull requests and issues, delete the branches, tags and secrets, main back to its first commit
 just sandbox minutes 2026-10-07T00:00:00Z   # Actions run time since then
 just sandbox capture               # all of the docs' GitHub views, from reset to reset
@@ -429,20 +422,9 @@ No token is traded with AWS: the sandbox has no cloud account (the Forgejo claim
 
 `just sandbox prove` runs on the newest published release, a phase at a time; a person runs it, and no workflow does. Each phase keeps `prove.json` and the logs; prove rewrites `prove.json` after every verdict, so a run stopped part way keeps the verdicts it reached. It needs `TERRAGUCCI_SANDBOX_TOKEN` (or `gh auth token`): a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or classic with `repo` and `workflow`.
 
-`just sandbox capture` resets the sandbox, runs `change one-root`, `plan-comment one-root`, `change unformatted`, `change destroy`, `merge destroy` and `drift`, shoots each view right after its step, writes them as the step `github`, and resets the sandbox again. It takes about 15 minutes. A page uses them as it uses a Forgejo step's: `<Shot step="github" view="note" alt="..." />`, and `<Captured step="github" />` for the commands and the lines of the two job logs a logged-out reader cannot open.
+`just sandbox capture` resets the sandbox, runs `change one-root`, records the plan note it posts, writes it as the step `github`, and resets the sandbox again. The note is its Markdown and GitHub's rendering of it (`gh api markdown`, gfm, in the sandbox's context). A page uses it as it uses a Forgejo step's: `<Recorded step="github" view="note" alt="..." optional />`.
 
-| View | Page | Shows |
-|---|---|---|
-| `note` | the one-root pull request | the plan note |
-| `reply` | the same pull request | the note the `/terragucci plan` comment re-planned, and the comment |
-| `check` | the run of the unformatted branch's push | the failed check job and its annotation |
-| `drift` | the drift issue | the issue the drift job opened for staging orders |
-| `waiting` | the run of the destroy's merge | wave 4 stopped, waiting for its approval |
-| `required` | the ruleset on main | `terragucci/plan` as a required status check |
-
-The `drift` view needs a release whose drift job can keep its issue on github.com: 0.3.1 asks github.com for `type=issues`, which it refuses with a 422, so on 0.3.1 `capture` says so, leaves the view out and keeps the one committed, if any.
-
-The files are `docs-site/src/data/tutorial/github.json` and `docs-site/src/assets/tutorial/github-<view>-<light|dark>.png`, so `just tutorial-check` holds a page that shows them to the same rules as the Forgejo steps.
+The file is `docs-site/src/data/tutorial/github.json`, so `just tutorial-check` holds a page that shows them to the same rules as the Forgejo steps.
 
 | Piece | How |
 |---|---|
@@ -450,14 +432,13 @@ The files are `docs-site/src/data/tutorial/github.json` and `docs-site/src/asset
 | State | `local`, in each root's `terraform.tfstate`, committed. The only store a GitHub-hosted job reaches without an account is the repo. `main.tf` keeps its `s3` backend and `state_override.tf` replaces it, so `init` finds the same four waves as on the example. The runner's disk is gone after a job, so after a green apply the script applies the same tree in the pipeline's image and commits the state with `[skip ci]`. |
 | Pipeline | `npx @intentius/terragucci@0.4.0 init` (`TERRAGUCCI_SANDBOX_RELEASE`), pinned by digest to the published images, which mark every checkout safe for git. `TERRAGUCCI_SANDBOX_SAFE_DIRECTORY=1` adds an `env` that does the same, for running the sandbox on 0.3.0, whose container jobs ran git as root in a checkout the runner's user owns. |
 | Drift | `terraform_data` reads nothing back, so a refresh finds no drift in it. `drift` adds a `local_file` to staging orders, applies it into the state, and deletes the file on main with `[skip ci]`; the drift job's refresh then finds it gone. |
-| Ruleset | `terragucci/plan required`, made by `up` and `capture` when missing: the default branch requires the `terragucci/plan` status. It is a ruleset, not a classic protection rule, because a logged-out reader can open a ruleset. Repository admins bypass it, so the script's own pushes and merges to main go through. |
+| Ruleset | `terragucci/plan required`, made by `up` and `capture` when missing: the default branch requires the `terragucci/plan` status. The docs show it in a picture taken by hand (`docs-site/src/assets/forge/github-required-*.png`). Repository admins bypass it, so the script's own pushes and merges to main go through. |
 | Signer | an ed25519 key made by `up` and `reset` in the scratch directory, listed as `sandbox-signer` in `.chant/allowed_signers` on main by the first `merge`. Its private half never leaves the scratch directory. |
 | Token | `TERRAGUCCI_SANDBOX_TOKEN`, else `gh auth token`, read at run time and handed to `gh` (`GH_TOKEN`) and to git (a credential helper in `GIT_CONFIG_*` that reads the variable) in the script's own environment. It is never written to a file, a git config or a log. |
-| Screenshots | `stack/shot.mjs` in `mcr.microsoft.com/playwright` (`TERRAGUCCI_SHOT_IMAGE`) with a fresh profile, so the page is the one a logged-out reader sees, in `prefers-color-scheme` light and dark. |
 
-Scratch files go in `TERRAGUCCI_SANDBOX_DIR` (default `$TMPDIR/terragucci-sandbox`): `signer`, `views/` (one file per recorded page), `logs/` and `shots/<view>-<light|dark>.png`.
+Scratch files go in `TERRAGUCCI_SANDBOX_DIR` (default `$TMPDIR/terragucci-sandbox`): `signer`, `views/` (one JSON file per recorded view) and `logs/`.
 
-GitHub shows a job's log only to a signed-in reader. A logged-out job page lists the job's steps, with the failed one marked, and "Sign in to view logs". So a job's log is saved as text, from `gh run view --log`, beside the picture: `logs/waiting.log`, `logs/refused.log` and `logs/applied.log`. A pull request's merge box is also hidden when logged out; the `checks` view is the pull request's Checks tab. The comment re-plan posts no reply of its own: it edits the plan note, so the `reply` view is the note above the `/terragucci plan` comment.
+GitHub shows a job's log only to a signed-in reader, so `prove` keeps the logs it reads in `logs/`.
 
 The repo is public, so its Actions minutes on GitHub-hosted runners are free. A pull request costs two runs and a merge one run of seven jobs.
 
