@@ -29,7 +29,7 @@ For a security review or a platform evaluation, each row below names a standard 
 | SLSA provenance and in-toto | with `modules.attest`, each release carries SLSA v1 provenance in an in-toto statement, signed with cosign | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
 | SPDX | each attested release carries an SPDX 2.3 SBOM of its providers and modules | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
 | JSON Schema | the report, its indexes, the estate, the audit trail and DORA files ship schemas (draft 2020-12) a reader can validate against | [Report JSON schema](/terragucci/reference/report-schema/) |
-| HMAC-SHA256 request signing | webhook events are signed over their body; the chat relay checks Slack's signing secret and the Teams outgoing webhook's HMAC | [Webhook event schema](/terragucci/reference/notify-event/#headers), [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) |
+| HMAC-SHA256 request signing | webhook events are signed over a timestamp and their body, so a replayed one can be refused; the chat relay checks Slack's signing secret and the Teams outgoing webhook's HMAC | [Webhook event schema](/terragucci/reference/notify-event/#headers), [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) |
 | Signed object URLs | reports open through S3 presigned links, GCS V4 signed URLs or Azure user delegation SAS, with no public bucket | [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 
 ## Next

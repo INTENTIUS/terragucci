@@ -419,7 +419,7 @@ Sets `terragucci/approval` on the head `TG_SHA` and `TG_PR` name. The status sta
 terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
 ```
 
-Sends one wave's outcome to whichever of `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOOK` and `TERRAGUCCI_WEBHOOK` are set. The generic webhook gets a [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event signed with `TERRAGUCCI_WEBHOOK_KEY`, and nothing when the key is empty. With `notify` set, the generated apply jobs run it on any nonzero exit.
+Sends one wave's outcome to whichever of `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOOK` and `TERRAGUCCI_WEBHOOK` are set. The generic webhook gets a [`chant.notify/v1`](/terragucci/reference/notify-event/) event signed with `TERRAGUCCI_WEBHOOK_KEY` over `<timestamp>.<body>`, and nothing when the key is empty. With `notify` set, the generated apply jobs run it on any nonzero exit.
 
 | Read from | For |
 |---|---|
@@ -435,7 +435,7 @@ terragucci notify drift [--report <dir>]
 
 Posts to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK` the drift job's findings in `--report` (default `terragucci-report`): the roots found drifted and the roots that could not be refreshed. Its Re-plan button opens the page where a person reruns the drift check with their own login (the workflow's Run workflow page on GitHub and Forgejo; the pipeline schedules on GitLab). With no drift and every root refreshed it posts nothing. The generic webhook gets no drift event. The generated drift job runs it when `notify` names `slack` or `teams`.
 
-A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command, which never prints a webhook's address, exits 0.
+A webhook that answers a 5xx or does not answer within 10 seconds is tried twice more. One that still fails leaves a line in the log, and the command, which never prints a webhook's address, exits 0.
 
 ## relay
 
