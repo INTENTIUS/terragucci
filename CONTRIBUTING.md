@@ -167,7 +167,7 @@ To prove a change on the stack, run `just claims-affected` (or `just claims <nam
 | a docs page | the claims its `claims:` line newly lists |
 | anything else | the claims `stack/claim-paths.txt` names for its path, none when no line names it |
 
-The picked claims run plain and under `BREAK=1`, six at a time with the locks `CLAIM_GROUPS` gives them, and their rows replace theirs in `smoke.json`. A run whose log stops growing for `SMOKE_STALL_MIN` minutes (the claim timeout plus two, 17 by default) is stopped and fails as stalled, with its last lines and the stack's job containers printed. The full `just smoke-record` and `just tutorial-capture` run for a release. The capture workflow refreshes the tutorial's output and screenshots weekly and opens a pull request when they change.
+The picked claims run plain and under `BREAK=1`, six at a time with the locks `CLAIM_GROUPS` gives them, and their rows replace theirs in `smoke.json`. A run whose log stops growing for `SMOKE_STALL_MIN` minutes (the claim timeout plus two, 17 by default) is stopped and fails as stalled, with its last lines and the stack's job containers printed. The full `just smoke-record` runs for a release. The tutorial's captures do not: a person refreshes them by hand when they choose (below), and neither a change nor a release waits on them. The capture workflow is disabled.
 
 ### Capturing one step or all of them
 
@@ -207,9 +207,11 @@ Each step writes only its own files: `docs-site/src/data/tutorial/<step>.json` a
 - a `<Captured>` step is stale when its `source_hash` is not the hash of `example/` as it is now;
 - a `<Shot>` is stale when its step is, and wrong when the PNG on disk is not the one its step's JSON records.
 
-So recapturing one step makes that step current and leaves every other step as it was: current if it was captured from the same `example/`, stale if not. Each step carries its own hash, so a fresh step cannot make another step look fresh, and a hand-copied or leftover PNG fails the check. After an edit under `example/`, every step is stale until it is recaptured: run `just tutorial-capture`, or `just capture` with each stale step the check names. `manifest.json` records the date, commit and tool versions of the last capture that changed anything. It is for contributors and the check does not read it.
+A missing capture or a wrong PNG fails the check. A stale one does not: captures are refreshed by hand, so the check prints one line naming the stale steps and passes. `just tutorial-check --strict` fails on each stale capture, page by page; run it before and after a recapture.
 
-`<Shot optional>` and `<Captured optional>` let the site build before a step's first capture. The check still fails on them until the step is captured.
+Recapturing one step makes that step current and leaves every other step as it was: current if it was captured from the same `example/`, stale if not. Each step carries its own hash, so a fresh step cannot make another step look fresh, and a hand-copied or leftover PNG fails the check. After an edit under `example/`, every step is stale until someone recaptures it with `just tutorial-capture`, or `just capture` with each stale step the check names. `manifest.json` records the date, commit and tool versions of the last capture that changed anything. It is for contributors and the check does not read it.
+
+`<Shot optional>` and `<Captured optional>` let the site build before a step's first capture. The check still fails on them until the step is captured, since a missing capture is not a stale one.
 
 ### The example on GitLab
 
