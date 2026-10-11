@@ -34,6 +34,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `query` | runs one SQL statement over the inventory, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
 | `mcp` | a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent |
+| `view` | runs [behold](https://intentius.io/behold/using/terragucci/) on your machine over the repo and its reports bucket: the roots as one graph, each resource marked with what the newest runs found; `--export` writes a static copy |
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state |
@@ -507,6 +508,49 @@ Every tool is marked read-only, and the server refuses these calls.
 
 The server writes nothing. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
 
+## view
+
+```text
+terragucci view [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>]
+    [--port <n>] [--no-open] [--export <dir> [--publish]] [--config <file>]
+```
+
+Starts [behold](https://intentius.io/behold/using/terragucci/) with `npx`, at the version this terragucci pins, on the repo's checkout and its reports bucket. It waits until behold answers on `http://127.0.0.1:<port>`, opens the browser, and runs until Ctrl-C. Each root is drawn as a box of its resources, and a resource a run flagged carries a mark with that run's finish time.
+
+```bash
+npx --yes -p @intentius/behold@0.23.0 -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0 \
+  behold serve <repo> --terragucci <reports> --terragucci-project <project> --port 4600
+```
+
+| Flag | Meaning |
+|---|---|
+| `--reports` | where to read the reports, in place of `reports` in the config: a directory, `s3://<bucket>/<prefix>` or an https address |
+| `--project` | the project's name in the index; default the one a run in this checkout writes, from the git remote |
+| `--port` | the port behold serves on; default 4600 |
+| `--no-open` | serve without opening the browser |
+| `--export` | write a static view to the directory instead of serving, without each root's source text |
+| `--publish` | with `--export`, also upload the view to `<prefix>/views/behold` in the reports bucket, where no run writes |
+| `--config` | the config file; default the one in the working directory or at the repo's root |
+
+| Reports in | behold reads |
+|---|---|
+| S3 | `s3://<bucket>/<prefix>`, with your shell's AWS credentials; `reports.endpoint` is passed as `AWS_ENDPOINT_URL_S3` |
+| GCS or Azure Blob | `reports.url` with the prefix; with no `reports.url`, the command stops and asks for `--reports <dir>` with a copy made by `gcloud storage rsync` or `azcopy` |
+
+`--publish` writes to S3 only. A read-only identity needs `s3:GetObject` on the prefix; `--publish` also needs `s3:PutObject` on `<prefix>/views/behold/*`.
+
+When behold stops, the command prints one line and exits 1:
+
+| Cause | The line says |
+|---|---|
+| no `npx` | `npx` is not on the path |
+| the repo's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) asks for a newer `minReader` than behold 0.23.0 reads | the repo asks for a newer reader than the pinned behold reads |
+| the Terraform reader did not install | the package behold could not load |
+| AWS refused or found no credentials | the source, and which error AWS gave |
+| behold refused a report as malformed | behold's own error and what to fix |
+
+The command writes nothing to the repo. behold refuses to deploy, approve or start a run on a terragucci repo, and a waiting wave shows the `terragucci approve` line to run in your shell.
+
 ## drift-agent
 
 ```text
@@ -788,6 +832,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 | `query` | rows printed | | a bad flag or config, a statement that does not run or writes | | |
 | `mcp` | the client closed stdin | | a bad flag or config | | |
+| `view` | stopped with Ctrl-C, or the view exported | behold stopped or refused the reports | a bad flag or config, or a source behold cannot read | | |
 | `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
 
 Code 4 comes from `stage tf-apply`, `unlock-state` and `ephemeral`, which have no `--json`.

@@ -278,6 +278,7 @@ sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose 
 estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
 behold-view|the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue|
 behold-serve|behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json|
+terragucci-view|terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line|
 drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
 pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no terragucci approve, recorded on the ledger as via pr-review|
 pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest|
@@ -10013,6 +10014,128 @@ JS
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "behold serve drew both roots, the queue's dated drift and wave 1's approve line from the bucket, and refused a deploy"
+  return $rc
+}
+
+claim_terragucci_view() {
+  # One project with two roots copies its reports to the bucket: a drift check
+  # that finds a queue deleted outside OpenTofu, and a gated tf-apply wave that
+  # waits for an approval. `terragucci estate` writes estate.json. Then
+  # `terragucci view --no-open` runs in the CI image against the checkout, with
+  # reports read from terragucci.yml (the floci endpoint passed to behold as
+  # AWS_ENDPOINT_URL_S3) and the project named as the runs named it. Holds when
+  # it says behold serves on :4600, /api/terragucci lists both roots, marks the
+  # queue's card as deleted outside Terraform with the drift check's finish
+  # time, and gives the waiting wave's `terragucci approve wave-1 --plan` line,
+  # and SIGTERM stops it with exit 0.
+  # BREAK: index.json at the prefix is corrupted after the runs; behold
+  # refuses it (422, terragucci-report), and view stops with one line instead
+  # of serving.
+  log() { echo "[smoke terragucci-view] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 code=0 prefix queue url out api card="terragucci-view/queue/aws_sqs_queue.jobs"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # Plain and BREAK run at once: each its own prefix and queue.
+  prefix="terragucci-view-$(date +%s)-$$${BREAK:+-break}"
+  queue="terragucci-view-$(date +%s)-$$${BREAK:+-break}"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/terragucci-view/queue" "$work/terragucci-view/gate" "$work/probe"
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/terragucci-view/terragucci.yml"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "gate" {\n  input = "terragucci-view"\n}\n' > "$work/terragucci-view/gate/main.tf"
+  cat > "$work/terragucci-view/queue/main.tf" <<HCL
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+
+  backend "local" {}
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_sqs_queue" "jobs" {
+  name = "$queue"
+}
+HCL
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/terragucci-view/queue/"
+  git -C "$work/terragucci-view" init -q -b main
+  git -C "$work/terragucci-view" add -A && git -C "$work/terragucci-view" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke terragucci-view"
+  # Waits for behold while view runs (its pid is the argument), then reads the marks.
+  cat > "$work/probe/probe.mjs" <<'JS'
+import { writeFileSync } from "node:fs";
+const pid = Number(process.argv[2]);
+const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+let api;
+for (let i = 0; i < 300 && !api && alive(); i++) {
+  try {
+    const r = await fetch("http://127.0.0.1:4600/api/terragucci");
+    api = { status: r.status, body: await r.text() };
+  } catch { await new Promise((r) => setTimeout(r, 1000)); }
+}
+writeFileSync("/probe/out.json", JSON.stringify({ api: api ?? null }));
+if (!api) { console.error(alive() ? "behold never answered on :4600" : "terragucci view exited before behold answered"); process.exit(1); }
+JS
+  in_image() { # the command
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/terragucci-view:/projects/terragucci-view" -v "$work/probe:/probe" -w /projects/terragucci-view \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" "$@"
+  }
+  in_image sh -c 'cd queue && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { log "the queue did not apply"; rc=1; }
+  clean_mounted "$work/terragucci-view" "$image"
+  if [ $rc = 0 ]; then
+    sqs() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.$1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] && sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null || { log "could not delete $queue from floci"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci stage tf-drift --layers queue >&2 || true
+    clean_mounted "$work/terragucci-view" "$image"
+    jq -e '[.roots[] | select(.changes | length > 0)] | length == 1' "$work/terragucci-view/terragucci-report/report.json" >/dev/null 2>&1 || { log "the drift check found no drift"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci stage tf-apply --wave 1 --layers gate --binary tofu --gate always >&2 || code=$?
+    clean_mounted "$work/terragucci-view" "$image"
+    [ "$code" = 3 ] || { log "the gated wave exited $code, not 3 (waiting)"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/terragucci-view" "$image"
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET/$prefix/index.json" --data-binary '{"reports": "corrupted"' || { log "could not corrupt index.json"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The command as a reader runs it, with credentials in the environment
+    # (AWS_DOCKER_ENV); SIGTERM stops it once the probe has read the marks.
+    out="$(in_image sh -c 'terragucci view --no-open >/tmp/view.log 2>&1 & pid=$!; node /probe/probe.mjs "$pid"; rc=$?; kill -TERM "$pid" 2>/dev/null; wait "$pid"; echo "view exited $?"; cat /tmp/view.log; exit $rc' 2>&1)" || { log "the probe did not reach behold through terragucci view"; rc=1; }
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/terragucci-view" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    grep -qx 'terragucci view: behold serves http://127.0.0.1:4600; Ctrl-C stops it' <<<"$out" || { log "terragucci view never said behold serves on :4600"; rc=1; }
+    grep -qx 'view exited 0' <<<"$out" || { log "terragucci view did not stop with exit 0 on SIGTERM"; rc=1; }
+    api="$(jq -r '.api.body' "$work/probe/out.json")"
+    if [ "$(jq -r '.api.status' "$work/probe/out.json")" != 200 ]; then
+      log "/api/terragucci answered $(jq -r '.api.status' "$work/probe/out.json"): $(jq -c '{code, error}' <<<"$api" 2>/dev/null)"; rc=1
+    else
+      jq -e '[.roots[].path] | (map(endswith("queue")) | any) and (map(endswith("gate")) | any)' <<<"$api" >/dev/null || { log "the roots are $(jq -c '[.roots[].path]' <<<"$api"), not queue and gate"; rc=1; }
+      jq -e --arg c "$card" '.cards[$c] // [] | map(select(.verdict == "drift" and .action == "delete" and (.run.finished | length > 0))) | length == 1' <<<"$api" >/dev/null || { log "no dated drift mark on $card: $(jq -c --arg c "$card" '.cards[$c]' <<<"$api")"; rc=1; }
+      jq -e '.waiting | map(select(.command | test("^npx terragucci approve wave-1 --plan [^ ]+$"))) | length == 1' <<<"$api" >/dev/null || { log "no approve line for wave 1: $(jq -c '.waiting' <<<"$api")"; rc=1; }
+    fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "terragucci view served the reports from terragucci.yml: both roots, the queue's dated drift and wave 1's approve line"
   return $rc
 }
 
@@ -22059,6 +22182,7 @@ sealed-migrate       runner self! weight=250
 estate               weight=120
 behold-view          weight=120
 behold-serve         weight=150
+terragucci-view      weight=150
 drift-overdue        self! weight=60
 pr-review            runner self! weight=300
 pr-review-moved      runner self! weight=300
