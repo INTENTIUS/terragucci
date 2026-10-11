@@ -131,7 +131,11 @@ export interface ViewChild {
   kill(signal: NodeJS.Signals): void;
 }
 
-export type ViewSpawn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; detached?: boolean }) => ViewChild;
+/**
+ * `group`: the child leads its own process group and a signal goes to the
+ * whole group, so behold, which npx starts as its own child, stops with it.
+ */
+export type ViewSpawn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; detached?: boolean; group?: boolean }) => ViewChild;
 
 export interface ViewDeps {
   spawn: ViewSpawn;
@@ -241,7 +245,7 @@ export async function view(o: ViewOptions, deps: ViewDeps): Promise<number> {
     }
   }
   const argv = beholdArgv(o);
-  const child = deps.spawn("npx", argv, { cwd: o.root, env: beholdEnv(o.source, deps.env) });
+  const child = deps.spawn("npx", argv, { cwd: o.root, env: beholdEnv(o.source, deps.env), group: true });
   let out = "";
   let serving = false;
   child.output((t) => {
@@ -324,11 +328,13 @@ export function viewProject(root: string, env: NodeJS.ProcessEnv): string {
 export function nodeViewDeps(): ViewDeps {
   return {
     spawn(cmd, args, opts) {
+      // A group leader on POSIX; Windows has no process groups to signal.
+      const group = opts.group === true && process.platform !== "win32";
       const child = nodeSpawn(cmd, args, {
         cwd: opts.cwd,
         env: opts.env,
         stdio: opts.detached ? "ignore" : ["ignore", "pipe", "pipe"],
-        ...(opts.detached ? { detached: true } : {}),
+        ...(opts.detached || group ? { detached: true } : {}),
         // npx is npx.cmd on Windows, which Node starts only through a shell.
         ...(process.platform === "win32" ? { shell: true } : {}),
       });
@@ -343,7 +349,17 @@ export function nodeViewDeps(): ViewDeps {
       return {
         output: (fn) => void listeners.push(fn),
         exit,
-        kill: (signal) => void child.kill(signal),
+        kill: (signal) => {
+          if (group && child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, signal);
+              return;
+            } catch {
+              // The group is gone; signal the child alone.
+            }
+          }
+          child.kill(signal);
+        },
       };
     },
     fetch: (url) => fetch(url, { signal: AbortSignal.timeout(2000) }),

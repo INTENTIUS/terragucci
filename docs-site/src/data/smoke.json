@@ -1092,11 +1092,27 @@
     },
     {
       "claim": "behold-view",
-      "says": "the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue",
+      "says": "the behold step of the estate job reads the reports from the bucket and publishes the view of the commit under views/behold/<commit>/ with latest.json and history.json naming it, and headless Chrome, opening views/behold/ from the bucket, draws the drift the drift check found on the card of the deleted queue",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4e3ccead"
+      "commit": "41460da8"
+    },
+    {
+      "claim": "behold-serve",
+      "says": "behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "41460da8"
+    },
+    {
+      "claim": "terragucci-view",
+      "says": "terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "54129f30"
     },
     {
       "claim": "drift-overdue",
