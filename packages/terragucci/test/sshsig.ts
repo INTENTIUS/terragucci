@@ -4,6 +4,7 @@
  * `chant approve --sign` does without ssh-keygen.
  */
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { parseAllowedSigners, type GateSigners } from "@intentius/chant/gate-decision";
 
 export interface TestKey {
   privateKey: KeyObject;
@@ -39,3 +40,9 @@ export function sshsig(key: TestKey, message: Buffer, namespace: string): string
   const lines = blob.toString("base64").match(/.{1,70}/g)!.join("\n");
   return `-----BEGIN SSH SIGNATURE-----\n${lines}\n-----END SSH SIGNATURE-----\n`;
 }
+
+/** The signers a gate reads at base, from an allowed_signers text; none (inactive) without one. */
+export const gateSigners = (text?: string, signersPath = ".chant/allowed_signers"): GateSigners =>
+  text === undefined
+    ? { base: null, signersPath, active: false, signers: [], problems: [] }
+    : { base: null, signersPath, active: true, signers: parseAllowedSigners(text).signers, problems: [] };

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseLedger, type GateLedger, type ResolutionRecord } from "../src/apply";
 import { checkToken, decideClick, gitAuthEnv, handleRelay, principalFor, relayRepo, slackClick, slackSignature, teamsClick, teamsSignature, verifySlack, verifyTeams, workspaceDeps, type Click, type RelayDeps } from "../src/relay";
-import { parseSigners } from "../src/seal";
+import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
 const KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
@@ -20,7 +20,7 @@ function deps(o: { mode?: "ledger" | "pr-review" | "sealed"; ledger?: GateLedger
   return {
     recorded,
     principal: "terragucci-relay",
-    rule: async () => ({ mode: o.mode ?? "ledger", signers: parseSigners(SIGNERS), signersPath: ".chant/allowed_signers", ...(o.resume ? { resume: o.resume } : {}) }),
+    rule: async () => ({ mode: o.mode ?? "ledger", signers: gateSigners(SIGNERS), signersPath: ".chant/allowed_signers", ...(o.resume ? { resume: o.resume } : {}) }),
     ledger: () => o.ledger ?? parseLedger(jsonl(pending("wave-1", D, 1))),
     record: (r) => void recorded.push(r),
     now: () => new Date(T(5)),
@@ -73,13 +73,13 @@ describe("relay: clicks", () => {
   });
 
   it("maps a chat user to the principal on the signers file line that lists them, and nobody else", () => {
-    const signers = parseSigners(SIGNERS);
+    const signers = gateSigners(SIGNERS);
     expect(principalFor(signers, "slack:T1/U1")).toBe("alice@acme.com");
     expect(principalFor(signers, "teams:0000-AAAA")).toBe("alice@acme.com");
     expect(principalFor(signers, "slack:T1/U2")).toBeUndefined();
-    expect(principalFor(null, "slack:T1/U1")).toBeUndefined();
+    expect(principalFor(gateSigners(), "slack:T1/U1")).toBeUndefined();
     // One chat id on two people's lines maps to neither.
-    expect(principalFor(parseSigners(SIGNERS + `carol@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\n`), "slack:T1/U1")).toBeUndefined();
+    expect(principalFor(gateSigners(SIGNERS + `carol@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\n`), "slack:T1/U1")).toBeUndefined();
   });
 });
 

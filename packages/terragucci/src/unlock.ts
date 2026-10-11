@@ -351,7 +351,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
       ...ledger,
       resolutions: ledger.resolutions.filter((r) => {
         if (r.gate !== rel) return true;
-        const why = sealRefusal(rule.signers, rule.signersPath, r);
+        const why = sealRefusal(rule.signers, r);
         if (why !== null && samePlanDigest(r.planDigest, digest)) log(`${rel}: an approval does not count: ${why}`);
         return why === null;
       }),

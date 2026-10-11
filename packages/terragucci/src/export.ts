@@ -281,7 +281,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
       log(`state export: an approval by ${by} does not count: the person who asks for an export does not approve it`);
       return false;
     }
-    const refused = sealed ? sealRefusal(rule.signers, rule.signersPath, r) : null;
+    const refused = sealed ? sealRefusal(rule.signers, r) : null;
     if (refused) log(`state export: an approval does not count: ${refused}`);
     return refused === null;
   });
