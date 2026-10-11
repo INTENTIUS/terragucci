@@ -1,24 +1,25 @@
 ---
 title: See your estate in behold
 description: Draw a repo's roots as one graph on your machine, each resource marked with what the newest drift check, plan or waiting wave found, and when.
-claims: [terragucci-view, behold-serve]
+claims: [behold-serve]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-your-estate-in-behold/.
-  In this repo, run `npx terragucci view --no-open`, and tell me which resources are marked and how old each mark is. Do not create or print credentials.
+  In this repo, start behold with the command the page gives, reading the reports bucket this repo's terragucci.yml names, and tell me which resources are marked and how old each mark is. Do not create or print credentials.
   Read only, and never deploy from behold. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-The [estate page](/terragucci/guides/see-every-project/) counts per project. [behold](https://intentius.io/behold/using/terragucci/) draws one repo's roots and resources as a graph and marks each resource with what your runs last found about it. `terragucci view` runs it on your machine against the checkout and the reports bucket. Nothing is written, and the pipeline never needs it.
+The [estate page](/terragucci/guides/see-every-project/) counts per project. [behold](https://intentius.io/behold/using/terragucci/) draws one repo's roots and resources as a graph and marks each resource with what your runs last found about it. It runs on your machine against the checkout and the reports bucket. Nothing is written, and the pipeline never needs it.
 
 ## Result
 
 ```bash
-npx terragucci view
+npx --yes -p @intentius/behold@0.25.0 -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0 \
+  behold serve . --terragucci s3://acme-terragucci/reports
 ```
 
-The command takes the bucket and project from `terragucci.yml` and runs the behold version terragucci pins. Your browser opens `http://127.0.0.1:4600`. Each root is a box of its resources. A resource a run flagged carries a mark with the time that run finished, and the **Terragucci** tab lists every root with its newest drift check, plan and apply wave.
+Use the bucket and prefix from your `terragucci.yml`, then open `http://127.0.0.1:4600`. Each root is a box of its resources. A resource a run flagged carries a mark with the time that run finished, and the **Terragucci** tab lists every root with its newest drift check, plan and apply wave.
 
 ## Marks
 
@@ -65,20 +66,19 @@ behold has no approve button. Run the line in your shell, which records the appr
 
    For a GCS or Azure bucket, set `reports.url`, or copy the prefix to a directory with `gcloud storage rsync` or `azcopy`.
 
-2. From the repo, run `npx terragucci view`. To read a copy instead of the bucket, pass it:
+2. From the repo's root, run the command under [Result](#result). To read a copy instead of the bucket, pass the directory:
 
    ```bash
    aws s3 sync s3://acme-terragucci/reports ./reports
-   npx terragucci view --reports ./reports
+   npx --yes -p @intentius/behold@0.25.0 -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0 \
+     behold serve . --terragucci ./reports
    ```
 
-3. If the bucket holds several repos and none matches this checkout's git remote, name the project with `--project github.com/acme/infra`.
+3. If the bucket holds several repos and none matches this checkout's git remote, add `--terragucci-project github.com/acme/infra`.
 
 4. Stop it with Ctrl-C. behold binds `127.0.0.1` only.
 
 </Steps>
-
-The [CLI reference](/terragucci/reference/cli/#view) gives the behold command it runs, its flags and each failure line.
 
 ## Limits
 
