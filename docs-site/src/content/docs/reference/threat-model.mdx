@@ -166,7 +166,7 @@ With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt
 
 ## Approval modes
 
-The gate policy decides when a wave waits: `always`, `on-destroy` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent.
+The gate policy decides when a wave waits: `always`, `on-destructive` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent.
 
 | Mode | Set by | An approval counts when | Stops | Does not stop |
 |---|---|---|---|---|

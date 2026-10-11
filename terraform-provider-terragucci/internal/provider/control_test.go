@@ -186,10 +186,10 @@ func TestProjectAndDefaultsOnEachForge(t *testing.T) {
 			if err := create(ctx, c, projectEntry, "github.com/acme/infra", settings); err != nil {
 				t.Fatal(err)
 			}
-			if err := create(ctx, c, defaultsEntry, "", obj(t, map[string]attr.Value{"gate": types.StringValue("on-destroy")})); err != nil {
+			if err := create(ctx, c, defaultsEntry, "", obj(t, map[string]attr.Value{"gate": types.StringValue("on-destructive")})); err != nil {
 				t.Fatal(err)
 			}
-			want := "defaults:\n  gate: on-destroy\nprojects:\n  github.com/acme/infra:\n    binary: tofu\n    roots:\n      - envs/*\n"
+			want := "defaults:\n  gate: on-destructive\nprojects:\n  github.com/acme/infra:\n    binary: tofu\n    roots:\n      - envs/*\n"
 			if got := ff.files["terragucci.yml"]; got != want {
 				t.Fatalf("file:\n%s\nwant:\n%s", got, want)
 			}
@@ -201,7 +201,7 @@ func TestProjectAndDefaultsOnEachForge(t *testing.T) {
 			if err := remove(ctx, c, projectEntry, "github.com/acme/infra"); err != nil {
 				t.Fatal(err)
 			}
-			if got := ff.files["terragucci.yml"]; got != "defaults:\n  gate: on-destroy\n" {
+			if got := ff.files["terragucci.yml"]; got != "defaults:\n  gate: on-destructive\n" {
 				t.Fatalf("after removing the project:\n%s", got)
 			}
 			if err := remove(ctx, c, defaultsEntry, ""); err != nil {

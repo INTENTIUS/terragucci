@@ -57,10 +57,11 @@
     "gate": {
       "enum": [
         "always",
-        "on-destroy",
-        "never"
+        "on-destructive",
+        "never",
+        "on-destroy"
       ],
-      "description": "When a wave waits for an approval."
+      "description": "When a wave waits for an approval. on-destroy is an older name for on-destructive."
     },
     "approval": {
       "enum": [
@@ -1445,10 +1446,11 @@
         "gate": {
           "enum": [
             "always",
-            "on-destroy",
-            "never"
+            "on-destructive",
+            "never",
+            "on-destroy"
           ],
-          "description": "When a wave waits for an approval."
+          "description": "When a wave waits for an approval. on-destroy is an older name for on-destructive."
         },
         "approval": {
           "enum": [

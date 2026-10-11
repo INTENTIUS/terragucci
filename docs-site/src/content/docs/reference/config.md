@@ -30,7 +30,7 @@ binary: tofu
 | Version | the repo's `.opentofu-version` or `.terraform-version`, then the one `required_version` pins exactly, or terragucci's default for the binary; a root that pins its own runs that one ([A version per root](#a-version-per-root)) |
 | Forge | from a workflow directory already in the repo, or the host of its `origin` remote |
 | Order | a root that reads another's state through `terraform_remote_state`, or with `binary: choudoufu` another estate's outputs through `terraform_estate_outputs`, applies after it |
-| Gate | `on-destroy`, so a wave waits for an approval only when it destroys or replaces something |
+| Gate | `on-destructive`, so a wave waits for an approval only when it destroys or replaces something |
 | Drift | off |
 | Runtime | your forge's CI |
 | Reports | a CI artifact, linked from the pull-request note |
@@ -62,7 +62,7 @@ A key the control repo sets away from its default reaches each project one of tw
 ```yaml
 defaults:
   binary: tofu
-  gate: on-destroy
+  gate: on-destructive
 projects:
   github.com/acme/infra:
     roots: ["envs/*/*"]
@@ -142,7 +142,7 @@ dashboards: true
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
-| `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
+| `gate` | `on-destructive` | `always`, `on-destructive` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy). `on-destroy` is accepted as an older name for `on-destructive`, the name SQL Yodeler and chant use |
 | `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `branches`: roots that apply from a branch other than the default; see [Apply from other branches](#apply-from-other-branches). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |

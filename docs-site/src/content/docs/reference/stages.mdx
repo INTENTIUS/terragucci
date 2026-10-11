@@ -11,7 +11,7 @@ Every stage takes the root directories and the binary.
 |---|---|---|---|
 | `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository, with no forge token; when a branch's check fails, a separate `fmt` job pushes the formatting commit (`respond.fmt: commit`, the default; in a Terragrunt repo it runs `terragrunt hcl fmt` too; not with `gitlab.token: protected`) | pass or fail, the log, and the check report |
 | `tf-plan` | plans the affected roots in one run and posts the grouped summary; with [`policy`](/terragucci/reference/policy/) set, fails a denied root | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
-| `tf-apply` | applies one job per wave; a wave the [gate policy](#gate-policy) holds (under the default `on-destroy`, one that destroys or replaces) waits for an approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch (read only under `gate: never`), post statuses and pull request comments; with `waves.jobs`, push the run's shared lock tag | per wave, whether it waited and its approval command |
+| `tf-apply` | applies one job per wave; a wave the [gate policy](#gate-policy) holds (under the default `on-destructive`, one that destroys or replaces) waits for an approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch (read only under `gate: never`), post statuses and pull request comments; with `waves.jobs`, push the run's shared lock tag | per wave, whether it waited and its approval command |
 | `tf-drift` | plans every root `-refresh-only` on a schedule and groups what changed outside Terraform | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
@@ -240,7 +240,9 @@ The plan and drift stages group identical changes and name each destroy, replace
 | Policy | Waits for an approval when |
 |---|---|
 | `always` | the wave has at least one change; a wave whose plans change nothing never waits |
-| `on-destroy` | the wave's plans destroy or replace something |
+| `on-destructive` | the wave's plans destroy or replace something |
 | `never` | never; only pull request review and default-branch protection stand before the apply |
+
+`on-destroy` is an older name for `on-destructive`, and `terragucci.yml` and `--gate` still accept it, so a pipeline rendered with it keeps working. SQL Yodeler and chant's Op waves call the same policy `on-destructive`.
 
 Run the approval command a waiting wave prints and run the stage again.

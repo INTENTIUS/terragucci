@@ -484,7 +484,7 @@ jobs:
           done_waves=""
           for wave in $(seq 1 "$last"); do
             : >"$outcome"
-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'network;app,cache' --binary tofu --gate on-destroy --on-held refuse 2>&1 | tee "$log"
+            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'network;app,cache' --binary tofu --gate on-destructive --on-held refuse 2>&1 | tee "$log"
             rc=${PIPESTATUS[0]}
             case "$rc" in
               0) done_waves="${done_waves:+$done_waves, }$wave" ;;
@@ -656,7 +656,7 @@ jobs:
           tg status terragucci/apply pending "applying"
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -761,7 +761,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;

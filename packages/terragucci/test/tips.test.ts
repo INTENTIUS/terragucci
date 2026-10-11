@@ -144,7 +144,7 @@ describe("terragucci-ungated-destroy", () => {
     expect(await rules(repo, ["a", "b"], { settings: settings({ gate: "never" }), destroying: ["b"] })).toEqual([["terragucci-ungated-destroy", "b"]]);
   });
   it("stays quiet with a gate, or with nothing destroyed", async () => {
-    expect(await rules(repo, ["a", "b"], { settings: settings({ gate: "on-destroy" }), destroying: ["b"] })).toEqual([]);
+    expect(await rules(repo, ["a", "b"], { settings: settings({ gate: "on-destructive" }), destroying: ["b"] })).toEqual([]);
     expect(await rules(repo, ["a", "b"], { settings: settings({ gate: "never" }), destroying: [] })).toEqual([]);
   });
 });

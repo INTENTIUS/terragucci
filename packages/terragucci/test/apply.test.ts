@@ -208,6 +208,23 @@ describe("a wave behind its gate", () => {
     return { work, origin, bin, log: join(dir, "apply.log") };
   }
 
+  it.each(["on-destructive", "on-destroy"] as const)("under --gate %s a wave that replaces something waits, and one that only creates applies", async (gate) => {
+    const { work, bin, log } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate, env: {}, now: T(1) })).toBe(0);
+    expect(existsSync(log)).toBe(true);
+    const replace = { resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["delete", "create"], before: { input: "1" }, after: { input: "2" }, after_unknown: {} } }] };
+    writeFileSync(join(process.env.PLANS!, "a.json"), JSON.stringify(replace));
+    renameSync(log, `${log}.first`);
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate, env: {}, now: T(2) })).toBe(3);
+    expect(existsSync(log)).toBe(false);
+  });
+
+  it("refuses a --gate that names no policy, and lists the current names", async () => {
+    const { work, bin } = setup();
+    await expect(applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "on-delete" as never, env: {}, now: T(1) })).rejects.toThrow("--gate must be one of always, on-destructive, never");
+  });
+
   it("refuses a wave the policy denies, before any gate fact or apply, and leaves the wave alone when policy is not set", async () => {
     const { work, origin, bin, log } = setup({ "terragucci.yml": "policy:\n  path: policy\n", "policy/p.rego": "package main\n" });
     const out = vi.spyOn(console, "log").mockImplementation(() => {});

@@ -30,7 +30,7 @@ Each workspace becomes a root with its own state in your bucket. The jobs `init`
 | Terraform version per workspace | [`version`](/terragucci/reference/config/#a-version-per-root) per root glob, or the root's `.terraform-version` |
 | VCS-driven runs, trigger patterns | the [generated pipeline](/terragucci/getting-started/): a pull request plans the roots its files reach |
 | Speculative plan | the plan note and `terragucci/plan` status on the pull request |
-| Confirm and apply, auto-apply | [`gate`](/terragucci/reference/stages/#gate-policy): `always`, `on-destroy` (default) or `never`, then [approve a wave](/terragucci/guides/approve-a-wave/) |
+| Confirm and apply, auto-apply | [`gate`](/terragucci/reference/stages/#gate-policy): `always`, `on-destructive` (default) or `never`, then [approve a wave](/terragucci/guides/approve-a-wave/) |
 | Run triggers, `tfe_outputs` | [waves](/terragucci/concepts/waves-and-approvals/#linked-roots): a root that reads another through `terraform_remote_state` applies in a later wave; `waves.after`, which an import writes from run triggers, for an order the reads do not give |
 | Sentinel policy set | [`policy`](/terragucci/reference/policy/) in Rego, rewritten by hand |
 | OPA policy set | `policy.input: hcp` with `engine: opa`; `policies.hcl` [runs as is](/terragucci/reference/policy/#hcp-terraform-policy-sets) |

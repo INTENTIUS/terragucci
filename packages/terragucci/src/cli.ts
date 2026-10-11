@@ -14,7 +14,7 @@
   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
@@ -71,7 +71,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -138,7 +138,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
@@ -407,7 +407,7 @@ export async function main(argv: string[]): Promise<number> {
             layers: parseLayers(layers),
             canary: (str(flags, "canary") ?? "").split(",").filter(Boolean),
             binary: str(flags, "binary") ?? "tofu",
-            gate: (str(flags, "gate") ?? "on-destroy") as Gate,
+            gate: (str(flags, "gate") ?? "on-destructive") as GateName,
             ...(str(flags, "approval") ? { approval: approvalFlag(str(flags, "approval")) } : {}),
             ...(str(flags, "config") ? { config: str(flags, "config") } : {}),
             ...(str(flags, "parallelism") ? { parallelism: parallelismFlag(str(flags, "parallelism")!) } : {}),
