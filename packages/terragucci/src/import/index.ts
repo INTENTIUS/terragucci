@@ -1,10 +1,8 @@
 /**
  * `terragucci import atlantis [atlantis.yaml]`, `terragucci import digger
- * [digger.yml]`, `terragucci import terrateam [.terrateam/config.yml]` and
- * `terragucci import terragrunt-scale [.gruntwork]`: write terragucci.yml from
- * an Atlantis repo config, an OpenTaco (digger) config, a Terrateam config
- * (./terrateam.ts) or a Terragrunt Scale repo's Pipelines HCL
- * (./terragrunt-scale.ts), and say what became of every setting.
+ * [digger.yml]` and `terragucci import terragrunt-scale [.gruntwork]`: write
+ * terragucci.yml from an Atlantis repo config, an OpenTaco (digger) config or
+ * a Terragrunt Scale repo's Pipelines HCL (./terragrunt-scale.ts), and say what became of every setting.
  * `import spacelift` (./spacelift.ts) and `import env0` (./env0.ts) do the
  * same from a Spacelift or env zero repo, its files and its admin code, by
  * the guide "Coming from Spacelift or env zero".
@@ -42,33 +40,31 @@ import {
   type ProjectSettings,
 } from "../config";
 import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
-import { APPLY_TIMING_TABLE, GUIDE_URL, plain, TERRATEAM_URL, SCALE_URL, type SettingRow } from "./guide";
-import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind } from "./notes";
+import { APPLY_TIMING_TABLE, GUIDE_URL, plain, SCALE_URL, type SettingRow } from "./guide";
+import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind, type RepoShape } from "./notes";
 import { readEnv0, convertEnv0, ENV0_DISCOVERY_FILES } from "./env0";
 import { convertSpacelift, readSpacelift, SPACELIFT_FILES } from "./spacelift";
 import { SPACELIFT_ENV0_GUIDE_URL } from "./spacelift-env0-guide";
 import { readTerragruntScale } from "./terragrunt-scale";
-import { convertTerrateam, type RepoShape } from "./terrateam";
 
 export { rootOf, type ImportNote, type NoteKind } from "./notes";
 
-export const IMPORT_SOURCES = ["atlantis", "digger", "terrateam", "terragrunt-scale", "spacelift", "env0"] as const;
+export const IMPORT_SOURCES = ["atlantis", "digger", "terragrunt-scale", "spacelift", "env0"] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 /** The file each source reads when none is named, first found wins. */
 export const SOURCE_FILES: Record<ImportSource, string[]> = {
   atlantis: ["atlantis.yaml", "atlantis.yml"],
   digger: ["digger.yml", "digger.yaml"],
-  terrateam: [".terrateam/config.yml", ".terrateam/config.yaml"],
   "terragrunt-scale": [".gruntwork"],
   spacelift: SPACELIFT_FILES,
   env0: ENV0_DISCOVERY_FILES,
 };
 
-const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", terrateam: "Terrateam", "terragrunt-scale": "Terragrunt Scale", spacelift: "Spacelift", env0: "env zero" };
+const SOURCE_NAMES: Record<ImportSource, string> = { atlantis: "Atlantis", digger: "OpenTaco", "terragrunt-scale": "Terragrunt Scale", spacelift: "Spacelift", env0: "env zero" };
 
 /** The page each source's mapping is on. */
-const SOURCE_URLS: Record<ImportSource, string> = { atlantis: GUIDE_URL, digger: GUIDE_URL, terrateam: TERRATEAM_URL, "terragrunt-scale": SCALE_URL, spacelift: SPACELIFT_ENV0_GUIDE_URL, env0: SPACELIFT_ENV0_GUIDE_URL };
+const SOURCE_URLS: Record<ImportSource, string> = { atlantis: GUIDE_URL, digger: GUIDE_URL, "terragrunt-scale": SCALE_URL, spacelift: SPACELIFT_ENV0_GUIDE_URL, env0: SPACELIFT_ENV0_GUIDE_URL };
 
 export interface Converted {
   settings: ProjectSettings;
@@ -365,10 +361,9 @@ function readDigger(doc: Record<string, unknown>, g: Gathered, notes: Notes): vo
 
 // ── both ────────────────────────────────────────────────────────────────────
 
-/** Turn a parsed atlantis.yaml, digger.yml or .terrateam/config.yml into terragucci settings and a note per setting. */
+/** Turn a parsed atlantis.yaml or digger.yml into terragucci settings and a note per setting. */
 export function convert(source: Exclude<ImportSource, "terragrunt-scale">, doc: unknown, o: ImportOptions = {}): Converted & { missing?: string[] } {
   if (!isMap(doc)) throw new ConfigError(`the ${SOURCE_NAMES[source]} config is not a map of settings`);
-  if (source === "terrateam") return convertTerrateam(doc, o);
   if (source === "spacelift") return convertSpacelift(doc, [], o);
   if (source === "env0") return convertEnv0({ discovery: doc, flows: [], resources: [] }, o);
   const notes = new Notes();
@@ -557,8 +552,7 @@ export function describeImport(r: ImportResult): string {
   }
   if (r.missing.length) {
     const what =
-      r.source === "terrateam" ? `No root matches the dirs ${r.missing.join(", ")}; check those keys.`
-      : r.source === "terragrunt-scale" ? `No unit matches ${r.missing.join(", ")}; check those filter paths.`
+      r.source === "terragrunt-scale" ? `No unit matches ${r.missing.join(", ")}; check those filter paths.`
       : r.source === "spacelift" ? `No directory with Terraform files matches ${r.missing.join(", ")}; check those stacks' project_root.`
       : r.source === "env0" ? `No directory with Terraform files matches ${r.missing.join(", ")}; check those environments' templates.`
       : `No directory with Terraform files matches ${r.missing.join(", ")}; check those projects' dir.`;

@@ -97,20 +97,14 @@ export const FROM: { id: string; label: string; first: Link; carries: string[] }
 	{
 		id: 'atlantis',
 		label: 'Atlantis',
-		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		first: { label: 'Coming from Atlantis or OpenTaco', href: '/guides/coming-from-atlantis-or-opentaco/' },
 		carries: ['terragucci import atlantis writes terragucci.yml from atlantis.yaml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of atlantis plan and atlantis apply'],
 	},
 	{
 		id: 'digger',
 		label: 'OpenTaco or Digger',
-		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		first: { label: 'Coming from Atlantis or OpenTaco', href: '/guides/coming-from-atlantis-or-opentaco/' },
 		carries: ['terragucci import digger writes terragucci.yml from digger.yml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of digger plan and digger apply'],
-	},
-	{
-		id: 'terrateam',
-		label: 'Terrateam',
-		first: { label: 'Coming from Atlantis, OpenTaco or Terrateam', href: '/guides/coming-from-atlantis-or-opentaco/' },
-		carries: ['terragucci import terrateam writes terragucci.yml from .terrateam/config.yml', 'A terrateam apply before merge becomes /terragucci apply, with the same required checks'],
 	},
 	{
 		id: 'hcp',
