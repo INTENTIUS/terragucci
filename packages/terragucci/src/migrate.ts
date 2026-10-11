@@ -1353,7 +1353,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
       ...ledger,
       resolutions: ledger.resolutions.filter((r) => {
         if (r.gate !== m.name) return true;
-        const why = sealRefusal(rule.signers, rule.signersPath, r);
+        const why = sealRefusal(rule.signers, r);
         if (why !== null && samePlanDigest(r.planDigest, record.digest)) log(`${label}: an approval does not count: ${why}`);
         return why === null;
       }),

@@ -34,7 +34,7 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import type { GateLedger, PendingRecord, ResolutionRecord } from "./apply";
 import type { Approval } from "./config";
 import type { ReportOverride } from "./report/schema";
-import { sealRefusal, type Signer } from "./seal";
+import { sealRefusal, type GateSigners } from "./seal";
 
 /** The op every override is recorded under. */
 export const OVERRIDE_OP = "policy-override";
@@ -64,7 +64,7 @@ export function overrideCommand(root: string, rules: readonly string[], sealed =
 export interface OverrideRule {
   mode: Approval;
   overriders: string[];
-  signers: Signer[] | null;
+  signers: GateSigners;
   signersPath: string;
 }
 
@@ -89,7 +89,7 @@ export function overrideRefusal(rule: OverrideRule, r: ResolutionRecord & { note
     return `${r.resolvedBy} is not listed under policy.override at base${rule.overriders.length ? ` (${rule.overriders.join(", ")})` : ""}`;
   }
   if (!r.note?.trim()) return `the override by ${r.resolvedBy} gives no reason`;
-  if (rule.mode === "sealed") return sealRefusal(rule.signers, rule.signersPath, r);
+  if (rule.mode === "sealed") return sealRefusal(rule.signers, r);
   return null;
 }
 

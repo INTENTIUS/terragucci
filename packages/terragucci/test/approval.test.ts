@@ -69,7 +69,7 @@ describe("approvalRule", () => {
     const repo = twoCommits({ "terragucci.yml": "approval: sealed\n", ".chant/allowed_signers": "alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGb6\n" }, {});
     const rule = await approvalRule(repo, { config: `${repo}/terragucci.yml` });
     expect(rule.mode).toBe("sealed");
-    expect(rule.signers?.map((s) => s.principals)).toEqual([["alice"]]);
+    expect(rule.signers.signers.map((s) => s.principal)).toEqual(["alice"]);
   });
 
   it("a config at base that cannot be read decides nothing", async () => {

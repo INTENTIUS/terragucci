@@ -722,7 +722,7 @@ export async function ephemeralUp(repo: string, options: UpOptions): Promise<num
           ...ledger,
           resolutions: ledger.resolutions.filter((x) => {
             if (x.gate !== name) return true;
-            const why = sealRefusal(rule.signers, rule.signersPath, x);
+            const why = sealRefusal(rule.signers, x);
             if (why !== null && samePlanDigest(x.planDigest, digest)) r.log(`${label}: an approval does not count: ${why}`);
             return why === null;
           }),
