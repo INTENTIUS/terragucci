@@ -18,7 +18,9 @@
  * `plan` job. When the plan note does not yet name that job, it posts the
  * status and then the note. The note's last line names the job
  * (`<!-- terragucci:plan-job=<id> -->`), so the cursor lives in the note and
- * the job keeps no state.
+ * the job keeps no state. chant's forge client (`@intentius/chant/pr-forge`)
+ * posts the status and the note, the note found again by its first line and
+ * the job's own user.
  *
  * Both files are the merge request's: its code can write anything into them,
  * just as its author can write any note. So the job reads them as data, takes
@@ -28,6 +30,7 @@
  * and the description flag. A forged `applied` reply in a note the job posts
  * would otherwise read as the mr-apply job's to pr-merge.
  */
+import type { PrForge } from "@intentius/chant/pr-forge";
 import type { Fetch } from "./forge";
 
 /** The note body the plan job writes into its report directory, first line included. */
@@ -70,6 +73,10 @@ export interface PlanNoteContext {
   id: string;
   /** The comments job's own user id: only its notes are plan notes. */
   me: number;
+  /** The same user's username, by which chant's client tells its notes apart. */
+  meName: string;
+  /** chant's client, holding the comments job's token: it posts the status and the note. */
+  forge: PrForge;
   /** The base URL of GitLab's API, for the artifact files, which are not JSON. */
   apiUrl: string;
   token: string;
@@ -151,23 +158,22 @@ export async function postPlanNote(c: PlanNoteContext, mr: any, notes: any[]): P
   // The status goes first: the note is the cursor, so a status that failed is posted again on the next poll.
   if (status) {
     try {
-      await c.api("POST", `/projects/${c.id}/statuses/${head}`, {
-        name: PLAN_CONTEXT,
-        state: status.state,
+      // A status set again to the state it has, which a poll after a failed note does, is no error to the client.
+      await c.forge.setStatus(head, {
+        context: PLAN_CONTEXT,
+        state: status.state === "success" ? "success" : "failure",
         description: status.description,
-        pipeline_id: pipeline.id,
-        ...(typeof job.web_url === "string" && /^https?:\/\//.test(job.web_url) ? { target_url: job.web_url } : {}),
+        pipelineId: pipeline.id,
+        ...(typeof job.web_url === "string" && /^https?:\/\//.test(job.web_url) ? { url: job.web_url } : {}),
       });
     } catch (e) {
-      // GitLab answers 400 to a status set again to the state it has, which a poll after a failed note does.
-      if (!/ answered 400/.test((e as Error).message)) return { ...at, posted: false, fail: true, reason: `could not post ${PLAN_CONTEXT} on ${head.slice(0, 8)} (${(e as Error).message})` };
+      return { ...at, posted: false, fail: true, reason: `could not post ${PLAN_CONTEXT} on ${head.slice(0, 8)} (${(e as Error).message})` };
     }
   }
   if (noteFile === undefined) return { ...at, posted: Boolean(status), reason: `plan job ${job.id} wrote no note${status ? `; ${PLAN_CONTEXT} is ${status.state}` : ""}` };
   const body = planNoteBody(noteFile, job.id);
   try {
-    if (old) await c.api("PUT", `/projects/${c.id}/merge_requests/${iid}/notes/${old.id}`, { body });
-    else await c.api("POST", `/projects/${c.id}/merge_requests/${iid}/notes`, { body });
+    await c.forge.upsertComment(iid, PLAN_MARK, body, { author: c.meName });
   } catch (e) {
     return { ...at, posted: Boolean(status), fail: true, reason: `could not post the plan note of plan job ${job.id} (${(e as Error).message})` };
   }
