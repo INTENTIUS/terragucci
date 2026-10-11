@@ -309,7 +309,9 @@ export function chantCommand(repo: string, o: { chant?: string } = {}): string {
 function runChant(repo: string, args: string[], command: string, o: { chant?: string; env?: NodeJS.ProcessEnv }, log: (line: string) => void): number {
   log(`running: ${command}`);
   const env = o.env ?? process.env;
-  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+  // terragucci reads who may override from policy.override at base, so chant does not look for .chant/overriders (chant#3824).
+  const overriders = args[1] === OVERRIDE_OP ? { CHANT_OVERRIDERS_FROM: "policy.override in terragucci.yml" } : {};
+  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, ...overriders, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
   if (r.error) throw new ConfigError(`could not record the approval (${r.error.message}): the @intentius/chant package that @intentius/terragucci installs with itself is missing; install terragucci again with npm i -D @intentius/terragucci`);
   return r.status ?? 1;
 }
