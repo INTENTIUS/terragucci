@@ -121,7 +121,7 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
-import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, overrideDigest, type OverridePending } from "./override";
+import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, overrideDigest, overridePending, overrideRule } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
@@ -1864,7 +1864,7 @@ async function overrideDenials(repo: string, options: ApplyWaveOptions, label: s
   for (const p of overridable) {
     const rules = p.policy!.rules ?? [];
     const planDigest = p.member!.planDigest;
-    const decision = decideOverride(ledger, rule, p.root, planDigest, rules, now);
+    const decision = decideOverride(ledger, overrideRule(repo, rule), p.root, planDigest, rules, now);
     if (decision.status === "overridden") {
       const o = decision.override;
       p.policy = { ...p.policy!, override: o };
@@ -1884,20 +1884,10 @@ async function overrideDenials(repo: string, options: ApplyWaveOptions, label: s
     }
     if (!decision.standing) {
       const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
-      const pending: OverridePending = {
-        version: 1,
-        kind: "pending",
-        op: OVERRIDE_OP,
-        gate: p.root,
-        timestamp: now,
-        expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(),
-        planDigest: digest,
-        description: `${p.root}: plan ${planDigest} denied by ${rules.join(", ")}`,
-        ...(runId ? { runId } : {}),
-        members: [p.member!],
-        rules,
-        neverOverMcp: true,
-      };
+      const pending = overridePending(
+        { subject: p.root, planDigest, rules, timestamp: now, expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(), description: `${p.root}: plan ${planDigest} denied by ${rules.join(", ")}`, ...(runId ? { runId } : {}) },
+        { members: [p.member!], neverOverMcp: true },
+      );
       try {
         appendPending(repo, pending, {}, OVERRIDE_LEDGER);
       } catch (e) {
