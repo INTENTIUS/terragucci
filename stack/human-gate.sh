@@ -45,10 +45,15 @@ grant_take() {
   mv "$tmp" "$GRANT_FILE"
 }
 
-# The process and everything it started, children first.
+# The process and everything it started, children first, except the process
+# $2 (the watch calling this, itself a child of the run). Linux's pgrep lists
+# its own ancestors, so without the skip the watch kills itself first and
+# leaves the run going.
 gate_kill_tree() {
   local child
-  for child in $(pgrep -P "$1" 2>/dev/null); do gate_kill_tree "$child"; done
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    [ "$child" = "${2:-}" ] || gate_kill_tree "$child" "${2:-}"
+  done
   kill -TERM "$1" 2>/dev/null || true
 }
 
@@ -83,7 +88,8 @@ grant_watch() {
           if [ -n "$newest" ]; then echo "Last written: $newest"; tail -n 5 "$newest" 2>/dev/null; fi
           echo "Report this to the person; do not start it again without them."
         } >&2
-        gate_kill_tree "$target"
+        # bash 3.2 (macOS) has no BASHPID; its BSD pgrep leaves out its own ancestors anyway.
+        gate_kill_tree "$target" "${BASHPID:-}"
         exit 0
       fi
     done

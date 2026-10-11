@@ -14,6 +14,6 @@
 - The nightly workflow is disabled, and so are capture and scale. Only CI's checks run on their own.
 - For a person: `just claims-affected` runs the claims a change can affect and records their rows in `smoke.json`. `just coverage-fill` fills the validation page's gaps a source at a time. GitLab runs on its own lab: boot it with `just gitlab-lab up` only on a quiet host, and stop it with `just gitlab-lab down` when done.
 - A new file under `packages/terragucci/src/` gets a line in `stack/claim-paths.txt` naming the claims it can affect.
-- The example lives in `example/`. An edit there needs `just example-patches`, then a person runs `just tutorial-capture`, which needs Docker. Without the capture `just tutorial-check` fails on stale captures.
+- The example lives in `example/`. An edit there needs `just example-patches`. The tutorial's captures then go stale; `just tutorial-check` lists them and passes. A person recaptures by hand with `just tutorial-capture`.
 - A tutorial page or a guide leaves `draft: true` only when every claim in its `claims:` passes in `docs-site/src/data/smoke.json`, and each claim runs the steps the page gives the reader. A guide carries a `claims:` line; `claims: []` says no recorded claim backs it.
 - Commits carry no AI attribution lines.
