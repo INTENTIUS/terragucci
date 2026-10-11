@@ -102,7 +102,6 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `capture/pipeline.ts` | `.github/workflows/capture.yml` |
 | `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
 | `publish/pipeline.ts` | `.github/workflows/publish.yml` |
-| `nightly/pipeline.ts` | `.github/workflows/nightly.yml` |
 | `ci-red/pipeline.ts` | `.github/workflows/ci-red.yml` |
 | `diff-guard/pipeline.ts` | `.github/workflows/diff-guard.yml` |
 | `images/images.ts` | `images/Dockerfile.*` |
@@ -123,7 +122,6 @@ A pull request runs one check, `diff-guard`, which takes seconds. The test suite
 | `ci.yml` | each push to main, and by hand | `just check` |
 | `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
 | `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
-| `nightly.yml` | nightly | the GitLab claims, too heavy for every push |
 
 main's runs of `ci.yml` are never cancelled. GitHub keeps one run going and one waiting per concurrency group, so in a burst of merges the first and the newest are tested and the commits between them get no tag. A run by hand on a branch cancels that branch's run in progress.
 
@@ -429,7 +427,7 @@ No token is traded with AWS: the sandbox has no cloud account (the Forgejo claim
 | `report-oidc` | `oidc` is cut from main's `terragucci.yml`, so the plan job has no token to take `reports.role` with |
 | `estate-job` | `id-token: write` is cut from the page's workflow, so `configure-aws-credentials` has no token for the role |
 
-The nightly workflow (`nightly/pipeline.ts`) runs one phase per job on the newest published release, one after the other whatever the last one's result: `sandbox` runs `just sandbox prove merge`, then `sandbox-pull-request`, `sandbox-modules` and `sandbox-reports` run theirs, and `sandbox-break` runs `just sandbox prove --break`, each with its own timeout and `just sandbox reset` after it. Each keeps `prove.json` and the logs as the `sandbox-prove-<phase>` artifact (`sandbox-prove-break` for the BREAK job); prove rewrites `prove.json` after every verdict, so a job that runs out of time keeps the verdicts it reached. It needs the repo secret `TERRAGUCCI_SANDBOX_TOKEN`: a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or classic with `repo` and `workflow`. Without it the job stops at its first step and says so.
+`just sandbox prove` runs on the newest published release, a phase at a time; a person runs it, and no workflow does. Each phase keeps `prove.json` and the logs; prove rewrites `prove.json` after every verdict, so a run stopped part way keeps the verdicts it reached. It needs `TERRAGUCCI_SANDBOX_TOKEN` (or `gh auth token`): a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or classic with `repo` and `workflow`.
 
 `just sandbox capture` resets the sandbox, runs `change one-root`, `plan-comment one-root`, `change unformatted`, `change destroy`, `merge destroy` and `drift`, shoots each view right after its step, writes them as the step `github`, and resets the sandbox again. It takes about 15 minutes. A page uses them as it uses a Forgejo step's: `<Shot step="github" view="note" alt="..." />`, and `<Captured step="github" />` for the commands and the lines of the two job logs a logged-out reader cannot open.
 
