@@ -1,6 +1,6 @@
 // Checks the smoke claim tables without Docker: every CLAIMS line in
 // stack/smoke.sh, and every GITLAB_CLAIMS line in stack/smoke-gitlab.sh, is
-// name|description|issue with no apostrophe (it would end the single-quoted
+// area/part|description|issue with no apostrophe (it would end the single-quoted
 // string), and `smoke.sh --list` (with SMOKE_FORGE=gitlab for GitLab's), which
 // really sources the scripts, reports the same names in the same order, each
 // with a claim function and a group line unless it waits on an issue.
@@ -25,8 +25,8 @@ function check({ file, table, forge, fn, groups }) {
   const declared = [];
   for (const row of rows) {
     const f = row.split("|");
-    if (f.length !== 3 || !/^[a-z][a-z0-9-]*$/.test(f[0]) || f[1].trim() === "") {
-      mine.push(`${table} line is not name|description|issue: ${row.slice(0, 60)}`);
+    if (f.length !== 3 || !/^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/.test(f[0]) || f[1].trim() === "") {
+      mine.push(`${table} line is not area/part|description|issue: ${row.slice(0, 60)}`);
       continue;
     }
     if (/^\d*$/.test(f[2]) === false) mine.push(`${f[0]}: issue field is not a number: ${f[2]}`);

@@ -41,7 +41,7 @@ SA_CAP_USD=5
 # The guard calls Cost Explorer, which bills $0.01 a request, so a passed
 # check is kept for this long.
 SA_GUARD_TTL="${SMOKE_AWS_GUARD_TTL:-1800}"
-SA_CLAIMS="boot drift respond-drift tg-drift report"
+SA_CLAIMS="boot/tofu drift/tofu respond/drift drift/terragrunt report/tofu"
 SA_RUNNER=terragucci-smoke-aws
 SA_RUNNER_CONTAINER=terragucci-smoke-aws-runner
 SA_LABEL=smoke-aws

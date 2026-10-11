@@ -64,7 +64,7 @@ smoke_owner() {
     # The last row ends with the closing quote, on the same line.
     sect == "claims" { split($0, f, "|"); print (f[1] == "" ? "-" : f[1]); if (/\047$/) sect = ""; next }
     sect == "groups" { print (NF ? $1 : "-"); if (/\047$/) sect = ""; next }
-    /^claim_[a-z0-9_]+\(\) *\{/ { fn = $0; sub(/^claim_/, "", fn); sub(/\(.*/, "", fn); gsub(/_/, "-", fn); print fn; next }
+    /^claim_[a-z0-9_]+\/[a-z0-9_]+\(\) *\{/ { fn = $0; sub(/^claim_/, "", fn); sub(/\(.*/, "", fn); gsub(/_/, "-", fn); print fn; next }
     # A claim runs to the next top-level definition: a "}" at column 0 can
     # close a heredoc inside it.
     /^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/ { fn = $0; sub(/\(.*/, "", fn); fn = "h:" fn; print fn; next }

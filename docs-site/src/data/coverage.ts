@@ -19,7 +19,7 @@ const FORGE_OF = areaMap.forge as Record<string, string>;
 const FORGE_NAMES: Record<string, Forge> = { forgejo: 'Forgejo', github: 'GitHub', 'github.com': 'GitHub', gitlab: 'GitLab' };
 
 // steward checks the validation stack's own runtime, which no setting reaches.
-const STACK_ONLY = new Set(['steward']);
+const STACK_ONLY = new Set(['apply/steward']);
 
 const statusOf = (verdict: string, brk: string | null): Status | undefined => {
 	if (verdict === 'pending') return undefined;
@@ -27,16 +27,18 @@ const statusOf = (verdict: string, brk: string | null): Status | undefined => {
 	return brk === 'caught' ? 'proven' : 'passes';
 };
 const shapeOf = (claim: string): string => {
-	if (claim.startsWith('tg-') || claim === 'import-tg-scale') return 'Terragrunt';
-	if (claim.startsWith('atmos-')) return 'Atmos';
-	if (claim.startsWith('terramate-')) return 'Terramate';
-	if (claim.startsWith('cdktn-')) return 'CDK Terrain';
+	// The part names the shape: lock/terragrunt, waves/atmos, affected/cdktn.
+	const part = claim.split('/')[1] ?? '';
+	if (part.startsWith('terragrunt')) return 'Terragrunt';
+	if (part.startsWith('atmos')) return 'Atmos';
+	if (part.startsWith('terramate')) return 'Terramate';
+	if (part.startsWith('cdktn')) return 'CDK Terrain';
 	return 'Plain roots';
 };
 // A row with no binary ran on OpenTofu, unless its claim sets the binary in
-// its own config; a cdf- claim runs a choudoufu estate.
+// its own config; a choudoufu claim runs a choudoufu estate.
 const binaryOf = (claim: string, binary?: string): Binary =>
-	(binary as Binary | undefined) ?? CONFIG_BINARY[claim] ?? (claim.startsWith('cdf-') ? 'choudoufu' : 'tofu');
+	(binary as Binary | undefined) ?? CONFIG_BINARY[claim] ?? (claim.startsWith('choudoufu/') || claim.endsWith('/choudoufu') ? 'choudoufu' : 'tofu');
 
 export const rows: Row[] = [];
 for (const r of smoke.claims as SmokeRow[]) {

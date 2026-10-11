@@ -35,9 +35,13 @@
 # stopped and fails as stalled, its last lines and the stack's job containers
 # printed, so nothing waits out a long timeout without anyone looking.
 #
-# A new claim: add its line to CLAIMS and its function claim_<name>, and give
-# it a line in CLAIM_GROUPS naming what it shares. A claim with no line there
-# runs alone, after boot and tg-waves: safe, and slow.
+# A claim is named <area>/<part>: the area is the behaviour (lock, waves,
+# refuse, policy), the part the flavor or case that proves it (lock/terragrunt,
+# lock/plan). An area alone names all of its parts: `--only lock`. A new claim:
+# add its line to CLAIMS and its function claim_<area>/<part> (hyphens in the
+# part become underscores), and give it a line in CLAIM_GROUPS naming what it
+# shares. A claim with no line there runs alone, after boot/tofu and
+# waves/terragrunt: safe, and slow.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,7 +93,7 @@ export SMOKE_BINARY
 EX_REPO=example; EX_SHOP=shop; EX_TAG=""
 case "$SMOKE_BINARY" in terraform) EX_TAG=tf ;; choudoufu) EX_TAG=cdf ;; esac
 [ -z "$EX_TAG" ] || { EX_REPO="example-$SMOKE_BINARY"; EX_SHOP="shop$EX_TAG"; }
-# A claim's function is claim_<name> on Forgejo and gitlab_claim_<name> on GitLab.
+# A claim's function is claim_<area>/<part> on Forgejo and gitlab_claim_<area>/<part> on GitLab.
 CLAIM_FN=claim_
 [ "$SMOKE_FORGE" = gitlab ] && CLAIM_FN=gitlab_claim_
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
@@ -172,308 +176,308 @@ trap 'cleanup_works; exit 143' TERM
 # JOB_CACHE_VOLUME is set at the top, next to mounted.sh.
 
 # name|what the site says|issue that builds it (empty: implemented here)
-CLAIMS='boot|the example boots and deploys locally|
-check|tf-check fails an unformatted root and names the file|
-affected|only the roots a change touches are planned|
-grouped|one note groups many plans|
-report|the report is JSON and HTML, and links every root to its full plan|
-highlight|destroys and outliers are open, identical groups are folded|
-waves|each wave goes out only once approved|
-refuse|a wave whose plans changed after approval applies nothing|
-sealed|under approval: sealed a wave counts only an approval sealed by a key the signers file lists|
-drift|drift is reported by root|
-rollout|a module version rolls out one pull request per wave|
-publish|changed modules are published at a new version|
-publish-attest|with modules.attest each release is signed, attested and recorded in the release ledger with its tag|
-require-attested|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
-require-recorded|with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record|
-tg-require-attested|with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release|
-module-registry|with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused|
-tips|tips are on by default and name their rule|
-zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
-apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
-reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
-reconcile-mixed|a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1|
-traces|each plan run is one trace, with a span per root and the binary spans inside it|
-metrics|the metrics of a plan run reach Prometheus with the counts in its report|
-tg-zero-config|init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits|
-tg-waves|the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all|
-tg-check|tf-check fails an unformatted Terragrunt file and names it|
-tg-affected|only the units a change reaches are planned, including a file a module reads that Terragrunt misses|
-tg-mock-lint|a dependency whose mock_outputs can stand in for apply is named by a tip|
-tg-refuse|a unit that reads a new upstream is planned on the planned outputs of that upstream, never on its mock_outputs|
-tg-mock-trap|a new upstream and its dependent merge together and apply in order, so no mock reaches real state|
-tg-drift|drift is reported by unit in a Terragrunt repo, with the same tracking issue|
-respond-refused|a refused wave names each root whose plan moved and the attributes that moved|
-respond-triage|a failed apply is triaged from the known-error table|
-respond-drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
-respond-tips|each tip becomes its own small pull request|
-respond-fmt|fmt on request commits to the pull request branch and nowhere else|
-respond-notes|release notes come from the conventional commits that touched the module|
-fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
-forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
-steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
-policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
-comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
-import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
-import-spacelift|terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask|
-import-env0|terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval|
-import-hcp|terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask|
-import-scalr|terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group|
-import-tg-scale|terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own|
-waves-after|waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three|
-comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
-lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
-dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
-dash-changes|the Change review dashboard init writes shows the roots, groups and changes by action of a pull request|
-dash-waves|the Rollouts and waves dashboard init writes shows a wave waiting for its approval, how long, and wave runs by result|
-dash-drift|the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is|
-dash-estate|the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs|
-dash-runs|the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo|
-dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|
-drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|
-policy-wave|a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings|
-check-diagnostics|tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal|
-comment-not-affected|a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause|
-drift-attribute|with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue|
-version-bump-job|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
-tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
-oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
-comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
-comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
-review-agent|with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing|
-review-policy|a tf-apply wave gives the policy the risk the review workflow of the default branch kept as its artifact for the head of the merged pull request as input.review; the edited review job of the pull request itself keeping risk low and a forged low-risk note posted with the pipeline token change nothing, and a policy that denies risk high stops the wave|
-wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
-policy-delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
-report-oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
-tg-gate-wait|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
-tg-gate-refuse|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
-tg-sealed|under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists|
-pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto|
-pr-apply-lock|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
-pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
-tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request|
-provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
-summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
-foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
-tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
-atmos-waves|init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate|
-atmos-workspace|each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply|
-atmos-affected|a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other|
-atmos-from-plan|an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved|
-atmos-upstream-wait|an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied|
-atmos-check|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
-atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
-terramate-waves|init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate|
-terramate-affected|a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other|
-terramate-pr-apply-lock|with apply.when: pull-request in a Terramate repo, a pull request applied on a comment locks the stack it changes, and a second pull request that changes that stack is refused with the stack and the holder named, its state left as the first applied it|
-terramate-sharing|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
-terramate-stale|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
-atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
-atmos-pr-apply-lock|with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instances it reaches (every instance, for a change to a stack manifest), and a second pull request that changes one is refused with the instance and the holder named, its state left as the first applied it|
-atmos-refuse|config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances|
-policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
-reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
-provider-project|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
-pr-requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
-pr-lock|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|
-front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
-ledger-default|with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign|
-approval-at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
-sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
-estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
-behold-view|the behold step of the estate job reads the reports from the bucket and publishes the view of the commit under views/behold/<commit>/ with latest.json and history.json naming it, and headless Chrome, opening views/behold/ from the bucket, draws the drift the drift check found on the card of the deleted queue|
-behold-serve|behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json|
-terragucci-view|terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line|
-drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
-pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no terragucci approve, recorded on the ledger as via pr-review|
-pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest|
-pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
-cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
-cdf-concurrency-time|with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it|
-cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
-cdf-killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
-cdf-resume|with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one|
-cdf-live-progress|with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store|
-cdf-record-versions|with binary: choudoufu a record changed by three tf-apply waves shows three versions, newest first, on the estate page and in its history, listed by choudoufu live-history|
-cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
-apply-per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
-apply-stand-down|a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root|
-cdf-rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
-cdf-rows-wait|with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value|
-cdf-drift|with binary: choudoufu a queue changed outside choudoufu on a root under live resource markers is drift: tf-drift plans the root in full, its report and one drift issue name the root and the attribute, and a run with no change closes the issue|
-cdf-rows-takeover|with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call|
-resume-approve|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
-resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
-approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
-approve-command|the plan note of a pull request gives the terragucci approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
-tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
-tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
-plan-lock|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
-plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|
-plan-lock-fmt|with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head|
-policy-override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
-policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
-policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
-policy-override-applied|once a wave applied a root under its override, the next plan of that root the policy denies is recorded as a new denial and waits for its own override, and only an override no wave applied refuses|
-blob-azure|with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it|
-blob-gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|
-note-diff|the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block|
-note-split|a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays|
-note-report-link|with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci|
-config-ts|init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line|
-role-refused|config check and init refuse an oidc block that names one role for plan and apply|
-description-check|with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json|
-decide-backends|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
-otlp-headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
-pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
-generate|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
-tg-generate|in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name|
-tg-generate-init|with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it|
-root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
-drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
-estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
-estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
-reader-contracts|the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers|
-comment-refused|a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies|
-note-stale|a push to the default branch that changes a root an open pull request planned marks its plan note stale|
-pr-confirm|with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing|
-pr-base-config|with apply.when: pull-request a pull request that sets gate: never still waits at the gate of the default branch|
-pr-guard|with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing|
-pr-close-release|with apply.when: pull-request closing a pull request releases the roots it locked|
-tg-lock-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
-token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
-plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
-fork-no-plan|a pull request from a fork runs check and no plan job|
-highlight-sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
-approval-revoke|removing an approval line from chant/lifecycle makes its wave wait again|
-pending-expiry|a pending fact past its 48 hours is recorded afresh by the next run of its wave|
-signer-trust|init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it|
-rollout-control|from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied|
-rollout-provider|rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave|
-rollout-pins|rollout moves an oci:// tag and a registry version pin, each in the shape it had|
-rollout-continue|with rollouts set, once wave 1 merged and applied the rollout job opens wave 2 with no manual run|
-policy-opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
-policy-hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
-policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
-tg-policy|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
-tg-credentials|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
-tg-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
-tg-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
-tg-preview-gate|a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves|
-tf-terraform|with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform|
-tg-terraform|in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it|
-tfquery-import|with binary: terraform a root with a .tfquery.hcl gets the drift pull request with the config terraform query generated for what it lists|
-alerts-fire|with short thresholds every alert init writes fires on its signal, and the apply-success and drift-corrected SLOs record|
-blob-gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
-blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
-index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
-note-footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
-replan-dispatch|a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only|
-cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
-cdf-migrate|with binary: choudoufu a migration moves a resource between two estates by rewriting its ownership tags: proved by both plans, approved by digest, after which the next plan of both shows no change and the move is on chant/lifecycle|
-cdf-adopt|with binary: choudoufu a migration adopts a root on s3 state into an estate: proved against the live system, approved by digest, its resources stamped with no change, and its old state left as the version it was|
-cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
-apply-outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
-audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
-audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
-audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
-audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
-inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
-estate-graph|the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave|
-resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
-query-sql|terragucci query, run on the reports bucket with no server, answers the SQS queues changed in the last 7 days with their approvers with the rows the audit trail holds|
-state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
-state-roles|with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state|
-state-export|terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket|
-gcs-state|a root whose state is in a bucket on fake-gcs-server with object versioning applies twice, each wave naming the generation it left, and terragucci state export writes the first generation once someone else approved the request|
-azurerm-state|a root whose azurerm backend on Azurite takes snapshots applies twice, each wave naming the snapshot it took of the state blob, and terragucci state export writes the first snapshot once someone else approved the request|
-gcs-unlock|terragucci unlock-state reads the lock a killed apply left on a gcs backend, by the generation of the lock object, and releases it only after an approval of that lock, recording who released it|
-azurerm-unlock|terragucci unlock-state reads the lease a killed apply left on an azurerm state blob, with the lock info in its metadata, and releases it only after an approval of that lock, recording who released it|
-blob-migrate|a migration moves a resource from a root whose state is on GCS to one whose state is on Azure Blob Storage: approved by digest, written under the lock object and the blob lease, and each version before and after recorded|
-cloud-roles|with oidc.gcp.roles and oidc.azure.roles, the roots of each environment plan and apply with the service account and the client of their glob, from the exports of the pipeline, and never the identity of the job|
-state-edges|the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again|
-migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
-migrate-backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
-migrate-backend-tfe|a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded|
-migrate-backend-pg|a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was|
-migrate-backend-k8s|a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was|
-migrate-backend-consul|a migration moves the state of a root between two consul paths: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its session lock, the old key left as it was|
-migrate-backend-http|a migration moves the state of a root between two http backend addresses: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the lock of the server, the old state left as it was|
-migrate-revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
-migrate-resume-never|with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1|
-migrate-split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
-dora|terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each|
-notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
-notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
-cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
-cost-gate|with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base|
-cost-policy|with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave|
-approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
-cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
-cdktn-apply|with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is|
-cdktn-pr-apply-lock|with synth and apply.when: pull-request, a pull request applied on a comment locks every CDK Terrain stack, since its change to the app can reach any, and a second pull request that changes a stack is refused with the stack and the holder named, its state left as the first applied it|
-cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
-cdktn-migrate|a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files|
-cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
-apply-branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
-apply-branches-drift|with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would read the state release left behind and report a false drift|
-own-jobs-kept|with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes|
-wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
-steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
-steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
-steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
-tg-cost-gate|with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies|
-tg-steps-gate|a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it|
-tg-wave-jobs|with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once|
-tg-respond-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|
-tg-state-versions|a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds|
-tg-drift-pr|a drifted Terragrunt unit gets a pull request that writes the live value into its own terragrunt.hcl inputs and leaves the module its units share alone|
-tg-drift-attribute|with respond.drift: attribute in a Terragrunt repo, tf-drift lists who changed each drifted attribute under its unit in the drift issue|
-tg-migrate-split|a migration file moves a resource from the state of one Terragrunt unit to that of another: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks, recording each version before and after|
-tg-root-pins|three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each|
-tg-choudoufu|in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH|
-tg-estate-graph|in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block|
-tg-state-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
-tg-apply-branches|with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved|
-tg-stacks|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
-tg-stack-check|the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit|
-tg-stack-affected|a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file|
-tg-stack-gate|the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate|
-tg-stack-drift|tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from|
-chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
-chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
-chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
-chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
-linked-plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
-linked-plan-local|two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer|
-resource-blast|a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output|
-linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
-plan-no-lock|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
-sensitive-redacted|a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket|
-provider-cache-once|a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy|
-unlock-state|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
-tip-moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
-mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
-drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
-tg-pr-plan|a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo|
-github-drift-issue|on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another|
-runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|
-ephemeral-pr|with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed|
-ephemeral-ttl|with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired|
-tg-ephemeral-pr|in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record|
-cdktn-ephemeral|with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record|
-cdktn-generate|with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend|
-cdktn-linked|a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown|
-image|with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies|
-env|with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state|
-local-plan|terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0|
-runner-label|with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one|
-pass-secrets|with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state|'
+CLAIMS='boot/tofu|the example boots and deploys locally|
+check/tofu|tf-check fails an unformatted root and names the file|
+affected/tofu|only the roots a change touches are planned|
+note/grouped|one note groups many plans|
+report/tofu|the report is JSON and HTML, and links every root to its full plan|
+report/highlight|destroys and outliers are open, identical groups are folded|
+waves/tofu|each wave goes out only once approved|
+refuse/tofu|a wave whose plans changed after approval applies nothing|
+approval/sealed|under approval: sealed a wave counts only an approval sealed by a key the signers file lists|
+drift/tofu|drift is reported by root|
+rollout/tofu|a module version rolls out one pull request per wave|
+modules/publish|changed modules are published at a new version|
+modules/attest|with modules.attest each release is signed, attested and recorded in the release ledger with its tag|
+modules/require|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
+modules/recorded|with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record|
+modules/terragrunt-require|with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release|
+modules/registry|with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused|
+tips/tofu|tips are on by default and name their rule|
+init/zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
+apply/serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
+reconcile/tofu|a control repo opens one pull request per project that changes, and the merged pipeline applies|
+reconcile/mixed|a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1|
+telemetry/traces|each plan run is one trace, with a span per root and the binary spans inside it|
+telemetry/metrics|the metrics of a plan run reach Prometheus with the counts in its report|
+init/terragrunt|init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits|
+waves/terragrunt|the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all|
+check/terragrunt|tf-check fails an unformatted Terragrunt file and names it|
+affected/terragrunt|only the units a change reaches are planned, including a file a module reads that Terragrunt misses|
+tips/terragrunt-mock|a dependency whose mock_outputs can stand in for apply is named by a tip|
+linked/terragrunt-mock|a unit that reads a new upstream is planned on the planned outputs of that upstream, never on its mock_outputs|
+linked/terragrunt-mock-trap|a new upstream and its dependent merge together and apply in order, so no mock reaches real state|
+drift/terragrunt|drift is reported by unit in a Terragrunt repo, with the same tracking issue|
+respond/refused|a refused wave names each root whose plan moved and the attributes that moved|
+respond/triage|a failed apply is triaged from the known-error table|
+respond/drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
+respond/tips|each tip becomes its own small pull request|
+respond/fmt|fmt on request commits to the pull request branch and nowhere else|
+respond/notes|release notes come from the conventional commits that touched the module|
+linked/fresh|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
+oidc/forgejo|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
+apply/steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
+policy/tofu|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
+comment/plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
+import/atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
+import/spacelift|terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask|
+import/env0|terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval|
+import/hcp|terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask|
+import/scalr|terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group|
+import/terragrunt-scale|terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own|
+waves/after|waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three|
+comment/atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
+lock/wait-span|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
+telemetry/dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
+telemetry/dash-changes|the Change review dashboard init writes shows the roots, groups and changes by action of a pull request|
+telemetry/dash-waves|the Rollouts and waves dashboard init writes shows a wave waiting for its approval, how long, and wave runs by result|
+telemetry/dash-drift|the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is|
+telemetry/dash-estate|the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs|
+telemetry/dash-runs|the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo|
+telemetry/dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|
+report/drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|
+policy/wave|a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings|
+check/diagnostics|tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal|
+comment/not-affected|a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause|
+drift/attribute|with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue|
+modules/version-bump|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
+telemetry/terragrunt-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
+oidc/clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
+comment/apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
+agent/comment|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
+agent/review|with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing|
+policy/review-risk|a tf-apply wave gives the policy the risk the review workflow of the default branch kept as its artifact for the head of the merged pull request as input.review; the edited review job of the pull request itself keeping risk low and a forged low-risk note posted with the pipeline token change nothing, and a policy that denies risk high stops the wave|
+report/wave|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
+policy/delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
+report/oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
+approval/terragrunt|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
+refuse/terragrunt|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
+approval/terragrunt-sealed|under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists|
+pr-apply/tofu|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto|
+lock/apply|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
+pr-apply/stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
+comment/terragrunt-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request|
+telemetry/provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
+telemetry/summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
+init/foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
+waves/terragrunt-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
+waves/atmos|init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate|
+apply/atmos-workspace|each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply|
+affected/atmos|a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other|
+refuse/atmos|an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved|
+linked/atmos|an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied|
+check/atmos|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
+init/atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
+waves/terramate|init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate|
+affected/terramate|a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other|
+lock/terramate|with apply.when: pull-request in a Terramate repo, a pull request applied on a comment locks the stack it changes, and a second pull request that changes that stack is refused with the stack and the holder named, its state left as the first applied it|
+linked/terramate|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
+check/terramate|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
+oidc/atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
+lock/atmos|with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instances it reaches (every instance, for a change to a stack manifest), and a second pull request that changes one is refused with the instance and the holder named, its state left as the first applied it|
+init/atmos-refuse|config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances|
+policy/source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
+reconcile/parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
+reconcile/provider|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
+pr-apply/requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
+lock/comment|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|
+report/front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
+approval/ledger|with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign|
+approval/at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
+approval/sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
+estate/tofu|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
+behold/view|the behold step of the estate job reads the reports from the bucket and publishes the view of the commit under views/behold/<commit>/ with latest.json and history.json naming it, and headless Chrome, opening views/behold/ from the bucket, draws the drift the drift check found on the card of the deleted queue|
+behold/serve|behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json|
+behold/terragucci-view|terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line|
+note/drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
+approval/pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no terragucci approve, recorded on the ledger as via pr-review|
+refuse/pr-review|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest|
+approval/pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
+choudoufu/concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
+choudoufu/concurrency-time|with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it|
+choudoufu/write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
+choudoufu/killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
+choudoufu/resume|with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one|
+choudoufu/live-progress|with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store|
+choudoufu/record-versions|with binary: choudoufu a record changed by three tf-apply waves shows three versions, newest first, on the estate page and in its history, listed by choudoufu live-history|
+choudoufu/iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
+apply/per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
+apply/stand-down|a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root|
+choudoufu/rows-overlap|with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held|
+choudoufu/rows-wait|with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value|
+drift/choudoufu|with binary: choudoufu a queue changed outside choudoufu on a root under live resource markers is drift: tf-drift plans the root in full, its report and one drift issue name the root and the attribute, and a run with no change closes the issue|
+choudoufu/rows-takeover|with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call|
+approval/resume|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
+approval/resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
+refuse/approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
+note/approve-command|the plan note of a pull request gives the terragucci approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
+pr-apply/terragrunt|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
+lock/terragrunt|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
+lock/plan|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
+lock/plan-release|with locks: plan the merge of a pull request releases the lock its first plan took|
+lock/plan-fmt|with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head|
+policy/override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
+policy/override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
+policy/override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
+policy/override-applied|once a wave applied a root under its override, the next plan of that root the policy denies is recorded as a new denial and waits for its own override, and only an override no wave applied refuses|
+report/azure|with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it|
+report/gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|
+note/diff|the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block|
+note/split|a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays|
+note/report-link|with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci|
+init/config-ts|init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line|
+init/role-refused|config check and init refuse an oidc block that names one role for plan and apply|
+review/description|with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json|
+review/decide|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
+telemetry/headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
+init/pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
+generate/tofu|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
+generate/terragrunt|in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name|
+generate/terragrunt-init|with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it|
+init/root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
+drift/close|a drift run that finds no drift closes the drift issue an earlier run opened|
+estate/control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
+estate/override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
+report/contracts|the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers|
+comment/refused|a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies|
+note/stale|a push to the default branch that changes a root an open pull request planned marks its plan note stale|
+pr-apply/confirm|with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing|
+pr-apply/base-config|with apply.when: pull-request a pull request that sets gate: never still waits at the gate of the default branch|
+pr-apply/guard|with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing|
+lock/close-release|with apply.when: pull-request closing a pull request releases the roots it locked|
+lock/terragrunt-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
+security/token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
+security/plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
+security/fork|a pull request from a fork runs check and no plan job|
+report/sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
+approval/revoke|removing an approval line from chant/lifecycle makes its wave wait again|
+approval/pending-expiry|a pending fact past its 48 hours is recorded afresh by the next run of its wave|
+approval/signer-trust|init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it|
+rollout/control|from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied|
+rollout/provider|rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave|
+rollout/pins|rollout moves an oci:// tag and a registry version pin, each in the shape it had|
+rollout/continue|with rollouts set, once wave 1 merged and applied the rollout job opens wave 2 with no manual run|
+policy/opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
+policy/hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
+policy/hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
+policy/terragrunt|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
+oidc/terragrunt|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
+affected/terragrunt-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
+linked/terragrunt-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
+linked/terragrunt-preview-gate|a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves|
+binary/terraform|with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform|
+binary/terragrunt-terraform|in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it|
+drift/tfquery|with binary: terraform a root with a .tfquery.hcl gets the drift pull request with the config terraform query generated for what it lists|
+telemetry/alerts|with short thresholds every alert init writes fires on its signal, and the apply-success and drift-corrected SLOs record|
+report/gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
+report/azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
+report/index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
+note/footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
+comment/dispatch|a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only|
+choudoufu/shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
+choudoufu/migrate|with binary: choudoufu a migration moves a resource between two estates by rewriting its ownership tags: proved by both plans, approved by digest, after which the next plan of both shows no change and the move is on chant/lifecycle|
+choudoufu/adopt|with binary: choudoufu a migration adopts a root on s3 state into an estate: proved against the live system, approved by digest, its resources stamped with no change, and its old state left as the version it was|
+init/cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
+report/outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
+audit/tofu|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
+audit/override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
+audit/refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
+audit/control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
+estate/inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
+estate/graph|the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave|
+estate/history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
+estate/query|terragucci query, run on the reports bucket with no server, answers the SQS queues changed in the last 7 days with their approvers with the rows the audit trail holds|
+state/versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
+oidc/state-roles|with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state|
+state/export|terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket|
+state/gcs|a root whose state is in a bucket on fake-gcs-server with object versioning applies twice, each wave naming the generation it left, and terragucci state export writes the first generation once someone else approved the request|
+state/azurerm|a root whose azurerm backend on Azurite takes snapshots applies twice, each wave naming the snapshot it took of the state blob, and terragucci state export writes the first snapshot once someone else approved the request|
+state/gcs-unlock|terragucci unlock-state reads the lock a killed apply left on a gcs backend, by the generation of the lock object, and releases it only after an approval of that lock, recording who released it|
+state/azurerm-unlock|terragucci unlock-state reads the lease a killed apply left on an azurerm state blob, with the lock info in its metadata, and releases it only after an approval of that lock, recording who released it|
+migrate/blob|a migration moves a resource from a root whose state is on GCS to one whose state is on Azure Blob Storage: approved by digest, written under the lock object and the blob lease, and each version before and after recorded|
+oidc/cloud-roles|with oidc.gcp.roles and oidc.azure.roles, the roots of each environment plan and apply with the service account and the client of their glob, from the exports of the pipeline, and never the identity of the job|
+estate/state-edges|the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again|
+migrate/resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
+migrate/backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
+migrate/tfe|a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded|
+migrate/pg|a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was|
+migrate/k8s|a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was|
+migrate/consul|a migration moves the state of a root between two consul paths: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its session lock, the old key left as it was|
+migrate/http|a migration moves the state of a root between two http backend addresses: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the lock of the server, the old state left as it was|
+migrate/revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
+migrate/resume-never|with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1|
+migrate/split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
+estate/dora|terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each|
+notify/chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
+notify/webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
+cost/estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
+cost/gate|with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base|
+cost/policy|with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave|
+refuse/approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
+affected/cdktn|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
+apply/cdktn|with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is|
+lock/cdktn|with synth and apply.when: pull-request, a pull request applied on a comment locks every CDK Terrain stack, since its change to the app can reach any, and a second pull request that changes a stack is refused with the stack and the holder named, its state left as the first applied it|
+tips/cdktn|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
+migrate/cdktn|a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files|
+init/cdktn-refuse|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
+apply/branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
+drift/branches|with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would read the state release left behind and report a false drift|
+init/own-jobs|with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes|
+waves/jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
+steps/before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
+steps/stop|a step before apply that exits 1 fails the wave job before anything applies|
+steps/gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
+cost/terragrunt-gate|with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies|
+steps/terragrunt-gate|a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it|
+waves/terragrunt-jobs|with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once|
+respond/terragrunt-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|
+state/terragrunt-versions|a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds|
+respond/terragrunt-drift|a drifted Terragrunt unit gets a pull request that writes the live value into its own terragrunt.hcl inputs and leaves the module its units share alone|
+drift/terragrunt-attribute|with respond.drift: attribute in a Terragrunt repo, tf-drift lists who changed each drifted attribute under its unit in the drift issue|
+migrate/terragrunt-split|a migration file moves a resource from the state of one Terragrunt unit to that of another: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks, recording each version before and after|
+init/terragrunt-root-pins|three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each|
+binary/terragrunt-choudoufu|in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH|
+estate/terragrunt-graph|in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block|
+state/terragrunt-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
+apply/terragrunt-branches|with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved|
+waves/terragrunt-stack|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
+check/terragrunt-stack|the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit|
+affected/terragrunt-stack|a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file|
+approval/terragrunt-stack|the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate|
+drift/terragrunt-stack|tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from|
+chat/slack|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
+chat/lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
+chat/teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
+chat/replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
+linked/plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
+linked/local|two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer|
+note/blast|a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output|
+linked/states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
+lock/plan-none|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
+note/sensitive|a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket|
+apply/provider-cache|a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy|
+state/unlock|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
+tips/moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
+estate/mcp|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
+agent/drift|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
+note/terragrunt|a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo|
+drift/github|on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another|
+apply/runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|
+ephemeral/pr|with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed|
+ephemeral/ttl|with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired|
+ephemeral/terragrunt|in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record|
+ephemeral/cdktn|with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record|
+generate/cdktn|with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend|
+linked/cdktn|a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown|
+init/image|with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies|
+init/env|with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state|
+estate/local-plan|terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0|
+init/runner-label|with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one|
+init/pass-secrets|with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state|'
 
 # The core claims, which SMOKE_BINARY=terraform and SMOKE_BINARY=choudoufu run
 # on that binary, each a row of its own in smoke.json.
-BINARY_CLAIMS='boot waves pr-apply policy-wave notify-webhook report drift cost-gate steps-gate approve-plan inventory resource-history estate-graph audit'
+BINARY_CLAIMS='boot/tofu waves/tofu pr-apply/tofu policy/wave notify/webhook report/tofu drift/tofu cost/gate steps/gate refuse/approve-plan estate/inventory estate/history estate/graph audit/tofu'
 # A core claim that shows something else on a binary: <binary> <claim>|what
 # its row shows.
 BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, each root plans in full: the queue deleted outside choudoufu is named by root in the report and one drift issue, the change waiting on main shows as drift too, and a run with no drift closes it
@@ -486,8 +490,8 @@ choudoufu unlock-state|with binary: choudoufu and a root under live resource mar
 # and lock-wait are about a lock it never takes (its own side is
 # cdf-concurrency, cdf-rows-* and cdf-killed-records, and the plain lock-wait
 # row is choudoufu on an s3 backend).
-BINARY_LOCK_CLAIMS='terraform apply-serial unlock-state lock-wait
-choudoufu unlock-state'
+BINARY_LOCK_CLAIMS='terraform apply/serial state/unlock lock/wait-span
+choudoufu state/unlock'
 # The claims SMOKE_BINARY runs.
 binary_claims() { echo $BINARY_CLAIMS $(grep "^$SMOKE_BINARY " <<<"$BINARY_LOCK_CLAIMS" | cut -d' ' -f2-); }
 
@@ -501,7 +505,7 @@ say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 # Each returns 0 when the property held and 1 when it did not, and prints its
 # evidence on stderr.
 
-claim_boot() {
+claim_boot/tofu() {
   # The example from nothing: its repo, its resources and its state are wiped,
   # then `example.sh up` pushes it and the pipeline applies every root. Only
   # the example is wiped (not all of floci, as `up --fresh` does), so claims on
@@ -585,7 +589,7 @@ wipe_example() {
   log "wiped the example's repo, resources and state"
 }
 
-claim_check() {
+claim_check/tofu() {
   # A clean branch must go green, and the same branch plus an unformatted file
   # must go red with the file named in the log.
   log() { echo "[smoke check] $*" >&2; }
@@ -617,7 +621,7 @@ claim_check() {
 
 TERRAGUCCI="$HERE/../node_modules/.bin/terragucci"
 
-claim_zero_config() {
+claim_init/zero_config() {
   # The example with its terragucci.yml cut down to the drift schedule, the one
   # thing a repo cannot show: init must write exactly the pipeline the example
   # commits, finding everything else from the repo alone.
@@ -637,7 +641,7 @@ claim_zero_config() {
   return $rc
 }
 
-claim_apply_serial() {
+claim_apply/serial() {
   # A scratch repo whose one root writes a mark to floci when its apply starts
   # and another when it ends, with a long pause between. The first push is
   # let run until its apply has started, then a second push lands. The marks
@@ -866,7 +870,7 @@ gated_approve() { # name, wave, [sign|unlisted]
   (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver ${sign[@]+"${sign[@]}"}) >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
 }
 
-claim_waves() {
+claim_waves/tofu() {
   # Push the fixture. Wave 1 (canary/one) waits for its approval, so the run
   # stops there and wave 2 (fleet/*) never starts: no root has state. Approve
   # wave 1 and push again: canary/one applies, and wave 2 waits for its own
@@ -907,7 +911,7 @@ claim_waves() {
   return $rc
 }
 
-claim_apply_branches() {
+claim_apply/branches() {
   # The gated-waves fixture with apply.branches: {release: ["canary/*"]}.
   # Push main: its wave 1 is fleet/*, which waits; canary/one is release's.
   # Approve it and push main again: fleet/* applies and canary/one has no
@@ -970,7 +974,7 @@ claim_apply_branches() {
   return $rc
 }
 
-claim_tg_apply_branches() {
+claim_apply/terragrunt_branches() {
   # The Terragrunt gated-waves fixture with apply.branches: {release:
   # ["live/canary/*"]}. Push main: its wave 1 is the fleet units, which wait;
   # live/canary/one is release's. Approve it and push main again: the fleet
@@ -1056,7 +1060,7 @@ branches_drift_apply() { # work, log name, tf-apply arguments... -> AUDIT_CODE
   clean_mounted "$work/wave" "$(image_tag tofu)"
 }
 
-claim_apply_branches_drift() {
+claim_drift/branches() {
   # Two roots with their state in floci and apply.branches: {release:
   # ["canary"]}: app, a terraform_data, and canary, an SQS queue. release
   # applies canary (owner tag v1, state at canary.tfstate), then moves its
@@ -1125,7 +1129,7 @@ claim_apply_branches_drift() {
   return $rc
 }
 
-claim_own_jobs_kept() {
+claim_init/own_jobs() {
   # The gated-waves fixture under gate: never, with own_jobs: ci/own-jobs.yml
   # naming one job that needs check and prints a marker. init runs twice; the
   # pipeline still holds the job as the file has it, and on the push the job
@@ -1236,7 +1240,7 @@ ephemeral_pr() { # name, repo, title -> pushes $work/tree as the change branch, 
   [ "$RUN_STATUS" = success ] || { log "the ephemeral job of pull request $EPH_PR did not succeed"; return 1; }
 }
 
-claim_ephemeral_pr() {
+claim_ephemeral/pr() {
   # Push the fixture to main, which applies every root at its own key. Open a
   # pull request that changes canary/one: the default branch's ephemeral job
   # applies its copy under <name>/canary/one-pr-<n>.tfstate, and the root's
@@ -1294,7 +1298,7 @@ claim_ephemeral_pr() {
   return $rc
 }
 
-claim_ephemeral_ttl() {
+claim_ephemeral/ttl() {
   # The same repo with ttl: 1m. The pull request's copy applies; once a
   # minute has passed, one run of the sweep workflow (dispatched, as its
   # schedule would run it) destroys the copy while the pull request is still
@@ -1365,7 +1369,7 @@ state_count() { # key -> how many resource instances the state at key in floci h
   curl -fsS "$FLOCI/shop-terraform-state/$1" 2>/dev/null | jq -r '[.resources[]?.instances[]?] | length' 2>/dev/null || true
 }
 
-claim_tg_ephemeral_pr() {
+claim_ephemeral/terragrunt() {
   # The Terragrunt gated-waves fixture under gate: never, its root.hcl key
   # reading TERRAGUCCI_EPHEMERAL_SUFFIX, and ephemeral naming live/canary/*.
   # The push to main applies every unit at its own key. A pull request that
@@ -1418,7 +1422,7 @@ claim_tg_ephemeral_pr() {
   return $rc
 }
 
-claim_cdktn_ephemeral() {
+claim_ephemeral/cdktn() {
   # The CDK Terrain app of cdktn-synth with each stack's state in floci under
   # cdktn-ephemeral/, gate: never, and ephemeral naming
   # cdktf.out/stacks/dev. The push to main synthesizes and applies both
@@ -1470,7 +1474,7 @@ claim_cdktn_ephemeral() {
   return $rc
 }
 
-claim_cdktn_generate() {
+claim_generate/cdktn() {
   # The CDK Terrain app of cdktn-synth with synth and a generate key that
   # gives every root an s3 backend. init and terragucci generate each refuse
   # it as a config error that names the CDK Terrain constructs that set a
@@ -1500,7 +1504,7 @@ claim_cdktn_generate() {
   return $rc
 }
 
-claim_cdktn_linked() {
+claim_linked/cdktn() {
   # A CDK Terrain app of two stacks with their state in floci under
   # cdktn-linked/: net, whose output name is known when it plans and stamp
   # only once it applies, and app, which reads both through a
@@ -1594,7 +1598,7 @@ JS
   return $rc
 }
 
-claim_wave_jobs() {
+claim_waves/jobs() {
   # The gated-waves fixture with waves.jobs: 2. Wave 1 (canary/one) is one root
   # and one job; wave 2 (fleet/*, four roots) gets apply-wave-2, which plans
   # and gates the wave, and two share jobs of two roots each. Push, approve
@@ -1689,7 +1693,7 @@ unseal_tree() {
   rm -f "$work/tree/terragucci.yml.bak" "$work/tree/chant.workspace.json"
 }
 
-claim_sealed() {
+claim_approval/sealed() {
   # Push the fixture; wave 1 waits. Write an unsealed approval of its plan, and
   # one sealed with an agent's key the signers file does not list, both in the
   # approver's name, and push again: nothing applies, and the run says the
@@ -1739,7 +1743,7 @@ claim_sealed() {
   return $rc
 }
 
-claim_refuse() {
+claim_refuse/tofu() {
   # Push the fixture; wave 1 waits. Approve it, then change canary/one and
   # push again. Wave 1 plans a different set digest from the approved one, so
   # it applies nothing, names canary/one, and no root anywhere has state.
@@ -1813,7 +1817,7 @@ linked_key() { # prefix, sha -> the key of sha's run view in the reports bucket
   curl -fsS "$FLOCI/$REPORT_BUCKET?list-type=2&prefix=$1/" | grep -o "<Key>[^<]*/runs/$2/run.json</Key>" | sed -E 's#</?Key>##g' | head -1
 }
 
-claim_linked_plan() {
+claim_linked/plan() {
   # net (wave 1) and app (wave 2, reading net's state) applied at rev 1; then
   # net's rev.txt goes to 2 and tf-plan runs in the CI image. app plans on
   # net's planned outputs: its name moves to net-2, and its stamp, which net
@@ -1855,7 +1859,7 @@ claim_linked_plan() {
   return $rc
 }
 
-claim_linked_plan_local() {
+claim_linked/local() {
   # The local-states fixture: net and app on the local backend, their state
   # files under state/, app reading net's through terraform_remote_state by
   # the same path. Both applied at rev 1, then net goes to rev 2 and tf-plan
@@ -1909,7 +1913,7 @@ claim_linked_plan_local() {
   return $rc
 }
 
-claim_resource_blast() {
+claim_note/blast() {
   # The resource-blast fixture: queue (a jobs queue, its policy, a
   # dead-letter queue, each ARN an output) and worker (a function reading
   # jobs_arn through terraform_remote_state, the mapping that feeds it, and a
@@ -1980,7 +1984,7 @@ claim_resource_blast() {
   return $rc
 }
 
-claim_linked_states() {
+claim_linked/states() {
   # The linked-states fixture (net in wave 1, app in wave 2 reading net's
   # state), gate always, a reports bucket, both roots applied at rev 1. A pull
   # request moves net to rev 2: its plan note shows app's name moving to
@@ -2074,7 +2078,7 @@ claim_linked_states() {
   return $rc
 }
 
-claim_reconcile() {
+claim_reconcile/tofu() {
   # A control repo names two projects with the same two roots: in-line already
   # has the pipeline init writes, two-roots has none. Apply must leave in-line
   # alone and open one pull request on two-roots; its check must pass; merged,
@@ -2172,7 +2176,7 @@ YML
   log "one pull request on $repo, check green, merged, both roots applied in order; in-line unchanged"
 }
 
-claim_reconcile_mixed() {
+claim_reconcile/mixed() {
   # A control repo whose projects are on three forges: a Forgejo project on
   # the stack and a GitHub project on stack/mock-github, each with one root
   # and no pipeline, and a Forgejo project whose forge does not answer.
@@ -2363,7 +2367,7 @@ apply_roots() { # root...
   drop_work "$work"
 }
 
-claim_report() {
+claim_report/tofu() {
   # Two runs on two commits, each copying its report to the bucket. Each run
   # writes report.json and report.html, every planned root links to its full
   # plan text and JSON and those files exist, the HTML carries the JSON
@@ -2423,7 +2427,7 @@ claim_report() {
   log "two runs, each root linked to its plan, both in $REPORT_BUCKET/$prefix/index.json"
 }
 
-claim_report_oidc() {
+claim_report/oidc() {
   # The plan job of a pipeline with oidc: AWS_ROLE_ARN and a token in
   # AWS_WEB_IDENTITY_TOKEN_FILE, and no AWS_ACCESS_KEY_ID. The report goes to
   # the bucket with the keys AssumeRoleWithWebIdentity answers, and the index
@@ -2454,7 +2458,7 @@ claim_report_oidc() {
   log "with only a role and an OIDC token, the report of $commit is in $REPORT_BUCKET/$prefix and its index"
 }
 
-claim_affected() {
+claim_affected/tofu() {
   # A change to envs/dev/platform, against the commit before it. The plan must
   # cover dev's platform and the four dev services that read its state, and
   # no other root. BREAK: no base, so every root is planned.
@@ -2475,7 +2479,7 @@ claim_affected() {
   return $rc
 }
 
-claim_grouped() {
+claim_note/grouped() {
   # A pull request on the example with module-bump, which reaches the twelve
   # service roots. Its plan job must post one plan note whose first line names
   # those twelve roots, and whose groups name every one of them, in fewer
@@ -2566,7 +2570,7 @@ otel_trace() {
   echo "$t"
 }
 
-claim_traces() {
+claim_telemetry/traces() {
   # One plan run. Its trace is found by the commit on the stage span; it must
   # hold one root span per root in the report, and OpenTofu's own spans (sent
   # under its own service name) must carry the same trace id, which they do
@@ -2599,7 +2603,7 @@ claim_traces() {
   log "trace $trace: $spans root spans for $roots roots, and $binary spans from the binary inside it"
 }
 
-claim_metrics() {
+claim_telemetry/metrics() {
   # One plan run. Prometheus, scraping the collector, must hold the run's
   # metrics with the report's root count and change totals. The metrics carry
   # no commit (reference/observability.mdx), so the run is its own project and
@@ -2639,7 +2643,7 @@ claim_metrics() {
   log "Prometheus holds project $project's roots planned and changes by action, equal to the report"
 }
 
-claim_highlight() {
+claim_report/highlight() {
   # One run with a module bump (identical change in every root), a destroy and
   # a replacement. The destroy and the replacement are named and their roots
   # open; the bump's big group is folded.
@@ -2672,7 +2676,7 @@ claim_highlight() {
   log "named $del (delete) and $rep (replace), both roots open; group $big folded"
 }
 
-claim_drift() {
+claim_drift/tofu() {
   # Staging orders' jobs queue is deleted from floci, outside Terraform. A
   # drift run, with an unapplied code change waiting on main, must report that
   # root and that queue and nothing else, and keep exactly one open issue that
@@ -2771,7 +2775,7 @@ claim_drift() {
   log "$root and $queue named in the report and one issue, the only delete; a run with none closed the issue"
 }
 
-claim_tips() {
+claim_tips/tofu() {
   # Dev search's AWS provider is let float to "~> 6.0". With tips on, which is
   # the default, the report carries a tip that names its rule and links the
   # rule's page, the HTML has a Tips section and the note counts them. A second
@@ -2832,7 +2836,7 @@ registry_up() { # work, port
   return 1
 }
 
-claim_publish() {
+claim_modules/publish() {
   # The pipeline's publish job, on a Forgejo repo: a merge to the default branch
   # publishes each changed module to a TLS registry and as a git tag, a push
   # that changes nothing publishes nothing, and a change to one module moves
@@ -2904,7 +2908,7 @@ claim_publish() {
   drop_work "$work"
 }
 
-claim_publish_attest() {
+claim_modules/attest() {
   # modules.attest on a Forgejo repo: the pipeline's publish job signs
   # modules/service with the repo's cosign key, attests its provenance and
   # SBOM, and records the release on chant/lifecycle with the tag, on a TLS
@@ -3031,10 +3035,10 @@ require_claim() { # claim name, tampered|unrecorded
   drop_work "$work"
 }
 
-claim_require_attested() { require_claim require-attested tampered; }
-claim_require_recorded() { require_claim require-recorded unrecorded; }
+claim_modules/require() { require_claim require-attested tampered; }
+claim_modules/recorded() { require_claim require-recorded unrecorded; }
 
-claim_module_registry() {
+claim_modules/registry() {
   # modules.registry with modules.test, the CLI in the CI image: two releases
   # of modules/network, 1.0.0 and 1.1.0, each tested with tofu test first, are
   # written to a floci bucket as the module registry protocol's files. A TLS
@@ -3106,7 +3110,7 @@ JS
   log "both releases passed tofu test and reached the bucket; tofu resolved ~> 1.0 to 1.1.0 from the registry it serves"
 }
 
-claim_tg_require_attested() {
+claim_modules/terragrunt_require() {
   # modules.require: attested in a Terragrunt repo whose pipeline publishes
   # modules/service 0.1.0 attested. A branch whose unit live/dev pins 0.1.1,
   # a tag pushed by hand, must fail its tf-check job with the unit, its
@@ -3188,7 +3192,7 @@ claim_tg_require_attested() {
   drop_work "$work"
 }
 
-claim_rollout() {
+claim_rollout/tofu() {
   # One repo, three roots taking modules/network by git tag: dev/app (the
   # canary), prod/net, and prod/app, which reads prod/net's state. The module
   # changes and tf-publish tags 0.2.0. A dry run with no version must find
@@ -3336,7 +3340,7 @@ pr_files() { # repo, number
   api "$URL/api/v1/repos/$1/pulls/$2/files" | jq -r '[.[].filename] | sort | join(",")'
 }
 
-claim_respond_refused() {
+claim_respond/refused() {
   # Plan the example, then plan it again with the replace scenario. The
   # wave-refused response must name envs/prod/search alone, and hash_key as
   # what moved in it. BREAK: the second plan has no change, so nothing moved.
@@ -3357,7 +3361,7 @@ claim_respond_refused() {
   log "envs/prod/search moved, and hash_key with it"
 }
 
-claim_respond_triage() {
+claim_respond/triage() {
   # An apply that meets a state lock someone else holds fails, and the triage
   # names it as a state lock with its fix. BREAK: no lock, so the apply passes
   # and there is nothing to triage.
@@ -3383,7 +3387,7 @@ claim_respond_triage() {
   log "the failed apply was triaged as a state lock, with its fix"
 }
 
-claim_respond_drift() {
+claim_respond/drift() {
   # A root with a literal visibility timeout is applied; then the queue's
   # timeout is changed in floci, and another queue is made there by hand. The
   # drift response must open one pull request that writes the live timeout
@@ -3429,7 +3433,7 @@ claim_respond_drift() {
   log "pull request $pr writes the live timeout and imports $extra"
 }
 
-claim_respond_tips() {
+claim_respond/tips() {
   # Two roots: dev takes the AWS provider by a range, prod has no lock file,
   # and the config names no canary. The repo commits the pipeline init writes
   # and pushes to main: after the applies, its tips job must open three pull
@@ -3473,7 +3477,7 @@ claim_respond_tips() {
   return $rc
 }
 
-claim_respond_fmt() {
+claim_respond/fmt() {
   # A pull request's branch carries an unformatted file. fmt on request must
   # push one commit to that branch, formatting it, and leave main alone.
   # BREAK: a dry run, which commits nothing.
@@ -3509,7 +3513,7 @@ claim_respond_fmt() {
   log "one fmt commit on smoke-fmt; main untouched"
 }
 
-claim_respond_notes() {
+claim_respond/notes() {
   # A module released twice; the notes for the second release come from its
   # conventional commits, breaking change first. BREAK: the commits do not
   # follow the convention, so nothing is marked breaking.
@@ -3620,7 +3624,7 @@ tg_restore_main() {
   return 0
 }
 
-claim_tg_zero_config() {
+claim_init/terragrunt() {
   # The example with its pipeline removed: init must find Terragrunt from
   # root.hcl and the 15 units, with no roots setting, and write exactly the
   # committed pipeline. BREAK: an exclude drops prod, so the units differ.
@@ -3640,7 +3644,7 @@ claim_tg_zero_config() {
   return $rc
 }
 
-claim_tg_waves() {
+claim_waves/terragrunt() {
   # Boot the example: every resource the units declare reaches floci, and the
   # pipeline runs one job per wave, each wave a dependency layer: the dev
   # platform, the other dev units, then the staging and prod platforms, the
@@ -3695,7 +3699,7 @@ WAVES
   return $rc
 }
 
-claim_tg_check() {
+claim_check/terragrunt() {
   # A clean branch goes green; the same branch plus an unformatted .hcl file
   # goes red with the file named. BREAK: the "clean" branch carries the file.
   log() { echo "[smoke tg-check] $*" >&2; }
@@ -3723,7 +3727,7 @@ claim_tg_check() {
   log "the unformatted push failed at the format check and named live/dev/orders/owner.hcl"
 }
 
-claim_tg_affected() {
+claim_affected/terragrunt() {
   # module-bump changes only modules/service/policy.json, which the module
   # reads with file(). Terragrunt's git filter misses it; the plan must cover
   # the 12 service units, each saying why, and none of the 3 platform units.
@@ -3745,7 +3749,7 @@ claim_tg_affected() {
   return $rc
 }
 
-claim_tg_mock_lint() {
+claim_tips/terragrunt_mock() {
   # prod email's dependency has mocks and no allow-list, so they could stand in
   # for apply. The report's tips name it as TF041 with the rule's page.
   # BREAK: prod email gets an allow-list first, so there is nothing to name.
@@ -3763,7 +3767,7 @@ claim_tg_mock_lint() {
   return $rc
 }
 
-claim_tg_refuse() {
+claim_linked/terragrunt_mock() {
   # new-service adds ledger and billing, which reads ledger's logs_bucket and
   # has a mock for it. Ledger has no state yet, so Terragrunt alone would hand
   # billing the mock. Ledger's plan knows the bucket it makes, so billing plans
@@ -3803,7 +3807,7 @@ claim_tg_refuse() {
   return $rc
 }
 
-claim_tg_mock_trap() {
+claim_linked/terragrunt_mock_trap() {
   # Merge new-service to main. Wave 1 applies ledger with the dev platform;
   # billing reads ledger, so it is in wave 2 and plans once ledger applied, and
   # its state holds ledger's real bucket and no mock value. BREAK: wave 1 of the
@@ -3845,7 +3849,7 @@ claim_tg_mock_trap() {
   return $rc
 }
 
-claim_tg_drift() {
+claim_drift/terragrunt() {
   # The Terragrunt example is applied (run 'just example-terragrunt up' first).
   # Staging orders' jobs queue is deleted from floci, outside Terraform. A
   # tf-drift run over every unit, one refresh-only run --all per wave, must
@@ -3853,7 +3857,7 @@ claim_tg_drift() {
   # open drift issue that names them. Run again it updates the issue.
   # floci keeps no tags or object metadata, so every unit shows tag and
   # metadata drift; the claim holds the deletes exact and every other drifted
-  # attribute to that known set, as claim_drift does.
+  # attribute to that known set, as claim_drift/tofu does.
   # BREAK: the queue is not deleted, so there is no drift to name.
   log() { echo "[smoke tg-drift] $*" >&2; }
   # shellcheck source=lib.sh
@@ -3916,7 +3920,7 @@ claim_tg_drift() {
   return $rc
 }
 
-claim_fresh_plan() {
+claim_linked/fresh() {
   # Two roots nothing has applied are added: fresh-net, and fresh-app, which
   # reads fresh-net's state. The plan job must stay green, plan fresh-net, not
   # plan fresh-app, and say in the report and the note that fresh-app waits
@@ -3989,7 +3993,7 @@ TF"
   return $rc
 }
 
-claim_policy() {
+claim_policy/tofu() {
   # A new root plans a terraform_data resource, and the repo's terragucci.yml
   # turns on policy: a Rego rule denying terraform_data. tf-plan must exit 1,
   # fail that root, and name the denial in the report and the note; conftest is
@@ -4047,7 +4051,7 @@ printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  input.the_pu
   return $rc
 }
 
-claim_policy_wave() {
+claim_policy/wave() {
   # stack/fixtures/policy-wave: one root creating a terraform_data resource,
   # local state, gate: never, and a policy that denies terraform_data. A
   # tf-apply wave runs in the tofu CI image; the policy must refuse it: the
@@ -4108,7 +4112,7 @@ claim_policy_wave() {
   return $rc
 }
 
-claim_wave_report() {
+claim_report/wave() {
   # One root that creates something, --gate always, and a bare repo for origin.
   # The first run waits (exit 3): its report.json says the wave is waiting and
   # names the chant/lifecycle ledger that holds the record, and report.html
@@ -4178,7 +4182,7 @@ HCL
   return $rc
 }
 
-claim_forgejo_oidc() {
+claim_oidc/forgejo() {
   # A scratch repo whose one root reads a data source that runs a probe in the
   # job: it reads the token the job wrote to $AWS_WEB_IDENTITY_TOKEN_FILE,
   # verifies its signature against Forgejo's published keys, trades it with
@@ -4305,7 +4309,7 @@ JS
   return $rc
 }
 
-claim_steward() {
+claim_apply/steward() {
   # Changes the example: it boots it from nothing with tf-apply handed to the
   # fountain steward (stack/steward.sh). The push to main goes green, every
   # resource is in floci, and the steward has a `chant run tf-apply` turn it
@@ -4352,7 +4356,7 @@ claim_steward() {
   log "the steward's tf-apply turn completed, and every root's resources are in floci"
 }
 
-claim_comment_plan() {
+claim_comment/plan() {
   # A scratch repo with two roots, the pipeline init writes for it, a push to
   # main (which applies), and a pull request that changes one root (which
   # plans). Then comments, each by the repo's admin: `/terragucci plan app`
@@ -4474,7 +4478,7 @@ TF
   return "$rc"
 }
 
-claim_import_atlantis() {
+claim_import/atlantis() {
   # The example as an Atlantis repo would have it: an atlantis.yaml whose six
   # projects are dev's five roots and staging's orders, with a workflow that
   # sets a variable, passes a flag and has an import stage. `terragucci import
@@ -4551,7 +4555,7 @@ YAML
   return $rc
 }
 
-claim_import_spacelift() {
+claim_import/spacelift() {
   # The example as a Spacelift repo would have it: an admin stack's code
   # (spacelift/stacks.tf, no provider block, so it is not a root) declaring a
   # stack per root on OpenTofu 1.13.1, two dependencies the state reads do not
@@ -4651,7 +4655,7 @@ YAML
   return $rc
 }
 
-claim_import_env0() {
+claim_import/env0() {
   # The example as an env zero repo would have it: admin code
   # (env0/environments.tf, no provider block) with an OpenTofu 1.13.1
   # template and an environment per root, each waiting for an approval, the
@@ -4778,7 +4782,7 @@ tfe_terragucci() { # work, tree, host, token, args...
     "$(image_tag tofu)" terragucci "$@"
 }
 
-claim_import_hcp() {
+claim_import/hcp() {
   # The example as HCP Terraform runs it: organization acme
   # (stack/fixtures/tfe-api/hcp.json, served by the TFE API mock over HTTPS,
   # five workspaces to a page) holds a workspace per dev and staging root of
@@ -4848,7 +4852,7 @@ claim_import_hcp() {
   return $rc
 }
 
-claim_import_scalr() {
+claim_import/scalr() {
   # The example as Scalr runs it: account <host> (stack/fixtures/tfe-api/
   # scalr.json on Scalr's own API, /api/iacp/v3/, by the same mock) holds
   # environments staging and prod, five OpenTofu workspaces of acme/shop
@@ -4911,7 +4915,7 @@ claim_import_scalr() {
   return $rc
 }
 
-claim_import_tg_scale() {
+claim_import/terragrunt_scale() {
   # The Terragrunt example as a Terragrunt Scale repo would have it: Gruntwork
   # Pipelines' .gruntwork/aws.hcl reading accounts.yml, an environment block
   # per account (dev and staging by account reference, prod by literal ARNs),
@@ -5031,7 +5035,7 @@ HCL
   return $rc
 }
 
-claim_waves_after() {
+claim_waves/after() {
   # A scratch repo with three plain roots that read nothing of each other's
   # state, and terragucci.yml whose waves.after puts app after database and
   # database after network. init must cut them into three waves, network,
@@ -5105,7 +5109,7 @@ TF
   return $rc
 }
 
-claim_comment_atlantis() {
+claim_comment/atlantis() {
   # A scratch repo with two roots and atlantis_comments: true, the pipeline
   # init writes for it, a push to main, and a pull request that changes one
   # root. `atlantis plan -d app` by the repo's admin must start a run that
@@ -5314,7 +5318,7 @@ HCL
   log "the wave's Terraform plan waited ${secs}s for the lock the second plan held, under the default lock timeout, and applied"
 }
 
-claim_lock_wait() {
+claim_lock/wait_span() {
   # One root on floci's S3 with use_lockfile, planned by choudoufu. A second
   # plan of the same state takes the lock first and holds it: it waits at the
   # prompt for a variable it was not given, which comes after the lock. While
@@ -5460,7 +5464,7 @@ HCL
   echo "$work/repo/terragucci-report/report.json"
 }
 
-claim_provider_calls() {
+claim_telemetry/provider_calls() {
   # With binary: choudoufu, the wave report lists the slowest provider calls
   # of the root, read from the tfplugin5/6.Provider spans choudoufu sends with
   # rpc.method, opentofu.provider.address and opentofu.resource.type: at least
@@ -5483,7 +5487,7 @@ claim_provider_calls() {
   return "$rc"
 }
 
-claim_summed_timings() {
+claim_telemetry/summed_timings() {
   # With binary: choudoufu and a span budget of one detail span per walk
   # (CHOUDOUFU_TRACE_SPAN_BUDGET=1), choudoufu sums the rest into Aggregate:
   # spans, and the wave report lists those sums: an aggregate for the
@@ -5510,7 +5514,7 @@ claim_summed_timings() {
   return "$rc"
 }
 
-claim_foreign_checkout() {
+claim_init/foreign_checkout() {
   # On github.com a container job runs as root and the runner's user (uid 1001)
   # owns the checkout; git refuses such a checkout unless it is marked safe.
   # The same change as affected, with the checkout handed to uid 1001 and no
@@ -5683,49 +5687,49 @@ dash_claim() { # uid, panel title...
   log "$uid renders as init writes it, and $# panel(s) show $DASH_PROJECT's plan, drift run and gated wave: $*"
 }
 
-claim_dash_pipeline() {
+claim_telemetry/dash_pipeline() {
   log() { echo "[smoke dash-pipeline] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   dash_claim terragucci-pipeline-health "Runs per hour" "Errors" "Duration p95" "Runs by result"
 }
 
-claim_dash_changes() {
+claim_telemetry/dash_changes() {
   log() { echo "[smoke dash-changes] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   dash_claim terragucci-change-review "Roots changed per pull request" "Groups per pull request" "Changes by action"
 }
 
-claim_dash_waves() {
+claim_telemetry/dash_waves() {
   log() { echo "[smoke dash-waves] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   dash_claim terragucci-rollouts-waves "Waves waiting" "Waiting for" "Wave runs by result" "Refused and failed waves" "Roots per wave"
 }
 
-claim_dash_drift() {
+claim_telemetry/dash_drift() {
   log() { echo "[smoke dash-drift] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   dash_claim terragucci-drift "Drifted roots" "Drift age"
 }
 
-claim_dash_estate() {
+claim_telemetry/dash_estate() {
   log() { echo "[smoke dash-estate] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   dash_claim terragucci-estate "Roots per project" "Versions"
 }
 
-claim_dash_runs() {
+claim_telemetry/dash_runs() {
   log() { echo "[smoke dash-runs] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   dash_claim terragucci-runs "Slowest roots" "Stage duration" "Runs"
 }
 
-claim_dash_slos() {
+claim_telemetry/dash_slos() {
   # The plan SLO's dashboard, and its recorded SLI for this project: the
   # rules file init writes is loaded in Prometheus (promtool checks it), and
   # its recording rules record the project's plans.
@@ -5766,7 +5770,7 @@ claim_dash_slos() {
 # BREAK: reports.url names a bucket that does not exist, so the note's link is
 # broken and the walk stops at its first step.
 
-claim_drill_down() {
+claim_report/drill_down() {
   log() { echo "[smoke drill-down] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -5858,7 +5862,7 @@ check_step_body() { # workflow file
     r { sub(/^          /, ""); print }' "$1"
 }
 
-claim_check_diagnostics() {
+claim_check/diagnostics() {
   # tf-check fails with the cause in its job log for each of three faults. On
   # a scratch repo whose main carries a policy (terragucci.yml's policy:, a
   # Rego rule and its test), main goes green first. Then:
@@ -6012,7 +6016,7 @@ REGO
 }
 
 # ── comment re-plans that plan nothing ────────────────────────────────────
-claim_comment_not_affected() {
+claim_comment/not_affected() {
   # A scratch repo with two roots, app and net, the pipeline init writes for
   # it, a push to main, and a pull request that changes app only. Then, as
   # the repo's admin:
@@ -6163,7 +6167,7 @@ TF
   return "$rc"
 }
 
-claim_drift_attribute() {
+claim_drift/attribute() {
   # A scratch repo with one root, a queue with a literal visibility timeout,
   # is applied to floci; then the timeout is changed in floci, outside
   # Terraform. With respond.drift: attribute in terragucci.yml, a tf-drift run
@@ -6242,7 +6246,7 @@ SH
   return $rc
 }
 
-claim_version_bump_job() {
+claim_modules/version_bump() {
   # A scratch repo with one root, app, and a module, modules/queue, released
   # as modules/queue/v0.1.0. main then gains a commit to the module with no
   # conventional type, so only the decision service can suggest its bump.
@@ -6322,7 +6326,7 @@ claim_version_bump_job() {
   return $rc
 }
 
-claim_tg_spans() {
+claim_telemetry/terragrunt_spans() {
   # module-bump reaches the Terragrunt example's 12 service units. Their
   # tf-plan run must give every planned unit timings from Terragrunt's run
   # report (source terragrunt) with spans > 0: its plan's own spans, which
@@ -6374,7 +6378,7 @@ SH
   return $rc
 }
 
-claim_oidc_clouds() {
+claim_oidc/clouds() {
   # A scratch tree whose terragucci.yml sets oidc.gcp and oidc.azure (no AWS).
   # init writes its Forgejo pipeline; the plan job's and apply-wave-1's scripts
   # are cut before they plan, lock or post (their forge calls and credential
@@ -6485,7 +6489,7 @@ exit "$rc"' oidc "$name" "$provider" "$sa@shop.iam.gserviceaccount.com" "$client
   return $rc
 }
 
-claim_comment_apply() {
+claim_comment/apply() {
   # The gated fixture (gate always; wave 1 is canary/one, wave 2 fleet/*) on
   # main, where wave 1 waits. A pull request changes canary/one and is merged;
   # the merge commit's apply waits at wave 1 for its new digest. An agent then
@@ -6668,7 +6672,7 @@ pr_state_input() { # name, root -> the input its terraform_data holds in the sta
   curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty | if type == "object" then .value else . end' 2>/dev/null || true
 }
 
-claim_pr_apply() {
+claim_pr_apply/tofu() {
   # A repo with apply.when: pull-request and apply.merge: auto. A pull request
   # changes canary/one; once its runs finished, a reviewer approves its
   # head and the admin comments /terragucci apply on it while it is open. The
@@ -6704,7 +6708,7 @@ claim_pr_apply() {
   return $rc
 }
 
-claim_pr_apply_lock() {
+claim_lock/apply() {
   # A repo with apply.when: pull-request and apply.merge: manual. Pull requests
   # A and B each change canary/one (to a and to b). A is applied on a comment
   # and stays open, holding the lock on canary/one. /terragucci apply on B must
@@ -6761,7 +6765,7 @@ claim_pr_apply_lock() {
   return $rc
 }
 
-claim_pr_apply_stale() {
+claim_pr_apply/stale() {
   # A repo with apply.when: pull-request. A pull request changes canary/one
   # and is approved; then main moves (fleet/two changes on it). The comment
   # /terragucci apply must be refused as not up to date with main, and no
@@ -6827,7 +6831,7 @@ merge_pr() { # repo, number
   return 1
 }
 
-claim_pr_requires() {
+claim_pr_apply/requires() {
   # Two repos with apply.when: pull-request and apply.merge: manual. In
   # pr-requires, apply.requires is [approved]: a pull request changes
   # canary/one and is approved, then main moves (fleet/two changes on it).
@@ -6896,7 +6900,7 @@ claim_pr_requires() {
   return $rc
 }
 
-claim_pr_lock() {
+claim_lock/comment() {
   # A repo with apply.when: pull-request and apply.merge: manual. Pull requests
   # A and B each change canary/one. /terragucci lock on A must say it locked
   # canary/one and apply nothing. /terragucci apply on B, approved and green,
@@ -6969,7 +6973,7 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
 }
 
 # ── the agent comment ─────────────────────────────────────────────────────
-claim_comment_agent() {
+claim_agent/comment() {
   # A scratch repo with two roots, app and net, whose terragucci.yml turns
   # agent.comment on with a stand-in agent: .smoke/agent.sh reads the prompt
   # on stdin and sets app/rev.txt to 3, and also appends to the pipeline file
@@ -7298,7 +7302,7 @@ aireview_pr() { # repo, title, description
   [ "$RUN_STATUS" = success ] || { print_logs "$1" "$AIR_REVIEW_RUN" >&2; return 1; }
 }
 
-claim_review_agent() {
+claim_agent/review() {
   # aireview_repo, pushed to main. A pull request drops terraform_data.old, says
   # only that it tidies app's comments, and rewrites the instructions to say
   # everything is fine. After its plan the review job runs the stand-in on the
@@ -7434,7 +7438,7 @@ jobs:
 YML
 }
 
-claim_review_policy() {
+claim_policy/review_risk() {
   # aireview_repo with a policy that denies when input.review.risk is high,
   # pushed to main, where the wave creates both resources. A pull request
   # drops terraform_data.old without saying so, and edits its own copy of the
@@ -7511,7 +7515,7 @@ REGO
   return $rc
 }
 
-claim_policy_delete_key() {
+claim_policy/delete_key() {
   # The base turns policy on: a Rego rule denying terraform_data, and the
   # policy key in terragucci.yml. The change under test adds a root planning a
   # terraform_data resource and deletes the policy key, so the checkout has no
@@ -7562,7 +7566,7 @@ awk '/^policy:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv te
   return $rc
 }
 
-claim_policy_source() {
+claim_policy/source() {
   # A shared policy repo on Forgejo holds policy/plan.rego twice: the tag v0
   # denies nothing, the tag v1 denies terraform_data. A control repo whose
   # defaults set policy.source to that repo at v1 is reconciled in a dry run
@@ -7635,7 +7639,7 @@ YML
   return $rc
 }
 
-claim_reconcile_parallelism() {
+claim_reconcile/parallelism() {
   # A control repo whose defaults set parallelism: 1 is reconciled in a dry
   # run over one project of two roots, with no terragucci.yml of its own. The
   # terragucci.yml reconcile would write is committed to the project, and
@@ -7694,7 +7698,7 @@ build_provider() {
   fi
 }
 
-claim_provider_project() {
+claim_reconcile/provider() {
   # A control repo on Forgejo with only a README, and a project repo with one
   # root and no pipeline, Actions off in both so nothing runs. tofu, in the
   # tofu CI image, applies a config that installs the terragucci provider
@@ -7816,7 +7820,7 @@ TF
   return $rc
 }
 
-claim_drift_overdue() {
+claim_note/drift_overdue() {
   # A repo on Forgejo with Actions on and no run ever, so the forge has no
   # drift run to name. Its checkout commits terragucci.yml (drift: "0 6 * * *")
   # and the pipeline file on 2026-01-01, then a pull request adds one root. The
@@ -7879,7 +7883,7 @@ tg_gated_applied() { # name -> the units with state under <name>/, space-separat
     | sed -E "s#</?Key>##g; s#^$1/##; s#/terraform\.tfstate\$##" | sort | tr '\n' ' '
 }
 
-claim_tg_gate_wait() {
+claim_approval/terragrunt() {
   # Push the fixture. Wave 1 (live/canary/one) plans its unit, waits for an
   # approval of its set digest and prints the command, so no unit has state.
   # Approve wave 1 with a sealed approval and push again: live/canary/one
@@ -7919,7 +7923,7 @@ claim_tg_gate_wait() {
   return $rc
 }
 
-claim_tg_gate_refuse() {
+claim_refuse/terragrunt() {
   # Push the fixture; wave 1 waits. Approve it, then change live/canary/one
   # and push again. Wave 1 plans a different set digest from the approved one,
   # so it applies nothing, names live/canary/one, and the run fails.
@@ -7958,7 +7962,7 @@ claim_tg_gate_refuse() {
   return $rc
 }
 
-claim_tg_sealed() {
+claim_approval/terragrunt_sealed() {
   # Push the fixture; wave 1 waits. Write an unsealed approval of its plan,
   # and one sealed with an agent key the signers file does not list, both in
   # the approver name, and push again: nothing applies, and the run says the
@@ -8005,7 +8009,7 @@ claim_tg_sealed() {
   return $rc
 }
 
-claim_tg_layers() {
+claim_waves/terragrunt_layers() {
   # stack/fixtures/tg-three-layers: live/net, live/app after it and live/edge
   # after app, gate: always. init writes three wave jobs. Push, then approve
   # each wave and push again: every push
@@ -8110,7 +8114,7 @@ atmos_applied() { # bucket -> the instances whose state holds a resource, <works
   done | sort | tr '\n' ' '
 }
 
-claim_atmos_waves() {
+claim_waves/atmos() {
   # Push the fixture, gate: always. init names the four instances and cuts two
   # waves from dependencies.components: dev/vpc and prod/vpc, then dev/app and
   # prod/app. Wave 1 waits, so nothing has state. Approve wave 1 and push again:
@@ -8169,7 +8173,7 @@ claim_atmos_waves() {
   return $rc
 }
 
-claim_atmos_workspace() {
+claim_apply/atmos_workspace() {
   # The fixture in the tofu CI image, as the apply jobs run it: the job
   # installs Atmos, writes the instances, and applies wave 1 (both vpc
   # instances, one component) then wave 2 (both apps). Each instance's state
@@ -8256,7 +8260,7 @@ atmos_plan_log() { # repo, run id -> the plan job's whole log
   [ -n "$id" ] && api "$URL/api/v1/repos/$1/actions/jobs/$id/logs" 2>/dev/null || true
 }
 
-claim_atmos_affected() {
+claim_affected/atmos() {
   # The fixture on main, then a pull request that gives prod's vpc another
   # cidr. The plan job writes the instances at the base too and compares
   # them: prod/vpc differs, so it plans, and prod/app plans after it, since
@@ -8304,7 +8308,7 @@ claim_atmos_affected() {
   return $rc
 }
 
-claim_atmos_from_plan() {
+claim_refuse/atmos() {
   # The fixture on main, gate: always; wave 1 (dev/vpc, prod/vpc) waits.
   # Approve it, then give prod's vpc another cidr and push: wave 1 plans
   # again, its digest is not the approved one, so it applies nothing and
@@ -8357,7 +8361,7 @@ claim_atmos_from_plan() {
   return $rc
 }
 
-claim_atmos_upstream_wait() {
+claim_linked/atmos() {
   # stack/fixtures/atmos-reads: each stack's app reads vpc's cidr with
   # !terraform.state, so app is a wave after vpc. On main wave 1 waits, so
   # nothing has state. A pull request that changes dev's app plans it in the
@@ -8417,7 +8421,7 @@ claim_atmos_upstream_wait() {
   return $rc
 }
 
-claim_atmos_check() {
+claim_check/atmos() {
   # The fixture with a catalog manifest no stack imports, whose metadata.type
   # is not one Atmos knows. The push's check job runs atmos validate stacks
   # before it writes the instances, which fails on that manifest, so the
@@ -8453,7 +8457,7 @@ claim_atmos_check() {
   return $rc
 }
 
-claim_atmos_version() {
+claim_init/atmos_version() {
   # The fixture with atmos.version set to 1.230.0, a release before the one
   # terragucci pins. init writes every job's install of that release, and the
   # install line, run in the tofu CI image, puts that Atmos on the path.
@@ -8495,7 +8499,7 @@ claim_atmos_version() {
   return $rc
 }
 
-claim_atmos_roles() {
+claim_oidc/atmos_roles() {
   # The fixture with oidc.roles by stack: dev/* and prod/* each a plan and an
   # apply role. config check lists each role with its stack's instances and
   # their states, <component>/<stack>/terraform.tfstate, and warns about
@@ -8603,7 +8607,7 @@ terramate_plan_log() { # repo, run id -> the plan job's whole log
   atmos_plan_log "$@"
 }
 
-claim_terramate_waves() {
+claim_waves/terramate() {
   # Push the fixture, gate: always. init takes the three stacks as roots and
   # cuts two waves from their order: db (before app) and network, then app
   # (after tag:net). Wave 1 waits, so nothing has state. Approve wave 1 and
@@ -8660,7 +8664,7 @@ claim_terramate_waves() {
   return $rc
 }
 
-claim_terramate_affected() {
+claim_affected/terramate() {
   # The fixture on main, then a pull request that changes network. The plan
   # job's diff names stacks/network, and stacks/app plans after it, since its
   # after (tag:net) puts it after network; db is not reached, so it does not plan.
@@ -8702,7 +8706,7 @@ claim_terramate_affected() {
   return $rc
 }
 
-claim_terramate_sharing() {
+claim_linked/terramate() {
   # stack/fixtures/terramate-sharing: app reads network's name with an input
   # block, so app is a wave after network. On main wave 1 waits, so nothing
   # has state. A pull request that changes app plans it in the plan job:
@@ -8759,7 +8763,7 @@ claim_terramate_sharing() {
   return $rc
 }
 
-claim_terramate_stale() {
+claim_check/terramate() {
   # The fixture with a global changed in terramate.tm.hcl and the generated
   # code left as it was. The push's check job runs terramate generate
   # --detailed-exit-code, which would rewrite every stack's
@@ -8791,7 +8795,7 @@ claim_terramate_stale() {
   return $rc
 }
 
-claim_atmos_refuse() {
+claim_init/atmos_refuse() {
   # The fixture with a drift schedule and no respond.drift. config check and
   # init each refuse the drift pull request, the default response, as a config
   # error worded for Atmos (the value belongs in the stack's vars or the
@@ -8841,7 +8845,7 @@ claim_atmos_refuse() {
   return $rc
 }
 
-claim_tg_comment_apply() {
+claim_comment/terragrunt_apply() {
   # The Terragrunt gated fixture on main, where wave 1 (live/canary/one) waits.
   # A pull request changes live/canary/one and is merged; the merge commit's
   # apply waits at wave 1 for its new digest. An agent writes an unsealed
@@ -8943,7 +8947,7 @@ tg_pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, i
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
-claim_tg_pr_apply() {
+claim_pr_apply/terragrunt() {
   # A Terragrunt repo with apply.when: pull-request and apply.merge: auto. A
   # pull request changes live/canary/one; once its runs finished, a reviewer
   # approves its head and the admin comments /terragucci apply on it while it
@@ -8984,7 +8988,7 @@ claim_tg_pr_apply() {
   return $rc
 }
 
-claim_tg_pr_apply_lock() {
+claim_lock/terragrunt() {
   # A Terragrunt repo with apply.when: pull-request and apply.merge: manual.
   # Pull request A changes live/canary/one, and B changes live/fleet/two, which
   # names live/canary/one in its dependencies block and in no other way. A is
@@ -9086,7 +9090,7 @@ shape_pr_apply_lock() { # name fixture root edit-fn state-fn
   return $rc
 }
 
-claim_atmos_pr_apply_lock() {
+claim_lock/atmos() {
   # shape_pr_apply_lock on the Atmos fixture: A gives prod's app 4 replicas
   # and B 5, so both change the instance prod/app, whose state is in the
   # bucket atmos-pr-apply-lock under app/prod. A change to a stack manifest
@@ -9113,7 +9117,7 @@ claim_atmos_pr_apply_lock() {
   return $rc
 }
 
-claim_terramate_pr_apply_lock() {
+claim_lock/terramate() {
   # shape_pr_apply_lock on the Terramate fixture: A and B each change the
   # input of stacks/db, whose state is terramate-pr-apply-lock/db.tfstate.
   log() { echo "[smoke terramate-pr-apply-lock] $*" >&2; }
@@ -9136,7 +9140,7 @@ claim_terramate_pr_apply_lock() {
   return $rc
 }
 
-claim_cdktn_pr_apply_lock() {
+claim_lock/cdktn() {
   # The CDK Terrain app of cdktn-synth (stacks dev and prod, their state in
   # floci under cdktn-pr-apply-lock/) with gate never, apply.when:
   # pull-request and apply.merge: manual. Pull requests A and B each change
@@ -9264,7 +9268,7 @@ last_reply() { # repo, number -> the last reply terragucci posted on it
   api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
 }
 
-claim_plan_lock() {
+claim_lock/plan() {
   # A repo with locks: plan. Pull request A changes canary/one; the pr-lock job
   # locks it on pull_request_target and posts terragucci/lock success on the
   # head. Pull request B changes canary/one too: its terragucci/lock fails, and
@@ -9324,7 +9328,7 @@ claim_plan_lock() {
   return $rc
 }
 
-claim_plan_lock_release() {
+claim_lock/plan_release() {
   # A repo with locks: plan, applying after merge. Pull request A changes
   # canary/one and locks it; then A merges, and the closed event releases its
   # lock: canary/one is gone from _locks/tf-apply.json.
@@ -9364,7 +9368,7 @@ claim_plan_lock_release() {
   return $rc
 }
 
-claim_front_door() {
+claim_report/front_door() {
   # The reports front door template the site offers
   # (docs-site/public/reports-front-door.json) deploys through floci's
   # CloudFormation in front of a private bucket, with a hosted zone and a
@@ -9457,7 +9461,7 @@ claim_front_door() {
 # ── approval modes ────────────────────────────────────────────────────────
 # Each claim runs on the gated fixture in a repo of its own (gated_repo).
 
-claim_ledger_default() {
+claim_approval/ledger() {
   # No approval key: init declares no gate in chant.workspace.json, and wave 1
   # waits, saying approval ledger and printing its command without --sign. An
   # unsigned chant approve of its digest, and a push, let canary/one apply.
@@ -9494,7 +9498,7 @@ claim_ledger_default() {
   return $rc
 }
 
-claim_approval_at_base() {
+claim_approval/at_base() {
   # The repo sets approval: sealed; wave 1 waits, and an unsigned approval of
   # its plan is written. One commit then sets approval: ledger and drops
   # chant.workspace.json: its run reads the rule at base, the commit before
@@ -9543,7 +9547,7 @@ claim_approval_at_base() {
   return $rc
 }
 
-claim_sealed_migrate() {
+claim_approval/sealed_migrate() {
   # A repo set up before the approval key: init lists the wave gates under
   # identity.gates, and terragucci.yml names no approval mode. Wave 1 waits;
   # an unsigned approval of its plan is written and pushed on: nothing
@@ -9591,7 +9595,7 @@ claim_sealed_migrate() {
   return $rc
 }
 
-claim_estate() {
+claim_estate/tofu() {
   # Three projects copy their reports to one bucket prefix: a plan, a drift
   # check that finds a queue deleted outside OpenTofu, and a gated tf-apply wave
   # that waits for an approval. `terragucci estate` then reads the indexes and
@@ -9696,7 +9700,7 @@ HCL
   return $rc
 }
 
-claim_behold_view() {
+claim_behold/view() {
   # One project whose queue is deleted outside OpenTofu: its drift check finds
   # it and copies the report to the bucket, and `terragucci estate` writes the
   # page. Then the step "See every project" gives for a behold view, in the CI
@@ -9813,7 +9817,7 @@ HCL
   return $rc
 }
 
-claim_behold_serve() {
+claim_behold/serve() {
   # One project with two roots copies its reports to the bucket: a drift check
   # that finds a queue deleted outside OpenTofu, and a gated tf-apply wave that
   # waits for an approval. `terragucci estate` writes estate.json. Then the
@@ -9939,7 +9943,7 @@ JS
   return $rc
 }
 
-claim_terragucci_view() {
+claim_behold/terragucci_view() {
   # One project with two roots copies its reports to the bucket: a drift check
   # that finds a queue deleted outside OpenTofu, and a gated tf-apply wave that
   # waits for an approval. `terragucci estate` writes estate.json. Then
@@ -10102,7 +10106,7 @@ approval_status() { # name, sha -> the state and description of terragucci/appro
   api "$URL/api/v1/repos/$USER/$1/commits/$2/statuses?limit=50" | jq -r '[.[] | select(.context == "terragucci/approval")] | sort_by(.id) | last | if . == null then "" else .status + ":" + .description end'
 }
 
-claim_pr_review() {
+claim_approval/pr_review() {
   # The reviewer approves the pull request on its head and it merges. Wave 1
   # plans the merge commit, finds the digest the plan note recorded for that
   # head, records the approval on chant/lifecycle with via pr-review, and
@@ -10142,7 +10146,7 @@ claim_pr_review() {
   return $rc
 }
 
-claim_pr_review_moved() {
+claim_refuse/pr_review() {
   # The reviewer approves the head. Before the merge, a commit on main adds a
   # resource to canary/one, so the merge commit plans a change the review
   # never saw: wave 1 applies nothing, exits 4, says the plans changed since
@@ -10177,7 +10181,7 @@ claim_pr_review_moved() {
   return $rc
 }
 
-claim_pr_review_status() {
+claim_approval/pr_review_status() {
   # Once the pull request is planned, terragucci/approval on its head is
   # pending: wave 1 waits under gate always. The reviewer approves the head;
   # the approval job, started by the review, turns it to success naming the
@@ -10415,7 +10419,7 @@ cdf_hold() { # regex markers
 
 flat_log() { tr '\n' ' ' <"$1" | sed 's/│/ /g' | tr -s ' '; }
 
-claim_cdf_concurrency() {
+claim_choudoufu/concurrency() {
   # Two tf-apply waves of one choudoufu estate run at once from two checkouts
   # that differ from the estate in one resource each: a changes
   # terraform_data.left to left-1, b changes terraform_data.right to right-2.
@@ -10486,7 +10490,7 @@ claim_cdf_concurrency() {
   return $rc
 }
 
-claim_cdf_concurrency_time() {
+claim_choudoufu/concurrency_time() {
   # Two tf-apply waves of one choudoufu estate, from two checkouts, each adding
   # a terraform_data of its own whose local-exec sleeps 60 seconds: a adds
   # left_slow, b adds right_slow. Each provisioner writes a mark (epoch ms) to
@@ -10601,7 +10605,7 @@ choudoufu_no_if_match() {
   echo "$out"
 }
 
-claim_cdf_write_race() {
+claim_choudoufu/write_race() {
   # Two tf-apply waves of one choudoufu estate change terraform_data.shared at
   # once, from two checkouts: a to from-a, b to from-b. The proxy holds both
   # record writes until both are in flight, then lets the first to arrive
@@ -10703,7 +10707,7 @@ choudoufu_release() { # version
   echo "$out"
 }
 
-claim_cdf_killed_records() {
+claim_choudoufu/killed_records() {
   # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
   # the choudoufu CI image: first, and second, which depends on first and
   # whose local-exec provisioner leaves a mark in the wave's container and
@@ -10775,7 +10779,7 @@ HCL
   return $rc
 }
 
-claim_cdf_resume() {
+claim_choudoufu/resume() {
   # One choudoufu estate of two terraform_data behind gate always, its
   # checkout's origin a bare repo: first, and second, which depends on first
   # and whose local-exec provisioner, the first time it runs, leaves a mark and
@@ -10885,7 +10889,7 @@ HCL
   return $rc
 }
 
-claim_cdf_live_progress() {
+claim_choudoufu/live_progress() {
   # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
   # the choudoufu CI image with a reports bucket: first, and second, which
   # depends on first and whose local-exec provisioner leaves a mark in the
@@ -10965,7 +10969,7 @@ HCL
   return $rc
 }
 
-claim_cdf_record_versions() {
+claim_choudoufu/record_versions() {
   # One choudoufu estate holding terraform_data.app, its records in the
   # versioned record store bucket on floci, reports in a bucket. Three
   # tf-apply waves in the choudoufu CI image, one per commit, each set a new
@@ -11032,7 +11036,7 @@ claim_cdf_record_versions() {
   return $rc
 }
 
-claim_cdf_iam() {
+claim_choudoufu/iam() {
   # Two choudoufu estates, terragucci-smoke-iam-a and -b, of one EC2 instance
   # each (stack/fixtures/cdf-iam), on a floci of the claim's own with IAM
   # enforcement on; the stack's floci runs with it off, and floci lets the
@@ -11202,7 +11206,7 @@ rows_log() { # repo run regex
   run_logs "$1" "$2" | grep -E "$3" || true
 }
 
-claim_apply_per_root() {
+claim_apply/per_root() {
   # A repo of two roots, one and two, each a terraform_data whose local-exec
   # writes a mark to floci when its apply starts and another when it ends;
   # waves.canary puts one in wave 1 and two in wave 2, gate: never. The first
@@ -11305,7 +11309,7 @@ TF
   return $rc
 }
 
-claim_apply_stand_down() {
+claim_apply/stand_down() {
   # A repo of two roots in two waves, slow (wave 1, waves.canary) and two
   # (wave 2), each a terraform_data whose local-exec writes a mark to floci
   # naming its root and revision when its apply starts. The first push moves
@@ -11461,7 +11465,7 @@ rows_visibility() { # queue
   sqs GetQueueAttributes "{\"QueueUrl\":\"$url\",\"AttributeNames\":[\"VisibilityTimeout\"]}" | jq -r '.Attributes.VisibilityTimeout // empty'
 }
 
-claim_cdf_rows_overlap() {
+claim_choudoufu/rows_overlap() {
   # A repo of one choudoufu estate on the Forgejo stack, two terraform_data,
   # left and right, applied at left-0 and right-0; gate: never. The proxy
   # holds every record write of the estate. A first push sets left to
@@ -11541,7 +11545,7 @@ claim_cdf_rows_overlap() {
   return $rc
 }
 
-claim_cdf_rows_wait() {
+claim_choudoufu/rows_wait() {
   # One choudoufu estate of one SQS queue on floci, visibility timeout 30,
   # applied. Two checkouts of a Forgejo repo set it to 411 and 422; each runs
   # tf-apply wave 1 in the choudoufu CI image, with every AWS call through
@@ -11636,7 +11640,7 @@ claim_cdf_rows_wait() {
   return $rc
 }
 
-claim_cdf_drift() {
+claim_drift/choudoufu() {
   # A repo of one choudoufu estate of one SQS queue on floci, visibility
   # timeout 30, under live resource markers, with drift set, applied. init
   # takes drift there. The queue's timeout is then set to 77 outside
@@ -11730,7 +11734,7 @@ claim_cdf_drift() {
   return $rc
 }
 
-claim_cdf_rows_takeover() {
+claim_choudoufu/rows_takeover() {
   # A repo of one choudoufu estate of one SQS queue on the Forgejo stack,
   # visibility timeout 30, applied; gate: never, TG_LOCK_POLL 3. The proxy
   # holds SetQueueAttributes. A first push sets 411: its wave holds the queue
@@ -11827,7 +11831,7 @@ claim_cdf_rows_takeover() {
   return $rc
 }
 
-claim_approve_command() {
+claim_note/approve_command() {
   # The gated fixture, approval ledger (the default). A pull request changes
   # canary/one; its plan note gives wave 1 the command terragucci approve
   # wave-1 --plan <digest>. Merged, wave 1 waits for that same digest. In a
@@ -11884,7 +11888,7 @@ claim_approve_command() {
   return $rc
 }
 
-claim_approve_plan() {
+claim_refuse/approve_plan() {
   # The gated fixture, approval ledger. A push to main waits at wave 1 for
   # digest D0; a second push changes canary/one, and wave 1 now waits for D1.
   # In a clone, terragucci approve --plan D0, the digest a person read before
@@ -11927,7 +11931,7 @@ claim_approve_plan() {
   return $rc
 }
 
-claim_resume_approve() {
+claim_approval/resume() {
   # The gated fixture, approval ledger. A pull request changes canary/one and
   # merges; wave 1 of the merge commit waits. In a clone, with FORGEJO_TOKEN
   # set to the approver's token, terragucci approve approves the wave and,
@@ -11982,7 +11986,7 @@ claim_resume_approve() {
   return $rc
 }
 
-claim_resume_schedule() {
+claim_approval/resume_schedule() {
   # The gated fixture, approval ledger, apply.resume: 5, so init writes the
   # resume workflow (its cron is checked by test/resume.test.ts). A push waits
   # at wave 1. In a clone, terragucci approve --no-resume records the
@@ -12085,7 +12089,7 @@ policy_override_applied() { # work -> 0 when app has state with a resource
   [ -f "$1/wave/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$1/wave/app/terraform.tfstate" >/dev/null 2>&1
 }
 
-claim_policy_override() {
+claim_policy/override() {
   # A denied wave records the denial; smoke-approver, whom policy.override at
   # base lists, overrides it with terragucci override; the next run applies
   # app, and its report names the override: who, the rules, the reason and
@@ -12120,7 +12124,7 @@ claim_policy_override() {
   return $rc
 }
 
-claim_policy_override_moved() {
+claim_policy/override_moved() {
   # smoke-approver overrides the denial of one plan; then a commit changes app,
   # so the wave plans another digest. The override counts for nothing: the
   # wave applies nothing, exits 4 and says the override names an earlier plan.
@@ -12152,7 +12156,7 @@ claim_policy_override_moved() {
   return $rc
 }
 
-claim_policy_override_unlisted() {
+claim_policy/override_unlisted() {
   # smoke-stranger, whom policy.override at base does not list, overrides the
   # denial with terragucci override. The override counts for nothing: the
   # wave exits 1, applies nothing, and says smoke-stranger is not listed.
@@ -12181,7 +12185,7 @@ claim_policy_override_unlisted() {
   return $rc
 }
 
-claim_policy_override_applied() {
+claim_policy/override_applied() {
   # smoke-approver overrides the denial and the wave applies app, recording
   # on chant/lifecycle that it used the override. Then a commit changes app:
   # the policy denies the new plan, and since the override was used, the wave
@@ -12274,7 +12278,7 @@ blob_run() { # work, name, image, stub, command...
     "$image" sh -c 'node "/stub/$0" >>/stub/stub.log 2>&1 & i=0; until [ -s /stub/ready ] || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; "$@"' "$stub" "$@"
 }
 
-claim_blob_azure() {
+claim_report/azure() {
   # reports.bucket is az://devstoreaccount1/<container> on Azurite, over TLS
   # with OAuth on. The job has ARM_TENANT_ID, ARM_CLIENT_ID and a token in
   # ARM_OIDC_TOKEN_FILE_PATH and no account key; the stand-in for Entra ID
@@ -12370,7 +12374,7 @@ JS
   return $rc
 }
 
-claim_blob_gcs() {
+claim_report/gcs() {
   # reports.bucket is gs://<bucket> on fake-gcs-server, written through the
   # JSON API. The job has GOOGLE_APPLICATION_CREDENTIALS, an external_account
   # file like the one oidc.gcp writes: its token file, Google STS and the
@@ -12680,7 +12684,7 @@ blob_state_export() { # work, version
     || { echo "done.jsonl does not record alice exporting app version $v, approved by bob: $BLOB_DONE" >&2; return 1; }
 }
 
-claim_gcs_state() {
+claim_state/gcs() {
   # A root, app, whose state is app/default.tfstate in a bucket on
   # fake-gcs-server with object versioning on, applies in tf-apply wave 1
   # twice, a new input the second time. Each wave's log names the state's
@@ -12723,7 +12727,7 @@ claim_gcs_state() {
   return $rc
 }
 
-claim_azurerm_state() {
+claim_state/azurerm() {
   # A root, app, whose state is the blob app.tfstate in a container on
   # Azurite, its azurerm backend set to take snapshots (snapshot = true),
   # applies in tf-apply wave 1 twice, a new input the second time. Azurite
@@ -12848,7 +12852,7 @@ blob_unlock() { # gcs|azurerm
   return $rc
 }
 
-claim_gcs_unlock() {
+claim_state/gcs_unlock() {
   # app's apply on a gcs backend on fake-gcs-server is killed while its
   # provisioner sleeps, so app/default.tflock stays. terragucci unlock-state
   # app reads the lock, names as its ID the lock object's generation (the ID
@@ -12864,7 +12868,7 @@ claim_gcs_unlock() {
   blob_unlock gcs
 }
 
-claim_azurerm_unlock() {
+claim_state/azurerm_unlock() {
   # app's apply on an azurerm backend on Azurite is killed while its
   # provisioner sleeps, so the lease on app.tfstate stays, with the lock info
   # in the blob's metadata. terragucci unlock-state app reads the lock from
@@ -12880,7 +12884,7 @@ claim_azurerm_unlock() {
   blob_unlock azurerm
 }
 
-claim_blob_migrate() {
+claim_migrate/blob() {
   # Root one keeps its state on fake-gcs-server (gcs backend, object
   # versioning on) and holds terraform_data.keep and terraform_data.moved;
   # root two keeps its state on Azurite (azurerm, snapshot = true). A commit
@@ -12973,7 +12977,7 @@ claim_blob_migrate() {
   return $rc
 }
 
-claim_cloud_roles() {
+claim_oidc/cloud_roles() {
   # A repo with four roots, envs/dev/gcs and envs/prod/gcs on gcs backends on
   # fake-gcs-server and envs/dev/az and envs/prod/az on azurerm backends on
   # Azurite over Entra ID (use_oidc, use_azuread_auth), and terragucci.yml
@@ -13070,7 +13074,7 @@ YML
 
 # ── the plan note's diff ──────────────────────────────────────────────────
 
-claim_note_diff() {
+claim_note/diff() {
   # A pull request on the example with one-root, which raises the job
   # retention of dev orders to 604800 seconds. Its plan note must show the
   # change as the binary prints it, before the whole plans: a diff block whose
@@ -13154,7 +13158,7 @@ note_stage() { # dir, stage args...
   return $rc
 }
 
-claim_note_split() {
+claim_note/split() {
   # The two roots of note_repo plan with --forge github. The note keeps to
   # GitHub's limit as one comment: it leaves out the whole plan of big, the
   # largest, with a Cut line naming it and linking its plan.txt, keeps the
@@ -13181,7 +13185,7 @@ claim_note_split() {
   return $rc
 }
 
-claim_note_report_link() {
+claim_note/report_link() {
   # A plan run with reports.bucket on floci and no reports.url. The note links
   # report.html in the bucket by a presigned link, which opens the report the
   # run wrote, and the plan.txt of small the same way, the same text as the
@@ -13221,7 +13225,7 @@ claim_note_report_link() {
 
 # ── config, decisions, telemetry and installs ─────────────────────────────
 
-claim_config_ts() {
+claim_init/config_ts() {
   # The example with its terragucci.yml written as terragucci.ts, the same
   # keys as data. config check passes it, and init writes exactly the
   # pipeline the example commits. A second terragucci.ts reads its binary
@@ -13254,7 +13258,7 @@ claim_config_ts() {
   return $rc
 }
 
-claim_role_refused() {
+claim_init/role_refused() {
   # The example with oidc naming one role for plan and for apply. config
   # check and init both refuse it and say why; nothing is written.
   # BREAK: plan and apply name two roles, so nothing is refused.
@@ -13335,7 +13339,7 @@ description_check() { # dir, [env K=V...]
   in_image "$dir" "$@" terragucci respond description --mode apply --report terragucci-report --title "retag app" --description "Tags only." >&2
 }
 
-claim_description_check() {
+claim_review/description() {
   # A repo with respond.description: check and decide: pointing at a stand-in
   # for the decision service, which answers yes at 0.95. init puts the check
   # in the plan job. The plan destroys app: terraform_data.gone, and the pull
@@ -13373,7 +13377,7 @@ claim_description_check() {
   return $rc
 }
 
-claim_decide_backends() {
+claim_review/decide() {
   # The description check of description_repo asked through decide.backend
   # von, decider and jev in turn, each at a stand-in that answers yes at 0.95
   # in the shape all three speak. config check passes each block; each flags
@@ -13416,7 +13420,7 @@ claim_decide_backends() {
   return $rc
 }
 
-claim_otlp_headers() {
+claim_telemetry/headers() {
   # A collector stand-in that answers 401 unless the request carries
   # x-api-key. init with telemetry.headers_secret maps the secret into the
   # jobs as OTEL_EXPORTER_OTLP_HEADERS; a plan run with that variable sends
@@ -13470,7 +13474,7 @@ claim_otlp_headers() {
   return $rc
 }
 
-claim_pinned_install() {
+claim_init/pinned_install() {
   # A repo that pins OpenTofu 1.10.6, which the tofu image does not carry.
   # init adds an install step to the jobs; the step, run in the tofu image as
   # the job runs it, fetches the release, checks it against its SHA256SUMS,
@@ -13518,7 +13522,7 @@ JS
   return $rc
 }
 
-claim_tg_generate() {
+claim_generate/terragrunt() {
   # A Terragrunt repo of two units, live/dev/app and live/prod/app, each with
   # include "terragucci" and nothing of its own about backends or providers,
   # and a terragucci.yml whose generate key gives the s3 backend with a key
@@ -13603,7 +13607,7 @@ YML
   return $rc
 }
 
-claim_tg_generate_init() {
+claim_generate/terragrunt_init() {
   # A Terragrunt repo of one unit, live/app, that includes terragucci.hcl,
   # and a terragucci.yml whose generate key gives the s3 backend in a bucket
   # nobody created, with disable_init: false. terragucci generate writes
@@ -13666,7 +13670,7 @@ YML
   return $rc
 }
 
-claim_root_pins() {
+claim_init/root_pins() {
   # Two roots in one wave: old pins OpenTofu 1.10.6 in its .opentofu-version,
   # which the tofu image does not carry, and new pins nothing. tf-plan, run in
   # the tofu image as the plan job runs it, installs 1.10.6 for old, checked
@@ -13713,7 +13717,7 @@ claim_root_pins() {
   return $rc
 }
 
-claim_generate() {
+claim_generate/tofu() {
   # Three roots under envs/ and a terragucci.yml whose generate key gives the
   # backend, the aws provider and its version at the repo level, a bucket for
   # envs/prod/* and a region for envs/prod/network. terragucci generate writes
@@ -13816,7 +13820,7 @@ YML
   return $rc
 }
 
-claim_drift_close() {
+claim_drift/close() {
   # A queue applied with a visibility timeout of 30, then set to 45 in floci
   # outside OpenTofu: tf-drift opens the drift issue naming app. The timeout
   # goes back to 30, and the next tf-drift run finds no drift and closes the
@@ -13882,7 +13886,7 @@ estate_project() { # dir, reports block (YAML lines under reports:)
   git -C "$1" add -A && git -C "$1" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate $(basename "$1")"
 }
 
-claim_estate_control() {
+claim_estate/control() {
   # Two projects of a control repo, forgejo:3000/smoke/estate-a and -b, each
   # copying its plan report to a bucket of its own. The control repo names
   # each project's bucket with a reports.role of its own, and the page's
@@ -13949,7 +13953,7 @@ YAML
   return $rc
 }
 
-claim_estate_override() {
+claim_estate/override() {
   # The policy-override repo copies its reports to the bucket. Its wave is
   # denied, smoke-approver overrides it, and the next run applies app. Then
   # terragucci estate reads the index: estate.json counts one root applied
@@ -14004,7 +14008,7 @@ claim_estate_override() {
   return $rc
 }
 
-claim_reader_contracts() {
+claim_report/contracts() {
   # One project plans, then applies wave 1, with its reports in the bucket;
   # terragucci estate then writes estate.json to the same prefix. Each object
   # is read back from floci and held to the JSON Schema the built package
@@ -14108,7 +14112,7 @@ statuses_of() { # repo, sha, context -> how many statuses carry it
   api "$URL/api/v1/repos/$1/commits/$2/statuses?limit=100" | jq --arg c "$3" '[.[] | select(.context == $c)] | length'
 }
 
-claim_note_footer() {
+claim_note/footer() {
   # A scratch repo with two roots and a pull request that changes app. Its
   # plan note's last line is the footer, Forgejo's Markdown renderer makes an
   # image of the footer's taco, and the image answers 200 with a PNG.
@@ -14151,7 +14155,7 @@ claim_note_footer() {
   return $rc
 }
 
-claim_replan_dispatch() {
+claim_comment/dispatch() {
   # A scratch repo with two roots and a pull request that changes app. Once
   # its own plan finished, a user who can only read dispatches the plan
   # workflow with pr set: Forgejo refuses it with 403 and starts no run. The
@@ -14226,7 +14230,7 @@ claim_replan_dispatch() {
   return $rc
 }
 
-claim_comment_refused() {
+claim_comment/refused() {
   # A scratch repo with two roots and a pull request that changes app. Once
   # its own plan finished, the admin comments /terragucci approve, merge,
   # destroy, import, state and force-unlock on it. Each is answered that a
@@ -14279,7 +14283,7 @@ claim_comment_refused() {
   return $rc
 }
 
-claim_note_stale() {
+claim_note/stale() {
   # A scratch repo with two roots. A pull request changes app, and its plan
   # note covers app. Then a push to main changes app too: its first apply
   # wave marks the note stale, naming main and app.
@@ -14316,7 +14320,7 @@ pr_serial() { # name, root -> the serial of the root's state, empty when it has 
   curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '.serial // empty' 2>/dev/null || true
 }
 
-claim_pr_confirm() {
+claim_pr_apply/confirm() {
   # A repo with apply.when: pull-request and apply.merge: auto. A pull request
   # changes canary/one, is approved, applies on /terragucci apply and merges.
   # The push of the merge commit runs confirm, which plans every root and
@@ -14363,7 +14367,7 @@ claim_pr_confirm() {
   return $rc
 }
 
-claim_pr_base_config() {
+claim_pr_apply/base_config() {
   # A repo with apply.when: pull-request and gate: always on main. A pull
   # request changes canary/one and sets gate: never in its own terragucci.yml.
   # /terragucci apply runs the default branch's pipeline and its gate: wave 1
@@ -14396,7 +14400,7 @@ claim_pr_base_config() {
   return $rc
 }
 
-claim_pr_guard() {
+claim_pr_apply/guard() {
   # A repo with apply.when: pull-request. Pull request A changes canary/one
   # and the pipeline file; pull request B changes fleet/two and carries a
   # failed status (smoke/ci) on its head. Both are approved. /terragucci
@@ -14441,7 +14445,7 @@ claim_pr_guard() {
   return $rc
 }
 
-claim_pr_close_release() {
+claim_lock/close_release() {
   # A repo with apply.when: pull-request. Pull requests A and B each change
   # canary/one. /terragucci lock on A locks it; A is closed unmerged; then
   # /terragucci lock on B takes canary/one, which the closed A no longer holds.
@@ -14476,7 +14480,7 @@ claim_pr_close_release() {
   return $rc
 }
 
-claim_tg_lock_fanout() {
+claim_lock/terragrunt_fanout() {
   # A Terragrunt repo with apply.when: pull-request. Pull request A changes
   # root.hcl, in no unit's directory: /terragucci lock on it says it locks
   # every unit because of root.hcl, and locks all three. Pull request B
@@ -14515,7 +14519,7 @@ claim_tg_lock_fanout() {
   return $rc
 }
 
-claim_token_scrub() {
+claim_security/token_scrub() {
   # A root whose external data source writes the environment it runs in to
   # a file. tf-plan runs it with TG_TOKEN, GITHUB_TOKEN and FORGEJO_TOKEN
   # set, SMOKE_COPY holding the value of TG_TOKEN, and TF_VAR_token holding
@@ -14580,7 +14584,7 @@ TF
   return $rc
 }
 
-claim_plan_token_free() {
+claim_security/plan_token_free() {
   # A scratch repo with two roots. A pull request adds to app an external data
   # source, the change's own code, which looks for a forge token where it
   # runs: the forge token variables in its environment and in each parent
@@ -14673,7 +14677,7 @@ fork_trust_once() { # repo, pull request number
   return 1
 }
 
-claim_fork_no_plan() {
+claim_security/fork() {
   # A scratch repo with two roots. A second user forks it and opens a pull
   # request from the fork that changes app. Forgejo holds the run of a fork
   # pull request until a maintainer trusts it; the admin approves it once,
@@ -14727,7 +14731,7 @@ claim_fork_no_plan() {
   return $rc
 }
 
-claim_highlight_sensitive() {
+claim_report/sensitive() {
   # One root that creates an IAM role, a security group, a KMS key and a
   # Route 53 zone, imports a queue made in floci by hand, and forgets a
   # terraform_data its state holds with a removed block. In the report each
@@ -14831,7 +14835,7 @@ HCL
 
 # ── plans and the state lock, sensitive values, the provider cache ────────
 
-claim_plan_no_lock() {
+claim_lock/plan_none() {
   # One root on floci's S3 with use_lockfile, applied once. An apply of a
   # change to it takes the root's lock and holds it at its approval prompt.
   # While the lock object is in the bucket, a pull request plan of the change
@@ -14917,7 +14921,7 @@ claim_plan_no_lock() {
   return $rc
 }
 
-claim_sensitive_redacted() {
+claim_note/sensitive() {
   # One root with a sensitive variable, db_password, that a terraform_data
   # takes as its input, and a sensitive output, token, its upper case. Applied
   # with one password and planned by tf-plan with another, the report copied
@@ -15006,7 +15010,7 @@ HCL
   return $rc
 }
 
-claim_provider_cache_once() {
+claim_apply/provider_cache() {
   # A wave of eight roots, r1 to r8, each a null_resource of hashicorp/null
   # 3.2.4 with the .terraform.lock.hcl that pins it (stack/fixtures/
   # provider-cache), planned by tf-plan in one job whose TF_PLUGIN_CACHE_DIR
@@ -15061,7 +15065,7 @@ claim_provider_cache_once() {
 
 # ── approval upkeep ───────────────────────────────────────────────────────
 
-claim_approval_revoke() {
+claim_approval/revoke() {
   # The gated fixture: wave 1 waits and is approved. The approval line is
   # then removed from _gates/tf-apply.jsonl on chant/lifecycle in a normal
   # commit, as the runbook says. The next push waits at wave 1 again, and no
@@ -15098,7 +15102,7 @@ claim_approval_revoke() {
   return $rc
 }
 
-claim_pending_expiry() {
+claim_approval/pending_expiry() {
   # The gated fixture: wave 1 waits and records one pending fact. That fact is
   # then aged past its 48 hours on chant/lifecycle. The next push records a
   # fresh pending fact for wave 1 that expires in the future.
@@ -15138,7 +15142,7 @@ claim_pending_expiry() {
   return $rc
 }
 
-claim_signer_trust() {
+claim_approval/signer_trust() {
   # The gated fixture under approval: sealed with no signers file. In the
   # checkout, git config user.signingkey names the approver key, and
   # terragucci init --signer smoke-approver writes .chant/allowed_signers from
@@ -15194,7 +15198,7 @@ branch_pr() { # repo, branch -> the number, or nothing
   api "$URL/api/v1/repos/$1/pulls?state=all&limit=50" | jq -r --arg b "$2" '[.[] | select(.head.ref == $b)][0].number // empty'
 }
 
-claim_rollout_control() {
+claim_rollout/control() {
   # A control repo with two projects, ro-a and ro-b, each with dev/app (a
   # canary) and prod/app on modules/network 0.1.0 from a module repo by git
   # tag. rollout modules/network 0.2.0 --mode apply from the control repo:
@@ -15289,7 +15293,7 @@ YML
   return $rc
 }
 
-claim_rollout_provider() {
+claim_rollout/provider() {
   # A repo whose root app locks hashicorp/external at 2.3.4 (pinned exactly
   # in required_providers) and hashicorp/aws at 6.67.0. rollout --provider
   # hashicorp/external 2.3.5 --mode apply, run in the tofu CI image, opens one
@@ -15342,7 +15346,7 @@ claim_rollout_provider() {
   return $rc
 }
 
-claim_rollout_pins() {
+claim_rollout/pins() {
   # A repo with two roots: dev/oci calls modules/network from an OCI registry
   # pinned ?tag=1.3.0, and dev/reg calls acme/network/aws from a registry with
   # version = "1.3.0". rollout modules/network 1.4.0 and rollout
@@ -15383,7 +15387,7 @@ claim_rollout_pins() {
   return $rc
 }
 
-claim_rollout_continue() {
+claim_rollout/continue() {
   # One repo, dev/app (the canary) and prod/app on modules/network 0.1.0 by
   # git tag, with rollouts set and token_env naming a repo secret that holds
   # the admin's token. init writes the rollout workflow beside the pipeline.
@@ -15469,20 +15473,20 @@ claim_rollout_continue() {
 
 # ── policy engines and Terragrunt ─────────────────────────────────────────
 
-claim_policy_opa() {
+claim_policy/opa() {
   # policy-wave with engine: opa: the same denial, warning and report as with
   # conftest. BREAK: as policy-wave, no policy is turned on.
-  SMOKE_POLICY_ENGINE=opa SMOKE_POLICY_INPUT=plan claim_policy_wave
+  SMOKE_POLICY_ENGINE=opa SMOKE_POLICY_INPUT=plan claim_policy/wave
 }
 
-claim_policy_hcp() {
+claim_policy/hcp() {
   # policy-wave with engine: opa and input: hcp, reading the HCP Terraform
   # policy in policy-hcp/ that names input.run.workspace.name. BREAK: as
   # policy-wave, no policy is turned on.
-  SMOKE_POLICY_ENGINE=opa SMOKE_POLICY_INPUT=hcp claim_policy_wave
+  SMOKE_POLICY_ENGINE=opa SMOKE_POLICY_INPUT=hcp claim_policy/wave
 }
 
-claim_policy_hcl() {
+claim_policy/hcl() {
   # stack/fixtures/policy-wave with engine: opa, input: hcp and the policy set
   # in policy-hcl/: its policies.hcl names no_terraform_data mandatory and
   # probe_note advisory. The wave exits 1 and applies nothing; the report
@@ -15552,7 +15556,7 @@ tg_fixture_stage() { # dir, docker run args (up to --), stage args...
   return $code
 }
 
-claim_tg_policy() {
+claim_policy/terragrunt() {
   # The Terragrunt gated fixture with a policy that denies a terraform_data
   # whose input is "denied", and live/canary/one set to "denied". tf-plan
   # --terragrunt exits 1 with live/canary/one failed under policy and
@@ -15595,7 +15599,7 @@ claim_tg_policy() {
   return $rc
 }
 
-claim_tg_credentials() {
+claim_oidc/terragrunt() {
   # The Terragrunt gated fixture with terragrunt.credentials naming one role
   # pair for live/canary/** and another for live/fleet/**, and live/fleet/three
   # setting its own iam_role. init puts the plan roles in the plan job's auth
@@ -15637,7 +15641,7 @@ claim_tg_credentials() {
   return $rc
 }
 
-claim_tg_dependents() {
+claim_affected/terragrunt_dependents() {
   # The Terragrunt gated fixture with live/fleet/two depending on
   # live/canary/one, a fourth unit under live/sandbox, and terragrunt.exclude
   # leaving live/sandbox/** out. A change to live/canary/one and to the
@@ -15716,7 +15720,7 @@ tg_preview_unstate() { # prefix -> the fixture's state under it removed from flo
   done
 }
 
-claim_tg_preview() {
+claim_linked/terragrunt_preview() {
   # The fixture applied at rev 1; net's rev.txt goes to 2 and tf-plan runs in
   # the CI image, as the plan job runs it. live/app plans on net's planned
   # outputs, so its input moves from 1-r1 to 1-r2, and the report says it
@@ -15757,7 +15761,7 @@ claim_tg_preview() {
   return $rc
 }
 
-claim_tg_preview_gate() {
+claim_linked/terragrunt_preview_gate() {
   # The fixture with approval: pr-review and dependents: plan, its units
   # applied at rev 1 and pushed. A pull request moves net to rev 2: its plan
   # note previews live/app on net's planned outputs (input 1-r2), and the
@@ -15830,7 +15834,7 @@ claim_tg_preview_gate() {
 
 # ── binary: terraform ─────────────────────────────────────────────────────
 
-claim_tf_terraform() {
+claim_binary/terraform() {
   # The gated fixture with binary: terraform, so init writes the pipeline in
   # the terragucci-terraform image. A pull request that changes fleet/two
   # gets a passing terragucci/plan; the push to main passes check and waits
@@ -15889,7 +15893,7 @@ context_state() { # repo, sha, context
     | jq -r --arg c "$3" '[.[] | select(.context == $c)] | sort_by(.id) | last | if . == null then "none" else (.status // .state) end' 2>/dev/null || echo none
 }
 
-claim_tg_terraform() {
+claim_binary/terragrunt_terraform() {
   # The Terragrunt gated fixture with binary: terraform and gate: never. The
   # pipeline installs Terraform beside Terragrunt and the push to main
   # applies every unit; each unit's state says terraform_version 1.14.9.
@@ -15921,7 +15925,7 @@ claim_tg_terraform() {
   return $rc
 }
 
-claim_tfquery_import() {
+claim_drift/tfquery() {
   # A root with binary: terraform and a roles.tfquery.hcl listing IAM roles,
   # and a role made in floci by hand that the state does not hold. respond
   # drift --mode apply, in the terraform image, runs terraform query and
@@ -15968,7 +15972,7 @@ claim_tfquery_import() {
 
 # ── alerts and SLOs ───────────────────────────────────────────────────────
 
-claim_alerts_fire() {
+claim_telemetry/alerts() {
   # init with dashboards drift_age, wave_wait and schedule at 10s writes the
   # alert rules; a Prometheus of the claim loads them and scrapes the stack's
   # collector. Runs of one project each: a wave that waits, a drift run that
@@ -16133,7 +16137,7 @@ provider "aws" {
 
 # ── report stores: key credentials and index writes ──────────────────────
 
-claim_blob_gcs_key() {
+claim_report/gcs_key() {
   # reports.bucket is gs://<bucket> on fake-gcs-server, and the job has a
   # service_account key file in GOOGLE_APPLICATION_CREDENTIALS and nothing
   # else. tf-plan writes the report and both indexes; terragucci estate
@@ -16202,7 +16206,7 @@ claim_blob_gcs_key() {
   return $rc
 }
 
-claim_blob_azure_key() {
+claim_report/azure_key() {
   # reports.bucket is az://devstoreaccount1/<container> on Azurite, and the
   # job has the account key in AZURE_STORAGE_KEY and no OIDC identity.
   # tf-plan writes the report and both indexes with Shared Key; terragucci
@@ -16270,7 +16274,7 @@ claim_blob_azure_key() {
   return $rc
 }
 
-claim_index_writes() {
+claim_report/index_writes() {
   # Two projects plan at once through an S3 stand-in in front of floci that
   # holds the first two PUTs of the top index.json and sends them together,
   # so both writers read the same index: one conditional write lands, the
@@ -16324,7 +16328,7 @@ claim_index_writes() {
   return $rc
 }
 
-claim_cdf_shared_bucket() {
+claim_choudoufu/shared_bucket() {
   # Two choudoufu estates in one record store bucket, applied by one tf-apply
   # wave of one repo: root a is estate <name>, root b is estate <name>-eu, so
   # one name starts the other, and each holds terraform_data.this (a from-a,
@@ -16468,7 +16472,7 @@ cdf_root_creates() { # work root
   clean_mounted "$1/wave" "$(image_tag choudoufu)"
 }
 
-claim_cdf_migrate() {
+claim_choudoufu/migrate() {
   # Estate <stamp>-mono (root mono) holds the queues jobs and keep, applied
   # by wave 1; root team is estate <stamp>-team, with no resources. A commit
   # moves the jobs block to team and adds migrations/carve-jobs.yml naming
@@ -16538,7 +16542,7 @@ claim_cdf_migrate() {
   return $rc
 }
 
-claim_cdf_adopt() {
+claim_choudoufu/adopt() {
   # Root app holds the queues a and b, its state app.tfstate in the versioned
   # bucket tgca-<stamp>, applied by wave 1 with choudoufu as stock OpenTofu.
   # A commit replaces its backend block with a live block naming estate
@@ -16614,7 +16618,7 @@ claim_cdf_adopt() {
   return $rc
 }
 
-claim_cdktn_synth() {
+claim_init/cdktn_synth() {
   # A CDK Terrain app (fixtures/cdktn) on cdktn 0.24.0 with two stacks, and
   # synth in terragucci.yml. Its .npmrc sets engine-strict, so npm ci stops
   # on a job image whose Node is older than the 22.19 cdktn 0.24 needs. The
@@ -16669,7 +16673,7 @@ claim_cdktn_synth() {
   return $rc
 }
 
-claim_cdktn_affected() {
+claim_affected/cdktn() {
   # The CDK Terrain app of cdktn-synth (fixtures/cdktn, stacks dev and prod)
   # on main, and a pull request that changes the size of prod in main.js.
   # tf-plan runs the synth command on the base too and compares each stack's
@@ -16745,7 +16749,7 @@ cdktn_unsynth() { # workflow, job name pattern (awk)
   awk -v pat="$2" '/^  [a-z0-9-]+:$/ { job = substr($1, 1, length($1) - 1) } !(job ~ pat && index($0, "( set -e; ")) { print }' "$1" > "$1.new" && mv "$1.new" "$1"
 }
 
-claim_cdktn_apply() {
+claim_apply/cdktn() {
   # The CDK Terrain app of cdktn-synth with each stack's state in floci under
   # cdktn-apply/, gate: always, and the dev stack as the canary wave. Each
   # apply wave's job runs synth: on the push to main wave 1 waits at its gate
@@ -16796,7 +16800,7 @@ claim_cdktn_apply() {
   return $rc
 }
 
-claim_cdktn_tips() {
+claim_tips/cdktn() {
   # The CDK Terrain app of cdktn-synth with gate: never and no canary. The
   # push to main applies both stacks, and the tips job runs synth before
   # respond tips: it opens the canary tip's pull request, which changes
@@ -16836,7 +16840,7 @@ claim_cdktn_tips() {
   return $rc
 }
 
-claim_cdktn_refused() {
+claim_init/cdktn_refuse() {
   # The CDK Terrain app of cdktn-synth, synthesized on the host. init refuses
   # synth with a drift schedule whose response is the drift pull request (the
   # default), and synth with rollouts, each as a config error saying why:
@@ -16947,7 +16951,7 @@ audit_unrecorded() { # origin.git, ledger file, entry kind, record -> each appro
     <(jq -r --arg k "$3" 'select(.kind == $k) | "\(.who) \(.digest) \(.at)"' "$4" | sort)
 }
 
-claim_apply_outcome() {
+claim_report/outcome() {
   # A repo with one root, app, run by stage tf-apply in the CI image with
   # TG_OUTCOME_JSON naming a file. Wave 1 waits (gate always): the file says
   # terragucci.outcome/v1, waiting, exit 3, the set digest, the gate, mode
@@ -17011,7 +17015,7 @@ claim_apply_outcome() {
   return $rc
 }
 
-claim_audit() {
+claim_audit/tofu() {
   # A repo whose reports go to the bucket: wave 1 waits, smoke-approver
   # approves its digest on chant/lifecycle, and the next run applies it.
   # terragucci audit, run in the repo, writes audit.jsonl, audit.html and
@@ -17073,7 +17077,7 @@ claim_audit() {
   return $rc
 }
 
-claim_audit_override() {
+claim_audit/override() {
   # The policy-wave repo with policy.override and reports in the bucket. Its
   # wave is denied and terragucci audit runs; smoke-approver overrides the
   # denial, the next run applies app (its report replaces the denied one) and
@@ -17129,7 +17133,7 @@ claim_audit_override() {
   return $rc
 }
 
-claim_audit_refused() {
+claim_audit/refused() {
   # Wave 1 waits and smoke-approver approves its digest; then app changes in
   # a new commit and wave 1 runs again. Its plans moved, so it applies nothing
   # and exits 4, and its report says why in waves[].refused. terragucci audit
@@ -17174,7 +17178,7 @@ claim_audit_refused() {
   return $rc
 }
 
-claim_audit_control() {
+claim_audit/control() {
   # A control repo names two projects, smoke.local/audit/a and b, each a repo
   # of its own (a.git and b.git, named by url:) copying its reports to the
   # bucket. Wave 1 of each waits; smoke-approver approves a, and its next run
@@ -17278,7 +17282,7 @@ inventory_repo() { # work, prefix -> $1/wave with the two roots and the module, 
   audit_origin "$work"
 }
 
-claim_inventory() {
+claim_estate/inventory() {
   # inventory_repo's two roots apply in two waves, platform then orders, each
   # copying its report to the bucket. terragucci estate then lists every
   # resource of both roots: estate.json has each root with its resources by
@@ -17381,7 +17385,7 @@ example_edges() {
   done | sort
 }
 
-claim_estate_graph() {
+claim_estate/graph() {
   # graph_repos' shop applies wave 1 (platform) under gate never; its run
   # view then gives the blast radius of that change: platform, and every dev
   # root that reads its state. Wave 2 (the four services) plans and waits
@@ -17498,7 +17502,7 @@ state_versions_root() { # work, state bucket, input
   printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$2" "$3" > "$1/wave/app/main.tf"
 }
 
-claim_state_versions() {
+claim_state/versions() {
   # state_versions_repo's root applies in tf-apply wave 1, then again with a
   # new input. Each wave's log names the state's version, and its upload adds
   # it to the project's states.json. terragucci estate then lists app's two
@@ -17590,7 +17594,7 @@ tg_state_versions_unit() { # work, input
   printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "../../modules/app"\n}\n\ninputs = {\n  input = "%s"\n}\n' "$2" > "$1/wave/live/app/terragrunt.hcl"
 }
 
-claim_tg_state_versions() {
+claim_state/terragrunt_versions() {
   # A Terragrunt unit, live/app, whose state is in a versioned bucket on floci
   # and whose module comes through Terragrunt's cache, applies in tf-apply
   # --terragrunt wave 1, then again with a new input. Each wave's log names
@@ -17675,7 +17679,7 @@ tg_graph_repo() { # work, prefix, state bucket -> $1/wave and $1/origin.git
   audit_origin "$work"
 }
 
-claim_tg_estate_graph() {
+claim_estate/terragrunt_graph() {
   # tg_graph_repo's chain of units: tf-plan --terragrunt of live/vpc alone
   # writes a plan note whose blast radius names live/vpc as changing and
   # live/app (depth 1) and live/web (depth 2) as the units downstream, each
@@ -17807,7 +17811,7 @@ tg_queue_drift() { # tree, repo, respond|"", docker run args...
   tg_in_image "$tree" -e TG_TF_PATH=tofu -e "GITHUB_REPOSITORY=$repo" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN" "$@" -- sh -c "$cmd" >&2
 }
 
-claim_tg_drift_attribute() {
+claim_drift/terragrunt_attribute() {
   # A scratch repo with one Terragrunt unit, live/app, whose module sets its
   # queue's visibility timeout from the unit's inputs, is applied to floci;
   # then the timeout is changed in floci, outside Terraform. With
@@ -17867,7 +17871,7 @@ SH
   return $rc
 }
 
-claim_tg_drift_pr() {
+claim_respond/terragrunt_drift() {
   # A scratch repo with one Terragrunt unit, live/app, whose module sets its
   # queue's visibility timeout from the unit's inputs (timeout = 30), is
   # applied to floci; then the timeout is set to 45 in floci. The drift job's
@@ -17932,7 +17936,7 @@ tg_migrate_wave() { # work, log name, layers -> AUDIT_CODE of wave 1
   clean_mounted "$1/wave" "$(image_tag terragrunt)"
 }
 
-claim_tg_migrate_split() {
+claim_migrate/terragrunt_split() {
   # Terragrunt unit live/mono calls a module holding terraform_data.keep and
   # terraform_data.moved, its state in a versioned bucket of the claim's own
   # on floci, applied by wave 1 of tf-apply --terragrunt. A commit moves the
@@ -18024,7 +18028,7 @@ claim_tg_migrate_split() {
   return $rc
 }
 
-claim_tg_root_pins() {
+claim_init/terragrunt_root_pins() {
   # Three Terragrunt units in one wave: live/old pins OpenTofu 1.10.6 in its
   # .opentofu-version, live/older pins Terragrunt 1.1.5 with an exact
   # terragrunt_version_constraint (Terragrunt itself refuses to run the unit
@@ -18085,7 +18089,7 @@ claim_tg_root_pins() {
   return $rc
 }
 
-claim_tg_choudoufu() {
+claim_binary/terragrunt_choudoufu() {
   # A Terragrunt repo of two units with binary: choudoufu. init writes a
   # pipeline whose jobs run in the choudoufu image, install Terragrunt beside
   # it, and set TG_TF_PATH to choudoufu. The plan job's install step and its
@@ -18147,7 +18151,7 @@ claim_tg_choudoufu() {
   return $rc
 }
 
-claim_tg_stacks() {
+claim_waves/terragrunt_stack() {
   # A Terragrunt repo whose only units come from an explicit stack:
   # live/stk/terragrunt.stack.hcl generates base and top from catalog
   # templates, and top reads base's output. init, run in the Terragrunt
@@ -18231,7 +18235,7 @@ tg_stack_rev() { # dir, unit, rev -> the stack file feeds that unit the rev
   perl -0pi -e "s/(unit \"$2\" \\{.*?rev = \")[^\"]*\"/\${1}$3\"/s" "$1/live/stk/terragrunt.stack.hcl"
 }
 
-claim_tg_stack_check() {
+claim_check/terragrunt_stack() {
   # The stack file stops feeding top the rev its template reads
   # (values.rev). Pushed to a branch, the check job generates the stack and
   # terragrunt hcl validate fails on the generated top unit, naming it and
@@ -18260,7 +18264,7 @@ claim_tg_stack_check() {
   return $rc
 }
 
-claim_tg_stack_affected() {
+claim_affected/terragrunt_stack() {
   # The base is the fixture; the head changes base's rev in the stack file
   # and nothing else. tf-plan against the base, in the Terragrunt image,
   # plans live/stk/.terragrunt-stack/base alone, selected for the stack
@@ -18298,7 +18302,7 @@ claim_tg_stack_affected() {
   return $rc
 }
 
-claim_tg_stack_gate() {
+claim_approval/terragrunt_stack() {
   # Push the fixture to a fresh repo. The check job generates the stack and
   # passes; wave 1 (the generated base) plans, waits for an approval of its
   # set digest and prints the command, so no unit has state. Approve wave 1
@@ -18338,7 +18342,7 @@ claim_tg_stack_gate() {
   return $rc
 }
 
-claim_tg_stack_drift() {
+claim_drift/terragrunt_stack() {
   # The fixture plus a third unit, queue, which the stack generates from
   # catalog/units/queue: one SQS queue on floci. Every unit is applied in the
   # Terragrunt image, then the queue is deleted outside Terraform. From a
@@ -18407,7 +18411,7 @@ state_roles_root() { # work, state bucket, env, [env whose state it reads]
   } > "$work/wave/envs/$env/app/main.tf"
 }
 
-claim_state_roles() {
+claim_oidc/state_roles() {
   # Two environments, envs/dev/app and envs/prod/app, each with its state
   # under its own key of one floci bucket, and oidc.roles giving each glob a
   # plan and an apply role. config check lists each role with its roots and
@@ -18491,7 +18495,7 @@ YML
   return $rc
 }
 
-claim_state_export() {
+claim_state/export() {
   # state_versions_repo's root applies twice into a versioned floci bucket.
   # In the CI image, as a person at a shell would: terragucci state export
   # app --version <the first> --actor alice records a request on
@@ -18598,7 +18602,7 @@ claim_state_export() {
   return $rc
 }
 
-claim_tg_state_export() {
+claim_state/terragrunt_export() {
   # tg_state_versions_repo's unit, live/app, applies twice through Terragrunt
   # into a versioned floci bucket, its backend only in root.hcl's
   # remote_state block. In the Terragrunt image, as a person at a shell would:
@@ -18690,7 +18694,7 @@ state_edges_roots() { # work, state bucket, network's input
   printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\ndata "terraform_remote_state" "net" {\n  backend = "s3"\n  config = {\n    bucket         = "%s"\n    key            = "network.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = data.terraform_remote_state.net.outputs.id\n}\n' "$2" "$2" > "$1/wave/app/main.tf"
 }
 
-claim_state_edges() {
+claim_estate/state_edges() {
   # Two roots in one floci bucket: network, and app, which reads network's
   # state through terraform_remote_state. Wave 1 applies network and wave 2
   # app; then a change to network alone applies wave 1 again. terragucci
@@ -18762,7 +18766,7 @@ claim_state_edges() {
 }
 
 # ── the MCP server ────────────────────────────────────────────────────────
-claim_mcp_last_apply() {
+claim_estate/mcp() {
   # A repo with one root, app (a terraform_data, local state), whose reports
   # go to the reports bucket under a fresh prefix, applied in tf-apply wave 1
   # with gate never. terragucci mcp then runs in the CI image over stdio, with
@@ -18827,7 +18831,7 @@ claim_mcp_last_apply() {
 }
 
 # ── the drift agent ───────────────────────────────────────────────────────
-claim_drift_agent() {
+claim_agent/drift() {
   # A scratch repo with one root, app: a queue on floci with a visibility
   # timeout of 30, its state in floci's S3, and a drift schedule. terragucci.yml
   # turns agent.drift on with a stand-in agent: .smoke/drift-agent.sh reads
@@ -18987,7 +18991,7 @@ for (const [name, names] of Object.entries(STACKS)) new Stack(app, name, names);
 app.synth();
 '
 
-claim_cdktn_migrate() {
+claim_migrate/cdktn() {
   # A CDK Terrain app on the cdktn fixture's packages, synthesized on the
   # host: stack mono holds terraform_data.keep and terraform_data.moved, its
   # state in a versioned bucket of the claim's own on floci, applied by wave
@@ -19061,16 +19065,16 @@ claim_cdktn_migrate() {
   return $rc
 }
 
-claim_migrate_resume_never() {
+claim_migrate/resume_never() {
   # migrate-resume with gate: never in the fixture: no wave can wait, and a
   # migration still can, so init writes the resume workflow all the same, and
   # one run of it applies the approved migration.
   # BREAK: the resume workflow init wrote is removed before the push, as when
   # init wrote none under gate: never, so nothing resumes the migration.
-  MIGRATE_RESUME_GATE=never MIGRATE_RESUME_NAME=migrate-resume-never claim_migrate_resume
+  MIGRATE_RESUME_GATE=never MIGRATE_RESUME_NAME=migrate-resume-never claim_migrate/resume
 }
 
-claim_migrate_resume() {
+claim_migrate/resume() {
   # stack/fixtures/migrate-roots: one root, mono, holding keep and moved, with
   # the default gate (on-destructive) and apply.resume: 5, so init writes the
   # resume workflow, pushed to Forgejo; its run applies mono, which destroys
@@ -19188,7 +19192,7 @@ current_version() { # bucket key -> the object's current version id
   curl -fsS -o /dev/null -D - "$FLOCI/$1/$2" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }'
 }
 
-claim_migrate_backend() {
+claim_migrate/backend() {
   # Root app holds terraform_data.keep and terraform_data.moved, its state
   # app.tfstate in bucket tgmb-old-<stamp>, applied by wave 1. A commit points
   # its backend block at tgmb-new-<stamp> and adds migrations/move-app.yml,
@@ -19254,7 +19258,7 @@ claim_migrate_backend() {
   return $rc
 }
 
-claim_migrate_backend_tfe() {
+claim_migrate/tfe() {
   # Root app holds terraform_data.keep and terraform_data.moved, applied by
   # wave 1 into a bucket of the claim's own, which gives a real state. A TFE
   # API (stack/fixtures/tfe-api/tfe.mjs, HTTPS with a certificate the job
@@ -19343,7 +19347,7 @@ claim_migrate_backend_tfe() {
   return $rc
 }
 
-claim_migrate_backend_pg() {
+claim_migrate/pg() {
   # A Postgres of the claim's own (tgpg-<stamp>) holds the states, its
   # password in PGPASSWORD and never in the code. Root app holds
   # terraform_data.keep and terraform_data.moved, its pg backend in schema
@@ -19425,7 +19429,7 @@ claim_migrate_backend_pg() {
   return $rc
 }
 
-claim_migrate_backend_k8s() {
+claim_migrate/k8s() {
   # A Kubernetes API of the claim's own: k3s's control plane alone
   # (tgk8s-<stamp>, no agent, no privileges), its kubeconfig given to the job
   # in KUBE_CONFIG_PATH. Root app holds terraform_data.keep and
@@ -19513,7 +19517,7 @@ claim_migrate_backend_k8s() {
   return $rc
 }
 
-claim_migrate_backend_consul() {
+claim_migrate/consul() {
   # A Consul of the claim's own (tgconsul-<stamp>, one agent in dev mode).
   # Root app holds terraform_data.keep and terraform_data.moved, its consul
   # backend at path tgold/app, applied by wave 1. A commit points the backend
@@ -19594,7 +19598,7 @@ claim_migrate_backend_consul() {
   return $rc
 }
 
-claim_migrate_backend_http() {
+claim_migrate/http() {
   # An http state server of the claim's own (stack/fixtures/http-backend/
   # http-state.mjs in the CI image, tghttp-<stamp>), which locks each path
   # with LOCK and UNLOCK and refuses a write to a locked path that does not
@@ -19679,7 +19683,7 @@ claim_migrate_backend_http() {
   return $rc
 }
 
-claim_migrate_revert() {
+claim_migrate/revert() {
   # mono holds keep and moved (state in a versioned bucket); a migration splits
   # moved out to split and applies under smoke-approver's approval, as in
   # migrate-split. terragucci migrate revert split-moved then writes
@@ -19759,7 +19763,7 @@ claim_migrate_revert() {
   return $rc
 }
 
-claim_migrate_split() {
+claim_migrate/split() {
   # Root mono holds terraform_data.keep and terraform_data.moved, its state
   # mono.tfstate in a versioned bucket of the claim's own on floci, applied by
   # wave 1. A commit moves the moved block to a new root, split, and adds
@@ -19854,7 +19858,7 @@ claim_migrate_split() {
   return $rc
 }
 
-claim_resource_history() {
+claim_estate/history() {
   # The audit repo (one root, app, holding terraform_data.app) with --gate
   # always and reports in the bucket. Three commits each set a new input; each
   # time wave 1 waits, approver-one, approver-two and approver-three approve it
@@ -19923,7 +19927,7 @@ claim_resource_history() {
   return $rc
 }
 
-claim_query_sql() {
+claim_estate/query() {
   # A repo with one root, app, holding an SQS queue in floci and a
   # terraform_data, reports in the bucket, gate always. Change 1 creates both
   # and approver-one approves wave 1; change 2 moves the queue's timeout and
@@ -19999,7 +20003,7 @@ claim_query_sql() {
   return $rc
 }
 
-claim_dora() {
+claim_estate/dora() {
   # A repo with one root, app, holding an SQS queue in floci with a timeout
   # of 30, reports in the bucket. Change 1 is planned, waits at wave 1's gate
   # (gate always), smoke-approver approves it and the next run applies.
@@ -20123,7 +20127,7 @@ claim_dora() {
   return $rc
 }
 
-claim_notify_chat() {
+claim_notify/chat() {
   # The gated fixture (gate: always) with approval: pr-review and notify
   # naming two secrets, which hold the addresses of a webhook stand-in: one
   # path for Slack, one for Teams. A pull request changes canary/one and
@@ -20194,7 +20198,7 @@ claim_notify_chat() {
   return $rc
 }
 
-claim_notify_webhook() {
+claim_notify/webhook() {
   # The gated fixture (gate: always) with notify naming a generic webhook and
   # its key: the secret HOOK_URL holds a stand-in receiver's address and
   # HOOK_KEY the key it verifies with. The push to main stops at wave 1, and
@@ -20449,7 +20453,7 @@ chat_approve() { # slack|teams, [lambda]
   return $rc
 }
 
-claim_chat_approve() {
+claim_chat/slack() {
   # A waiting wave's Slack message carries Approve and Decline buttons whose
   # value names wave 1 and its digest. A click by the Slack user the signers
   # file lists beside smoke-approver, signed as Slack signs with the app's
@@ -20462,7 +20466,7 @@ claim_chat_approve() {
   chat_approve slack
 }
 
-claim_chat_approve_lambda() {
+claim_chat/lambda() {
   # As chat-approve, with the relay as the AWS Lambda function the guide
   # builds: its Dockerfile (the Lambda Web Adapter 1.1.0 extension, PORT and
   # the readiness path), run under the Lambda runtime interface emulator on
@@ -20475,7 +20479,7 @@ claim_chat_approve_lambda() {
   chat_approve slack lambda
 }
 
-claim_chat_approve_teams() {
+claim_chat/teams() {
   # A waiting wave's Teams card gives the reply @terragucci approve wave-1
   # <digest>. That reply by the Entra user the signers file lists beside
   # smoke-approver, signed as a Teams outgoing webhook signs it, reaches the
@@ -20487,7 +20491,7 @@ claim_chat_approve_teams() {
   chat_approve teams
 }
 
-claim_chat_replan() {
+claim_chat/replan() {
   # A queue applied with a visibility timeout of 30, set to 45 outside
   # OpenTofu. With notify naming a Slack webhook and a drift schedule, the
   # drift job's commands (stage tf-drift, then notify drift) post the drifted
@@ -20545,7 +20549,7 @@ claim_chat_replan() {
   return $rc
 }
 
-claim_cost_estimate() {
+claim_cost/estimate() {
   # Two roots, app and net, and cost in terragucci.yml naming the secret
   # COST_KEY and a command, cost.mjs, that sends the root's plan with that key
   # to a cost stand-in, which answers Infracost's JSON: 10.00 a month for each
@@ -20610,7 +20614,7 @@ JS
   return $rc
 }
 
-claim_cost_gate() {
+claim_cost/gate() {
   # Two roots, app and net, in one wave, with gate: never and cost naming a
   # command, cost.mjs, that prices 10.00 a month for each resource a plan
   # creates, with approve_above: 15. No Infracost key is needed. The push to
@@ -20667,7 +20671,7 @@ claim_cost_gate() {
   return $rc
 }
 
-claim_cost_policy() {
+claim_cost/policy() {
   # stack/fixtures/cost-policy: one root, app, with two resources, gate:
   # never, an HCP Terraform policy set (engine: opa, input: hcp) whose
   # mandatory cost_limit policy denies a root whose
@@ -20711,7 +20715,7 @@ claim_cost_policy() {
   return $rc
 }
 
-claim_approval_used() {
+claim_refuse/approval_used() {
   # Push the fixture; wave 1 waits. Approve it and push again: canary/one
   # applies, and the wave records on chant/lifecycle that it used the
   # approval. Then change canary/one and push: wave 1 plans another digest,
@@ -20784,7 +20788,7 @@ steps_repo() { # name
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
-claim_steps_before_plan() {
+claim_steps/before_plan() {
   # The gated-waves fixture with gate: never. canary/one gains a variable,
   # from_step (default no-step), that a second resource takes as its input,
   # and a step before plan on canary/* writes step.auto.tfvars setting it to
@@ -20831,7 +20835,7 @@ YAML
   return $rc
 }
 
-claim_steps_stop() {
+claim_steps/stop() {
   # The gated-waves fixture with gate: never and a step before apply on
   # canary/* that exits 1. The push to main plans wave 1 (canary/one), the
   # step fails, and the job fails before anything applies: no root has state,
@@ -20863,7 +20867,7 @@ YAML
   return $rc
 }
 
-claim_steps_gate() {
+claim_steps/gate() {
   # The gated-waves fixture with gate: never and a step after plan on canary/*
   # that exits 1 with on_failure: approve. The push to main stops at wave 1:
   # the step asks for an approval, so the wave waits at its gate and prints
@@ -20942,7 +20946,7 @@ HCL
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
-claim_image() {
+claim_init/image() {
   # A one-root repo whose terragucci.yml names image: one built FROM this
   # tree's tofu CI image with a file of its own, /etc/terragucci-smoke-image,
   # and a step before apply that prints it. init writes that image into every
@@ -20983,7 +20987,7 @@ claim_image() {
   return $rc
 }
 
-claim_env() {
+claim_init/env() {
   # A one-root repo whose root reads var.greeting, unset by default, and
   # whose terragucci.yml sets env: TF_VAR_greeting. init writes it into the
   # pipeline's env, the push to main applies app, and the state holds the
@@ -21093,7 +21097,7 @@ job_runner() { # repo, run id, job name -> the uuid of the runner that ran the j
   sed -nE '1,5s/.*Runner ([0-9a-f-]{36}) .*/\1/p' <<<"$text" | sed -n 1p
 }
 
-claim_runner_label() {
+claim_init/runner_label() {
   # A one-root repo whose terragucci.yml sets runner.apply to a label that
   # only a second Forgejo runner serves (labelled_runner). init writes that
   # label as the runs-on of the apply jobs and leaves the others on the
@@ -21132,7 +21136,7 @@ claim_runner_label() {
   return $rc
 }
 
-claim_pass_secrets() {
+claim_init/pass_secrets() {
   # A one-root repo whose root reads var.greeting and var.place, with a repo
   # secret TF_VAR_greeting and a repo variable TF_VAR_place, both named under
   # pass in terragucci.yml. init writes the names, never the values, into the
@@ -21171,7 +21175,7 @@ claim_pass_secrets() {
   return $rc
 }
 
-claim_local_plan() {
+claim_estate/local_plan() {
   # terragucci plan, run as on a laptop: in a copy of the example with the
   # one-root change (dev orders keeps jobs for seven days), from the tofu CI
   # image with floci's keys, and --json. Each dev root plans against the
@@ -21216,7 +21220,7 @@ tg_never_repo() { # name
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
-claim_tg_cost_gate() {
+claim_cost/terragrunt_gate() {
   # The Terragrunt gated-waves fixture with gate: never and cost naming
   # cost.mjs, which prices 10.00 a month for each resource a unit's saved plan
   # creates, with approve_above: 15. Each unit creates one resource. The push
@@ -21253,7 +21257,7 @@ YAML
   return $rc
 }
 
-claim_tg_steps_gate() {
+claim_steps/terragrunt_gate() {
   # The Terragrunt gated-waves fixture with gate: never and a step after plan
   # on live/canary/* that checks the unit's saved plan is there and exits 1,
   # with on_failure: approve. The push to main stops at wave 1: the step runs
@@ -21301,7 +21305,7 @@ YAML
   return $rc
 }
 
-claim_tg_wave_jobs() {
+claim_waves/terragrunt_jobs() {
   # The Terragrunt gated-waves fixture with waves.jobs: 2. Wave 1
   # (live/canary/one) is one unit and one job; wave 2 (live/fleet/three and
   # live/fleet/two) gets apply-wave-2, which plans both units with one run --all
@@ -21369,7 +21373,7 @@ claim_tg_wave_jobs() {
   return $rc
 }
 
-claim_tg_respond_fmt() {
+claim_respond/terragrunt_fmt() {
   # The Terragrunt gated-waves fixture: main is pushed without a run, then a
   # branch whose live/canary/one/terragrunt.hcl is not formatted. The branch's
   # check fails on terragrunt hcl fmt --check, and the pipeline's fmt job runs
@@ -21518,7 +21522,7 @@ HCL
   return $rc
 }
 
-claim_unlock_state() {
+claim_state/unlock() {
   # stack/fixtures/unlock-state: one root, slow, whose terraform_data runs a
   # local-exec that sleeps for the seconds in hold.txt (600) while its apply
   # holds slow's lock file in floci, gate: never. A push to main runs its
@@ -21647,7 +21651,7 @@ claim_unlock_state() {
 
 # ── a rename's moved block ────────────────────────────────────────────────
 
-claim_tip_moved() {
+claim_tips/moved() {
   # A root, app, holding terraform_data.old is applied, its state in floci.
   # On a branch, rename, the block is renamed new with the same input:
   # stage tf-plan plans a destroy and a create, and its report carries the
@@ -21709,7 +21713,7 @@ claim_tip_moved() {
   return $rc
 }
 
-claim_tg_pr_plan() {
+claim_note/terragrunt() {
   # Forgejo 16 creates no run for an event that skips a job with more than
   # five levels of needs below it: the Terragrunt example's check job heads
   # five waves and the tips job, so its pull requests got no plan. init hands
@@ -21760,7 +21764,7 @@ claim_tg_pr_plan() {
   return $rc
 }
 
-claim_plan_lock_fmt() {
+claim_lock/plan_fmt() {
   # A repo with locks: plan. Pull request A changes canary/one and holds it.
   # Then an unformatted main.tf is pushed to its branch: the check fails, and
   # the fmt job commits the formatting with the job's token, a push that
@@ -21811,7 +21815,7 @@ claim_plan_lock_fmt() {
   return $rc
 }
 
-claim_github_drift_issue() {
+claim_drift/github() {
   # stack/mock-github, as this tree has it, in a container of the claim's own:
   # it lists a repo's issues as github.com does, pull requests among them, and
   # answers 422 to a query parameter github.com does not take, such as
@@ -21875,7 +21879,7 @@ claim_github_drift_issue() {
   return $rc
 }
 
-claim_runner_nudge() {
+claim_apply/runner_nudge() {
   # Forgejo 16 moves no task version when a run ends with no task reporting
   # (forgejo#14576), so a run queued behind it in a concurrency group waits
   # until something else moves it. This makes that state on purpose: run 1's
@@ -21942,7 +21946,7 @@ runnable_names() {
 }
 
 # ── the GitLab claims ─────────────────────────────────────────────────────
-# GITLAB_CLAIMS, GITLAB_CLAIM_GROUPS and a gitlab_claim_<name> per claim.
+# GITLAB_CLAIMS, GITLAB_CLAIM_GROUPS and a gitlab_claim_<area>/<part> per claim.
 # shellcheck source=smoke-gitlab.sh
 . "$HERE/smoke-gitlab.sh"
 
@@ -21992,304 +21996,304 @@ runnable_names() {
 # while steward and boot hold the example, so the Terragrunt plans that share
 # tg follow it instead of holding it up at the end.
 CLAIM_GROUPS='
-tg-waves        tg! runner break-first weight=1000
-boot            ex! runner break-first after=steward weight=900
-drift           ex! after=boot weight=700
-tg-affected     tg after=tg-waves weight=500
-tg-refuse       tg tg-ledger! after=tg-waves weight=490
-tg-check        tg runner self! after=tg-waves weight=480
-tg-mock-lint    tg after=tg-waves weight=470
-tg-drift        tg! after=tg-waves weight=460
-tg-mock-trap    tg! tg-ledger! runner after=tg-waves weight=520
-report          ex after=boot weight=400
-respond-refused ex after=boot weight=350
-metrics         ex otel! after=boot weight=340
-traces          ex otel! after=boot weight=330
-highlight       ex after=boot weight=300
-tips            ex after=boot weight=300
-reconcile       runner self! weight=300
-reconcile-mixed self! weight=60
-rollout         runner self! weight=250
-fresh-plan      ex after=boot weight=250
-waves           runner self! weight=200
-linked-states   runner self! weight=260
-linked-plan     self! weight=90
-linked-plan-local self! weight=90
-resource-blast  weight=150
-refuse          runner self! weight=200
-sealed          runner self! weight=200
-publish         runner self! registry! weight=200
-publish-attest  runner self! registry! weight=200
-require-attested runner self! weight=200
-require-recorded runner self! weight=200
-tg-require-attested runner self! weight=220
-module-registry self! weight=120
-forgejo-oidc    runner self! weight=200
-grouped         ex runner self! after=boot weight=200
-check           ex runner self! after=boot weight=200
-affected        ex after=boot weight=150
-respond-tips    runner self! weight=150
-apply-serial    runner self! break:runner! weight=100
-respond-drift   self! weight=80
-respond-fmt     self! weight=60
-respond-triage  weight=60
-zero-config     weight=30
-tg-zero-config  weight=30
-respond-notes   weight=20
-policy          ex after=boot weight=150
-steward         ex! runner fountain! weight=950
-comment-plan    runner self! weight=150
-comment-atlantis runner self! weight=150
-import-atlantis ex after=boot weight=150
-import-spacelift weight=30
-import-env0     weight=30
-import-hcp      weight=60
-import-scalr    weight=60
-import-tg-scale weight=30
-waves-after     runner self! weight=150
-lock-wait       otel! self! weight=150
-dash-pipeline   ex otel after=boot weight=120
-dash-changes    ex otel after=boot weight=120
-dash-waves      ex otel after=boot weight=120
-dash-drift      ex otel after=boot weight=120
-dash-estate     ex otel after=boot weight=120
-dash-runs       ex otel after=boot weight=120
-dash-slos       ex otel after=boot weight=120
-drill-down      ex otel after=boot weight=120
-policy-wave     weight=150
-check-diagnostics    runner self! weight=150
-comment-not-affected runner self! weight=150
-drift-attribute      self! weight=90
-version-bump-job     runner self! weight=150
-tg-spans             tg after=tg-waves weight=450
-oidc-clouds          weight=20
-comment-apply        runner self! weight=200
-comment-agent        runner self! weight=200
-review-agent         runner self! weight=200
-review-policy        runner self! weight=250
-wave-report     weight=120
-policy-delete-key    ex after=boot weight=150
-report-oidc          ex after=boot weight=150
-tg-gate-wait         runner self! weight=200
-tg-gate-refuse       runner self! weight=200
-tg-sealed            runner self! weight=200
-pr-apply             runner self! weight=250
-pr-apply-lock        runner self! weight=300
-pr-apply-stale       runner self! weight=200
-tg-comment-apply     runner self! weight=200
-provider-calls       weight=90
-summed-timings       weight=90
-foreign-checkout     ex after=boot weight=150
-tg-layers            runner self! weight=300
-atmos-waves          runner self! weight=350
-atmos-workspace      self! weight=150
-atmos-affected       runner self! weight=250
-atmos-from-plan      runner self! weight=350
-atmos-upstream-wait  runner self! weight=400
-atmos-check          runner self! weight=150
-atmos-version        self! weight=90
-atmos-roles          self! weight=150
-terramate-waves      runner self! weight=350
-terramate-affected   runner self! weight=250
-terramate-sharing    runner self! weight=400
-terramate-stale      runner self! weight=150
-atmos-refuse         weight=60
-policy-source        self! weight=150
-reconcile-parallelism weight=120
-provider-project self! weight=90
-pr-requires          runner self! weight=300
-pr-lock              runner self! weight=200
-front-door           self! weight=40
-ledger-default       runner self! weight=200
-approval-at-base     runner self! weight=250
-sealed-migrate       runner self! weight=250
-estate               weight=120
-behold-view          weight=120
-behold-serve         weight=150
-terragucci-view      weight=150
-drift-overdue        self! weight=60
-pr-review            runner self! weight=300
-pr-review-moved      runner self! weight=300
-pr-review-status     runner self! weight=250
-approve-plan         runner self! weight=150
-resume-approve       runner self! weight=250
-resume-schedule      runner self! weight=300
-cdf-concurrency      weight=150
-cdf-concurrency-time weight=250
-cdf-write-race       weight=150
-cdf-iam              self! weight=250
-cdf-record-versions  weight=120
-cdf-killed-records   weight=90
-cdf-resume           weight=150
-cdf-live-progress    weight=90
-apply-per-root       runner self! weight=300
-apply-stand-down     runner self! weight=300
-cdf-rows-overlap     runner self! weight=250
-cdf-rows-wait        self! weight=200
-cdf-rows-takeover    runner self! weight=300
-cdf-drift            self! weight=150
-approve-command      runner self! weight=250
-tg-pr-apply          runner self! weight=300
-tg-pr-apply-lock     runner self! weight=300
-atmos-pr-apply-lock  runner self! weight=300
-terramate-pr-apply-lock runner self! weight=300
-plan-lock            runner self! weight=250
-plan-lock-release    runner self! weight=200
-policy-override      weight=150
-policy-override-moved     weight=150
-policy-override-unlisted  weight=150
-policy-override-applied   weight=150
-blob-azure           azurite! weight=120
-blob-gcs             gcs! weight=120
-note-diff            ex runner self! after=boot weight=200
-note-split           weight=60
-note-report-link     weight=60
-config-ts            weight=20
-role-refused         weight=20
-description-check    weight=60
-decide-backends      weight=80
-otlp-headers         weight=60
-pinned-install       weight=60
-root-pins            weight=60
-generate             weight=60
-tg-generate          weight=150
-tg-generate-init     weight=120
-drift-close          self! weight=90
-estate-control       self! weight=80
-estate-override      weight=150
-reader-contracts     weight=110
-comment-refused      runner self! weight=200
-note-stale           runner self! weight=200
-pr-confirm           runner self! weight=300
-pr-base-config       runner self! weight=250
-pr-guard             runner self! weight=300
-pr-close-release     runner self! weight=200
-tg-lock-fanout       runner self! weight=200
-token-scrub          weight=60
-plan-token-free      runner self! weight=250
-fork-no-plan         runner self! weight=250
-highlight-sensitive  weight=90
-approval-revoke      runner self! weight=250
-pending-expiry       runner self! weight=250
-signer-trust         runner self! weight=250
-rollout-control      runner self! weight=400
-rollout-provider     self! weight=120
-rollout-pins         self! weight=80
-rollout-continue     runner self! weight=300
-policy-opa           weight=150
-policy-hcp           weight=150
-policy-hcl           weight=150
-tg-policy            weight=200
-tg-credentials       weight=200
-tg-dependents        weight=250
-tg-preview           self! weight=120
-tg-preview-gate      runner self! weight=400
-tf-terraform         runner self! weight=300
-tg-terraform         runner self! weight=300
-tfquery-import       self! weight=120
-alerts-fire          otel self! weight=300
-blob-gcs-key         gcs! weight=120
-blob-azure-key       azurite! weight=120
-index-writes         self! weight=90
-note-footer          runner self! weight=150
-replan-dispatch      runner self! weight=150
-cdf-shared-bucket    weight=120
-cdf-migrate          weight=200
-cdf-adopt            weight=200
-cdktn-synth          runner self! weight=200
-audit                weight=150
-apply-outcome        self! weight=120
-audit-override       weight=150
-audit-refused        weight=150
-audit-control        weight=150
-inventory            weight=150
-estate-graph         weight=200
-resource-history     weight=200
-query-sql            weight=200
-state-versions       weight=150
-state-roles          weight=150
-state-export         weight=200
-gcs-state            gcs! weight=150
-azurerm-state        azurite! weight=150
-gcs-unlock           gcs! weight=150
-azurerm-unlock       azurite! weight=150
-blob-migrate         gcs! azurite! weight=200
-cloud-roles          gcs! azurite! weight=200
-state-edges          weight=250
-migrate-split        weight=200
-cdktn-migrate        weight=200
-migrate-backend      weight=200
-migrate-backend-tfe  weight=200
-migrate-backend-pg   weight=200
-migrate-backend-k8s  weight=250
-migrate-backend-consul weight=200
-migrate-backend-http weight=200
-migrate-revert       weight=250
-migrate-resume       runner self! weight=300
-migrate-resume-never runner self! weight=300
-dora                 weight=250
-notify-chat          runner self! weight=250
-notify-webhook       runner self! weight=150
-cost-estimate        runner self! weight=150
-cost-gate            runner self! weight=200
-cost-policy          weight=150
-approval-used        runner self! weight=200
-cdktn-affected       runner self! weight=200
-cdktn-apply          runner self! weight=300
-cdktn-pr-apply-lock  runner self! weight=400
-cdktn-tips           runner self! weight=200
-cdktn-refused        weight=60
-wave-jobs            runner self! weight=250
-own-jobs-kept        runner self! weight=120
-apply-branches       runner self! weight=300
-apply-branches-drift weight=200
-steps-before-plan    runner self! weight=200
-steps-stop           runner self! weight=150
-steps-gate           runner self! weight=200
-tg-cost-gate         runner self! weight=200
-tg-steps-gate        runner self! weight=200
-tg-wave-jobs         runner self! weight=300
-tg-respond-fmt       runner self! weight=150
-tg-state-versions    weight=150
-tg-drift-pr          self! weight=150
-tg-drift-attribute   self! weight=150
-tg-migrate-split     weight=200
-tg-root-pins         weight=150
-tg-choudoufu         weight=120
-tg-stacks            weight=150
-tg-stack-check       runner self! weight=150
-tg-stack-affected    weight=120
-tg-stack-gate        runner self! weight=250
-tg-stack-drift       weight=150
-tg-estate-graph      weight=200
-tg-state-export      weight=200
-tg-apply-branches    runner self! weight=300
-chat-approve         runner self! weight=300
-chat-approve-teams   runner self! weight=300
-chat-approve-lambda  runner self! weight=350
-chat-replan          self! weight=90
-plan-no-lock         weight=120
-sensitive-redacted   weight=90
-provider-cache-once  weight=90
-unlock-state         runner self! weight=300
-tip-moved            self! weight=150
-mcp-last-apply       weight=120
-drift-agent          runner self! weight=250
-runner-nudge         stack! self! weight=200
-github-drift-issue   self! weight=90
-plan-lock-fmt        runner self! weight=200
-tg-pr-plan           tg self! after=tg-waves weight=300
-ephemeral-pr         runner self! weight=250
-ephemeral-ttl        runner self! weight=250
-tg-ephemeral-pr      runner self! weight=300
-cdktn-ephemeral      runner self! weight=300
-cdktn-generate       weight=60
-cdktn-linked         self! weight=90
-image                runner self! weight=150
-env                  runner self! weight=150
-runner-label         runner self! weight=150
-pass-secrets         runner self! weight=150
-local-plan           ex after=boot weight=90
+waves/terragrunt        tg! runner break-first weight=1000
+boot/tofu            ex! runner break-first after=apply/steward weight=900
+drift/tofu           ex! after=boot/tofu weight=700
+affected/terragrunt     tg after=waves/terragrunt weight=500
+linked/terragrunt-mock       tg tg-ledger! after=waves/terragrunt weight=490
+check/terragrunt        tg runner self! after=waves/terragrunt weight=480
+tips/terragrunt-mock    tg after=waves/terragrunt weight=470
+drift/terragrunt        tg! after=waves/terragrunt weight=460
+linked/terragrunt-mock-trap    tg! tg-ledger! runner after=waves/terragrunt weight=520
+report/tofu          ex after=boot/tofu weight=400
+respond/refused ex after=boot/tofu weight=350
+telemetry/metrics         ex otel! after=boot/tofu weight=340
+telemetry/traces          ex otel! after=boot/tofu weight=330
+report/highlight       ex after=boot/tofu weight=300
+tips/tofu            ex after=boot/tofu weight=300
+reconcile/tofu       runner self! weight=300
+reconcile/mixed self! weight=60
+rollout/tofu         runner self! weight=250
+linked/fresh      ex after=boot/tofu weight=250
+waves/tofu           runner self! weight=200
+linked/states   runner self! weight=260
+linked/plan     self! weight=90
+linked/local self! weight=90
+note/blast  weight=150
+refuse/tofu          runner self! weight=200
+approval/sealed          runner self! weight=200
+modules/publish         runner self! registry! weight=200
+modules/attest  runner self! registry! weight=200
+modules/require runner self! weight=200
+modules/recorded runner self! weight=200
+modules/terragrunt-require runner self! weight=220
+modules/registry self! weight=120
+oidc/forgejo    runner self! weight=200
+note/grouped         ex runner self! after=boot/tofu weight=200
+check/tofu           ex runner self! after=boot/tofu weight=200
+affected/tofu        ex after=boot/tofu weight=150
+respond/tips    runner self! weight=150
+apply/serial    runner self! break:runner! weight=100
+respond/drift   self! weight=80
+respond/fmt     self! weight=60
+respond/triage  weight=60
+init/zero-config     weight=30
+init/terragrunt  weight=30
+respond/notes   weight=20
+policy/tofu          ex after=boot/tofu weight=150
+apply/steward         ex! runner fountain! weight=950
+comment/plan    runner self! weight=150
+comment/atlantis runner self! weight=150
+import/atlantis ex after=boot/tofu weight=150
+import/spacelift weight=30
+import/env0     weight=30
+import/hcp      weight=60
+import/scalr    weight=60
+import/terragrunt-scale weight=30
+waves/after     runner self! weight=150
+lock/wait-span       otel! self! weight=150
+telemetry/dash-pipeline   ex otel after=boot/tofu weight=120
+telemetry/dash-changes    ex otel after=boot/tofu weight=120
+telemetry/dash-waves      ex otel after=boot/tofu weight=120
+telemetry/dash-drift      ex otel after=boot/tofu weight=120
+telemetry/dash-estate     ex otel after=boot/tofu weight=120
+telemetry/dash-runs       ex otel after=boot/tofu weight=120
+telemetry/dash-slos       ex otel after=boot/tofu weight=120
+report/drill-down      ex otel after=boot/tofu weight=120
+policy/wave     weight=150
+check/diagnostics    runner self! weight=150
+comment/not-affected runner self! weight=150
+drift/attribute      self! weight=90
+modules/version-bump     runner self! weight=150
+telemetry/terragrunt-spans             tg after=waves/terragrunt weight=450
+oidc/clouds          weight=20
+comment/apply        runner self! weight=200
+agent/comment        runner self! weight=200
+agent/review         runner self! weight=200
+policy/review-risk        runner self! weight=250
+report/wave     weight=120
+policy/delete-key    ex after=boot/tofu weight=150
+report/oidc          ex after=boot/tofu weight=150
+approval/terragrunt         runner self! weight=200
+refuse/terragrunt       runner self! weight=200
+approval/terragrunt-sealed            runner self! weight=200
+pr-apply/tofu             runner self! weight=250
+lock/apply        runner self! weight=300
+pr-apply/stale       runner self! weight=200
+comment/terragrunt-apply     runner self! weight=200
+telemetry/provider-calls       weight=90
+telemetry/summed-timings       weight=90
+init/foreign-checkout     ex after=boot/tofu weight=150
+waves/terragrunt-layers            runner self! weight=300
+waves/atmos          runner self! weight=350
+apply/atmos-workspace      self! weight=150
+affected/atmos       runner self! weight=250
+refuse/atmos      runner self! weight=350
+linked/atmos  runner self! weight=400
+check/atmos          runner self! weight=150
+init/atmos-version        self! weight=90
+oidc/atmos-roles          self! weight=150
+waves/terramate      runner self! weight=350
+affected/terramate   runner self! weight=250
+linked/terramate    runner self! weight=400
+check/terramate      runner self! weight=150
+init/atmos-refuse         weight=60
+policy/source        self! weight=150
+reconcile/parallelism weight=120
+reconcile/provider self! weight=90
+pr-apply/requires          runner self! weight=300
+lock/comment              runner self! weight=200
+report/front-door           self! weight=40
+approval/ledger       runner self! weight=200
+approval/at-base     runner self! weight=250
+approval/sealed-migrate       runner self! weight=250
+estate/tofu               weight=120
+behold/view          weight=120
+behold/serve         weight=150
+behold/terragucci-view      weight=150
+note/drift-overdue        self! weight=60
+approval/pr-review            runner self! weight=300
+refuse/pr-review      runner self! weight=300
+approval/pr-review-status     runner self! weight=250
+refuse/approve-plan         runner self! weight=150
+approval/resume       runner self! weight=250
+approval/resume-schedule      runner self! weight=300
+choudoufu/concurrency      weight=150
+choudoufu/concurrency-time weight=250
+choudoufu/write-race       weight=150
+choudoufu/iam              self! weight=250
+choudoufu/record-versions  weight=120
+choudoufu/killed-records   weight=90
+choudoufu/resume           weight=150
+choudoufu/live-progress    weight=90
+apply/per-root       runner self! weight=300
+apply/stand-down     runner self! weight=300
+choudoufu/rows-overlap     runner self! weight=250
+choudoufu/rows-wait        self! weight=200
+choudoufu/rows-takeover    runner self! weight=300
+drift/choudoufu            self! weight=150
+note/approve-command      runner self! weight=250
+pr-apply/terragrunt          runner self! weight=300
+lock/terragrunt     runner self! weight=300
+lock/atmos  runner self! weight=300
+lock/terramate runner self! weight=300
+lock/plan            runner self! weight=250
+lock/plan-release    runner self! weight=200
+policy/override      weight=150
+policy/override-moved     weight=150
+policy/override-unlisted  weight=150
+policy/override-applied   weight=150
+report/azure           azurite! weight=120
+report/gcs             gcs! weight=120
+note/diff            ex runner self! after=boot/tofu weight=200
+note/split           weight=60
+note/report-link     weight=60
+init/config-ts            weight=20
+init/role-refused         weight=20
+review/description    weight=60
+review/decide      weight=80
+telemetry/headers         weight=60
+init/pinned-install       weight=60
+init/root-pins            weight=60
+generate/tofu             weight=60
+generate/terragrunt          weight=150
+generate/terragrunt-init     weight=120
+drift/close          self! weight=90
+estate/control       self! weight=80
+estate/override      weight=150
+report/contracts     weight=110
+comment/refused      runner self! weight=200
+note/stale           runner self! weight=200
+pr-apply/confirm           runner self! weight=300
+pr-apply/base-config       runner self! weight=250
+pr-apply/guard             runner self! weight=300
+lock/close-release     runner self! weight=200
+lock/terragrunt-fanout       runner self! weight=200
+security/token-scrub          weight=60
+security/plan-token-free      runner self! weight=250
+security/fork         runner self! weight=250
+report/sensitive  weight=90
+approval/revoke      runner self! weight=250
+approval/pending-expiry       runner self! weight=250
+approval/signer-trust         runner self! weight=250
+rollout/control      runner self! weight=400
+rollout/provider     self! weight=120
+rollout/pins         self! weight=80
+rollout/continue     runner self! weight=300
+policy/opa           weight=150
+policy/hcp           weight=150
+policy/hcl           weight=150
+policy/terragrunt            weight=200
+oidc/terragrunt       weight=200
+affected/terragrunt-dependents        weight=250
+linked/terragrunt-preview           self! weight=120
+linked/terragrunt-preview-gate      runner self! weight=400
+binary/terraform         runner self! weight=300
+binary/terragrunt-terraform         runner self! weight=300
+drift/tfquery       self! weight=120
+telemetry/alerts          otel self! weight=300
+report/gcs-key         gcs! weight=120
+report/azure-key       azurite! weight=120
+report/index-writes         self! weight=90
+note/footer          runner self! weight=150
+comment/dispatch      runner self! weight=150
+choudoufu/shared-bucket    weight=120
+choudoufu/migrate          weight=200
+choudoufu/adopt            weight=200
+init/cdktn-synth          runner self! weight=200
+audit/tofu                weight=150
+report/outcome        self! weight=120
+audit/override       weight=150
+audit/refused        weight=150
+audit/control        weight=150
+estate/inventory            weight=150
+estate/graph         weight=200
+estate/history     weight=200
+estate/query            weight=200
+state/versions       weight=150
+oidc/state-roles          weight=150
+state/export         weight=200
+state/gcs            gcs! weight=150
+state/azurerm        azurite! weight=150
+state/gcs-unlock           gcs! weight=150
+state/azurerm-unlock       azurite! weight=150
+migrate/blob         gcs! azurite! weight=200
+oidc/cloud-roles          gcs! azurite! weight=200
+estate/state-edges          weight=250
+migrate/split        weight=200
+migrate/cdktn        weight=200
+migrate/backend      weight=200
+migrate/tfe  weight=200
+migrate/pg   weight=200
+migrate/k8s  weight=250
+migrate/consul weight=200
+migrate/http weight=200
+migrate/revert       weight=250
+migrate/resume       runner self! weight=300
+migrate/resume-never runner self! weight=300
+estate/dora                 weight=250
+notify/chat          runner self! weight=250
+notify/webhook       runner self! weight=150
+cost/estimate        runner self! weight=150
+cost/gate            runner self! weight=200
+cost/policy          weight=150
+refuse/approval-used        runner self! weight=200
+affected/cdktn       runner self! weight=200
+apply/cdktn          runner self! weight=300
+lock/cdktn  runner self! weight=400
+tips/cdktn           runner self! weight=200
+init/cdktn-refuse        weight=60
+waves/jobs            runner self! weight=250
+init/own-jobs        runner self! weight=120
+apply/branches       runner self! weight=300
+drift/branches weight=200
+steps/before-plan    runner self! weight=200
+steps/stop           runner self! weight=150
+steps/gate           runner self! weight=200
+cost/terragrunt-gate         runner self! weight=200
+steps/terragrunt-gate        runner self! weight=200
+waves/terragrunt-jobs         runner self! weight=300
+respond/terragrunt-fmt       runner self! weight=150
+state/terragrunt-versions    weight=150
+respond/terragrunt-drift          self! weight=150
+drift/terragrunt-attribute   self! weight=150
+migrate/terragrunt-split     weight=200
+init/terragrunt-root-pins         weight=150
+binary/terragrunt-choudoufu         weight=120
+waves/terragrunt-stack            weight=150
+check/terragrunt-stack       runner self! weight=150
+affected/terragrunt-stack    weight=120
+approval/terragrunt-stack        runner self! weight=250
+drift/terragrunt-stack       weight=150
+estate/terragrunt-graph      weight=200
+state/terragrunt-export      weight=200
+apply/terragrunt-branches    runner self! weight=300
+chat/slack         runner self! weight=300
+chat/teams   runner self! weight=300
+chat/lambda  runner self! weight=350
+chat/replan          self! weight=90
+lock/plan-none         weight=120
+note/sensitive   weight=90
+apply/provider-cache  weight=90
+state/unlock         runner self! weight=300
+tips/moved            self! weight=150
+estate/mcp       weight=120
+agent/drift          runner self! weight=250
+apply/runner-nudge         stack! self! weight=200
+drift/github   self! weight=90
+lock/plan-fmt        runner self! weight=200
+note/terragrunt           tg self! after=waves/terragrunt weight=300
+ephemeral/pr         runner self! weight=250
+ephemeral/ttl        runner self! weight=250
+ephemeral/terragrunt      runner self! weight=300
+ephemeral/cdktn      runner self! weight=300
+generate/cdktn       weight=60
+linked/cdktn         self! weight=90
+init/image                runner self! weight=150
+init/env                  runner self! weight=150
+init/runner-label         runner self! weight=150
+init/pass-secrets         runner self! weight=150
+estate/local-plan           ex after=boot/tofu weight=90
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
@@ -22330,7 +22334,7 @@ group_tokens() { # claim -> its tokens, or the default for a claim with no line
   line="$(awk -v n="$1" '$1 == n { $1 = ""; print; exit }' <<<"$CLAIM_GROUPS")"
   # Another binary's runs hold its own copy of the example, not the example.
   [ "$SMOKE_BINARY" = tofu ] || line="$(sed -E "s/(^| )ex(!?)( |$)/\1ex-$SMOKE_BINARY\2\3/g" <<<"$line")"
-  if [ -n "${line// /}" ]; then echo "$line"; else echo "stack! after=boot,tg-waves weight=1"; fi
+  if [ -n "${line// /}" ]; then echo "$line"; else echo "stack! after=boot/tofu,waves/terragrunt weight=1"; fi
 }
 
 claim_token() { # claim, key -> the value of its key=<value> token, if any
@@ -22408,7 +22412,7 @@ record_pending() {
     issue="$(grep "^$name|" <<<"$CLAIMS" | cut -d'|' -f3)"
     [ -n "$issue" ] || continue
     line="$(say "$name" pending "needs=$issue")"
-    echo "$line" >"$SMOKE_LOG_DIR/$name.plain.verdict"
+    echo "$line" >"$SMOKE_LOG_DIR/${name//\//.}.plain.verdict"
     smoke_line "$line"
   done
 }
@@ -22422,15 +22426,15 @@ start_run() { # run
   fi
   echo "[smoke] start $name ($mode)" >&2
   BREAK="$brk" SMOKE_PLAIN_NEXT="$next" SMOKE_LOCKS_HELD=1 "$BASH" "$HERE/smoke.sh" "$name" \
-    >"$SMOKE_LOG_DIR/$name.$mode.log" 2>&1 </dev/null &
+    >"$SMOKE_LOG_DIR/${name//\//.}.$mode.log" 2>&1 </dev/null &
   LAST_PID=$!
 }
 
 finish_run() { # run
   local run="$1" name="${1%:*}" mode="${1#*:}" line
-  line="$(grep "^SMOKE claim=$name " "$SMOKE_LOG_DIR/$name.$mode.log" 2>/dev/null | tail -1 || true)"
+  line="$(grep "^SMOKE claim=$name " "$SMOKE_LOG_DIR/${name//\//.}.$mode.log" 2>/dev/null | tail -1 || true)"
   [ -n "$line" ] || line="SMOKE claim=$name verdict=fail no-verdict"
-  echo "$line" >"$SMOKE_LOG_DIR/$name.$mode.verdict"
+  echo "$line" >"$SMOKE_LOG_DIR/${name//\//.}.$mode.verdict"
   unlock_holder "$$.$run"
   smoke_line "$line"
 }
@@ -22447,7 +22451,7 @@ case "$SMOKE_STALL_MIN" in ''|*[!0-9]*|0) SMOKE_STALL_MIN=$stall_default ;; esac
 # failing SMOKE line in its log. Returns 1 while the run is still moving.
 stalled() { # pid, run
   local pid="$1" run="$2" name="${2%:*}" mode="${2#*:}" log
-  log="$SMOKE_LOG_DIR/$name.$mode.log"
+  log="$SMOKE_LOG_DIR/${name//\//.}.$mode.log"
   [ -n "$(find "$log" -mmin "+$SMOKE_STALL_MIN" 2>/dev/null)" ] || return 1
   {
     echo "[smoke] $name ($mode) stalled: no output for $SMOKE_STALL_MIN minutes; its last lines:"
@@ -22557,7 +22561,7 @@ runner_prep() {
   # The steward claim runs alongside others, so its fountain profile starts
   # here, before any run: the claim's own bootstrap then finds it up and
   # starts nothing while other runs use the stack.
-  if runnable_names | grep -qx steward; then
+  if runnable_names | grep -qx apply/steward; then
     "$HERE/bootstrap.sh" fountain >/dev/null 2>"$SMOKE_LOG_DIR/bootstrap-fountain.log" \
       || { cat "$SMOKE_LOG_DIR/bootstrap-fountain.log" >&2; echo "[smoke] the fountain profile did not start" >&2; return 1; }
   fi
@@ -22619,6 +22623,15 @@ if [ -n "${SMOKE_AWS:-}" ]; then
 fi
 
 if [ -n "$SMOKE_ONLY" ]; then
+  # A claim is <area>/<part>; an area alone names every part of it, so
+  # `--only lock` runs lock/apply, lock/terragrunt and the rest.
+  SMOKE_ONLY="$(for n in $SMOKE_ONLY; do
+    case "$n" in
+      */*) echo "$n" ;;
+      *) parts="$(awk -F'|' -v a="$n/" 'index($1, a) == 1 { print $1 }' <<<"$CLAIMS")"; echo "${parts:-$n}" ;;
+    esac
+  done)"
+  export SMOKE_ONLY
   for n in $SMOKE_ONLY; do
     grep -q "^$n|" <<<"$CLAIMS" && continue
     if [ "$SMOKE_FORGE" = gitlab ]; then echo "smoke: no GitLab claim '$n' (GITLAB_CLAIMS in stack/smoke-gitlab.sh)" >&2
@@ -22641,9 +22654,9 @@ if [ "${1:-}" = --record ]; then
   # The rows in CLAIMS order, whatever order the runs finished in.
   rows=()
   for name in $(names); do
-    plain="$(cat "$SMOKE_LOG_DIR/$name.plain.verdict" 2>/dev/null || true)"
+    plain="$(cat "$SMOKE_LOG_DIR/${name//\//.}.plain.verdict" 2>/dev/null || true)"
     [ -n "$plain" ] || plain="SMOKE claim=$name verdict=fail no-verdict"
-    broken="$(cat "$SMOKE_LOG_DIR/$name.break.verdict" 2>/dev/null || true)"
+    broken="$(cat "$SMOKE_LOG_DIR/${name//\//.}.break.verdict" 2>/dev/null || true)"
     row="$(grep "^$name|" <<<"$CLAIMS")"
     says="$(cut -d'|' -f2 <<<"$row")"; issue="$(cut -d'|' -f3 <<<"$row")"
     alt="$(grep "^$SMOKE_BINARY $name|" <<<"$BINARY_SAYS" | cut -d'|' -f2 || true)"
@@ -22716,7 +22729,7 @@ if [ -n "${1:-}" ]; then
   if [ -z "${SMOKE_LOCKS_HELD:-}" ] && [ -z "${row##*|}" ]; then
     mode=plain; [ -n "${BREAK:-}" ] && mode="break"
     # shellcheck disable=SC2046
-    hold_locks "$$.$name.$mode" $(claim_locks "$name" "$mode")
+    hold_locks "$$.${name//\//.}.$mode" $(claim_locks "$name" "$mode")
   fi
   run_claim "$name" || rc=$?
 else

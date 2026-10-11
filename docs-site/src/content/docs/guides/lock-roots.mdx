@@ -1,7 +1,7 @@
 ---
 title: Lock roots to a pull request
 description: Hold the roots a pull request reaches from its first plan, or from a comment, so a second pull request that reaches one is refused until the first merges, closes or unlocks.
-claims: [pr-lock, plan-lock, plan-lock-release, pr-apply-lock, pr-close-release]
+claims: [lock/comment, lock/plan, lock/plan-release, lock/apply, lock/close-release]
 prompt: |
   Read https://intentius.io/terragucci/guides/lock-roots/.
   Add `locks: plan` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.

@@ -1,7 +1,7 @@
 ---
 title: Find the state version an apply left
 description: Each apply wave records the version id of each root's state from your bucket's versioning, and the estate page lists them per root, so you know which version to go back to.
-claims: [state-versions, tg-state-versions, gl-state-versions, gcs-state, azurerm-state]
+claims: [state/versions, state/terragrunt-versions, state/gcs, state/azurerm]
 prompt: |
   Read https://intentius.io/terragucci/guides/find-a-state-version/.
   Find the buckets and containers this repo's roots keep their state in, check whether each keeps versions, and write the commands that would turn it on as a file for me to review. Open a pull request.

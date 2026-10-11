@@ -1,7 +1,7 @@
 ---
 title: Have a model review a pull request
 description: Turn on review.agent, and a model on your own key compares each pull request's description with its plan and posts a note with the risk, the mismatches and its questions, on GitHub, GitLab and Forgejo.
-claims: [review-agent, review-policy, gl-review-agent]
+claims: [agent/review, policy/review-risk]
 prompt: |
   Read https://intentius.io/terragucci/guides/agent-review-a-pull-request/.
   Add the `review` block to terragucci.yml, write the review instructions file, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.

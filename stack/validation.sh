@@ -19,43 +19,43 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/human-gate.sh"; human_gate "the per-forge claims; record takes the whole shared stack down before and after"
 
 # forge|claim|what the claim shows
-CLAIMS='aws|s3|floci starts and answers S3
-forgejo|check|a push that is formatted goes green, and one with an unformatted file goes red naming the file
-forgejo|apply|a push to main applies the root, and the bucket exists afterwards
-forgejo|tg-check|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
-forgejo|tg-apply|the generated workflow for a Terragrunt repo applies both of its units on the default branch
-forgejo|cdf-check|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
-forgejo|cdf-apply|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
-forgejo|pr-review|with approval: pr-review a pull request approved on its head by a second user with write access merges, and its gated wave applies with no terragucci approve
-github|check|the generated workflow fails an unformatted root and names the file
-github|apply|the generated workflow applies the root on the default branch
-github|reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies both roots
-github|tg-check|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
-github|tg-apply|the generated workflow for a Terragrunt repo applies both of its units on the default branch
-github|cdf-check|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
-github|cdf-apply|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
-gitlab|check|the generated pipeline fails an unformatted root and names the file
-gitlab|apply|the generated pipeline applies the root on the default branch
-gitlab|reconcile|a control repo opens one merge request per project that changes, and the merged pipeline applies both roots
-gitlab|tg-check|the generated pipeline for a Terragrunt repo fails an unformatted unit file and names it
-gitlab|tg-apply|the generated pipeline for a Terragrunt repo applies both of its units on the default branch
-gitlab|cdf-check|the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it
-gitlab|cdf-apply|the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
-gitlab|gate-wait|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends
-gitlab|own-jobs|init adds an include to a repo with its own .gitlab-ci.yml, and the pipeline runs that repo job in its stage beside the generated check
-gitlab|pr-review|with approval: pr-review a merge request approval given before the latest push leaves the wave waiting, and one given after it applies the wave
-gitlab|approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it
-gitlab|gl-comment-plan|a /terragucci plan note from a Developer starts a merge request pipeline on the next play of the comments schedule; a root that is not one is refused, a Reporter gets no reply, and a second play answers nothing again
-gitlab|gl-comment-apply|/terragucci apply on a merged merge request retries its waiting wave at the merge commit, which waits again with no approval and applies with one; an open merge request is refused
-gitlab|gl-comment-drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and the comments schedule the comments job alone
-gitlab|pr-apply|with apply.when: pull-request a /terragucci apply note on an approved merge request starts a pipeline on main that applies its head in waves and then merges it with apply.merge: auto
-gitlab|pr-apply-stale|a /terragucci apply note on an approved merge request whose head is behind main is refused as not up to date, and no pipeline starts
-gitlab|pr-apply-lock|a second merge request that reaches a root an open merge request applied is refused by its mr-apply job with the root and the holder named
-gitlab|pr-apply-trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies
-gitlab|gl-token-protected|with gitlab.token: protected a job the merge request adds to its own pipeline finds GITLAB_TOKEN empty, and the comments schedule posts the plan note and terragucci/plan
-gitlab|gl-review-bot|under approval: pr-review an approval by the user the pipeline token acts as leaves the wave waiting, and nothing applies
-gitlab|gl-check-token|with GITLAB_TOKEN an unprotected variable the synth command of a branch runs in the check job with no forge token variable, and the check passes
-gitlab|gl-managed-state|a root on GitLab-managed state applies with its backend password passed as TF_HTTP_PASSWORD from the job token, and GitLab holds its state'
+CLAIMS='aws|boot/s3|floci starts and answers S3
+forgejo|check/tofu|a push that is formatted goes green, and one with an unformatted file goes red naming the file
+forgejo|apply/tofu|a push to main applies the root, and the bucket exists afterwards
+forgejo|check/terragrunt|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
+forgejo|apply/terragrunt|the generated workflow for a Terragrunt repo applies both of its units on the default branch
+forgejo|check/choudoufu|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
+forgejo|apply/choudoufu|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
+forgejo|approval/pr-review|with approval: pr-review a pull request approved on its head by a second user with write access merges, and its gated wave applies with no terragucci approve
+github|check/tofu|the generated workflow fails an unformatted root and names the file
+github|apply/tofu|the generated workflow applies the root on the default branch
+github|reconcile/tofu|a control repo opens one pull request per project that changes, and the merged pipeline applies both roots
+github|check/terragrunt|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
+github|apply/terragrunt|the generated workflow for a Terragrunt repo applies both of its units on the default branch
+github|check/choudoufu|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
+github|apply/choudoufu|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
+gitlab|check/tofu|the generated pipeline fails an unformatted root and names the file
+gitlab|apply/tofu|the generated pipeline applies the root on the default branch
+gitlab|reconcile/tofu|a control repo opens one merge request per project that changes, and the merged pipeline applies both roots
+gitlab|check/terragrunt|the generated pipeline for a Terragrunt repo fails an unformatted unit file and names it
+gitlab|apply/terragrunt|the generated pipeline for a Terragrunt repo applies both of its units on the default branch
+gitlab|check/choudoufu|the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it
+gitlab|apply/choudoufu|the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
+gitlab|approval/gate|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends
+gitlab|init/own-jobs|init adds an include to a repo with its own .gitlab-ci.yml, and the pipeline runs that repo job in its stage beside the generated check
+gitlab|approval/pr-review|with approval: pr-review a merge request approval given before the latest push leaves the wave waiting, and one given after it applies the wave
+gitlab|approval/approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it
+gitlab|comment/plan|a /terragucci plan note from a Developer starts a merge request pipeline on the next play of the comments schedule; a root that is not one is refused, a Reporter gets no reply, and a second play answers nothing again
+gitlab|comment/apply|/terragucci apply on a merged merge request retries its waiting wave at the merge commit, which waits again with no approval and applies with one; an open merge request is refused
+gitlab|comment/drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and the comments schedule the comments job alone
+gitlab|pr-apply/tofu|with apply.when: pull-request a /terragucci apply note on an approved merge request starts a pipeline on main that applies its head in waves and then merges it with apply.merge: auto
+gitlab|pr-apply/stale|a /terragucci apply note on an approved merge request whose head is behind main is refused as not up to date, and no pipeline starts
+gitlab|lock/apply|a second merge request that reaches a root an open merge request applied is refused by its mr-apply job with the root and the holder named
+gitlab|pr-apply/trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies
+gitlab|security/protected-token|with gitlab.token: protected a job the merge request adds to its own pipeline finds GITLAB_TOKEN empty, and the comments schedule posts the plan note and terragucci/plan
+gitlab|approval/pr-review-bot|under approval: pr-review an approval by the user the pipeline token acts as leaves the wave waiting, and nothing applies
+gitlab|security/check-token|with GITLAB_TOKEN an unprotected variable the synth command of a branch runs in the check job with no forge token variable, and the check passes
+gitlab|state/gitlab-managed|a root on GitLab-managed state applies with its backend password passed as TF_HTTP_PASSWORD from the job token, and GitLab holds its state'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

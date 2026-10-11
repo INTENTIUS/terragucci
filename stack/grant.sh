@@ -6,7 +6,8 @@
 #   stack/grant.sh --show                             what the grant holds now
 #   stack/grant.sh --end                              end the grant
 #
-# A name is a smoke claim (`stack/smoke.sh --list`) or `capture`. Granting
+# A name is a smoke claim (`stack/smoke.sh --list`), an area of them (`lock`
+# grants every lock/ claim), or `capture`. Granting
 # replaces any grant before it. The agent passes the gate only for the names
 # here, a run at a time, and each granted run stops itself when it goes quiet.
 set -euo pipefail
@@ -46,7 +47,9 @@ done
 
 known="$("$HERE/smoke.sh" --list 2>/dev/null | awk '{ print $1 }')"
 for n in "${names[@]}"; do
-  [ "$n" = capture ] || grep -qx -- "$n" <<<"$known" || { echo "grant: $n is not a claim (stack/smoke.sh --list) or capture" >&2; exit 2; }
+  # A claim is <area>/<part>; an area alone grants every part of it.
+  [ "$n" = capture ] || grep -qx -- "$n" <<<"$known" || grep -q -- "^$n/" <<<"$known" \
+    || { echo "grant: $n is not a claim or an area of claims (stack/smoke.sh --list), or capture" >&2; exit 2; }
 done
 
 # Only a person grants: with no terminal this stops (TG_HUMAN_RUN does not count here).
