@@ -276,7 +276,7 @@ ledger-default|with no approval key a wave counts an unsigned approval of its se
 approval-at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
 sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
 estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
-behold-view|the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue|
+behold-view|the behold step of the estate job reads the reports from the bucket and publishes the view of the commit under views/behold/<commit>/ with latest.json and history.json naming it, and headless Chrome, opening views/behold/ from the bucket, draws the drift the drift check found on the card of the deleted queue|
 behold-serve|behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json|
 terragucci-view|terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line|
 drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
@@ -9791,13 +9791,17 @@ claim_behold_view() {
   # the bucket and publishes the view to <prefix>/views/behold/. Holds when the
   # view is in the bucket, its marks name the deleted queue's card, and
   # headless Chrome, opening the view from the bucket, draws that drift mark.
-  # SMOKE_BEHOLD names the package (default @intentius/behold).
+  # SMOKE_BEHOLD names the package (default the version the guide pins), or a
+  # local `npm pack` tarball, mounted into the job's container.
+  # The view lands under views/behold/<commit>/; views/behold/index.html opens
+  # the commit latest.json names, and history.json lists it.
   # BREAK: the step runs without --terragucci, so the view carries no marks.
   log() { echo "[smoke behold-view] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 prefix queue url out dom chrome="${CHROME:-}" card="behold-drift/queue/aws_sqs_queue.jobs" view snap
-  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.24.0}"
+  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.25.0}" tgz=() commit
+  if [ -f "$behold" ]; then tgz=(-v "$(cd "$(dirname "$behold")" && pwd)/$(basename "$behold"):/tmp/behold.tgz:ro"); behold=/tmp/behold.tgz; fi
   local reads=(--terragucci) ; [ -n "${BREAK:-}" ] && reads=()
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
@@ -9840,7 +9844,7 @@ HCL
   git -C "$work/behold-drift" add -A && git -C "$work/behold-drift" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke behold-view"
   in_image() { # the command
     run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-drift:/projects/behold-drift" -w /projects/behold-drift \
-      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      -v "$bundle:/usr/local/bin/terragucci:ro" ${tgz[@]+"${tgz[@]}"} -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
       "$image" "$@"
@@ -9872,19 +9876,22 @@ HCL
   fi
   if [ $rc = 0 ]; then
     view="$FLOCI/$REPORT_BUCKET/$prefix/views/behold"
-    curl -fsS -o "$work/index.html" "$view/index.html" && grep -q '__BEHOLD_STATIC__' "$work/index.html" || { log "no view at $view/index.html"; rc=1; }
+    commit="$(git -C "$work/behold-drift" rev-parse HEAD)"
+    [ "$(curl -fsS "$view/latest.json" | jq -r '.commit // empty')" = "$commit" ] || { log "latest.json at $view does not name $commit"; rc=1; }
+    curl -fsS "$view/history.json" | jq -e --arg c "$commit" 'map(.commit) | index($c) != null' >/dev/null || { log "history.json at $view does not list $commit"; rc=1; }
+    curl -fsS -o "$work/index.html" "$view/$commit/index.html" && grep -q '__BEHOLD_STATIC__' "$work/index.html" || { log "no view at $view/$commit/index.html"; rc=1; }
   fi
   if [ $rc = 0 ]; then
-    snap="$(curl -fsS "$view/manifest.json" | jq -r '.keyToFile["/api/terragucci"] // empty')"
+    snap="$(curl -fsS "$view/$commit/manifest.json" | jq -r '.keyToFile["/api/terragucci"] // empty')"
     if [ -z "$snap" ]; then
       log "the view carries no terragucci marks"; rc=1
     else
-      curl -fsS "$view/$snap" | jq -e --arg c "$card" '.cards[$c] | map(select(.verdict == "drift" and .action == "delete")) | length == 1' >/dev/null || { log "the view does not mark $card as deleted outside Terraform"; rc=1; }
+      curl -fsS "$view/$commit/$snap" | jq -e --arg c "$card" '.cards[$c] | map(select(.verdict == "drift" and .action == "delete")) | length == 1' >/dev/null || { log "the view does not mark $card as deleted outside Terraform"; rc=1; }
     fi
   fi
   if [ $rc = 0 ]; then
-    # Rendered from the bucket, the way a link to it opens: the page's scripts
-    # fetch the snapshots and stamp the cards.
+    # Rendered from the bucket, the way a link to it opens: views/behold/
+    # opens the newest commit, whose scripts fetch the snapshots and stamp the cards.
     dom="$("$chrome" --headless=new --disable-gpu --no-first-run --virtual-time-budget=20000 --dump-dom "$view/index.html?detail=2" 2>/dev/null)" || true
     grep -q 'data-tg-mark="1"[^>]*>⚠ drift' <<<"$dom" || { log "Chrome drew no drift mark from $view/index.html"; rc=1; }
   fi
@@ -9903,14 +9910,16 @@ claim_behold_serve() {
   # card as deleted outside Terraform with the drift check's finish time, and
   # gives the waiting wave's `terragucci approve wave-1 --plan` line, and a
   # deploy (POST /api/apply) is refused with 409.
-  # SMOKE_BEHOLD names the package (default the version the guide pins).
+  # SMOKE_BEHOLD names the package (default the version the guide pins), or a
+  # local `npm pack` tarball, mounted into the container.
   # BREAK: index.json at the prefix is corrupted after the runs, and behold
   # must refuse it (422, code terragucci-report) rather than draw marks.
   log() { echo "[smoke behold-serve] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 code=0 prefix queue url out api card="behold-serve/queue/aws_sqs_queue.jobs"
-  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.24.0}"
+  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.25.0}" tgz=()
+  if [ -f "$behold" ]; then tgz=(-v "$(cd "$(dirname "$behold")" && pwd)/$(basename "$behold"):/tmp/behold.tgz:ro"); behold=/tmp/behold.tgz; fi
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
@@ -9962,7 +9971,7 @@ const apply = await get("/api/apply", { method: "POST", headers: { "content-type
 writeFileSync("/probe/out.json", JSON.stringify({ api, page: { status: page.status, length: page.body.length }, apply }));
 JS
   in_image() { # the command
-    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-serve:/projects/behold-serve" -v "$work/origin.git:/origin.git" -v "$work/probe:/probe" -w /projects/behold-serve \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-serve:/projects/behold-serve" -v "$work/origin.git:/origin.git" -v "$work/probe:/probe" ${tgz[@]+"${tgz[@]}"} -w /projects/behold-serve \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
