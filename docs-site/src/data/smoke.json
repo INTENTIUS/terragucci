@@ -500,14 +500,6 @@
       "commit": "ff7d397e"
     },
     {
-      "claim": "import-terrateam",
-      "says": "terragucci import terrateam writes terragucci.yml from a .terrateam/config.yml, names what it cannot map, and init then applies the roots in the order its depends_on asks",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "ff7d397e"
-    },
-    {
       "claim": "import-spacelift",
       "says": "terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask",
       "needs": null,

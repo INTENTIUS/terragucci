@@ -160,7 +160,6 @@
     "import-hcp": "Setup and runtime",
     "import-scalr": "Setup and runtime",
     "import-spacelift": "Setup and runtime",
-    "import-terrateam": "Setup and runtime",
     "import-tg-scale": "Setup and runtime",
     "index-writes": "Reports and visibility",
     "inventory": "Reports and visibility",
