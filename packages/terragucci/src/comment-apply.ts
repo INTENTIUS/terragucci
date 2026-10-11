@@ -50,7 +50,7 @@ import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDeci
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
-import type { Fetch } from "./forge";
+import { poster, type Fetch } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
 import { literalDependencies } from "./terragrunt";
 
@@ -591,10 +591,10 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }
   };
-  const runUrl = env.GITHUB_SERVER_URL && env.GITHUB_RUN_ID ? `${env.GITHUB_SERVER_URL}/${repo}/actions/runs/${env.GITHUB_RUN_ID}` : undefined;
+  const forge = poster(o.forge ?? "github", env, doFetch);
   const status = async (sha: string, state: "success" | "failure", description: string): Promise<void> => {
     try {
-      await call("POST", `repos/${repo}/statuses/${sha}`, { state, context: LOCK_CONTEXT, description: description.length > 140 ? `${description.slice(0, 137)}...` : description, ...(runUrl ? { target_url: runUrl } : {}) });
+      await forge.setStatus(sha, { state, context: LOCK_CONTEXT, description: description.length > 140 ? `${description.slice(0, 137)}...` : description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });
     } catch (e) {
       console.error(`terragucci: could not post ${LOCK_CONTEXT}: ${(e as Error).message}`);
     }

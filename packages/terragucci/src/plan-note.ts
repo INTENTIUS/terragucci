@@ -16,6 +16,10 @@
  * and every terragucci marker dropped from the body but the waves marker and
  * the description flag.
  *
+ * chant's forge client (`@intentius/chant/pr-forge`) posts the two: the note
+ * found again by its first line, and the status. What the note says is
+ * terragucci's.
+ *
  * With `drift:` set, the plan job asks the forge whether the drift checks are
  * overdue. With no token it can ask only a public repo, so it leaves the cron
  * and the pipeline file's first commit in DRIFT_SCHEDULE_FILE, and this job
@@ -25,7 +29,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiOf } from "./comment";
-import type { Fetch } from "./forge";
+import { poster, type Fetch } from "./forge";
 import { FORGED, PLAN_MARK, PLAN_NOTE_FILE, PLAN_STATUS_FILE, planStatus, ROOTS_LINE } from "./plan-note-gitlab";
 import { DRIFT_SCHEDULE_FILE, driftRuns, overdue } from "./report/drift-schedule";
 
@@ -35,8 +39,6 @@ import { approvalStatus } from "./review";
 
 /** How the note says the drift checks are overdue (overdue() in drift-schedule.ts). */
 const OVERDUE = "Drift checks are overdue:";
-/** GitHub keeps a status description to 140 characters. */
-const MAX_DESCRIPTION = 140;
 /** GitHub keeps a comment to 65536 characters. */
 const MAX_NOTE = 65_000;
 
@@ -112,6 +114,8 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
     return said;
   }
   const { api, repo, token } = apiOf(env);
+  const forge = poster(o.forge, env, doFetch);
+  // A reply is a new comment each time, found by no marker: chant's client posts none of those, so it goes out here.
   const call = async (method: string, path: string, body?: unknown): Promise<any> => {
     const r = await doFetch(`${api}/${path}`, { method, headers: { "content-type": "application/json", authorization: `token ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) });
     if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
@@ -147,10 +151,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
       if (late) body = withNotice(body, late);
     }
     try {
-      const comments = (await call("GET", `repos/${repo}/issues/${pr}/comments?per_page=100`)) as any[];
-      const old = (Array.isArray(comments) ? comments : []).find((c) => typeof c?.body === "string" && c.body.startsWith(PLAN_MARK));
-      if (old) await call("PATCH", `repos/${repo}/issues/comments/${old.id}`, { body });
-      else await call("POST", `repos/${repo}/issues/${pr}/comments`, { body });
+      await forge.upsertComment(Number(pr), PLAN_MARK, body);
       log(`terragucci plan-note: posted the plan note on pull request ${pr}`);
     } catch (e) {
       log(`terragucci: note failed: ${(e as Error).message}`);
@@ -159,10 +160,9 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
 
   const status = planStatus(read(PLAN_STATUS_FILE), o.planResult === "success" ? "success" : "failed");
   if (status) {
-    const url = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
     const state = status.state === "success" ? "success" : "failure";
     try {
-      await call("POST", `repos/${repo}/statuses/${sha}`, { context: "terragucci/plan", state, description: status.description.slice(0, MAX_DESCRIPTION), target_url: url });
+      await forge.setStatus(sha, { context: "terragucci/plan", state, description: status.description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });
       log(`terragucci plan-note: terragucci/plan is ${state} on ${sha.slice(0, 8)}: ${status.description}`);
     } catch (e) {
       log(`terragucci: status failed: ${(e as Error).message}`);

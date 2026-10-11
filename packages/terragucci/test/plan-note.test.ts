@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ConfigError } from "../src/config";
+import { poster } from "../src/forge";
 import { planNoteBodyOf, postPlanNoteFromReport, withNotice } from "../src/plan-note";
 import { DRIFT_SCHEDULE_FILE } from "../src/report/drift-schedule";
 
@@ -85,6 +87,25 @@ describe("plan-note", () => {
     });
     expect(posted[0]).toMatch(/\n\n> Drift checks are overdue: the schedule `0 6 \* \* \*` has come round at least twice/);
     expect(posted[0].indexOf("> Drift checks")).toBeLessThan(posted[0].indexOf("**app**"));
+  });
+
+  it("posts through chant's client: every page of comments is read, and only the note's own marker is edited", async () => {
+    const page = (n: number) => Array.from({ length: 100 }, (_, i) => ({ id: n * 100 + i, body: "someone else" }));
+    const { calls, fetch } = forge((m, p) => {
+      if (m !== "GET" || !p.includes("/comments")) return {};
+      if (p.endsWith("&page=1")) return page(1);
+      return [{ id: 999, body: "<!-- terragucci:plan roots=x -->\nold" }];
+    });
+    await postPlanNoteFromReport({ forge: "github", report: report({ "plan-note.md": NOTE }), planResult: "success", env: ENV, fetch });
+    expect(calls.filter((c) => c.method === "GET" && c.path.includes("/comments")).length).toBe(2);
+    expect(calls.find((c) => c.method === "PATCH")?.path).toBe("repos/o/r/issues/comments/999");
+    expect(calls.some((c) => c.method === "POST" && c.path.endsWith("/comments"))).toBe(false);
+  });
+
+  it("names the missing variable when the job cannot post", () => {
+    expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(ConfigError);
+    expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(/TG_TOKEN/);
+    expect(poster("forgejo", { ...ENV, GITHUB_SERVER_URL: "http://forge" }).runUrl).toBe("http://forge/o/r/actions/runs/5");
   });
 
   it("puts a notice after the heading and the counts", () => {

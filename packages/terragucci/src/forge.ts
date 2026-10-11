@@ -2,8 +2,13 @@
  * The little terragucci asks of a forge's API: find an open pull (or merge)
  * request from a branch, and open one. `fetch` is injectable so the clients
  * are tested against recorded requests.
+ *
+ * Notes, statuses and the comments found again by a marker are posted
+ * through chant's forge clients (`@intentius/chant/pr-forge`), with the
+ * job's TG_TOKEN (poster). What they say stays here.
  */
-import type { ForgeName } from "./config";
+import { ForgeEnvironmentError, forgeClient, forgeTargetFromEnv, type PrForge } from "@intentius/chant/pr-forge";
+import { ConfigError, type ForgeName } from "./config";
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
   ok: boolean;
@@ -111,6 +116,20 @@ export async function openPullRequest(
     number: number;
   };
   return { url: created.html_url, number: created.number, existing: false };
+}
+
+/**
+ * chant's client for the forge a job runs on, holding the job's TG_TOKEN:
+ * the repository, the API and the run's URL from the CI environment. A
+ * missing variable is a ConfigError naming it.
+ */
+export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch): PrForge {
+  try {
+    return forgeClient(forgeTargetFromEnv(env, { kind, tokenEnv: "TG_TOKEN" }), fetch);
+  } catch (e) {
+    if (e instanceof ForgeEnvironmentError) throw new ConfigError(e.message);
+    throw e;
+  }
 }
 
 /** The environment variable a forge's token is read from when the config names none. */

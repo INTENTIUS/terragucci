@@ -59,7 +59,8 @@
 import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
-import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
+import type { PrForge } from "@intentius/chant/pr-forge";
+import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, startDefaultPipeline, startReview, type ReviewStart } from "./gitlab-agent";
 import { postPlanNote, type PlanNoteOutcome } from "./plan-note-gitlab";
 
@@ -147,9 +148,12 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
   const since = new Date(now.getTime() - POLL_WINDOW_MINUTES * 60_000).toISOString();
 
   let me: number;
+  let meName: string;
   let mrs: any[];
   try {
-    me = Number((await api("GET", "/user"))?.id);
+    const user = await api("GET", "/user");
+    me = Number(user?.id);
+    meName = String(user?.username ?? "");
     mrs = (await api("GET", `/projects/${id}/merge_requests?state=all&updated_after=${encodeURIComponent(since)}&order_by=updated_at&sort=desc&per_page=100`)) as any[];
   } catch (e) {
     return { outcomes: [], fail: `could not list the merge requests (${(e as Error).message})` };
@@ -159,7 +163,8 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
   const outcomes: NoteOutcome[] = [];
   const plans: PlanNoteOutcome[] = [];
   const reviews: ReviewStart[] = [];
-  const planContext = { api, id, me, apiUrl: t.api!, token: t.token, fetch: doFetch, reportDir: o.reportDir ?? "terragucci-report" };
+  const forge = poster("gitlab", env, doFetch);
+  const planContext = { api, id, me, meName, forge, apiUrl: t.api!, token: t.token, fetch: doFetch, reportDir: o.reportDir ?? "terragucci-report" };
   for (const mr of mrs) {
     const iid = mr?.iid;
     if (!Number.isInteger(iid) || iid < 1) continue;
@@ -184,7 +189,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
       .filter((n) => typeof n.created_at === "string" && n.created_at >= since)
       .filter((n) => parseComment(n.body, parseOptions(env)) !== undefined)
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
-    for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: true } : {}) }));
+    for (const note of asks) outcomes.push(await answer({ api, forge, meName, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: true } : {}) }));
     if (o.review) {
       const started = await startReview({ api, id, me, base, env, fetch: doFetch }, mr, notes);
       if (started) reviews.push(started);
@@ -195,6 +200,10 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
 
 interface Ask {
   api: (method: string, path: string, body?: unknown) => Promise<any>;
+  /** chant's client, holding the job's token: it posts the replies. */
+  forge: PrForge;
+  /** The job's own username: only its replies mark a note answered. */
+  meName: string;
   /** The project id, encoded for a path. */
   id: string;
   /** The default branch. */
@@ -218,7 +227,8 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
   const at = { mr: iid, note: note.id as number };
   const reply = async (text: string, ran = false): Promise<NoteOutcome> => {
     try {
-      await api("POST", `/projects/${id}/merge_requests/${iid}/notes`, { body: `terragucci: ${text}\n\n${noteMarker(note.id)}` });
+      // One reply per note, found again by its marker: a poll that runs twice answers once.
+      await ask.forge.upsertComment(iid, noteMarker(note.id), `terragucci: ${text}\n\n${noteMarker(note.id)}`, { match: "anywhere", author: ask.meName });
     } catch (e) {
       return { ...at, ran, replied: false, fail: true, reason: `${text}; and the reply failed (${(e as Error).message})` };
     }
