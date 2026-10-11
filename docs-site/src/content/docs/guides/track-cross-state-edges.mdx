@@ -1,7 +1,7 @@
 ---
 title: Track the roots that read other roots' state
 description: The estate page lists each root that reads another root's state, with its last plan against the producer's last apply, and marks it stale when the producer changed after that plan.
-claims: [state-edges, gl-state-edges]
+claims: [estate/state-edges, linked/gitlab-state]
 prompt: |
   Read https://intentius.io/terragucci/guides/track-cross-state-edges/.
   List the terraform_remote_state blocks in this repo's roots and the root whose state each reads, from the backend blocks, and tell me which reads terragucci cannot match to a root.

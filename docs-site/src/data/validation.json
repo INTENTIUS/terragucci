@@ -9,315 +9,315 @@
   "claims": [
     {
       "forge": "aws",
-      "claim": "s3",
+      "claim": "boot/s3",
       "says": "floci starts and answers S3",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "forgejo",
-      "claim": "check",
+      "claim": "check/tofu",
       "says": "a push that is formatted goes green, and one with an unformatted file goes red naming the file",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "forgejo",
-      "claim": "apply",
+      "claim": "apply/tofu",
       "says": "a push to main applies the root, and the bucket exists afterwards",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "forgejo",
-      "claim": "tg-check",
+      "claim": "check/terragrunt",
       "says": "the generated workflow for a Terragrunt repo fails an unformatted unit file and names it",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "forgejo",
-      "claim": "tg-apply",
+      "claim": "apply/terragrunt",
       "says": "the generated workflow for a Terragrunt repo applies both of its units on the default branch",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "forgejo",
-      "claim": "cdf-check",
+      "claim": "check/choudoufu",
       "says": "the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "forgejo",
-      "claim": "cdf-apply",
+      "claim": "apply/choudoufu",
       "says": "the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "check",
+      "claim": "check/tofu",
       "says": "the generated workflow fails an unformatted root and names the file",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "apply",
+      "claim": "apply/tofu",
       "says": "the generated workflow applies the root on the default branch",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "reconcile",
+      "claim": "reconcile/tofu",
       "says": "a control repo opens one pull request per project that changes, and the merged pipeline applies both roots",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "tg-check",
+      "claim": "check/terragrunt",
       "says": "the generated workflow for a Terragrunt repo fails an unformatted unit file and names it",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "tg-apply",
+      "claim": "apply/terragrunt",
       "says": "the generated workflow for a Terragrunt repo applies both of its units on the default branch",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "cdf-check",
+      "claim": "check/choudoufu",
       "says": "the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github",
-      "claim": "cdf-apply",
+      "claim": "apply/choudoufu",
       "says": "the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github.com",
-      "claim": "affected",
+      "claim": "affected/tofu",
       "says": "a pull request that changes one root plans that root alone, and its plan note covers it alone",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "comment-plan",
+      "claim": "comment/plan",
       "says": "/terragucci plan on a pull request re-plans it in a run of its own, and the re-plan edits the plan note",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "pr-lock",
+      "claim": "lock/comment",
       "says": "with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github.com",
-      "claim": "policy",
+      "claim": "policy/tofu",
       "says": "a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "oidc",
+      "claim": "oidc/job",
       "says": "the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "gate-wait",
+      "claim": "approval/gate",
       "says": "a merged destroy stops its wave with the approve command, and after a sealed chant approve the re-run applies it",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "note-footer",
+      "claim": "note/footer",
       "says": "the plan note ends with the terragucci footer, and its taco image answers 200 with a PNG",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "tips",
+      "claim": "tips/tofu",
       "says": "the plan note counts the tips the run report holds, and each tip in the report names its rule and its page",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "comment-agent",
+      "claim": "agent/comment",
       "says": "a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "policy-override",
+      "claim": "policy/override",
       "says": "a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "apply-serial",
+      "claim": "apply/serial",
       "says": "two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and the newer applies the tree, none is cancelled, and each commit ends with a terragucci/apply success",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github.com",
-      "claim": "comment-apply",
+      "claim": "comment/apply",
       "says": "/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "approve-command",
+      "claim": "note/approve-command",
       "says": "terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "drift-issue",
+      "claim": "drift/issue",
       "says": "the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "pr-apply-lock",
+      "claim": "lock/apply",
       "says": "with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github.com",
-      "claim": "pr-apply-stale",
+      "claim": "pr-apply/stale",
       "says": "a comment on an approved pull request whose head is behind main is refused as not up to date, and nothing applies",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "github.com",
-      "claim": "pr-apply",
+      "claim": "pr-apply/tofu",
       "says": "with apply.merge: auto a comment on an open, approved pull request applies its head in every wave, and pr-merge merges it with the job token",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "pr-apply-token",
+      "claim": "pr-apply/token",
       "says": "with apply.merge: auto and merge_token_env the merge is made with that token, so the merge commit starts its own run on main",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "publish",
+      "claim": "modules/publish",
       "says": "with modules.publish: git-tags a conventional commit to a module on main makes the publish job push the module tag",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "rollout",
+      "claim": "rollout/tofu",
       "says": "once the roots pin that tag and the next version is published, terragucci rollout --mode apply opens one pull request for the canary wave that moves those pins alone",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "explain-refusal",
+      "claim": "respond/explain-refusal",
       "says": "after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step",
       "verdict": "pass",
       "break": null
     },
     {
       "forge": "github.com",
-      "claim": "pr-lock-fmt",
+      "claim": "lock/comment-fmt",
       "says": "with locks: plan a pull request whose check job formats it, with a push that starts no workflow, still has its lock answered on the formatted head",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "check",
+      "claim": "check/tofu",
       "says": "the generated pipeline fails an unformatted root and names the file",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "apply",
+      "claim": "apply/tofu",
       "says": "the generated pipeline applies the root on the default branch",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "reconcile",
+      "claim": "reconcile/tofu",
       "says": "a control repo opens one merge request per project that changes, and the merged pipeline applies both roots",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "tg-check",
+      "claim": "check/terragrunt",
       "says": "the generated pipeline for a Terragrunt repo fails an unformatted unit file and names it",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "tg-apply",
+      "claim": "apply/terragrunt",
       "says": "the generated pipeline for a Terragrunt repo applies both of its units on the default branch",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "cdf-check",
+      "claim": "check/choudoufu",
       "says": "the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "cdf-apply",
+      "claim": "apply/choudoufu",
       "says": "the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "gl-check-token",
+      "claim": "security/check-token",
       "says": "with GITLAB_TOKEN an unprotected variable the synth command of a branch runs in the check job with no forge token variable, and the check passes",
       "verdict": "pass",
       "break": "caught"
     },
     {
       "forge": "gitlab",
-      "claim": "gl-managed-state",
+      "claim": "state/gitlab-managed",
       "says": "a root on GitLab-managed state applies with its backend password passed as TF_HTTP_PASSWORD from the job token, and GitLab holds its state",
       "verdict": "pass",
       "break": "caught"

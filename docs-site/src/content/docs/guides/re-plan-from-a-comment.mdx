@@ -1,7 +1,7 @@
 ---
 title: Re-plan a pull request from a comment
 description: Ask for a read-only re-plan of a pull request by writing /terragucci plan or dispatching the workflow, and run an approved apply with /terragucci apply, on GitHub, Forgejo and GitLab.
-claims: [comment-plan, comment-apply, comment-not-affected, tg-comment-apply, pr-lock, comment-atlantis, replan-dispatch, gl-comments, gl-comment-plan]
+claims: [comment/plan, comment/apply, comment/not-affected, comment/terragrunt-apply, lock/comment, comment/atlantis, comment/dispatch, comment/poll]
 prompt: |
   Read https://intentius.io/terragucci/guides/re-plan-from-a-comment/.
   Check that the default branch's pipeline has the comment trigger (on GitLab, the `comments` job and a pipeline schedule with TERRAGUCCI_SCHEDULE set to comments); if it does not, run `npx terragucci init` and open a pull request with the result.

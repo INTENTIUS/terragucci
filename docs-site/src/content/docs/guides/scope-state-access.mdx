@@ -1,7 +1,7 @@
 ---
 title: Keep each environment's roles to its own state
 description: Give each environment's roots a plan role and an apply role of their own, scoped to that environment's state keys, and let config check warn when a role reaches another environment's state.
-claims: [state-roles, cloud-roles]
+claims: [oidc/state-roles, oidc/cloud-roles]
 prompt: |
   Read https://intentius.io/terragucci/guides/scope-state-access/.
   In this repo, add oidc.roles to terragucci.yml with one glob per environment the roots show, using placeholder role ARNs, and run `npx terragucci config check`.
