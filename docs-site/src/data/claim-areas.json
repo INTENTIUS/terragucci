@@ -44,6 +44,7 @@
     "audit-refused": "Reports and visibility",
     "azurerm-state": "State and migration",
     "azurerm-unlock": "Locks and safety",
+    "behold-serve": "Reports and visibility",
     "behold-view": "Reports and visibility",
     "blob-azure": "Reports and visibility",
     "blob-azure-key": "Reports and visibility",
