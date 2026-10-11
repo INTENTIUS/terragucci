@@ -557,9 +557,9 @@ OUT
     ;;
 
   capture)
-    # Each step runs as its own command, so what it prints is what a reader
-    # of the docs would see, and each view is recorded right after its step:
-    # the re-plan edits the note the note view holds.
+    # The tutorial shows one GitLab view, the plan note of a one-root change.
+    # The step runs as its own command, so what it prints is what a reader of
+    # the docs would see.
     ROOT="$(cd "$HERE/.." && pwd)"
     DATA="$ROOT/docs-site/src/data/tutorial"
     started="$(date +%s)"
@@ -572,18 +572,6 @@ OUT
       out="$("$0" "$@")" || return 1
       jq -n --arg cmd "just example-gitlab $*" --arg output "$(sed '/^$/d; s/^  //' <<<"$out")" '{cmd: $cmd, output: $output, exit: 0}' >> "$WORK/commands"
     }
-    # A job's lines from the first that matches one regex to the first after it
-    # that matches another.
-    lines_of() { # job id, from regex, to regex
-      trace "$1" | awk -v a="$2" -v b="$3" '!on && $0 ~ a { on = 1 } on { sub(/[ \t]+$/, ""); print } on && $0 ~ b { exit }'
-    }
-    # A job's log, which a signed-out reader cannot open, as a command record.
-    log_lines() { # command, job id, from regex, to regex, exit code
-      local out
-      out="$(lines_of "$2" "$3" "$4")"
-      [ -n "$out" ] || fail "no lines from /$3/ in job $2"
-      jq -n --arg cmd "$1" --arg output "$out" --argjson exit "$5" '{cmd: $cmd, output: $output, exit: $exit}' >> "$WORK/commands"
-    }
     # A note, a reply or an issue as the docs show it: its Markdown from the
     # API and GitLab's own rendering of it.
     md_view() { # view, markdown source
@@ -595,13 +583,6 @@ OUT
       [ -n "$html" ] || fail "GitLab rendered the $1 view empty"
       jq -n --arg s "$2" --arg h "$html" '{kind: "markdown", source: $s, html: $h}' > "$VIEWS/$1.json"
     }
-    # A job's log as the docs show it: the lines the job page showed.
-    log_view() { # view, job id, from regex, through regex
-      local out
-      out="$(lines_of "$2" "$3" "$4")"
-      [ -n "$out" ] || fail "no lines from /$3/ in job $2 for the $1 view"
-      jq -n --arg t "$out" '{kind: "log", text: $t}' > "$VIEWS/$1.json"
-    }
     plan_note() { # merge request iid -> the plan note's body
       api "$P/merge_requests/$1/notes?sort=asc&per_page=100" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty'
     }
@@ -612,49 +593,11 @@ OUT
     step change one-root || fail "change one-root failed"
     iid="$(forge_open_pr example change/one-root)"
     md_view note "$(plan_note "$iid")"
-    # The re-plan updates that note in place.
-    step plan-comment one-root || fail "plan-comment one-root failed"
-    md_view replan "$(plan_note "$iid")"
-
-    step change unformatted || fail "change unformatted failed"
-    # The check job's fix moves the branch, so its first push pipeline is the one that failed.
-    pipe="$(api "$P/pipelines?ref=change%2Funformatted&source=push&order_by=id&sort=asc" | jq -r '.[0].id // empty')"
-    job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name == "check") | .id' | head -1)"
-    [ -n "$job" ] || fail "no failed check job on change/unformatted"
-    # The file the check names, through the end of its diff.
-    log_view check "$job" '^envs/.*[.]tf$' '^[[:space:]]*}[[:space:]]*$'
-
-    log_lines "the check job of change/unformatted" "$job" '^envs/.*[.]tf$' 'Cleaning up|ERROR: Job failed' 1
-
-    step change destroy || fail "change destroy failed"
-    step merge destroy || fail "merge destroy failed"
-    pipe="$(last_failed main)"
-    job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name | startswith("apply-wave-")) | .id' | head -1)"
-    [ -n "$job" ] || fail "no waiting wave on main after merge destroy"
-    log_view waiting "$job" '^wave [0-9]+ of [0-9]+:' 'terragucci approve wave-'
-
-    log_lines "the waiting apply job on main" "$job" '^wave [0-9]+ of [0-9]+:' 'terragucci approve wave-' 3
-
-    # Drift comes last: the queue it deletes would be applied back by any later merge.
-    step change drift || fail "change drift failed"
-    issue="$(api "$P/issues?state=opened&order_by=created_at&sort=desc" | jq -r '.[0].iid // empty')"
-    [ -n "$issue" ] || fail "the drift run opened no issue"
-    md_view drift "$(api "$P/issues/$issue" | jq -r '.description // empty')"
-
-    # Apply before merge changes main's pipeline, so it runs on a reset example.
-    "$0" reset >&2 || fail "reset failed"
-    step pr-apply || fail "pr-apply failed"
-    iid="$(api "$P/merge_requests?state=merged&source_branch=change%2Fone-root&order_by=updated_at" | jq -r '.[0].iid // empty')"
-    [ -n "$iid" ] || fail "no merged merge request from change/one-root"
-    md_view apply "$(api "$P/merge_requests/$iid/notes?sort=asc&per_page=100" | jq -r '[.[] | select(.body | test("applied wave"))] | first | .body // empty')"
 
     # The hash tutorial-check computes, as every capture records it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
-    views='{}'
-    for view in note replan check waiting drift apply; do
-      [ -f "$VIEWS/$view.json" ] || fail "no $view view"
-      views="$(jq --arg k "$view" --slurpfile v "$VIEWS/$view.json" '. + {($k): $v[0]}' <<<"$views")"
-    done
+    [ -f "$VIEWS/note.json" ] || fail "no note view"
+    views="$(jq '{note: .}' "$VIEWS/note.json")"
     # GitLab's address depends on the stack it ran on; the docs show the path.
     # The views also hold the in-network address jobs build links from.
     U="$URL" perl -pi -e 's#\Q$ENV{U}\E##g' "$WORK/commands"

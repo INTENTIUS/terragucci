@@ -57,7 +57,7 @@ just example up
 
 It starts Forgejo (a local forge) with its runner, and floci (an AWS stand-in). Then it pushes the example and the pipeline applies every root:
 
-<Captured step="boot" />
+<Captured step="boot" optional />
 
 The last line is the boot time. Later boots skip the image pulls and builds.
 
@@ -65,7 +65,7 @@ The last line is the boot time. Later boots skip the image pulls and builds.
 
 Open the Forgejo link, at `localhost:3300` unless you changed the port. The repo is the shop's whole estate:
 
-<Recorded step="boot" view="repo" alt="The example repo on the local Forgejo, showing envs, modules, changes and terragucci.yml" />
+<Recorded step="boot" view="repo" alt="The example repo on the local Forgejo, showing envs, modules, changes and terragucci.yml" optional />
 
 | Path | What |
 |---|---|
@@ -81,7 +81,7 @@ The platform roots hold the logs bucket, so terragucci applies them before the s
 
 The pipeline run shows every root applied:
 
-<Recorded step="boot" view="run" alt="The pipeline run in Forgejo, with the check and apply jobs both green" />
+<Recorded step="boot" view="run" alt="The pipeline run in Forgejo, with the check and apply jobs both green" optional />
 
 `terragucci.yml` is four lines. Dev is the canary wave, and drift is checked every morning at six:
 

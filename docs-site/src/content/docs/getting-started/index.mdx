@@ -13,8 +13,6 @@ prompt: |
 
 import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import PlanNote from '../../../components/PlanNote.astro';
-import Recorded from '../../../components/Recorded.astro';
-import Captured from '../../../components/Captured.astro';
 
 <Badge text="About 10 minutes" variant="note" size="medium" />
 
@@ -83,9 +81,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
    | [binary](/terragucci/guides/use-a-binary/) | `tofu` or `terraform` and its version; Terragrunt runs it underneath | `--binary` |
    | forge | the `origin` remote | `--forge` |
 
-   If you have a `terragucci.yml`, run `npx terragucci config check` first. It names the approval mode and any unknown key, with the keys it accepts. The example's output:
-
-   <Captured step="config" />
+   If you have a `terragucci.yml`, run `npx terragucci config check` first. It names the approval mode and any unknown key, with the keys it accepts. The example's output.
 
 3. Write the pipeline.
 
@@ -176,19 +172,15 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
    A pull request comment, with the status in the checks box.
 
-   <Recorded step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
-
    </TabItem>
    <TabItem label="GitLab">
 
    A merge request note; the widget above it counts creates, updates and deletes.
 
-   <Recorded step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
-
    </TabItem>
    <TabItem label="Forgejo">
 
-   <Recorded step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
+   A pull request comment, with terragucci/plan among the commit statuses.
 
    </TabItem>
    </Tabs>

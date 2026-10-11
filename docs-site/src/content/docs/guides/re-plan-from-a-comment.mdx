@@ -11,7 +11,6 @@ prompt: |
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
-import Recorded from '../../../components/Recorded.astro';
 
 ## Result
 
@@ -61,28 +60,22 @@ As on GitHub.
    <Tabs syncKey="forge">
    <TabItem label="GitHub">
 
-   <Recorded step="github" view="reply" alt="The plan note on a GitHub pull request, edited after the /terragucci plan comment below it: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
+   The re-plan edits the note in place.
 
    </TabItem>
    <TabItem label="GitLab">
 
-   When the pipeline the `comments` job started has planned, it edits the note:
-
-   <Recorded step="gitlab" view="replan" alt="The plan note on a GitLab merge request, edited after the /terragucci plan note below it: one instance in one group, wave 2 with its set digest, and dev orders' queue keeping messages for seven days; below it, the comments job's reply that it started a pipeline to re-plan the merge request" />
+   When the pipeline the `comments` job started has planned, it edits the note.
 
    </TabItem>
    <TabItem label="Forgejo">
 
-   The example's note, updated in place above the comment:
-
-   <Recorded step="replan" view="note" alt="The plan note on the example's one-root pull request in Forgejo, planned again after the /terragucci plan comment below it: one instance in one group, wave 2 with its digest, and dev orders' queue keeping messages for seven days" />
+   The re-plan edits the note in place, above the comment.
 
    </TabItem>
    </Tabs>
 
-   A named root the change does not reach gets a "not affected" reply and no update; a name that is not a root is refused with the list of roots:
-
-   <Recorded step="replan" view="replies" alt="Two comments on the pull request and terragucci's replies: envs/prod/payments is not affected by this pull request, so nothing was planned; envs/nope is not a root of this repository, followed by the fifteen roots" />
+   A named root the change does not reach gets a "not affected" reply and no update; a name that is not a root is refused with the list of roots.
 
 </Steps>
 
@@ -157,8 +150,6 @@ No comment approves, and a re-plan cannot change what an approval binds. [When a
 ## Apply a merged pull request
 
 On a merged pull request, `/terragucci apply` re-runs `tf-apply` for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
-
-<Recorded step="statuses" view="reply" alt="A merged pull request\'s replies in Forgejo: wave 1 waits for an approval of its set digest, with the terragucci approve --sign command; a commenter with no write access is refused; and, once wave 1 is sealed, wave 1 applies and the reply says wave 2 now waits, linking the run" optional />
 
 | Part | What happens |
 |---|---|

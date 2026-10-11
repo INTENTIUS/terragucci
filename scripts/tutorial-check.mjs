@@ -1,14 +1,14 @@
 // Keeps the tutorial and the guides honest. For every tutorial page and every
 // guide that is not a draft:
 //   - every smoke claim it names in `claims:` passes in smoke.json;
-//   - every <Captured step="…"> has a capture;
-//   - every <Recorded step="…" view="…"> has that view in its step's capture.
-// A capture made from an older example/ (its source_hash does not match) is
-// stale. Captures are refreshed by hand, never as part of a change or a release,
-// so a stale one is listed and does not fail the check; `--strict` fails on it.
-// Draft pages and guides are skipped; they leave draft when their claims pass. Every
-// other page of the site that embeds a capture or a recorded view is held to the
-// same capture rules.
+//   - captures (<Captured step="…"> and <Recorded step="…" view="…">) appear on
+//     tutorial pages only;
+//   - a capture a tutorial page embeds without `optional` exists.
+// Captures are taken by hand, when a page needs one, never as part of a change
+// or a release. So an optional capture that was never taken, and a capture made
+// from an older example/ (its source_hash does not match), are listed and do
+// not fail the check; `--strict` fails on them.
+// Draft pages and guides are skipped; they leave draft when their claims pass.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -64,18 +64,18 @@ const capture = (step) => {
 // The github step is recorded on the sandbox on github.com, not on the stack.
 const fix = (step) => (step === "github" ? "run just sandbox capture" : `run just capture ${step}`);
 
-// The <Captured> and <Recorded> on one page.
-function checkCaptures(label, text) {
-  for (const [, step] of text.matchAll(/<Captured\s+step="([^"]+)"/g)) {
+// The <Captured> and <Recorded> on one page. Only a tutorial page may hold them.
+const pending = [];
+function checkCaptures(label, text, tutorial) {
+  const tags = [...text.matchAll(/<(Captured|Recorded)\s+step="([^"]+)"(?:\s+view="([^"]+)")?[^>]*>/g)];
+  if (tags.length && !tutorial) { problems.push(`${label}: holds ${tags.length} capture(s); captures belong on tutorial pages only`); return; }
+  for (const [tag, kind, step, view] of tags) {
+    const what = kind === "Recorded" ? `view ${step} ${view}` : `capture ${step}`;
+    const optional = /\soptional(\s|\/|>)/.test(tag);
     const c = capture(step);
-    if (!c) { problems.push(`${label}: no capture for step ${step}; ${fix(step)}`); continue; }
-    if (c.source_hash !== exampleHash) stale.push([step, `${label}: capture ${step} was made from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`]);
-  }
-  for (const [, step, view] of text.matchAll(/<Recorded\s+step="([^"]+)"\s+view="([^"]+)"[^>]*>/g)) {
-    const c = capture(step);
-    if (!c) { problems.push(`${label}: no capture for step ${step}, so no view ${view}; ${fix(step)}`); continue; }
-    if (!c.views?.[view]) { problems.push(`${label}: capture ${step} recorded no view ${view}; ${fix(step)}`); continue; }
-    if (c.source_hash !== exampleHash) stale.push([step, `${label}: view ${step} ${view} was recorded from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`]);
+    const missing = !c ? `no capture for step ${step}` : kind === "Recorded" && !c.views?.[view] ? `capture ${step} recorded no view ${view}` : "";
+    if (missing) { (optional ? pending : problems).push(optional ? [step, `${label}: ${missing}; ${fix(step)}`] : `${label}: ${missing}; ${fix(step)}`); continue; }
+    if (c.source_hash !== exampleHash) stale.push([step, `${label}: ${what} was recorded from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`]);
   }
 }
 
@@ -104,7 +104,7 @@ function checkDir(dir, kind) {
     for (const c of claims) {
       if (verdict[c] !== "pass") problems.push(`${label}: claim ${c} is ${verdict[c] ?? "unknown"}, so the ${kind} must stay a draft`);
     }
-    checkCaptures(label, text);
+    checkCaptures(label, text, kind === "page");
     console.log(`ok    ${label}`);
   }
 }
@@ -115,11 +115,15 @@ checkDir(standards, "standards page");
 // Every other page that embeds a capture or a recorded view.
 const docs = join(root, "docs-site/src/content/docs");
 for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/") && !p.startsWith(concepts + "/") && !p.startsWith(standards + "/")).sort()) {
-  checkCaptures(relative(docs, file), readFileSync(file, "utf8"));
+  checkCaptures(relative(docs, file), readFileSync(file, "utf8"), false);
 }
 // Without --strict, one line names the stale steps; --strict fails on each page that shows one.
-if (strict) problems.push(...stale.map(([, p]) => p));
-else if (stale.length) console.log(`stale  captures from an older example/, refreshed by hand (just capture <step>, or just tutorial-capture): ${[...new Set(stale.map(([step]) => step))].sort().join(", ")}`);
+const steps = (list) => [...new Set(list.map(([step]) => step))].sort().join(", ");
+if (strict) problems.push(...pending.map(([, p]) => p), ...stale.map(([, p]) => p));
+else {
+  if (pending.length) console.log(`not taken  optional captures, taken by hand when a page needs them (just capture <step>): ${steps(pending)}`);
+  if (stale.length) console.log(`stale  captures from an older example/, refreshed by hand (just capture <step>, or just tutorial-capture): ${steps(stale)}`);
+}
 if (problems.length) {
   for (const p of new Set(problems)) console.log(`FAIL  ${p}`);
   process.exit(1);

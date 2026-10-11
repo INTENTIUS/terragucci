@@ -2273,8 +2273,7 @@ EOF
 
   capture)
     # Each step runs as its own command, so what it prints is what a reader of
-    # the docs would see, and each view is taken right after its step: the
-    # re-plan edits the note the `note` view holds.
+    # the docs would see, and its view is taken right after it.
     ROOT="$(cd "$HERE/.." && pwd)"
     DATA="$ROOT/docs-site/src/data/tutorial"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "capture needs Docker, for the roots' state"; fi
@@ -2289,51 +2288,20 @@ EOF
       [ "$rc" = 0 ] || return "$rc"
       jq -n --arg cmd "just sandbox $*" --arg output "$(sed '/^$/d; s/^  //' <<<"$out")" '{cmd: $cmd, output: $output, exit: 0}' >> "$WORK/commands"
     }
-    # A job's log, which a logged-out reader cannot open: its lines from the
-    # first that matches one regex to the first after it that matches another.
-    log_lines() { # command, log file, from regex, to regex
-      local out
-      out="$(awk -v a="$3" -v b="$4" '!on && $0 ~ a { on = 1 } on { sub(/^##\[error\]/, ""); sub(/[ \t]+$/, ""); print } on && $0 ~ b { exit }' "$2")"
-      [ -n "$out" ] || fail "no lines from /$3/ in $2"
-      jq -n --arg cmd "$1" --arg output "$out" '{cmd: $cmd, output: $output, exit: 3}' >> "$WORK/commands"
-    }
     # A view the last step recorded, kept under the name the docs give it
     # before a later step records it again.
     take() { # view, name in the docs
       [ -s "$DIR/views/$1.json" ] || fail "the $1 view was not recorded"
       cp "$DIR/views/$1.json" "$WORK/views/$2.json"
     }
-    # The check and the waiting wave are their log lines (log_lines), as
-    # commands, not views.
-    names="note reply"
+    # The tutorial shows one GitHub view, the plan note of a one-root change.
+    names="note"
     step change one-root || fail "change one-root failed"
     take note note
-    step plan-comment one-root || fail "plan-comment one-root failed"
-    take reply reply
-    step change unformatted || fail "change unformatted failed"
-    log_lines "gh run view --log-failed  # the check job of change/unformatted" "$DIR/logs/check.log" '^envs/.*[.]tf$' 'Process completed'
-    step change destroy || fail "change destroy failed"
-    step merge destroy || fail "merge destroy failed"
-    log_lines "gh run view --log-failed  # wave 4 on main" "$DIR/logs/waiting.log" '^wave [0-9]+ of [0-9]+:' 'Process completed'
-    # Drift comes last: the file it deletes would be planned back by any later
-    # merge. A release whose drift job cannot keep its issue on github.com
-    # leaves the drift view out, and any committed one stands.
-    if step drift; then
-      take drift drift
-      names="$names drift"
-    else
-      log "no drift issue on $RELEASE; the drift view is left as it was"
-    fi
-    # Apply before merge changes main's pipeline, so it runs on a reset sandbox.
-    "$0" reset
-    step pr-apply || fail "pr-apply failed"
-    take pr-apply apply
-    names="$names apply"
     # The files the docs use: step `github`, beside the Forgejo steps.
     # The example's hash, computed the way tutorial-check computes it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
-    # A view this run left out keeps what the last capture recorded.
-    views="$(jq -c '.views // {}' "$DATA/github.json" 2>/dev/null || echo '{}')"
+    views='{}'
     for name in $names; do
       views="$(jq -c --arg k "$name" --slurpfile v "$WORK/views/$name.json" '. + {($k): $v[0]}' <<<"$views")"
     done

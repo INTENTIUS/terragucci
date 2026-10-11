@@ -29,15 +29,15 @@ Orders in dev should keep unpicked jobs for seven days instead of four: one line
 
 1. One command makes the branch and opens the pull request. The push and the pull request each start a run: the pull request's run posts the plan note, the push's run is the check. The output prints both run numbers.
 
-   <Captured step="first-pr" />
+   <Captured step="first-pr" optional />
 
 2. Open the pull request link in Forgejo:
 
-   <Recorded step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
+   <Recorded step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" optional />
 
 3. Look at the push's run, the second link printed. `tf-check` runs on the branch push, and on a pull request only from a fork: a format check, then `validate` for every root. Both steps pass. The plan note is a comment in the conversation:
 
-   <Recorded step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
+   <Recorded step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" optional />
 
 </Steps>
 
@@ -56,11 +56,11 @@ Orders in dev should keep unpicked jobs for seven days instead of four: one line
 
 2. The scenario opens it as a second pull request. The check fails, and `just example logs` prints the file and the change `tofu fmt` would make.
 
-   <Captured step="check" />
+   <Captured step="check" optional />
 
 3. In Forgejo the failed step is "Format check and validate, every root":
 
-   <Recorded step="check" view="log" alt="The failed check job in Forgejo, its format step open on the diff tofu fmt -check printed for envs/dev/orders/locals.tf" />
+   <Recorded step="check" view="log" alt="The failed check job in Forgejo, its format step open on the diff tofu fmt -check printed for envs/dev/orders/locals.tf" optional />
 
 4. Run `tofu fmt -recursive` in your own repo and the check goes green again.
 

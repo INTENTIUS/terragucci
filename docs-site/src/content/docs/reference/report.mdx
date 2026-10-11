@@ -8,7 +8,6 @@ prompt: |
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
-import Recorded from '../../../components/Recorded.astro';
 
 Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one JSON report, the source of everything a person reads.
 
@@ -19,18 +18,12 @@ The plan job writes the report for every pull request and merge request. Its not
 <Tabs syncKey="forge">
   <TabItem label="GitHub">
     Kept as the `terragucci-report` artifact, and the note names the run.
-
-    <Recorded step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
   </TabItem>
   <TabItem label="GitLab">
     The job's artifacts hold the HTML report, and the note links it. The merge-request widget reads `gitlab-terraform.json`.
-
-    <Recorded step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
   </TabItem>
   <TabItem label="Forgejo">
     The same as GitHub.
-
-    <Recorded step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
   </TabItem>
 </Tabs>
 
@@ -130,8 +123,6 @@ Presigned links live 7 days at most. An S3 link signed with a role's session sto
 
 ## Open and folded sections
 
-<Recorded step="report" view="top" alt="The top of a plan report for a shared-module change with a destroy beside it: the destroy named on its own, two outliers to read first, and ten identical roots folded into one group" optional />
-
 | Item | Shown as |
 |---|---|
 | destroy, replacement, refusal | open, with the attributes that forced each replacement |
@@ -160,11 +151,7 @@ A change to one of these that only touches tags stays folded.
 
 Each root's full plan is kept beside the report as printed and as JSON. The HTML report links every group, root and named change to its plan and job.
 
-<Recorded step="report" view="root" alt="One root's row in the HTML report, envs/prod/payments, with its links to plan, plan.json and the job" optional />
-
-The plan link opens the root's plan as the binary printed it:
-
-<Recorded step="report" view="plan" alt="The full plan text of envs/prod/payments, opened from the report" optional />
+The plan link opens the root's plan as the binary printed it.
 
 The header names the commit and the job, and the pull request when there is one. With `telemetry.trace_url` set, the trace id opens the trace; see [Traces and metrics](/terragucci/reference/observability/#trace-links). The HTML report is one file that makes no network calls.
 
@@ -269,5 +256,3 @@ Each upload rewrites the two index files, `index.html` and `index.json`.
 :::caution
 A static site serving the index publishes every report in the bucket, so put the site behind your identity provider and keep the bucket private. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index) has the choices.
 :::
-
-<Recorded step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />

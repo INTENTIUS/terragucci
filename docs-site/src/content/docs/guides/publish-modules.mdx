@@ -13,7 +13,6 @@ prompt: |
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
-import Recorded from '../../../components/Recorded.astro';
 
 ## Result
 
@@ -95,9 +94,7 @@ Each level is opt-in:
 
    The next push to the default branch publishes, printing each version's OCI manifest digest for a root to pin: `oci://registry.example.com/acme/modules/network@sha256:...`.
 
-   With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` moved to `0.2.0` after a change while `modules/queue` stayed at `0.1.0`:
-
-   <Recorded step="publish" view="tags" alt="The tags page of a Forgejo repo after three merges: modules/service/v0.2.0, modules/service/v0.1.0 and modules/queue/v0.1.0, each pushed by the pipeline's publish job" />
+   With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` moved to `0.2.0` after a change while `modules/queue` stayed at `0.1.0`.
 
    A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first; different content under an existing tag stops the run and names the tag.
 
