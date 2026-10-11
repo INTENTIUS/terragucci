@@ -52,7 +52,7 @@ A gated wave reads the newest approval of its gate:
 | another digest, which a run applied | waits for an approval of its own digest, with the command to give it |
 | another digest, which no run applied | applies nothing and exits 4: its plans changed after approval |
 
-An approval never counts for a digest other than its own. Under `on-destroy` a re-plan with no destroy applies; under `never` nothing is refused.
+An approval never counts for a digest other than its own. Under `on-destructive` a re-plan with no destroy applies; under `never` nothing is refused.
 
 ## Plans are made late
 
@@ -158,7 +158,7 @@ The gate policy decides which waves wait for a person.
 | Policy | Waits for an approval when |
 |---|---|
 | `always` | the wave has at least one change; a wave whose plans change nothing never waits |
-| `on-destroy` | the wave's plans destroy or replace something |
+| `on-destructive` | the wave's plans destroy or replace something |
 | `never` | never; only pull request review and default branch protection stand in front of it |
 
 A waiting wave exits with code 3 and prints the approval command; run it, then rerun the stage. A rerun resumes after the approval or failed root and never applies a root twice.

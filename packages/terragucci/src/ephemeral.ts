@@ -710,7 +710,7 @@ export async function ephemeralUp(repo: string, options: UpOptions): Promise<num
       if (live) return EPHEMERAL_EXIT.done;
     }
     const gate = r.settings.gate;
-    const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
+    const gated = changes > 0 && (gate === "always" || (gate === "on-destructive" && destroys > 0));
     const name = ephemeralGate(pr);
     let approvedBy: string | undefined;
     if (gated) {

@@ -17,7 +17,7 @@ Each step names its stage and the identity it runs with. All of them run on GitH
 
 2. The plan note: `tf-plan` posts one grouped comment naming every destroy and replacement, and sets `terragucci/plan`. `/terragucci plan` re-plans from a comment; on GitLab it needs the [`comments`](/terragucci/reference/config/#keys) schedule.
 
-3. The merge: any push to the default branch runs `tf-apply` with the apply identity, one push at a time. Under the default `on-destroy` gate only a wave that destroys or replaces waits. With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), a writer's `/terragucci apply` comment applies the open head instead (on GitLab, with the `comments` schedule). The [guide](/terragucci/guides/apply-before-merge/) lists what it refuses.
+3. The merge: any push to the default branch runs `tf-apply` with the apply identity, one push at a time. Under the default `on-destructive` gate only a wave that destroys or replaces waits. With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), a writer's `/terragucci apply` comment applies the open head instead (on GitLab, with the `comments` schedule). The [guide](/terragucci/guides/apply-before-merge/) lists what it refuses.
 
 4. The waves: `tf-apply` runs one job per [wave](/terragucci/concepts/glossary/#wave), `waves.canary` roots first, then dependency order. With [`waves.jobs`](/terragucci/concepts/waves-and-approvals/), a large wave gets a job that decides it and share jobs that apply it. Each wave plans after the previous one applied.
 

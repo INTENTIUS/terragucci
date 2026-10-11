@@ -202,7 +202,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
     [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
-    [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
+    [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
     [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
     [--on-held wait|refuse] [--stand-down]
 ```
@@ -230,7 +230,7 @@ Both `stage tf-plan` and `stage tf-drift` write the report even when a root refu
 | Flag | Environment | Meaning |
 |---|---|---|
 | `--wave` | | the wave to apply |
-| `--gate` | | `always`, `on-destroy` (the default) or `never` |
+| `--gate` | | `always`, `on-destructive` (the default) or `never` |
 | `--approval` | | the mode when the config at base names none and `chant.workspace.json` there lists no gate; a control repo's pipeline passes it |
 | `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, approval mode, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |

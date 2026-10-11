@@ -344,7 +344,7 @@ export function buildReport(input: BuildInput): Report {
       review = {
         // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
         review_digest: failed || changing.length === 0 || (w.replansAfter?.length ?? 0) > 0 ? null : changeSetDigest([...changing, ...extra]),
-        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
+        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
       };
     }
     return {

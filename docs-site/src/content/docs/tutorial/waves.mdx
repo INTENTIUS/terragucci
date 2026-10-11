@@ -30,7 +30,7 @@ The apply is one job per wave, canary first.
 | 3 | the staging and prod platform roots |
 | 4 | their eight services |
 
-With the default gate `on-destroy` a wave waits only when its plans destroy or replace something. This scenario makes one destroy.
+With the default gate `on-destructive` a wave waits only when its plans destroy or replace something. This scenario makes one destroy.
 
 <Captured step="wave-waiting" cmd="just example change destroy" optional />
 

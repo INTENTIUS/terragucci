@@ -364,10 +364,10 @@ describe("init in a Terragrunt repo", () => {
     expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "apply-wave-3", "apply-wave-4"]);
     const applyRun = (job: string): string => doc.jobs[job].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
     const apply = applyRun("apply-wave-1");
-    expect(apply).toContain(`terragucci stage tf-apply --wave 1 --layers ${layers} --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1`);
+    expect(apply).toContain(`terragucci stage tf-apply --wave 1 --layers ${layers} --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1`);
     expect(apply).not.toContain("--rest");
     // The last job also runs any wave past the ones init found.
-    expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destroy --stand-down --terragrunt --rest`);
+    expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destructive --stand-down --terragrunt --rest`);
     expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
     // approval: ledger is the default, so no gate is declared for a seal.
@@ -865,7 +865,7 @@ describe("tips in a Terragrunt repo", () => {
       "root.hcl": 'remote_state {\n  backend = "local"\n  config = { path = "x.tfstate" }\n}\n',
       "live/dev/app/terragrunt.hcl": unit(["vpc"]).replace('mock_outputs = { id = "mock" }', 'mock_outputs = { id = "mock" }\n  mock_outputs_allowed_terraform_commands = ["validate", "plan"]'),
     });
-    const tips = await repoTips(repo, ["live/dev/app", "live/prod/app"], { settings: { gate: "on-destroy", tips: true }, parser: await loadHclParser(), configDirs: ["."] });
+    const tips = await repoTips(repo, ["live/dev/app", "live/prod/app"], { settings: { gate: "on-destructive", tips: true }, parser: await loadHclParser(), configDirs: ["."] });
     const tf041 = tips.filter((t) => t.rule === "TF041").map((t) => t.root);
     expect(tf041).toEqual(["live/prod/app"]);
     expect(tips.some((t) => t.rule === "TF044" && t.root === ".")).toBe(true);
@@ -906,7 +906,7 @@ describe("TF042 as a tip", () => {
       "live/dev/app/terragrunt.hcl": skipUnit("  skip_outputs = true\n"),
       "live/prod/app/terragrunt.hcl": skipUnit(""),
     });
-    const tips = await repoTips(repo, ["live/dev/app", "live/prod/app"], { settings: { gate: "on-destroy", tips: true }, parser: await loadHclParser() });
+    const tips = await repoTips(repo, ["live/dev/app", "live/prod/app"], { settings: { gate: "on-destructive", tips: true }, parser: await loadHclParser() });
     expect(tips.filter((t) => t.rule === "TF042").map((t) => t.root)).toEqual(["live/dev/app"]);
   });
 });

@@ -1,6 +1,6 @@
 defaults:
   binary: tofu
-  gate: on-destroy
+  gate: on-destructive
   rollouts: false
 projects:
   github.com/acme/infra:

@@ -284,7 +284,7 @@ export interface PipelineInput {
   canary?: string[];
   /** `waves.jobs`: the most jobs one wave's roots or units spread across. A wave of more than one gets a job that decides it and a share job per part (GitHub and Forgejo). */
   waveJobs?: number;
-  /** When a wave waits for an approval. Default on-destroy. */
+  /** When a wave waits for an approval. Default on-destructive. */
   gate?: Gate;
   /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
   approval?: Approval;
@@ -980,7 +980,7 @@ export function applyScript(
 ): string {
   const roots = layers.flat().sort();
   const total = layers.flat().length;
-  const gate = input.gate ?? "on-destroy";
+  const gate = input.gate ?? "on-destructive";
   const count = applyWaves(layers, input.canary).length;
   const tg = input.terragrunt;
   // A wave split across jobs: its own job decides (first, as wave 1's always is), and its shares apply; the done job posts the last success.
@@ -1107,7 +1107,7 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
   const triage = responds(input.respond, "apply-failed");
   const refused = responds(input.respond, "wave-refused");
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(refuseHeld ? ["--on-held", "refuse"] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(input.branches ? ["--branches", sh(branchesArg(input.branches))] : []), ...(base ? [base] : [])];
+  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destructive", ...(input.approval ? ["--approval", input.approval] : []), ...(refuseHeld ? ["--on-held", "refuse"] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(input.branches ? ["--branches", sh(branchesArg(input.branches))] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
@@ -1929,7 +1929,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const driftNotify = Object.keys(driftNotifyEnv).length > 0;
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
-  const gate = input.gate ?? "on-destroy";
+  const gate = input.gate ?? "on-destructive";
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.

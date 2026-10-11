@@ -315,7 +315,7 @@ run_gate_wait() {
   curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
   prepare "$WORK/main"
   f="$WORK/main/$PIPELINE_FILE"
-  sed 's/--gate on-destroy/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
+  sed 's/--gate on-destructive/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
   grep -q -- '--gate always' "$f" || fail "could not set the gate to always in $PIPELINE_FILE"
   if [ -n "$BREAK" ]; then
     sed 's/ || exit \$?$//' "$f" > "$f.new" && mv "$f.new" "$f"
@@ -477,7 +477,7 @@ run_approve() {
   curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
   prepare "$WORK/main"
   f="$WORK/main/$PIPELINE_FILE"
-  sed 's/--gate on-destroy/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
+  sed 's/--gate on-destructive/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
   sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
   forge_run "$repo" main "$sha"
   grep -q "terragucci approve wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not wait"; }
