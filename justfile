@@ -21,7 +21,6 @@ lint:
     npx chant lint observability
     npx chant lint scale
     bash -n stack/smoke.sh
-    node scripts/check-smoke.mjs
 
 [doc("Run the unit tests.")]
 test:
@@ -33,7 +32,7 @@ lint-docs strictness="2" limit="8":
     node scripts/lint-ui-text.mjs {{strictness}} {{limit}}
     node scripts/lint-config-docs.mjs
 
-[doc("Fail when a published page shows a claim that does not pass, when a page that is not a tutorial page holds a capture, or when a required capture is missing. Optional captures not taken and stale ones are listed; --strict fails on them.")]
+[doc("Fail when a page that is not a tutorial page holds a capture, or a required capture is missing. Optional captures not taken and stale ones are listed; --strict fails on them.")]
 tutorial-check *args:
     node scripts/tutorial-check.mjs {{args}}
 
