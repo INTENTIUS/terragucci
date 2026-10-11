@@ -58,6 +58,7 @@
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
  *   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, in process)
+ *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
  *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   (a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo; credentials from the environment)
  *
  * `--json` on init, reconcile, plan, stage, rollout, config check and query prints one envelope
@@ -125,6 +126,7 @@ import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
 import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
+import { nodeViewDeps, publishTarget, repoRoot, view, viewProject, viewReports, viewSource } from "./view";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
@@ -165,6 +167,7 @@ const USAGE = `usage:
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, run in this process
+  terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   a read-only MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures; credentials from the environment
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci approve export <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a state export request
@@ -235,7 +238,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -814,6 +817,25 @@ export async function main(argv: string[]): Promise<number> {
           ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
         });
         return 0;
+      }
+      case "view": {
+        // behold over the reports bucket, run with npx at the version BEHOLD_PIN names; read-only.
+        if (args.length) throw new ConfigError("view takes no arguments: terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open]");
+        const out = str(flags, "export");
+        if (flags.publish === true && out === undefined) throw new ConfigError("--publish uploads the exported view; give --export <dir> too");
+        const port = str(flags, "port") === undefined ? undefined : Number(str(flags, "port"));
+        if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new ConfigError("terragucci view --port takes a port number");
+        if (port !== undefined && out !== undefined) throw new ConfigError("--port is for serving; --export writes files and serves nothing");
+        const root = repoRoot(cwd);
+        const reportsFlag = str(flags, "reports");
+        const project = str(flags, "project") ?? viewProject(root, process.env);
+        const path = reportsFlag === undefined ? (str(flags, "config") ?? findConfig(cwd) ?? (root !== cwd ? findConfig(root) : undefined)) : undefined;
+        const source = viewSource(reportsFlag === undefined ? viewReports(path ? await loadConfig(resolve(path)) : {}, project) : undefined, reportsFlag, cwd);
+        if (flags.publish === true) publishTarget(source);
+        return await view(
+          { root, source, project, ...(port !== undefined ? { port } : {}), open: flags["no-open"] !== true, ...(out !== undefined ? { export: resolve(cwd, out), publish: flags.publish === true } : {}) },
+          nodeViewDeps(),
+        );
       }
       case "relay": {
         const port = Number(str(flags, "port") ?? process.env.PORT ?? 8080);

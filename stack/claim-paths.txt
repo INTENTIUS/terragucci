@@ -27,6 +27,7 @@ packages/terragucci/src/agent-comment.ts  comment-agent drift-agent
 packages/terragucci/src/drift-agent.ts    drift-agent
 packages/terragucci/src/query.ts          query-sql
 packages/terragucci/src/mcp.ts            mcp-last-apply
+packages/terragucci/src/view.ts           terragucci-view
 packages/terragucci/src/mcp-validator.ts  mcp-last-apply
 packages/terragucci/src/unit-pins.ts      tg-root-pins tg-waves tg-gate-* tg-spans root-pins
 packages/terragucci/src/render-review.ts  review-*
