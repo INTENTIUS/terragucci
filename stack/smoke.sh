@@ -207,7 +207,6 @@ affected/terragrunt|only the units a change reaches are planned, including a fil
 tips/terragrunt-mock|a dependency whose mock_outputs can stand in for apply is named by a tip|
 linked/terragrunt-mock|a unit that reads a new upstream is planned on the planned outputs of that upstream, never on its mock_outputs|
 linked/terragrunt-mock-trap|a new upstream and its dependent merge together and apply in order, so no mock reaches real state|
-drift/terragrunt|drift is reported by unit in a Terragrunt repo, with the same tracking issue|
 respond/refused|a refused wave names each root whose plan moved and the attributes that moved|
 respond/triage|a failed apply is triaged from the known-error table|
 respond/drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
@@ -252,11 +251,9 @@ policy/delete-key|a pull request that deletes the policy key from terragucci.yml
 report/oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
 approval/terragrunt|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
 refuse/terragrunt|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
-approval/terragrunt-sealed|under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists|
 pr-apply/tofu|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto|
 lock/apply|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
 pr-apply/stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
-comment/terragrunt-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request|
 telemetry/provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
 telemetry/summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
 init/foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
@@ -311,7 +308,6 @@ approval/resume|terragucci approve, given a forge token of the approver, resumes
 approval/resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
 refuse/approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
 note/approve-command|the plan note of a pull request gives the terragucci approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
-pr-apply/terragrunt|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
 lock/terragrunt|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
 lock/plan|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
 lock/plan-release|with locks: plan the merge of a pull request releases the lock its first plan took|
@@ -360,7 +356,6 @@ rollout/continue|with rollouts set, once wave 1 merged and applied the rollout j
 policy/opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
 policy/hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
 policy/hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
-policy/terragrunt|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
 oidc/terragrunt|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
 affected/terragrunt-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
 linked/terragrunt-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
@@ -427,9 +422,6 @@ waves/jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own 
 steps/before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps/stop|a step before apply that exits 1 fails the wave job before anything applies|
 steps/gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
-cost/terragrunt-gate|with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies|
-steps/terragrunt-gate|a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it|
-waves/terragrunt-jobs|with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once|
 respond/terragrunt-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|
 state/terragrunt-versions|a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds|
 respond/terragrunt-drift|a drifted Terragrunt unit gets a pull request that writes the live value into its own terragrunt.hcl inputs and leaves the module its units share alone|
@@ -460,7 +452,6 @@ state/unlock|terragucci unlock-state refuses to release a state lock while a run
 tips/moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
 estate/mcp|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
 agent/drift|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
-note/terragrunt|a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo|
 drift/github|on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another|
 apply/runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|
 ephemeral/pr|with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed|
@@ -3846,77 +3837,6 @@ claim_linked/terragrunt_mock_trap() {
   tg_restore_main || true
   drop_work "$work"
   [ $rc = 0 ] && log "ledger applied before billing; billing's state names shop-tg-dev-ledger and holds no mock"
-  return $rc
-}
-
-claim_drift/terragrunt() {
-  # The Terragrunt example is applied (run 'just example-terragrunt up' first).
-  # Staging orders' jobs queue is deleted from floci, outside Terraform. A
-  # tf-drift run over every unit, one refresh-only run --all per wave, must
-  # report that unit and that queue as the only delete, and keep exactly one
-  # open drift issue that names them. Run again it updates the issue.
-  # floci keeps no tags or object metadata, so every unit shows tag and
-  # metadata drift; the claim holds the deletes exact and every other drifted
-  # attribute to that known set, as claim_drift/tofu does.
-  # BREAK: the queue is not deleted, so there is no drift to name.
-  log() { echo "[smoke tg-drift] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work rc=0 n issues body r unit="live/staging/orders" queue="shop-tg-staging-orders-jobs" repo="$USER/$TG_REPO_NAME" deletes extra
-  if [ -n "${SMOKE_AWS:-}" ]; then
-    queue="$SMOKE_AWS_PREFIX-$queue"
-    # tg-waves does not run on AWS, so the claim boots the Terragrunt example there itself.
-    if ! smoke_aws_queue_url "$queue" >/dev/null; then
-      log "$queue is not in AWS; booting the Terragrunt example there"
-      "$HERE/example-terragrunt.sh" up >&2 || return 1
-    fi
-  fi
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
-  drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
-    local TG_STAGE=tf-drift
-    local -a TG_STAGE_ARGS=(--forge forgejo --report-url "http://forgejo:3000/$repo/actions")
-    local -a TG_RUN_EXTRA=(-e "GITHUB_REPOSITORY=$repo" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN")
-    mkdir -p "$1"
-    tg_report_run "$1"
-  }
-  for n in $(open_issues | jq -r '.[].number'); do
-    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/issues/$n"
-  done
-  local deleted=""
-  if [ -z "${BREAK:-}" ] && [ -n "${SMOKE_AWS:-}" ]; then
-    smoke_aws_delete_queue "$queue" || { drop_work "$work"; return 1; }
-    deleted=1
-  elif [ -z "${BREAK:-}" ]; then
-    extra="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || extra=""
-    [ -n "$extra" ] || { log "$queue is not in floci; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
-    curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$extra\"}" || { drop_work "$work"; return 1; }
-    deleted=1
-  fi
-
-  r="$work/run1/terragucci-report/report.json"
-  if ! drift_run "$work/run1"; then log "the drift run failed"; rc=1
-  elif [ ! -f "$r" ]; then log "no report"; rc=1
-  else
-    jq -e '.run.stage == "tf-drift"' "$r" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
-    deletes="$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$r")"
-    [ "$deletes" = "$unit aws_sqs_queue.jobs" ] || { log "the deletes are not exactly $unit's queue: $deletes"; rc=1; }
-    [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$r")" = "" ] \
-      || { log "attributes other than tags and metadata drifted"; rc=1; }
-    issues="$(open_issues)"
-    [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
-    body="$(jq -r '.[0].body // ""' <<<"$issues")"
-    grep -q "$unit" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $unit and $queue"; rc=1; }
-    if [ $rc = 0 ]; then
-      drift_run "$work/run2" || { log "the second drift run failed"; rc=1; }
-      [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rc=1; }
-    fi
-  fi
-  drop_work "$work"
-  # Put back what the claim changed: the one queue, by applying its unit alone
-  # rather than the whole example through the pipeline.
-  if [ -n "$deleted" ]; then tg_apply_units "$unit" || log "could not apply $unit again"; fi
-  [ $rc = 0 ] && log "$unit and $queue named, one issue kept, a second run updated it"
   return $rc
 }
 
@@ -7962,53 +7882,6 @@ claim_refuse/terragrunt() {
   return $rc
 }
 
-claim_approval/terragrunt_sealed() {
-  # Push the fixture; wave 1 waits. Write an unsealed approval of its plan,
-  # and one sealed with an agent key the signers file does not list, both in
-  # the approver name, and push again: nothing applies, and the run says the
-  # approvals do not count. Then the approver runs chant approve --sign with
-  # the listed key, and live/canary/one applies. The repo sets approval: sealed.
-  # BREAK: the approval key and chant.workspace.json are left out of the pushed
-  # tree, so approval is ledger and the unsealed approval lets wave 1 apply.
-  log() { echo "[smoke tg-sealed] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-sealed" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-sealed tg-gated-waves sealed || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && unseal_tree
-  ssh-keygen -q -t ed25519 -N "" -C agent -f "$work/agent" || rc=1
-  sha="$(push_tree "$work/tree" "$repo" main "tg-sealed: first")"
-  wait_run "$repo" "$sha"
-  if [ $rc = 0 ]; then
-    gated_forge tg-sealed 1 unsealed || rc=1
-    gated_forge tg-sealed 1 "$work/agent" || rc=1
-  fi
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-sealed: after an unsealed and an agent-sealed approval")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-sealed)"
-    logs="$(print_logs "$repo" "$RUN_ID")"
-    log "after the unsealed and agent-sealed approvals: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ -z "$applied" ] || { log "a unit applied on an approval no listed key sealed"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    grep -q "an approval does not count: the approval by smoke-approver is not signed" <<<"$logs" || { log "the run did not say the unsealed approval does not count"; rc=1; }
-    grep -q "an approval does not count: the seal by smoke-approver does not verify" <<<"$logs" || { log "the run did not say the agent seal does not verify"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve tg-sealed 1 sign || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-sealed: after a sealed approval")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-sealed)"
-    log "after the sealed approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one to apply on the sealed approval"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "unsealed and agent-sealed approvals let no unit apply; the sealed one let wave 1 apply"
-  return $rc
-}
-
 claim_waves/terragrunt_layers() {
   # stack/fixtures/tg-three-layers: live/net, live/app after it and live/edge
   # after app, gate: always. init writes three wave jobs. Push, then approve
@@ -8845,89 +8718,6 @@ claim_init/atmos_refuse() {
   return $rc
 }
 
-claim_comment/terragrunt_apply() {
-  # The Terragrunt gated fixture on main, where wave 1 (live/canary/one) waits.
-  # A pull request changes live/canary/one and is merged; the merge commit's
-  # apply waits at wave 1 for its new digest. An agent writes an unsealed
-  # approval of that plan to chant/lifecycle. `/terragucci apply` on the merged
-  # pull request must be answered that wave 1 waits, with its set digest and
-  # the terragucci approve command, and apply no unit. The same comment on an open
-  # pull request is refused. The approver approves wave 1 with a sealed record,
-  # and `/terragucci apply` again must apply live/canary/one through the
-  # Terragrunt path (wave 2 waits at its own gate) and reply with a link to the
-  # run. The repo sets approval: sealed.
-  # BREAK: the approval key and chant.workspace.json are left out of the pushed
-  # tree, so approval is ledger, and the unsealed approval lets the first
-  # comment apply wave 1.
-  log() { echo "[smoke tg-comment-apply] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-comment-apply" wf sha merge pr open_pr applied reply rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-comment-apply tg-gated-waves sealed || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && unseal_tree
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  grep -q '^  apply-comment:' "$wf" || { log "the Terragrunt pipeline has no apply-comment job"; drop_work "$work"; return 1; }
-  grep -q 'tf-apply --wave "\$wave".* --terragrunt' "$wf" || { log "the apply-comment job does not run tf-apply with --terragrunt"; drop_work "$work"; return 1; }
-  sha="$(push_tree "$work/tree" "$repo" main "tg-comment-apply: first")" || { drop_work "$work"; return 1; }
-  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
-  echo 2 > "$work/tree/live/canary/one/rev.txt"
-  push_tree "$work/tree" "$repo" change "tg-comment-apply: change live/canary/one" >/dev/null || { drop_work "$work"; return 1; }
-  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"change","base":"main","title":"tg-comment-apply: change live/canary/one"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
-  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "pull request $pr did not merge"; drop_work "$work"; return 1; }
-  merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
-  [ -n "$merge" ] || { log "pull request $pr has no merge commit"; drop_work "$work"; return 1; }
-  wait_run "$repo" "$merge" || { drop_work "$work"; return 1; }
-  log "pull request $pr merged as ${merge:0:8}; its apply: $RUN_STATUS, state for: $(tg_gated_applied tg-comment-apply)"
-  gated_forge tg-comment-apply 1 unsealed || rc=1
-
-  # tg_reply n text -> the reply terragucci posts on n, once it has.
-  tg_reply_count() { api "$URL/api/v1/repos/$repo/issues/$1/comments?limit=100" | jq '[.[] | select(.body | startswith("terragucci: "))] | length'; }
-  tg_reply() {
-    local n="$1" before i
-    before="$(tg_reply_count "$n")"
-    api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$2" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$n/comments" || return 1
-    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
-      [ "$(tg_reply_count "$n")" -gt "$before" ] && break
-      sleep 3
-    done
-    api "$URL/api/v1/repos/$repo/issues/$n/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
-  }
-
-  if [ $rc = 0 ]; then
-    reply="$(tg_reply "$pr" "/terragucci apply")"
-    applied="$(tg_gated_applied tg-comment-apply)"
-    log "first comment: state for: ${applied:-nothing}; reply: ${reply:-none}"
-    [ -z "$applied" ] || { log "the comment applied a unit with no sealed approval"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    grep -Eq "wave 1 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
-    grep -Eq 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$reply" || { log "the reply does not give the terragucci approve command"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    echo open > "$work/tree/live/fleet/two/rev.txt"
-    push_tree "$work/tree" "$repo" open-change "tg-comment-apply: an open change" >/dev/null || rc=1
-    open_pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"open-change","base":"main","title":"tg-comment-apply: open"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
-    reply="$(tg_reply "$open_pr" "/terragucci apply")"
-    log "open pull request $open_pr: ${reply:-no reply}"
-    grep -q "pull request $open_pr is not merged" <<<"$reply" || { log "an apply comment on an open pull request was not refused"; rc=1; }
-    applied="$(tg_gated_applied tg-comment-apply)"
-    [ -z "$applied" ] || { log "a refused comment applied: $applied"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve tg-comment-apply 1 sign || rc=1; }
-  if [ $rc = 0 ]; then
-    reply="$(tg_reply "$pr" "/terragucci apply")"
-    applied="$(tg_gated_applied tg-comment-apply)"
-    log "after the sealed approval: state for: ${applied:-nothing}; reply: ${reply:-none}"
-    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, wave 2 waiting at its own gate"; rc=1; }
-    grep -q "/actions/runs/" <<<"$reply" || { log "the reply does not link the run"; rc=1; }
-    grep -q "wave 2 waits" <<<"$reply" || { log "the reply does not say wave 2 waits"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "the comment applied no unit while wave 1 had only an unsealed approval, refused an open pull request, and applied live/canary/one once wave 1 was sealed"
-  return $rc
-}
-
 # ── apply before merge in a Terragrunt repo ──
 # The Terragrunt gated fixture (stack/fixtures/tg-gated-waves) with gate never,
 # apply.when: pull-request, and live/fleet/two after live/canary/one through a
@@ -8945,47 +8735,6 @@ tg_pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, i
       || { log "could not set TG_SMOKE_MERGE_TOKEN on $USER/$1"; return 1; }
   fi
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
-}
-
-claim_pr_apply/terragrunt() {
-  # A Terragrunt repo with apply.when: pull-request and apply.merge: auto. A
-  # pull request changes live/canary/one; once its runs finished, a reviewer
-  # approves its head and the admin comments /terragucci apply on it while it
-  # is open. The reply must say both waves of units applied from the head and
-  # the pull request was merged; the forge must show it merged; every unit
-  # must have state, and live/canary/one must hold the value of the pull request.
-  # BREAK: the pipeline is written without apply.when, so it applies after
-  # merge only: the comment on the open pull request is refused, the unit
-  # never holds the value of the pull request, and nothing merges.
-  log() { echo "[smoke tg-pr-apply] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-pr-apply" wf head pr reply applied merged rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  tg_pr_repo tg-pr-apply auto ${BREAK:+merge} || { drop_work "$work"; return 1; }
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  if [ -z "${BREAK:-}" ]; then
-    grep -q 'comment-apply .*--when pull-request.* --terragrunt' "$wf" || { log "the apply-comment job does not decide with --terragrunt"; drop_work "$work"; return 1; }
-    grep -q '^  confirm:' "$wf" || { log "the Terragrunt pipeline has no confirm job"; drop_work "$work"; return 1; }
-  fi
-  push_tree "$work/tree" "$repo" main "tg-pr-apply: first" >/dev/null || { drop_work "$work"; return 1; }
-  pr_reviewer "$repo" smoke-rev-tg-pr-apply || { drop_work "$work"; return 1; }
-  echo opened > "$work/tree/live/canary/one/rev.txt"
-  head="$(push_tree "$work/tree" "$repo" change "tg-pr-apply: change live/canary/one")" || { drop_work "$work"; return 1; }
-  pr="$(pr_open "$repo" change "tg-pr-apply: change live/canary/one")" || { drop_work "$work"; return 1; }
-  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
-  reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
-  applied="$(tg_gated_applied tg-pr-apply)"
-  merged="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merged)"
-  log "reply: ${reply:-none}; state for: ${applied:-nothing}; merged: $merged"
-  grep -q "applied wave 1, 2 of pull request $pr at ${head:0:8}, and merged pull request $pr" <<<"$reply" || { log "the reply does not say both waves of units applied from the head and the pull request merged"; rc=1; }
-  [ "$merged" = true ] || { log "pull request $pr was not merged"; rc=1; }
-  [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "not every unit has state"; rc=1; }
-  [ "$(pr_state_input tg-pr-apply live/canary/one/terraform)" = opened ] || { log "live/canary/one does not hold the value of the pull request"; rc=1; }
-  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-tg-pr-apply?purge=true" 2>/dev/null || true
-  drop_work "$work"
-  [ $rc = 0 ] && log "the open pull request applied its waves of units from its head and was merged after the last one"
-  return $rc
 }
 
 claim_lock/terragrunt() {
@@ -15556,49 +15305,6 @@ tg_fixture_stage() { # dir, docker run args (up to --), stage args...
   return $code
 }
 
-claim_policy/terragrunt() {
-  # The Terragrunt gated fixture with a policy that denies a terraform_data
-  # whose input is "denied", and live/canary/one set to "denied". tf-plan
-  # --terragrunt exits 1 with live/canary/one failed under policy and
-  # live/fleet/two planned; the tf-apply wave 1, which holds live/canary/one,
-  # exits 1 and leaves it with no state.
-  # BREAK: live/canary/one keeps its value, so nothing is denied and the wave
-  # applies it.
-  log() { echo "[smoke tg-policy] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work prefix="tg-policy-$STAMP" code=0 r layers rc=0
-  docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
-  build_cli || return 1
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  tg_fixture "$work/repo" "$prefix" "$(printf 'policy:\n  engine: conftest\n  path: policy')"
-  mkdir -p "$work/repo/policy"
-  printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  some rc in input.resource_changes\n  rc.type == "terraform_data"\n  rc.change.after.input == "denied"\n  msg := sprintf("%%s: this input is denied", [rc.address])\n}\n' > "$work/repo/policy/plan.rego"
-  [ -n "${BREAK:-}" ] || echo denied > "$work/repo/live/canary/one/rev.txt"
-  (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
-  layers="$(grep -o "tf-apply --wave 1 --layers '[^']*'" "$work/repo/.forgejo/workflows/terragucci.yml" | head -1 | sed "s/.*--layers '//; s/'$//")"
-  [ -n "$layers" ] || { log "the pipeline names no layers"; drop_work "$work"; return 1; }
-  git -C "$work/repo" init -q -b main
-  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke tg-policy"
-  tg_fixture_stage "$work/repo" -- tf-plan --terragrunt --binary tofu --layers "$layers" || code=$?
-  r="$work/repo/terragucci-report/report.json"
-  [ "$code" = 1 ] || { log "tf-plan exited $code, not 1"; rc=1; }
-  if [ -f "$r" ]; then
-    jq -e '.roots[] | select(.path == "live/canary/one" and .status == "failed" and .policy.result == "denied")' "$r" >/dev/null || { log "live/canary/one is not failed by the policy"; rc=1; }
-    jq -e '.roots[] | select(.path == "live/fleet/two" and .status == "planned")' "$r" >/dev/null || { log "live/fleet/two did not plan"; rc=1; }
-  else
-    log "tf-plan wrote no report"; rc=1
-  fi
-  code=0
-  rm -rf "$work/repo/terragucci-report"
-  tg_fixture_stage "$work/repo" -- tf-apply --wave 1 --layers "$layers" --binary tofu --gate never --terragrunt || code=$?
-  [ "$code" = 1 ] || { log "the wave exited $code, not 1"; rc=1; }
-  [ -z "$(tg_gated_applied "$prefix")" ] || { log "the denied wave applied: $(tg_gated_applied "$prefix")"; rc=1; }
-  drop_work "$work"
-  [ $rc = 0 ] && log "the denied unit failed tf-plan, and its wave applied nothing"
-  return $rc
-}
-
 claim_oidc/terragrunt() {
   # The Terragrunt gated fixture with terragrunt.credentials naming one role
   # pair for live/canary/** and another for live/fleet/**, and live/fleet/three
@@ -21220,159 +20926,6 @@ tg_never_repo() { # name
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
-claim_cost/terragrunt_gate() {
-  # The Terragrunt gated-waves fixture with gate: never and cost naming
-  # cost.mjs, which prices 10.00 a month for each resource a unit's saved plan
-  # creates, with approve_above: 15. Each unit creates one resource. The push
-  # to main applies wave 1 (live/canary/one, +10.00, within the amount), and
-  # wave 2 (live/fleet/three and live/fleet/two, +20.00) waits for an approval
-  # although the gate is never: its log names +20.00 USD, the amount 15.00 USD
-  # and the commit it was read at, and gives the approve command.
-  # BREAK: terragucci.yml has no cost, so every unit applies under gate: never.
-  log() { echo "[smoke tg-cost-gate] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-cost-gate" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  tg_never_repo tg-cost-gate <<'YAML' || { drop_work "$work"; return 1; }
-cost:
-  command: node cost.mjs
-  approve_above: 15
-YAML
-  cp "$HERE/fixtures/cost-policy/cost.mjs" "$work/tree/cost.mjs"
-  sha="$(push_tree "$work/tree" "$repo" main "tg-cost-gate: three units")" || rc=1
-  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
-  if [ $rc = 0 ]; then
-    applied="$(tg_gated_applied tg-cost-gate)"
-    logs="$(run_logs "$repo" "$RUN_ID")"
-    grep -E 'monthly cost|waits|approve tf-apply' <<<"$logs" | tail -8 >&2 || true
-    log "after the push: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, within the amount, and wave 2 to wait"; rc=1; }
-    grep -qE "wave 2 of 2: the monthly cost changes by \+20\.00 USD, over cost\.approve_above 15\.00 USD in the config at [0-9a-f]{40}, so it waits for an approval although gate is never" <<<"$logs" \
-      || { log "wave 2 did not wait for its cost, naming +20.00 USD and the amount 15.00 USD"; rc=1; }
-    grep -qE 'terragucci approve wave-2 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 2 gave no approve command"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "wave 1 applied within the amount; wave 2 waited under gate: never for its +20.00 USD over 15.00 USD"
-  return $rc
-}
-
-claim_steps/terragrunt_gate() {
-  # The Terragrunt gated-waves fixture with gate: never and a step after plan
-  # on live/canary/* that checks the unit's saved plan is there and exits 1,
-  # with on_failure: approve. The push to main stops at wave 1: the step runs
-  # in live/canary/one after the wave's run --all plan and asks for an
-  # approval, so the wave waits at its gate and prints the terragucci approve
-  # command, and no unit has state. Approving wave 1 and pushing again applies
-  # every unit: live/canary/one under the approval, wave 2 with no gate.
-  # BREAK: terragucci.yml has no steps, so the first push applies every unit.
-  log() { echo "[smoke tg-steps-gate] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-steps-gate" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  # shellcheck disable=SC2016 # the step's shell expands TG_PLAN_FILE
-  tg_never_repo tg-steps-gate <<'YAML' || { drop_work "$work"; return 1; }
-steps:
-  - name: verify
-    run: test -f "$TG_PLAN_FILE" && echo "no signature for this unit" && exit 1
-    after: plan
-    roots: ["live/canary/*"]
-    on_failure: approve
-YAML
-  sha="$(push_tree "$work/tree" "$repo" main "tg-steps-gate: a step asks for an approval")" || rc=1
-  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
-  if [ $rc = 0 ]; then
-    applied="$(tg_gated_applied tg-steps-gate)"
-    logs="$(run_logs "$repo" "$RUN_ID")"
-    log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ -z "$applied" ] || { log "a unit applied before the wave held by the step was approved"; rc=1; }
-    grep -E 'after-plan|step verify|terragucci approve wave-1' <<<"$logs" | head -6 >&2 || true
-    grep -q "live/canary/one: after-plan verify: no signature for this unit" <<<"$logs" || { log "the step did not run in live/canary/one after its plan"; rc=1; }
-    grep -q "live/canary/one: step verify asks for an approval, so the gate holds this wave" <<<"$logs" || { log "wave 1 was not held by the step"; rc=1; }
-    grep -qE 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 did not wait with its approve command"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve tg-steps-gate 1 || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-steps-gate: after wave 1 was approved")" || rc=1
-    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
-    applied="$(tg_gated_applied tg-steps-gate)"
-    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "expected every unit to apply once wave 1 was approved"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "the step after the wave's run --all plan held wave 1 at its gate under gate: never, and the approval of its digest let it apply"
-  return $rc
-}
-
-claim_waves/terragrunt_jobs() {
-  # The Terragrunt gated-waves fixture with waves.jobs: 2. Wave 1
-  # (live/canary/one) is one unit and one job; wave 2 (live/fleet/three and
-  # live/fleet/two) gets apply-wave-2, which plans both units with one run --all
-  # and gates the wave, and two share jobs of one unit each, then apply-rest.
-  # Push, approve wave 1, push: wave 1 applies and wave 2 waits at its one
-  # gate. Approve wave 2 once and push: each share plans its own unit with
-  # run --all --filter and applies it, apply-wave-2 applies nothing, and the
-  # ledger holds one approval of wave 2, used once.
-  # BREAK: the share jobs lose --shares 2 --share <s>, so each one plans,
-  # gates and applies the whole wave: the second finds the approval spent.
-  log() { echo "[smoke tg-wave-jobs] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-wave-jobs" sha applied rc=0 wf s got all="" ledger used approvals
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-wave-jobs tg-gated-waves || { drop_work "$work"; return 1; }
-  echo "  jobs: 2" >> "$work/tree/terragucci.yml"
-  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with waves.jobs: 2 failed"; drop_work "$work"; return 1; }
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  grep -q '^  apply-wave-2-share-2:' "$wf" || { log "init wrote no share jobs for wave 2"; drop_work "$work"; return 1; }
-  grep -q '^  apply-rest:' "$wf" || { log "init wrote no apply-rest job after wave 2's shares"; drop_work "$work"; return 1; }
-  if [ -n "${BREAK:-}" ]; then
-    sed 's# --shares 2 --share [0-9]##' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
-  fi
-  job_log() { # run id, job name
-    local id
-    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '.[] | select(.name == $n) | .id' | head -1)"
-    [ -n "$id" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null
-  }
-  sha="$(push_tree "$work/tree" "$repo" main "tg-wave-jobs: first")"
-  wait_run "$repo" "$sha"
-  gated_approve tg-wave-jobs 1 || rc=1
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-wave-jobs: after wave 1 was approved")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-wave-jobs)"
-    log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
-    job_log "$RUN_ID" apply-wave-2 | grep "terragucci approve wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve tg-wave-jobs 2 || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-wave-jobs: after wave 2 was approved")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-wave-jobs)"
-    log "after wave 2's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; rc=1; }
-    [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "expected every unit to have state"; rc=1; }
-    # Each share planned and applied one unit of its own.
-    for s in 1 2; do
-      got="$(job_log "$RUN_ID" "apply-wave-2-share-$s" | sed -n 's#.*applied \(live/fleet/[a-z]*\)$#\1#p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-      log "apply-wave-2-share-$s applied: ${got:-nothing}"
-      case "$got" in live/fleet/three|live/fleet/two) all="$all $got" ;; *) log "apply-wave-2-share-$s should have applied one unit of its own"; rc=1 ;; esac
-    done
-    [ "$all" = " live/fleet/three live/fleet/two" ] || [ "$all" = " live/fleet/two live/fleet/three" ] || { log "the shares did not split wave 2 between them"; rc=1; }
-    job_log "$RUN_ID" apply-wave-2 | grep -E "applied live/fleet/" >/dev/null && { log "apply-wave-2 applied a unit itself"; rc=1; }
-    ledger="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl)"
-    used="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply/applied.jsonl | jq -s '[.[] | select(.gate == "wave-2")] | length')"
-    approvals="$(jq -s '[.[] | select(.gate == "wave-2" and .kind != "pending")] | length' <<<"$ledger")"
-    log "wave 2 on the ledger: $approvals approval(s), used $used time(s)"
-    { [ "$approvals" = 1 ] && [ "$used" = 1 ]; } || { log "expected one approval of wave 2, used once"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "wave 2 waited at one gate, then its two share jobs each planned and applied their own unit under that one approval"
-  return $rc
-}
-
 claim_respond/terragrunt_fmt() {
   # The Terragrunt gated-waves fixture: main is pushed without a run, then a
   # branch whose live/canary/one/terragrunt.hcl is not formatted. The branch's
@@ -21713,57 +21266,6 @@ claim_tips/moved() {
   return $rc
 }
 
-claim_note/terragrunt() {
-  # Forgejo 16 creates no run for an event that skips a job with more than
-  # five levels of needs below it: the Terragrunt example's check job heads
-  # five waves and the tips job, so its pull requests got no plan. init hands
-  # that check's if to the runner. A copy of the example, its main pushed
-  # without the pipeline so nothing applies, gets a pull request that adds the
-  # committed pipeline and the one-unit scenario: its pull_request run plans
-  # and the plan note names live/dev/orders.
-  # BREAK: the pipeline's check keeps Forgejo's if, and Forgejo creates no
-  # pull_request run.
-  log() { echo "[smoke tg-pr-plan] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-pr-plan" tree flow sha pr run="" i notes rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  fresh_repo tg-pr-plan || return 1
-  tree="$work/tree"
-  mkdir -p "$tree"
-  cp -R "$TG_EXAMPLE/." "$tree/"
-  flow="$work/terragucci.yml"
-  mv "$tree/.forgejo/workflows/terragucci.yml" "$flow"
-  grep -q "if: (env.TF_IN_AUTOMATION || 'set') != '' && (" "$flow" || { log "the committed pipeline's check keeps Forgejo's if"; drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && perl -pi -e "s/^(    if: )\\Q(env.TF_IN_AUTOMATION || 'set') != '' && (\\E(.*)\\)\$/\$1\$2/" "$flow"
-  push_tree "$tree" "$repo" main "the example, without its pipeline" >/dev/null || { drop_work "$work"; return 1; }
-  mkdir -p "$tree/.forgejo/workflows"
-  cp "$flow" "$tree/.forgejo/workflows/terragucci.yml"
-  git -C "$tree" apply "$TG_EXAMPLE/changes/one-unit.patch" || { log "changes/one-unit.patch does not apply"; drop_work "$work"; return 1; }
-  sha="$(push_tree "$tree" "$repo" change/one-unit "the pipeline and the one-unit scenario")" || { drop_work "$work"; return 1; }
-  pr="$(api -H 'content-type: application/json' -X POST -d '{"title":"one-unit","head":"change/one-unit","base":"main"}' "$URL/api/v1/repos/$repo/pulls" | jq -r '.number // empty')"
-  [ -n "$pr" ] || { log "no pull request opened"; drop_work "$work"; return 1; }
-  # Forgejo makes the run when the event comes, or never.
-  for i in $(seq 1 40); do
-    run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -r '[.workflow_runs[] | select(.event == "pull_request")][0].id // empty')"
-    [ -n "$run" ] && break
-    sleep 3
-  done
-  if [ -z "$run" ]; then
-    log "pull request $pr got no pull_request run in two minutes: $(docker logs --since 5m "${TG_PROJECT:-terragucci}-forgejo" 2>&1 | grep -m1 "runID .* hit recursion limit" || echo 'no recursion line in the Forgejo log')"
-    drop_work "$work"; return 1
-  fi
-  TIMEOUT=900 wait_run "$repo" "$sha" pull_request || { drop_work "$work"; return 1; }
-  [ "$RUN_STATUS" = success ] || { log "the pull_request run ended $RUN_STATUS"; print_logs "$repo" "$RUN_ID" >&2; rc=1; }
-  notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
-  if [ -z "$notes" ]; then log "pull request $pr has no plan note"; rc=1
-  elif ! grep -q "live/dev/orders" <<<"$notes"; then log "the plan note does not name live/dev/orders: $(head -c 400 <<<"$notes")"; rc=1
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "pull request $pr got its pull_request run ($RUN_URL) and a plan note naming live/dev/orders"
-  return $rc
-}
-
 claim_lock/plan_fmt() {
   # A repo with locks: plan. Pull request A changes canary/one and holds it.
   # Then an unformatted main.tf is pushed to its branch: the check fails, and
@@ -22003,7 +21505,6 @@ affected/terragrunt     tg after=waves/terragrunt weight=500
 linked/terragrunt-mock       tg tg-ledger! after=waves/terragrunt weight=490
 check/terragrunt        tg runner self! after=waves/terragrunt weight=480
 tips/terragrunt-mock    tg after=waves/terragrunt weight=470
-drift/terragrunt        tg! after=waves/terragrunt weight=460
 linked/terragrunt-mock-trap    tg! tg-ledger! runner after=waves/terragrunt weight=520
 report/tofu          ex after=boot/tofu weight=400
 respond/refused ex after=boot/tofu weight=350
@@ -22076,11 +21577,9 @@ policy/delete-key    ex after=boot/tofu weight=150
 report/oidc          ex after=boot/tofu weight=150
 approval/terragrunt         runner self! weight=200
 refuse/terragrunt       runner self! weight=200
-approval/terragrunt-sealed            runner self! weight=200
 pr-apply/tofu             runner self! weight=250
 lock/apply        runner self! weight=300
 pr-apply/stale       runner self! weight=200
-comment/terragrunt-apply     runner self! weight=200
 telemetry/provider-calls       weight=90
 telemetry/summed-timings       weight=90
 init/foreign-checkout     ex after=boot/tofu weight=150
@@ -22133,7 +21632,6 @@ choudoufu/rows-wait        self! weight=200
 choudoufu/rows-takeover    runner self! weight=300
 drift/choudoufu            self! weight=150
 note/approve-command      runner self! weight=250
-pr-apply/terragrunt          runner self! weight=300
 lock/terragrunt     runner self! weight=300
 lock/atmos  runner self! weight=300
 lock/terramate runner self! weight=300
@@ -22183,7 +21681,6 @@ rollout/continue     runner self! weight=300
 policy/opa           weight=150
 policy/hcp           weight=150
 policy/hcl           weight=150
-policy/terragrunt            weight=200
 oidc/terragrunt       weight=200
 affected/terragrunt-dependents        weight=250
 linked/terragrunt-preview           self! weight=120
@@ -22250,9 +21747,6 @@ drift/branches weight=200
 steps/before-plan    runner self! weight=200
 steps/stop           runner self! weight=150
 steps/gate           runner self! weight=200
-cost/terragrunt-gate         runner self! weight=200
-steps/terragrunt-gate        runner self! weight=200
-waves/terragrunt-jobs         runner self! weight=300
 respond/terragrunt-fmt       runner self! weight=150
 state/terragrunt-versions    weight=150
 respond/terragrunt-drift          self! weight=150
@@ -22282,7 +21776,6 @@ agent/drift          runner self! weight=250
 apply/runner-nudge         stack! self! weight=200
 drift/github   self! weight=90
 lock/plan-fmt        runner self! weight=200
-note/terragrunt           tg self! after=waves/terragrunt weight=300
 ephemeral/pr         runner self! weight=250
 ephemeral/ttl        runner self! weight=250
 ephemeral/terragrunt      runner self! weight=300

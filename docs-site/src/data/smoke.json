@@ -387,14 +387,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "drift/terragrunt",
-      "says": "drift is reported by unit in a Terragrunt repo, with the same tracking issue",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "respond/refused",
       "says": "a refused wave names each root whose plan moved and the attributes that moved",
       "needs": null,
@@ -792,14 +784,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "approval/terragrunt-sealed",
-      "says": "under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "pr-apply/tofu",
       "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
       "needs": null,
@@ -845,14 +829,6 @@
     {
       "claim": "pr-apply/stale",
       "says": "a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "comment/terragrunt-apply",
-      "says": "a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1301,14 +1277,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "pr-apply/terragrunt",
-      "says": "with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "lock/terragrunt",
       "says": "in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named",
       "needs": null,
@@ -1705,14 +1673,6 @@
     {
       "claim": "policy/hcl",
       "says": "with a policies.hcl a mandatory policy denies the wave and an advisory one warns",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "policy/terragrunt",
-      "says": "in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -2382,30 +2342,6 @@
       "commit": "33d0387f"
     },
     {
-      "claim": "cost/terragrunt-gate",
-      "says": "with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "steps/terragrunt-gate",
-      "says": "a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "waves/terragrunt-jobs",
-      "says": "with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "respond/terragrunt-fmt",
       "says": "in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else",
       "needs": null,
@@ -2662,14 +2598,6 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "c64d95fa"
-    },
-    {
-      "claim": "note/terragrunt",
-      "says": "a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "fbfefd6f"
     },
     {
       "claim": "drift/github",
