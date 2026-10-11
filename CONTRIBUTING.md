@@ -319,7 +319,7 @@ The page's "What is left" list shows the same cells, without the commands.
 
 Run it on demand, when the host is quiet. Review the rows and captures it writes, and commit them. A cell that reads "none" for a repo shape, or for a forge, needs a new claim first. `coverage-gaps` names which.
 
-Neither command runs in CI. Every test bench, `coverage-fill` included, asks a person to type `run` in their own terminal before it starts (`stack/human-gate.sh`). Without a terminal it stops with exit 3, so a coding agent cannot start one. The nightly, capture and scale workflows are disabled; `gh workflow enable <name>` turns one back on.
+Neither command runs in CI. Every test bench, `coverage-fill` included, asks a person to type `run` in their own terminal before it starts (`stack/human-gate.sh`). Without a terminal it stops with exit 3, so a coding agent cannot start one, unless you granted it: `just grant <claim>... [--runs N] [--hours H]` (or `capture`) asks you to type `run` once and lets an agent run those claims that many times each (2 by default) for that long (4 hours). A granted run stops itself after 5 minutes with nothing written. `just grant --show` lists what is left and `just grant --end` ends it. The nightly, capture and scale workflows are disabled; `gh workflow enable <name>` turns one back on.
 
 ### The real-AWS pilot (SMOKE_AWS=1)
 

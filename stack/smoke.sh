@@ -42,7 +42,14 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A person starts a run (stack/human-gate.sh); --list reads CLAIMS only.
-[ "${1:-}" = --list ] || { . "$HERE/human-gate.sh"; human_gate "smoke claims, plain and under BREAK, holding the shared stack (or the GitLab lab, or a binary's example copy) for minutes to hours"; }
+# A grant (stack/grant.sh) covers --only runs of the claims it names.
+if [ "${1:-}" != --list ]; then
+  . "$HERE/human-gate.sh"
+  gate_names=()
+  [ "${1:-}" = --only ] && read -r -a gate_names <<<"$(tr ',' ' ' <<<"${2:-}")"
+  human_gate "smoke claims, plain and under BREAK, holding the shared stack (or the GitLab lab, or a binary's example copy) for minutes to hours" ${gate_names[@]+"${gate_names[@]}"}
+  unset gate_names
+fi
 
 # --only and --affected pick the claims; the rest of the arguments mean what
 # they mean without them. The names are checked once CLAIMS is known.
