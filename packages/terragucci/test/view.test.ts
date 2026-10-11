@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError, type TerragucciConfig } from "../src/config";
-import { BEHOLD_PIN, beholdArgv, beholdEnv, explainBehold, explainRefusal, opener, publishTarget, view, viewReports, viewSource, type ViewChild, type ViewDeps, type ViewOptions, type ViewSource, viewProject } from "../src/view";
+import { BEHOLD_PIN, beholdArgv, beholdEnv, explainBehold, explainRefusal, opener, publishTarget, view, viewReports, viewSource, type ViewChild, type ViewDeps, type ViewOptions, type ViewSource, viewProject, nodeViewDeps } from "../src/view";
 
 const PROJECT = "github.com/acme/infra";
 const S3: ViewSource = { source: "s3://acme-reports/tg", kind: "s3" };
@@ -178,7 +178,7 @@ function fake(answers: (["down"] | [number, string])[], opts: { env?: NodeJS.Pro
   let i = 0;
   f.deps = {
     spawn(cmd, args, o) {
-      f.spawns.push({ cmd, args, env: o.env, cwd: o.cwd });
+      f.spawns.push({ cmd, args, env: o.env, cwd: o.cwd, ...(o.group ? { group: true } : {}) });
       if (cmd !== "npx") return { output: () => {}, exit: Promise.resolve({ code: 0 }), kill: () => {} };
       const child: ViewChild = {
         output: (fn) => void (listener = fn),
@@ -230,7 +230,7 @@ describe("view, serving", () => {
     });
     const code = await view(serve, f.deps);
     expect(code).toBe(0);
-    expect(f.spawns[0]).toEqual({ cmd: "npx", args: beholdArgv(serve), env: { HOME: "/h", AWS_ENDPOINT_URL_S3: "http://floci:4566" }, cwd: "/repo" });
+    expect(f.spawns[0]).toEqual({ cmd: "npx", args: beholdArgv(serve), env: { HOME: "/h", AWS_ENDPOINT_URL_S3: "http://floci:4566" }, cwd: "/repo", group: true });
     expect(f.spawns[1]).toMatchObject({ cmd: "open", args: ["http://127.0.0.1:4600"] });
     expect(f.killed).toEqual(["SIGINT"]);
     expect(f.printed.at(-1)).toBe("terragucci view: behold serves http://127.0.0.1:4600; Ctrl-C stops it");
@@ -314,5 +314,17 @@ describe("view, exporting", () => {
     const f = fake([], { onSpawn: (f) => (f.child.write("Reading a Terraform estate needs chant's terraform lexicon, which behold does not install: @intentius/chant-lexicon-terraform and @cdktn/hcl2json are not resolvable from /x.\n"), f.child.exit(1)) });
     expect(await view({ ...serve, export: "/out" }, f.deps)).toBe(1);
     expect(f.warned).toEqual(["terragucci view: behold could not load @intentius/chant-lexicon-terraform and @cdktn/hcl2json, the Terraform reader npx installs beside it (@intentius/chant-lexicon-terraform@^0.121.0, @cdktn/hcl2json@^0.24.0)"]);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("the real spawn", () => {
+  // npx starts behold as its own child, which holds the stdout pipe: a signal
+  // to npx alone left terragucci view waiting on a pipe that never closed.
+  it("stops a child and the grandchild holding its stdout with one SIGTERM", async () => {
+    const child = nodeViewDeps().spawn("sh", ["-c", "sleep 60 & wait"], { cwd: process.cwd(), env: process.env, group: true });
+    await new Promise((r) => setTimeout(r, 200));
+    child.kill("SIGTERM");
+    const ended = await Promise.race([child.exit.then(() => "ended"), new Promise((r) => setTimeout(() => r("still running"), 5000))]);
+    expect(ended).toBe("ended");
   });
 });

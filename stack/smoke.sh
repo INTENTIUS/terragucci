@@ -9984,6 +9984,9 @@ HCL
   cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/terragucci-view/queue/"
   git -C "$work/terragucci-view" init -q -b main
   git -C "$work/terragucci-view" add -A && git -C "$work/terragucci-view" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke terragucci-view"
+  # The gate reads chant/lifecycle from origin, so the wave can wait.
+  git init -q --bare "$work/origin.git"
+  git -C "$work/terragucci-view" remote add origin /origin.git
   # Waits for behold while view runs (its pid is the argument), then reads the marks.
   cat > "$work/probe/probe.mjs" <<'JS'
 import { writeFileSync } from "node:fs";
@@ -10000,7 +10003,7 @@ writeFileSync("/probe/out.json", JSON.stringify({ api: api ?? null }));
 if (!api) { console.error(alive() ? "behold never answered on :4600" : "terragucci view exited before behold answered"); process.exit(1); }
 JS
   in_image() { # the command
-    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/terragucci-view:/projects/terragucci-view" -v "$work/probe:/probe" -w /projects/terragucci-view \
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/terragucci-view:/projects/terragucci-view" -v "$work/origin.git:/origin.git" -v "$work/probe:/probe" -w /projects/terragucci-view \
       -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -10033,7 +10036,7 @@ JS
   if [ $rc = 0 ]; then
     # The command as a reader runs it, with credentials in the environment
     # (AWS_DOCKER_ENV); SIGTERM stops it once the probe has read the marks.
-    out="$(in_image sh -c 'terragucci view --no-open >/tmp/view.log 2>&1 & pid=$!; node /probe/probe.mjs "$pid"; rc=$?; kill -TERM "$pid" 2>/dev/null; wait "$pid"; echo "view exited $?"; cat /tmp/view.log; exit $rc' 2>&1)" || { log "the probe did not reach behold through terragucci view"; rc=1; }
+    out="$(in_image sh -c 'terragucci view --no-open >/tmp/view.log 2>&1 & pid=$!; node /probe/probe.mjs "$pid"; rc=$?; kill -TERM "$pid" 2>/dev/null; i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then echo "view still running 30 s after SIGTERM"; cat /tmp/view.log; exit 1; fi; wait "$pid"; echo "view exited $?"; cat /tmp/view.log; exit $rc' 2>&1)" || { log "the probe did not reach behold through terragucci view"; rc=1; }
     printf '%s\n' "$out" >&2
     clean_mounted "$work/terragucci-view" "$image"
   fi
