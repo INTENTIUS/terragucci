@@ -67,7 +67,7 @@ pin|chain|modules/publish rollout/tofu|pull files|just example change pin; the r
 drift|booted|drift/tofu|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
 see-runs|booted|telemetry/dash-pipeline telemetry/dash-changes telemetry/dash-waves telemetry/dash-drift telemetry/dash-estate telemetry/dash-runs telemetry/dash-slos||just see-runs; three runs of the example sent to the observability profile, which fill the dashboards the page describes
 tips|booted|tips/tofu|note report|just example change float and a tf-plan of it with reports.bucket on floci; the plan note'"'"'s tip line and the report'"'"'s Tips section (the pull request is closed afterwards)
-tg|alone|check/terragrunt note/terragrunt|check note|the Terragrunt example with its unformatted scenario pushed to a branch and its module-bump scenario as a pull request; the check job'"'"'s hcl fmt failure and the plan note (the example is reset afterwards)'
+tg|alone|check/terragrunt|check note|the Terragrunt example with its unformatted scenario pushed to a branch and its module-bump scenario as a pull request; the check job'"'"'s hcl fmt failure and the plan note (the example is reset afterwards)'
 
 field() { # step, field number -> that field of the step's row
   awk -F'|' -v s="$1" -v n="$2" '$1 == s { print $n }' <<<"$STEPS"
