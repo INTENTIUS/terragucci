@@ -277,6 +277,7 @@ approval-at-base|a merge that switches approval from sealed to ledger is judged 
 sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
 estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
 behold-view|the behold step of the estate job reads the reports from the bucket and publishes a view under views/behold/, and headless Chrome, opening it from the bucket, draws the drift the drift check found on the card of the deleted queue|
+behold-serve|behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json|
 drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
 pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no terragucci approve, recorded on the ledger as via pr-review|
 pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest|
@@ -9888,6 +9889,130 @@ HCL
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "the view is in the bucket under $prefix/views/behold, and draws the deleted queue's drift"
+  return $rc
+}
+
+claim_behold_serve() {
+  # One project with two roots copies its reports to the bucket: a drift check
+  # that finds a queue deleted outside OpenTofu, and a gated tf-apply wave that
+  # waits for an approval. `terragucci estate` writes estate.json. Then the
+  # command "See your estate in behold" gives, `behold serve . --terragucci
+  # s3://...`, runs in the CI image against the checkout and the bucket. Holds
+  # when its page loads, /api/terragucci lists both roots, marks the queue's
+  # card as deleted outside Terraform with the drift check's finish time, and
+  # gives the waiting wave's `terragucci approve wave-1 --plan` line, and a
+  # deploy (POST /api/apply) is refused with 409.
+  # SMOKE_BEHOLD names the package (default the version the guide pins).
+  # BREAK: index.json at the prefix is corrupted after the runs, and behold
+  # must refuse it (422, code terragucci-report) rather than draw marks.
+  log() { echo "[smoke behold-serve] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 code=0 prefix queue url out api card="behold-serve/queue/aws_sqs_queue.jobs"
+  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.23.0}"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # Plain and BREAK run at once: each its own prefix and queue.
+  prefix="behold-serve-$(date +%s)-$$${BREAK:+-break}"
+  queue="behold-serve-$(date +%s)-$$${BREAK:+-break}"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/behold-serve/queue" "$work/behold-serve/gate" "$work/probe"
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/behold-serve/terragucci.yml"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "gate" {\n  input = "behold-serve"\n}\n' > "$work/behold-serve/gate/main.tf"
+  cat > "$work/behold-serve/queue/main.tf" <<HCL
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+
+  backend "local" {}
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_sqs_queue" "jobs" {
+  name = "$queue"
+}
+HCL
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/behold-serve/queue/"
+  git -C "$work/behold-serve" init -q -b main
+  git -C "$work/behold-serve" add -A && git -C "$work/behold-serve" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke behold-serve"
+  git init -q --bare "$work/origin.git"
+  git -C "$work/behold-serve" remote add origin /origin.git
+  # Waits for the server, then reads the page, the marks and one write it must refuse.
+  cat > "$work/probe/probe.mjs" <<'JS'
+import { writeFileSync } from "node:fs";
+const base = "http://127.0.0.1:4600";
+const get = async (path, init) => { const r = await fetch(base + path, init); return { status: r.status, body: await r.text() }; };
+let api;
+for (let i = 0; i < 300 && !api; i++) {
+  try { api = await get("/api/terragucci"); } catch { await new Promise((r) => setTimeout(r, 1000)); }
+}
+if (!api) { console.error("behold serve never answered on :4600"); process.exit(1); }
+const page = await get("/");
+const apply = await get("/api/apply", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+writeFileSync("/probe/out.json", JSON.stringify({ api, page: { status: page.status, length: page.body.length }, apply }));
+JS
+  in_image() { # the command
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/behold-serve:/projects/behold-serve" -v "$work/origin.git:/origin.git" -v "$work/probe:/probe" -w /projects/behold-serve \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" "$@"
+  }
+  in_image sh -c 'cd queue && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { log "the queue did not apply"; rc=1; }
+  clean_mounted "$work/behold-serve" "$image"
+  if [ $rc = 0 ]; then
+    sqs() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.$1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] && sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null || { log "could not delete $queue from floci"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci stage tf-drift --layers queue >&2 || true
+    clean_mounted "$work/behold-serve" "$image"
+    jq -e '[.roots[] | select(.changes | length > 0)] | length == 1' "$work/behold-serve/terragucci-report/report.json" >/dev/null 2>&1 || { log "the drift check found no drift"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci stage tf-apply --wave 1 --layers gate --binary tofu --gate always >&2 || code=$?
+    clean_mounted "$work/behold-serve" "$image"
+    [ "$code" = 3 ] || { log "the gated wave exited $code, not 3 (waiting)"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/behold-serve" "$image"
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET/$prefix/index.json" --data-binary '{"reports": "corrupted"' || { log "could not corrupt index.json"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The command the guide gives, with the reader's own credentials
+    # (AWS_DOCKER_ENV), served while the probe reads it.
+    out="$(in_image sh -c 'npx --yes -p "$1" -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0 behold serve . --terragucci "$2" --port 4600 >/tmp/behold.log 2>&1 & pid=$!; node /probe/probe.mjs; rc=$?; kill $pid 2>/dev/null; tail -n 40 /tmp/behold.log; exit $rc' sh "$behold" "s3://$REPORT_BUCKET/$prefix" 2>&1)" || { log "the probe did not reach behold serve"; rc=1; }
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/behold-serve" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    api="$(jq -r '.api.body' "$work/probe/out.json")"
+    if [ "$(jq -r '.api.status' "$work/probe/out.json")" != 200 ]; then
+      log "/api/terragucci answered $(jq -r '.api.status' "$work/probe/out.json"): $(jq -c '{code, error}' <<<"$api" 2>/dev/null)"; rc=1
+    else
+      jq -e '[.roots[].path] | (map(endswith("queue")) | any) and (map(endswith("gate")) | any)' <<<"$api" >/dev/null || { log "the roots are $(jq -c '[.roots[].path]' <<<"$api"), not queue and gate"; rc=1; }
+      jq -e --arg c "$card" '.cards[$c] // [] | map(select(.verdict == "drift" and .action == "delete" and (.run.finished | length > 0))) | length == 1' <<<"$api" >/dev/null || { log "no dated drift mark on $card: $(jq -c --arg c "$card" '.cards[$c]' <<<"$api")"; rc=1; }
+      jq -e '.waiting | map(select(.command | test("^npx terragucci approve wave-1 --plan [^ ]+$"))) | length == 1' <<<"$api" >/dev/null || { log "no approve line for wave 1: $(jq -c '.waiting' <<<"$api")"; rc=1; }
+    fi
+    [ "$(jq -r '.page.status' "$work/probe/out.json")" = 200 ] && [ "$(jq -r '.page.length' "$work/probe/out.json")" -gt 0 ] || { log "the page did not load"; rc=1; }
+    [ "$(jq -r '.apply.status' "$work/probe/out.json")" = 409 ] && [ "$(jq -r '.apply.body | fromjson | .code' "$work/probe/out.json" 2>/dev/null)" = terragucci ] \
+      || { log "POST /api/apply answered $(jq -r '.apply.status' "$work/probe/out.json"), not a 409 naming the pipeline"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "behold serve drew both roots, the queue's dated drift and wave 1's approve line from the bucket, and refused a deploy"
   return $rc
 }
 
@@ -21933,6 +22058,7 @@ approval-at-base     runner self! weight=250
 sealed-migrate       runner self! weight=250
 estate               weight=120
 behold-view          weight=120
+behold-serve         weight=150
 drift-overdue        self! weight=60
 pr-review            runner self! weight=300
 pr-review-moved      runner self! weight=300
