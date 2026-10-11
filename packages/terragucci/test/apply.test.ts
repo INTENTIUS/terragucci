@@ -630,7 +630,7 @@ describe("a wave behind its gate", () => {
       approve(origin, approval(digest, "alice"));
       expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(log)).toBe(false);
-      expect(lines.join("\n")).toMatch(/not signed/);
+      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
       expect(lines.join("\n")).toContain(`--plan ${digest} --sign`);
     });
 
@@ -693,7 +693,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(s.work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(s.log)).toBe(false);
       expect(lines.join("\n")).toContain("does not list wave-1 under identity.gates");
-      expect(lines.join("\n")).toMatch(/not signed/);
+      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
       approve(s.origin, sealed(digest, "alice", alice));
       expect(await applyWave(s.work, { ...opts, now: T(5) })).toBe(0);
       expect(existsSync(s.log)).toBe(true);
@@ -728,7 +728,7 @@ describe("a wave behind its gate", () => {
       expect(lines).toContain(`  terragucci approve wave-1 --plan ${digest} --sign`);
       approve(origin, approval(digest, 2));
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(3);
-      expect(lines.join("\n")).toMatch(/not signed/);
+      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
       const a = approval(digest, 4);
       approve(origin, { ...a, seal: { signer: "alice", key: "SHA256:test", signature: sshsig(alice, gateSealPayload(a), "chant-gate") } });
       expect(await applyWave(work, { ...opts(bin), now: T(5) })).toBe(0);
