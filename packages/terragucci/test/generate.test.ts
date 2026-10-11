@@ -138,7 +138,7 @@ terraform {
     if (!has) return;
     const dir = repo(HIERARCHY);
     generate(dir);
-    execFileSync("tofu", ["fmt", "-check", "-recursive", dir], { stdio: "pipe" });
+    execFileSync("tofu", ["fmt", "-check", "-recursive", "."], { cwd: dir, stdio: "pipe" });
   });
 
   it("writes each root's files, and once written, --check passes and a second run changes nothing", () => {
