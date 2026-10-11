@@ -6,8 +6,8 @@
     "build": "chant build src --lexicon sql -o dist/schema.json"
   },
   "devDependencies": {
-    "@intentius/chant": "^0.112.0",
-    "@intentius/chant-lexicon-sql": "^0.112.0",
+    "@intentius/chant": "0.112.1",
+    "@intentius/chant-lexicon-sql": "0.112.1",
     "typescript": "^5.9.3"
   }
 }
