@@ -15,8 +15,9 @@
 //                200 "ok", as Slack's does, and is kept with its JSON body.
 //                With HMAC_KEY, each POST is also kept with `verified`:
 //                whether X-Terragucci-Signature is sha256= and the
-//                HMAC-SHA256 of the raw body with that key, as a receiver
-//                of terragucci's generic webhook checks it
+//                HMAC-SHA256 of `<X-Terragucci-Timestamp>.<raw body>` with
+//                that key, as a receiver of terragucci's generic webhook
+//                checks it
 //   MODE=cost    a cost estimator's API: POST /estimate takes a plan's
 //                show -json and answers Infracost's JSON, 10.00 a month for
 //                each resource the plan creates, less 10.00 for each it
@@ -73,9 +74,11 @@ function sts(form) {
   return [400, `<ErrorResponse><Error><Code>InvalidAction</Code><Message>${action} is not answered here</Message></Error></ErrorResponse>`, "text/xml"];
 }
 
-/** Whether the request carries X-Terragucci-Signature over its raw body with HMAC_KEY. */
+/** Whether the request carries X-Terragucci-Signature over `<timestamp>.<raw body>` with HMAC_KEY, its timestamp within five minutes. */
 function verified(req, raw) {
-  const want = Buffer.from(`sha256=${createHmac("sha256", process.env.HMAC_KEY).update(raw).digest("hex")}`);
+  const ts = String(req.headers["x-terragucci-timestamp"] ?? "");
+  if (!/^\d+$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const want = Buffer.from(`sha256=${createHmac("sha256", process.env.HMAC_KEY).update(`${ts}.${raw}`).digest("hex")}`);
   const got = Buffer.from(String(req.headers["x-terragucci-signature"] ?? ""));
   return got.length === want.length && timingSafeEqual(got, want);
 }

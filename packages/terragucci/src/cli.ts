@@ -118,7 +118,7 @@ import { exportState } from "./export";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
-import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
+import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type WaveEvent } from "./notify";
 import { startRelay } from "./relay";
 import { mcp } from "./mcp";
 import { describeQuery, query } from "./query";
@@ -761,7 +761,7 @@ export async function main(argv: string[]): Promise<number> {
           for (const line of await notifyDrift(driftNotice(resolve(cwd, str(flags, "report") ?? "terragucci-report")))) console.log(`terragucci notify: ${line}`);
           return 0;
         }
-        const event = args[0] as NotifyEvent;
+        const event = args[0] as WaveEvent;
         if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${[...NOTIFY_EVENTS, "drift"].join(", ")}`);
         const wave = Number(str(flags, "wave"));
         if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("terragucci notify needs --wave <n>");
