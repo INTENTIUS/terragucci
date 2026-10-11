@@ -45,22 +45,13 @@
 #   stack/example-gitlab.sh logs      the last failed pipeline's failing lines
 #   stack/example-gitlab.sh reset     close every merge request, put main back to
 #                                     the example as committed, and apply it again
-#   stack/example-gitlab.sh shot URL OUT.png [light|dark] [shot.mjs flags...]
-#                                     one picture of a GitLab page, signed in as
-#                                     root with the color mode set to light or
-#                                     dark, banners and the sidebar hidden
-#   stack/example-gitlab.sh capture   reset, then the docs' GitLab views, each
-#                                     light and dark, as the tutorial step gitlab:
-#                                     docs-site/src/data/tutorial/gitlab.json and
-#                                     docs-site/src/assets/tutorial/gitlab-*.png
+#   stack/example-gitlab.sh capture   reset, then the docs' GitLab views, recorded
+#                                     as text, as the tutorial step gitlab:
+#                                     docs-site/src/data/tutorial/gitlab.json
 #   stack/example-gitlab.sh down      remove the stack
 #
 # TGLAB=1 runs all of it on the GitLab lab (stack/gitlab/gitlab.sh, compose
 # project tglab) in place of the validation stack's gitlab profile.
-#
-# The project is public. GitLab's color mode is a setting of the signed-in
-# user, not the browser's prefers-color-scheme, so 'shot' signs in and sets it
-# before each picture.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -244,42 +235,6 @@ held_lines() { # pipeline id
   failed_jobs "$1" | while read -r id name; do
     trace "$id" | grep -E 'terragucci approve wave-|changed after it was approved|planned differently since' || true
   done
-}
-
-# What a picture of a GitLab page leaves out (stack/shot.mjs --hide): the
-# broadcast and callout banners, the left sidebar and the top bar's account
-# menus, so the page is the project's content alone. GITLAB_STYLE lets the
-# content take the sidebar's width.
-GITLAB_HIDE="${GITLAB_HIDE:-.super-sidebar, .super-sidebar-toggle, .broadcast-wrapper, .gl-broadcast-message, .alert-wrapper .gl-alert, .user-callout, .js-feature-highlight}"
-# Sticky bars (the breadcrumb and the job log's toolbar) are made static, so
-# none paints over a clipped log line.
-GITLAB_STYLE="${GITLAB_STYLE:-.page-with-super-sidebar { padding-left: 0 !important; } .top-bar-fixed, .top-bar-container, .build-log-toolbar, .job-log-top-bar, [data-testid=job-log-top-bar], .gl-sticky, .issue-sticky-header, .sticky-header { position: static !important; left: 0 !important; }}"
-
-# A signed-in session for root with GitLab's color mode set to THEME, as
-# NAME=VALUE for shot.mjs --cookie. The session is kept in stack/.state while
-# GitLab still accepts it. The root password is the stack's, from
-# docker-compose.yml.
-gitlab_session() { # light|dark
-  # Color mode 1 is light and 2 dark; so are the syntax themes, which code
-  # blocks follow.
-  local jar="$STATE_DIR/gitlab-cookies" page csrf mode=1 code
-  [ "$1" = dark ] && mode=2
-  code="$(curl -s -o "$WORK/prefs.html" -w '%{http_code}' -b "$jar" "$URL/-/profile/preferences" 2>/dev/null || true)"
-  if [ "$code" != 200 ]; then
-    rm -f "$jar"
-    page="$(curl -fsS -c "$jar" -b "$jar" "$URL/users/sign_in")" || fail "the GitLab sign-in page did not load"
-    csrf="$(grep -o 'name="authenticity_token" value="[^"]*"' <<<"$page" | head -1 | sed 's/.*value="//; s/"$//')"
-    curl -fsS -o /dev/null -c "$jar" -b "$jar" --data-urlencode "authenticity_token=$csrf" \
-      --data-urlencode "user[login]=root" --data-urlencode "user[password]=Tg9QvK3mNt8RpLb2WdHf" "$URL/users/sign_in" \
-      || fail "could not sign in to GitLab as root"
-    code="$(curl -s -o "$WORK/prefs.html" -w '%{http_code}' -b "$jar" "$URL/-/profile/preferences")"
-    [ "$code" = 200 ] || fail "signed in, but GitLab answered $code for the preferences page"
-  fi
-  csrf="$(grep -o 'name="csrf-token" content="[^"]*"' "$WORK/prefs.html" | head -1 | sed 's/.*content="//; s/"$//')"
-  curl -fsS -o /dev/null -b "$jar" -c "$jar" -X PUT -H "X-CSRF-Token: $csrf" -H 'Accept: application/json' \
-    --data-urlencode "user[color_mode_id]=$mode" --data-urlencode "user[color_scheme_id]=$mode" \
-    "$URL/-/profile/preferences" || fail "could not set the color mode to $1"
-  awk '$6 == "_gitlab_session" { print $6 "=" $7 }' "$jar" | tail -1
 }
 
 # The newest pipeline with a failed job, on REF or any ref. A pipeline whose
@@ -601,113 +556,58 @@ OUT
     verify_tree "$WORK/tree"
     ;;
 
-  shot)
-    url="${1:-}"; out="${2:-}"; theme="${3:-light}"
-    [ -n "$url" ] && [ -n "$out" ] || fail "usage: example-gitlab.sh shot URL OUT.png [light|dark] [shot.mjs flags...]"
-    shift $(( $# < 3 ? $# : 3 ))
-    case "$url" in http*) ;; *) url="$URL/${url#/}" ;; esac
-    CHROME="${CHROME:-}"
-    if [ -z "$CHROME" ]; then
-      for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium chromium-browser; do
-        if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then CHROME="$c"; break; fi
-      done
-    fi
-    [ -n "$CHROME" ] || fail "no Chrome or Chromium found; set CHROME"
-    cookie="$(gitlab_session "$theme")"
-    node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$out" --scheme "$theme" \
-      --cookie "$cookie" --hide "$GITLAB_HIDE" --style "$GITLAB_STYLE" "$@"
-    log "wrote $out ($theme)"
-    ;;
-
   capture)
-    # Each step runs as its own command, so what it prints is what a reader
-    # of the docs would see, and each view is shot right after its step.
+    # The tutorial shows one GitLab view, the plan note of a one-root change.
+    # The step runs as its own command, so what it prints is what a reader of
+    # the docs would see.
     ROOT="$(cd "$HERE/.." && pwd)"
-    DATA="$ROOT/docs-site/src/data/tutorial" SHOTS="$ROOT/docs-site/src/assets/tutorial"
+    DATA="$ROOT/docs-site/src/data/tutorial"
     started="$(date +%s)"
     "$0" reset >&2 || fail "reset failed; run 'just example-gitlab up' first"
-    mkdir -p "$WORK/shots"
+    VIEWS="$WORK/views"
+    mkdir -p "$VIEWS"
     : > "$WORK/commands"
     step() { # command words...
       local out
       out="$("$0" "$@")" || return 1
       jq -n --arg cmd "just example-gitlab $*" --arg output "$(sed '/^$/d; s/^  //' <<<"$out")" '{cmd: $cmd, output: $output, exit: 0}' >> "$WORK/commands"
     }
-    # A job's log, which a signed-out reader cannot open: its lines from the
-    # first that matches one regex to the first after it that matches another.
-    log_lines() { # command, job id, from regex, to regex, exit code
-      local out
-      out="$(trace "$2" | awk -v a="$3" -v b="$4" '!on && $0 ~ a { on = 1 } on { sub(/[ \t]+$/, ""); print } on && $0 ~ b { exit }')"
-      [ -n "$out" ] || fail "no lines from /$3/ in job $2"
-      jq -n --arg cmd "$1" --arg output "$out" --argjson exit "$5" '{cmd: $cmd, output: $output, exit: $exit}' >> "$WORK/commands"
+    # A note, a reply or an issue as the docs show it: its Markdown from the
+    # API and GitLab's own rendering of it.
+    md_view() { # view, markdown source
+      local html
+      [ -n "$2" ] || fail "nothing to record for the $1 view"
+      html="$(jq -n --arg t "$2" --arg p "$REPO" '{text: $t, gfm: true, project: $p}' \
+        | api -X POST -H 'Content-Type: application/json' --data-binary @- "$URL/api/v4/markdown" | jq -r '.html // empty')" \
+        || fail "GitLab did not render the $1 view"
+      [ -n "$html" ] || fail "GitLab rendered the $1 view empty"
+      jq -n --arg s "$2" --arg h "$html" '{kind: "markdown", source: $s, html: $h}' > "$VIEWS/$1.json"
     }
-    take() { # view path [shot.mjs flags...]
-      local view="$1" path="$2" scheme
-      shift 2
-      for scheme in light dark; do
-        "$0" shot "$path" "$WORK/shots/$view-$scheme.png" "$scheme" "$@" >&2 || fail "no $scheme picture of $view"
-        node "$ROOT/scripts/png-compress.mjs" "$WORK/shots/$view-$scheme.png" >/dev/null || fail "cannot compress $view-$scheme.png"
-      done
+    plan_note() { # merge request iid -> the plan note's body
+      api "$P/merge_requests/$1/notes?sort=asc&per_page=100" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty'
     }
-    # The setting the add-to page asks a GitLab reader to turn on.
+    # The setting the add-to page asks a GitLab reader to turn on, on while the
+    # steps run, as on the reader's project.
     api -o /dev/null -X PUT "$P" --data-urlencode "only_allow_merge_if_pipeline_succeeds=true"
-    take required "/$REPO/-/settings/merge_requests" --scroll 'fieldset, .form-group, .gl-form-group' --match '^\s*Merge checks' --fit 1
 
     step change one-root || fail "change one-root failed"
     iid="$(forge_open_pr example change/one-root)"
-    take note "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'Posted by' --fit 1
-    # The re-plan updates that note in place; the picture runs on to the note below it.
-    step plan-comment one-root || fail "plan-comment one-root failed"
-    take replan "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'Posted by' --height 1200
-
-    step change unformatted || fail "change unformatted failed"
-    # The check job's fix moves the branch, so its first push pipeline is the one that failed.
-    pipe="$(api "$P/pipelines?ref=change%2Funformatted&source=push&order_by=id&sort=asc" | jq -r '.[0].id // empty')"
-    job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name == "check") | .id' | head -1)"
-    [ -n "$job" ] || fail "no failed check job on change/unformatted"
-    take check "/$REPO/-/jobs/$job" --scroll '.job-log-line' --match '^\s*[0-9]*\s*envs/.*[.]tf\s*$' --through '^\s*[0-9]*\s*}\s*$' --margin 4
-
-    log_lines "the check job of change/unformatted" "$job" '^envs/.*[.]tf$' 'Cleaning up|ERROR: Job failed' 1
-
-    step change destroy || fail "change destroy failed"
-    step merge destroy || fail "merge destroy failed"
-    pipe="$(last_failed main)"
-    job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name | startswith("apply-wave-")) | .id' | head -1)"
-    [ -n "$job" ] || fail "no waiting wave on main after merge destroy"
-    take waiting "/$REPO/-/jobs/$job" --scroll '.job-log-line' --match 'wave [0-9]+ of [0-9]+:' --through 'terragucci approve wave-' --margin 4
-
-    log_lines "the waiting apply job on main" "$job" '^wave [0-9]+ of [0-9]+:' 'terragucci approve wave-' 3
-
-    # Drift comes last: the queue it deletes would be applied back by any later merge.
-    step change drift || fail "change drift failed"
-    issue="$(api "$P/issues?state=opened&order_by=created_at&sort=desc" | jq -r '.[0].iid // empty')"
-    [ -n "$issue" ] || fail "the drift run opened no issue"
-    take drift "/$REPO/-/issues/$issue" --scroll '[data-testid=work-item-description], .work-item-description, .detail-page-description' --fit 1
-
-    # Apply before merge changes main's pipeline, so it runs on a reset example.
-    "$0" reset >&2 || fail "reset failed"
-    step pr-apply || fail "pr-apply failed"
-    iid="$(api "$P/merge_requests?state=merged&source_branch=change%2Fone-root&order_by=updated_at" | jq -r '.[0].iid // empty')"
-    [ -n "$iid" ] || fail "no merged merge request from change/one-root"
-    take apply "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'applied wave' --fit 1
+    md_view note "$(plan_note "$iid")"
 
     # The hash tutorial-check computes, as every capture records it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
-    shots='{}'
-    for view in required note replan check waiting drift apply; do
-      for scheme in light dark; do
-        cp "$WORK/shots/$view-$scheme.png" "$SHOTS/gitlab-$view-$scheme.png"
-        h="$(shasum -a 256 "$SHOTS/gitlab-$view-$scheme.png" | cut -c1-16)"
-        shots="$(jq --arg k "$view-$scheme" --arg h "$h" '. + {($k): $h}' <<<"$shots")"
-      done
-    done
+    [ -f "$VIEWS/note.json" ] || fail "no note view"
+    views="$(jq '{note: .}' "$VIEWS/note.json")"
     # GitLab's address depends on the stack it ran on; the docs show the path.
+    # The views also hold the in-network address jobs build links from.
     U="$URL" perl -pi -e 's#\Q$ENV{U}\E##g' "$WORK/commands"
-    jq -s --arg h "$hash" --argjson shots "$shots" '{step: "gitlab", source_hash: $h, commands: ., shots: $shots}' \
+    printf '%s\n' "$views" > "$WORK/views.json"
+    U="$URL" perl -pi -e 's#\Q$ENV{U}\E##g; s#http://gitlab:8929##g' "$WORK/views.json"
+    jq -s --arg h "$hash" --slurpfile views "$WORK/views.json" '{step: "gitlab", source_hash: $h, commands: ., views: $views[0]}' \
       "$WORK/commands" > "$DATA/gitlab.json"
     api -o /dev/null -X PUT "$P" --data-urlencode "only_allow_merge_if_pipeline_succeeds=false"
     "$0" reset >&2
-    printf '\n  Wrote  docs-site/src/data/tutorial/gitlab.json and docs-site/src/assets/tutorial/gitlab-*.png\n  Took   %s minutes\n' \
+    printf '\n  Wrote  docs-site/src/data/tutorial/gitlab.json\n  Took   %s minutes\n' \
       "$(( ($(date +%s) - started + 59) / 60 ))"
     ;;
 

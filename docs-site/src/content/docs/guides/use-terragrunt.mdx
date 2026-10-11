@@ -11,7 +11,6 @@ prompt: |
 ---
 
 import { Steps } from '@astrojs/starlight/components';
-import Shot from '../../../components/Shot.astro';
 
 ## Result
 
@@ -91,9 +90,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate` and plans th
 | Moving resources between units | a migration file names units as it names roots; Terragrunt prepares each unit, and the move goes through the same gate ([Move resources between roots](/terragucci/guides/move-resources-between-roots/)) |
 | A version per unit | a unit's `.opentofu-version` or `.terraform-version`, a `version` map glob, or an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` picks its releases; each is installed in the job, and a wave runs as one `run --all` per pair of releases ([A version per root](/terragucci/reference/config/#a-version-per-root)) |
 
-A held wave of units waits as a wave of roots does. It names its units and set digest and prints the approve command:
-
-<Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the terragucci approve wave-2 command, and exits with code 3" />
+A held wave of units waits as a wave of roots does. It names its units and set digest and prints the approve command.
 
 ## Explicit stacks
 

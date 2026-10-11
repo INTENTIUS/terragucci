@@ -7,7 +7,6 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
 
 Nothing is sent until an endpoint is set; any backend with an OTLP endpoint works.
 
@@ -57,7 +56,7 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
 
-<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" />
+In Grafana's Explore, a tf-plan run's trace starts at its stage span. Each root, such as `envs/dev/orders`, gets a span below it with the binary's commands under that, and OpenTofu's provider and resource spans nest inside the plan.
 
 The binary exports to a loopback receiver, OTLP over HTTP only, which forwards batches to your collector.
 
@@ -188,13 +187,13 @@ observability/terragucci/
 | Runs | the slowest roots, root applies and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
 | One per SLO | the SLI against its objective, the error budget left and the burn rates |
 
-<Shot step="see-runs" view="estate" alt="The Estate dashboard's first row for the example: 15 roots in the project, run with tofu by terragucci 0.4.4" />
+For the example, the Estate dashboard's first row counts 15 roots in the project and the binary and terragucci version each one runs.
 
 ### SLOs and alerts
 
 The SLOs, over 28 days: plans finish within ten minutes 95% of the time, wave applies succeed 99%, drift is corrected within a day 90%.
 
-<Shot step="see-runs" view="slos" alt="The plan time SLO dashboard's tiles for the example: the SLI over 28 days at 100% against a 95% objective, all of the error budget left, and no burn-rate alert firing" />
+Each SLO's dashboard shows its SLI over 28 days against the objective, the error budget left, and whether a burn-rate alert is firing.
 
 | Alert | Fires when |
 |---|---|

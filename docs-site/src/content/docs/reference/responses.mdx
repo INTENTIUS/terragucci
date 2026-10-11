@@ -8,7 +8,6 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
 
 Every event has a default response that needs no model. No response runs a coding agent; people approve, apply and merge.
 
@@ -121,10 +120,6 @@ Under [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the roo
 
 For a resource the state lacks, pass `--import <address>=<id>`. From Terraform `1.14.1`, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
-<Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
-
-<Shot step="responses" view="drift-files" alt="The drift pull request's files: main.tf takes visibility_timeout_seconds = 45, terragucci_imports.tf adds an import block for the other queue, and terragucci_generated.tf holds that queue's generated config" optional />
-
 ### Drift attribution
 
 With `respond.drift: attribute`, each drifted attribute goes through three steps in order; the first to answer wins.
@@ -146,8 +141,6 @@ With `respond.drift: attribute`, each drifted attribute goes through three steps
 | `decide.token_env` | received on GitHub and Forgejo |
 
 If step 2 cannot run, it says so and step 3 follows.
-
-<Shot step="drift-attribute" view="issue" alt="A drift issue in Forgejo whose Who changed it list puts the queue's visibility_timeout_seconds down to a person: SetQueueAttributes by alice, from the audit log" />
 
 | Attributed to | In the drift pull request | Suggestion |
 |---|---|---|
@@ -185,11 +178,7 @@ terragucci respond description --report terragucci-report --title "retag email" 
 
 Under [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
 
-<Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
-
 `fmt` runs on request and pushes one commit to the pull request's branch, and refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. The generated pipeline's `fmt` job runs it after a failed check, so the check job holds no token that pushes.
-
-<Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
 Release notes cover the commits that touched a module between its last two tags, breaking changes first.
 
@@ -203,8 +192,6 @@ The bump comes from the [version bump rules](/terragucci/reference/stages/#versi
 | a registry-only project | pass `--since <ref>`; the `version` file at that ref is the last release (0.0.0 if none) |
 | the `version-bump` job | runs `terragucci respond version-bump --mode apply` on the default branch after every apply wave, with full history; it needs permission to push a branch and open a pull request; a failed response never fails the job |
 | the release pull request | writes the `version` file with the bump and its probability; merging confirms it and the next `tf-publish` publishes it |
-
-<Shot step="publish" view="release" alt="The release pull request the version-bump job opened on Forgejo, Release modules/queue 0.1.1: it proposes a patch bump, says no commit since 0.1.0 carries a conventional type and the decision service did not answer, explains that merging writes the module's version file for the next tf-publish run, and lists the commit since the last release" />
 
 ## Runtime
 

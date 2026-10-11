@@ -14,7 +14,7 @@ prompt: |
 ---
 
 import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
@@ -29,19 +29,19 @@ Open the pull request link it printed, on Forgejo at `localhost:3300`; the plan 
 
 terragucci plans only the twelve service roots the change reaches and posts one note. Eleven roots take the identical change and appear as one group. Prod payments sits apart, because its dead-letter queue changes too.
 
-<Shot step="one-note" view="note" alt="The plan note on the module change's pull request: 12 roots in 2 groups, the waves table, eleven roots in one group with one diff, and prod payments on its own with its dead-letter queue" optional />
+<Recorded step="one-note" view="note" alt="The plan note on the module change's pull request: 12 roots in 2 groups, the waves table, eleven roots in one group with one diff, and prod payments on its own with its dead-letter queue" optional />
 
 GitHub and GitLab get the same single comment, here for a change to one root:
 
 <Tabs syncKey="forge">
 <TabItem label="GitHub">
 
-<Shot step="github" view="note" alt="The plan note on a GitHub pull request for a change to one root: one group, its waves table with the set digest, and the change to the jobs queue" />
+<Recorded step="github" view="note" alt="The plan note on a GitHub pull request for a change to one root: one group, its waves table with the set digest, and the change to the jobs queue" optional />
 
 </TabItem>
 <TabItem label="GitLab">
 
-<Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
+<Recorded step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" optional />
 
 </TabItem>
 </Tabs>

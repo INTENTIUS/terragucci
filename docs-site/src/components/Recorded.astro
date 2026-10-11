@@ -1,0 +1,117 @@
+---
+// A view `just tutorial-capture` recorded as text: a plan note or a reply as
+// the forge rendered it, a job's log, a diff, a report page, or a list the
+// forge shows as a table.
+type View =
+	| { kind: 'markdown'; source: string; html: string }
+	| { kind: 'log' | 'diff'; text: string }
+	| { kind: 'html'; html: string; anchor?: string }
+	| { kind: 'table'; columns: string[]; rows: string[][] };
+
+const captures = import.meta.glob('../data/tutorial/*.json', { eager: true, import: 'default' }) as Record<
+	string,
+	{ step: string; views?: Record<string, View> }
+>;
+
+interface Props {
+	step: string;
+	view: string;
+	/** What the view shows, for a reader who cannot see it. */
+	alt: string;
+	/** Render nothing until the step has been recorded. `just tutorial-check` still fails on the page until it is. */
+	optional?: boolean;
+	/** The report page's height in the frame, in CSS pixels. */
+	height?: number;
+}
+const { step, view, alt, optional, height = 640 } = Astro.props;
+const v = captures[`../data/tutorial/${step}.json`]?.views?.[view];
+if (!v && !optional) throw new Error(`no recorded view ${step} ${view}; run just capture ${step}`);
+// A report view that starts at an element opens the <details> it is in (a root's row) and scrolls to it.
+const openAt = (anchor: string) =>
+	`<script>{const e=document.getElementById(${JSON.stringify(anchor)});if(e){const d=e.closest('details');if(d)d.open=true;e.scrollIntoView();}}</script>`;
+const srcdoc = v?.kind === 'html' ? v.html + (v.anchor ? openAt(v.anchor) : '') : '';
+---
+{v && (
+	<figure class={`tg-recorded not-content ${v.kind}`} aria-label={alt}>
+		{v.kind === 'markdown' && <div class="forge" set:html={v.html} />}
+		{(v.kind === 'log' || v.kind === 'diff') && (
+			<pre><code>{v.kind === 'diff'
+				? v.text.split('\n').map((line) => <span class={line.startsWith('+') && !line.startsWith('+++') ? 'add' : line.startsWith('-') && !line.startsWith('---') ? 'del' : line.startsWith('@@') ? 'hunk' : undefined}>{line}{'\n'}</span>)
+				: v.text}</code></pre>
+		)}
+		{v.kind === 'html' && <iframe title={alt} srcdoc={srcdoc} sandbox="allow-scripts" loading="lazy" style={`height: ${height}px`} />}
+		{v.kind === 'table' && (
+			<table>
+				<thead><tr>{v.columns.map((c) => <th>{c}</th>)}</tr></thead>
+				<tbody>{v.rows.map((r) => <tr>{r.map((c) => <td>{c}</td>)}</tr>)}</tbody>
+			</table>
+		)}
+	</figure>
+)}
+
+<style>
+	figure {
+		margin: 1rem 0 1.5rem;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		overflow: hidden;
+		background: var(--tg-panel);
+	}
+	.forge {
+		padding: 0.9rem 1.1rem;
+		font-size: 0.875rem;
+		overflow-x: auto;
+	}
+	.forge :global(table) {
+		border-collapse: collapse;
+		margin: 0.6rem 0;
+	}
+	.forge :global(th),
+	.forge :global(td) {
+		border: 1px solid var(--tg-rule);
+		padding: 0.25rem 0.6rem;
+		text-align: left;
+	}
+	.forge :global(pre) {
+		overflow-x: auto;
+		font-size: 0.8rem;
+	}
+	.forge :global(details) {
+		margin: 0.4rem 0;
+	}
+	pre {
+		margin: 0;
+		padding: 0.9rem 1rem;
+		overflow-x: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.8rem;
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
+	}
+	.add {
+		color: var(--sl-color-green);
+	}
+	.del {
+		color: var(--sl-color-red);
+	}
+	.hunk {
+		color: var(--sl-color-gray-4);
+	}
+	iframe {
+		display: block;
+		width: 100%;
+		border: 0;
+		background: #fff;
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.85rem;
+	}
+	th,
+	td {
+		padding: 0.4rem 0.8rem;
+		text-align: left;
+		border-bottom: 1px solid var(--tg-rule);
+	}
+</style>

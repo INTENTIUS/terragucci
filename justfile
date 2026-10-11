@@ -16,7 +16,6 @@ lint:
     npx chant lint image-ci
     npx chant lint publish
     npx chant lint images
-    npx chant lint capture
     npx chant lint ci-red
     npx chant lint diff-guard
     npx chant lint observability
@@ -34,7 +33,7 @@ lint-docs strictness="2" limit="8":
     node scripts/lint-ui-text.mjs {{strictness}} {{limit}}
     node scripts/lint-config-docs.mjs
 
-[doc("Fail when a published tutorial page shows a claim that does not pass, or a capture that is missing or not the one recorded. Stale captures are listed; --strict fails on them.")]
+[doc("Fail when a published page shows a claim that does not pass, when a page that is not a tutorial page holds a capture, or when a required capture is missing. Optional captures not taken and stale ones are listed; --strict fails on them.")]
 tutorial-check *args:
     node scripts/tutorial-check.mjs {{args}}
 
@@ -56,7 +55,6 @@ check: typecheck lint bundle-check test provider-test lint-docs tutorial-check
 ci:
     npx chant build ci -o .github/workflows/ci.yml --format yaml
     npx chant build pages -o .github/workflows/pages.yml --format yaml
-    npx chant build capture -o .github/workflows/capture.yml --format yaml
     npx chant build image-ci -o .github/workflows/images.yml --format yaml
     npx chant build publish -o .github/workflows/publish.yml --format yaml
     npx chant build ci-red -o .github/workflows/ci-red.yml --format yaml
@@ -96,7 +94,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
@@ -233,7 +231,7 @@ validation-record *forges:
 example *args="up":
     stack/example.sh {{args}}
 
-[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], comments, plan-comment [scenario], pr-apply, logs, reset, shot <url> <out.png> [light|dark], capture, down. TGLAB=1 runs it on the GitLab lab.")]
+[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], comments, plan-comment [scenario], pr-apply, logs, reset, capture, down. TGLAB=1 runs it on the GitLab lab.")]
 example-gitlab *args="up":
     stack/example-gitlab.sh {{args}}
 
@@ -241,7 +239,7 @@ example-gitlab *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
-[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--break] [--record FILE], reset, shot <view>|all|list, minutes.")]
+[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--break] [--record FILE], reset, minutes.")]
 sandbox *args:
     stack/sandbox-github.sh {{args}}
 
@@ -314,7 +312,7 @@ job-cache-prune:
     docker volume rm terragucci-job-cache
     echo "  ✓ terragucci-job-cache removed"
 
-[doc("Run the tutorial's steps against the example on the capture stack and record their output and screenshots.")]
+[doc("Run the tutorial's steps against the example on the capture stack and record their output, notes, logs and diffs as text.")]
 tutorial-capture:
     TG_STACK="${TG_STACK:-capture}" stack/tutorial-capture.sh
 

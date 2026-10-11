@@ -13,7 +13,7 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 
 :::note[Where the example stands]
 This path uses `example-terragrunt/`, beside the plain example. Boot it with `just example-terragrunt up`; `just example-terragrunt reset` gets you back to it from any step.
@@ -67,7 +67,7 @@ An unformatted `.hcl` file fails the job by name:
 just example-terragrunt change unformatted
 ```
 
-<Shot step="tg" view="check" alt="The check job of the unformatted scenario's push run on the Terragrunt example in Forgejo: Format check and validate, every unit fails with the diff of live/dev/orders/owner.hcl and the error that the file needs formatting, exit code 1" />
+<Recorded step="tg" view="check" alt="The check job of the unformatted scenario's push run on the Terragrunt example in Forgejo: Format check and validate, every unit fails with the diff of live/dev/orders/owner.hcl and the error that the file needs formatting, exit code 1" optional />
 
 ## A file Terragrunt does not see
 
@@ -79,7 +79,7 @@ just example-terragrunt change module-bump
 
 The plan covers the 12 service units and none of the platforms. Each unit in the report names `modules/service/policy.json` as its reason.
 
-<Shot step="tg" view="note" alt="The plan note on the module-bump pull request of the Terragrunt example in Forgejo: the 12 service units planned for the change to modules/service/policy.json, and no platform unit" optional />
+<Recorded step="tg" view="note" alt="The plan note on the module-bump pull request of the Terragrunt example in Forgejo: the 12 service units planned for the change to modules/service/policy.json, and no platform unit" optional />
 
 ## A new unit and its upstream, in one change
 

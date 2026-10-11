@@ -9,8 +9,6 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Result
@@ -33,10 +31,7 @@ A decision on a refused wave: the new plan approved and applied, or the change t
 
    An approval binds a wave's set digest. The wave applies nothing if any root's plan changes between the approval and the apply. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
 
-   In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave and then merge the module bump. Its job stops and names the roots that moved:
-
-   <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, both digests and the roots whose plans moved" optional />
-   <Captured step="wave-refused" cmd="just example merge" optional />
+   In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave and then merge the module bump. Its job stops and names the roots that moved.
 
 2. Get the two reports.
 

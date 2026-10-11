@@ -4,7 +4,6 @@ description: Apply order, comment refusals, commit statuses, stale plan notes an
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
-import Shot from '../../../components/Shot.astro';
 
 ## Applies side by side
 
@@ -58,8 +57,6 @@ The resume job applies the rest of a killed apply once the run that applied is g
 On GitHub and Forgejo, `/terragucci apply` on a merged pull request runs `apply-comment` from the default branch's workflow. It takes the push lock and runs `tf-apply` on the merge commit with the apply role. Forgejo's job also skips a merge commit that a later apply superseded.
 
 The comment approves nothing; a gated wave still needs its approval record, sealed under `approval: sealed`. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) has the steps.
-
-<Shot step="statuses" view="reply" alt="A merged pull request\'s replies in Forgejo: wave 1 waits for an approval of its set digest, with the terragucci approve --sign command; a commenter with no write access is refused; and, once wave 1 is sealed, wave 1 applies and the reply says wave 2 now waits, linking the run" optional />
 
 ## Ignored comments
 
@@ -175,8 +172,6 @@ With `approval: pr-review` (GitHub and Forgejo) the pipeline also posts `terragu
 | no wave of the plan waits for an approval | success |
 | a wave waits, and a writer other than the author approved the head with nobody asking for changes | success, naming the reviewers |
 | a wave waits, with no such approval of the head | pending |
-
-<Shot step="statuses" view="checks" alt="A pull request's checks in Forgejo, all successful: the plan job, terragucci/plan with its counts of roots, groups and destroys, the plan-note job and the check" optional />
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
 

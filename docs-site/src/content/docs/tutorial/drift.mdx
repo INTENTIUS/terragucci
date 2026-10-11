@@ -14,7 +14,7 @@ prompt: |
 ---
 
 import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
@@ -37,7 +37,7 @@ Someone deletes a queue in the console.
 
 3. Open the issue the job opened, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. A second run updates it.
 
-   <Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
+   <Recorded step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
 
 </Steps>
 
