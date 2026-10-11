@@ -266,7 +266,7 @@ Add one step after the estate step, in a repo whose roots the view should draw:
 
 ```yaml
 - run: >-
-    npx --yes -p @intentius/behold@0.24.0 -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0
+    npx --yes -p @intentius/behold@0.25.0 -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0
     behold export . --terragucci s3://acme-terragucci/reports --no-source
     --publish s3://acme-terragucci/reports/views/behold
 ```
@@ -278,7 +278,9 @@ Add one step after the estate step, in a repo whose roots the view should draw:
 | each waiting wave, with the `terragucci approve` line to run | `estate.json` |
 | the counts, as the estate page shows them, with a link to it | `estate.json` |
 
-It writes only under `reports/views/behold/`, which terragucci never writes, with the job's credentials. Add `s3:GetObject` on `reports/*/report.json`, and `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on `reports/views/behold/*`, to the policy of step 2. Each publish removes the files the last view used and this one does not. Its links open each run's report through the same presigned link or front door as the page. `--no-source` leaves each root's HCL out of the view.
+Each run publishes the view for the checkout's commit under `reports/views/behold/<commit>/` and keeps the 30 newest (`--keep <n>` changes it). `reports/views/behold/index.html` opens the newest, and a picker in the view opens an older commit.
+
+It writes only under `reports/views/behold/`, which terragucci never writes, with the job's credentials. Add `s3:GetObject` on `reports/*/report.json`, and `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on `reports/views/behold/*`, to the policy of step 2. A commit past the newest 30 is deleted. Its links open each run's report through the same presigned link or front door as the page. `--no-source` leaves each root's HCL out of the view.
 
 Give the step `continue-on-error: true` on GitHub and Forgejo, or `allow_failure: true` on GitLab: a view that cannot be built leaves the estate page as it is.
 

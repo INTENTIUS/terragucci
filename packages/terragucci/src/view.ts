@@ -32,7 +32,7 @@ import { VIEWS_DIR } from "./report/store";
 
 /** The behold `terragucci view` runs, and the two peers it reads Terraform with. Tested together; move them together. */
 export const BEHOLD_PIN = {
-  behold: "@intentius/behold@0.24.0",
+  behold: "@intentius/behold@0.25.0",
   lexicon: "@intentius/chant-lexicon-terraform@^0.121.0",
   hcl2json: "@cdktn/hcl2json@^0.24.0",
 } as const;

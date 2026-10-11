@@ -4,11 +4,11 @@ import { BEHOLD_PIN, beholdArgv, beholdEnv, explainBehold, explainRefusal, opene
 
 const PROJECT = "github.com/acme/infra";
 const S3: ViewSource = { source: "s3://acme-reports/tg", kind: "s3" };
-const NPX = ["--yes", "-p", "@intentius/behold@0.24.0", "-p", "@intentius/chant-lexicon-terraform@^0.121.0", "-p", "@cdktn/hcl2json@^0.24.0"];
+const NPX = ["--yes", "-p", "@intentius/behold@0.25.0", "-p", "@intentius/chant-lexicon-terraform@^0.121.0", "-p", "@cdktn/hcl2json@^0.24.0"];
 
 describe("the pin", () => {
   it("names behold and the two peers it reads Terraform with", () => {
-    expect(BEHOLD_PIN).toEqual({ behold: "@intentius/behold@0.24.0", lexicon: "@intentius/chant-lexicon-terraform@^0.121.0", hcl2json: "@cdktn/hcl2json@^0.24.0" });
+    expect(BEHOLD_PIN).toEqual({ behold: "@intentius/behold@0.25.0", lexicon: "@intentius/chant-lexicon-terraform@^0.121.0", hcl2json: "@cdktn/hcl2json@^0.24.0" });
   });
 });
 
@@ -106,7 +106,7 @@ describe("explainBehold", () => {
 
   it("says the repo asks for a newer reader than the pinned behold reads", () => {
     const line = explainBehold("behold serve: chant workspace ls refused: this declaration needs chant 0.130.0 or newer to read it, and this is chant 0.121.1\n        Run `chant workspace ls` in the workspace root.\n", o);
-    expect(line).toBe("chant.workspace.json asks for chant 0.130.0 or newer to read it, and behold 0.24.0, the version terragucci runs, reads with chant 0.121.1: the repo asks for a newer reader than the pinned behold reads");
+    expect(line).toBe("chant.workspace.json asks for chant 0.130.0 or newer to read it, and behold 0.25.0, the version terragucci runs, reads with chant 0.121.1: the repo asks for a newer reader than the pinned behold reads");
     expect(explainBehold('{"code":"reader-too-old"}', o)).toMatch(/the repo asks for a newer reader than the pinned behold reads/);
   });
 
