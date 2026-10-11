@@ -8,6 +8,7 @@ import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
 import { decideOverride, OVERRIDE_LEDGER, overrideDigest, recordedDenials } from "../src/override";
 import { git, tmp, twoRootRepo, write } from "./helpers";
+import { gateSigners } from "./sshsig";
 import { EXPORT_LEDGER, exportApproveCommand } from "../src/export";
 import { UNLOCK_LEDGER, unlockApproveCommand } from "../src/unlock";
 import { EPHEMERAL_LEDGER, ephemeralApproveCommand } from "../src/ephemeral";
@@ -205,7 +206,7 @@ describe("terragucci override", () => {
   });
 
   it("an override older than the newest denial of the root does not answer it", () => {
-    const rule = { mode: "ledger" as const, overriders: ["Alice"], signers: null, signersPath: ".chant/allowed_signers" };
+    const rule = { mode: "ledger" as const, overriders: ["Alice"], signers: gateSigners(), signersPath: ".chant/allowed_signers" };
     const line = (h: number) => ({ version: 1, kind: "resolution", op: "policy-override", gate: "envs/prod/app", resolvedBy: "alice", timestamp: T(h), planDigest: digest, note: "why" });
     const rules = ["main.deny_public", "main.deny_data"];
     expect(decideOverride(parseLedger(jsonl(denial(1), line(2))), rule, "envs/prod/app", plan, rules, T(3)).status).toBe("overridden");

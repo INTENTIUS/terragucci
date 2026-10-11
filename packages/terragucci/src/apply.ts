@@ -1981,7 +1981,7 @@ async function gateWave(
       if (rule.gates.size > 0 && !rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
       ledger.resolutions = ledger.resolutions.filter((r) => {
         if (r.gate !== name) return true;
-        const why = sealRefusal(rule.signers, rule.signersPath, r);
+        const why = sealRefusal(rule.signers, r);
         if (why !== null && samePlanDigest(r.planDigest, digest)) console.log(`${label}: an approval does not count: ${why}`);
         return why === null;
       });

@@ -45,7 +45,7 @@ import type { Fetch } from "./forge";
 import { APPROVE_ACTION, DECLINE_ACTION, REPLAN_ACTION, type ButtonValue } from "./notify";
 import { configAtBase } from "./report/policy";
 import { originOf, type ForgeKind } from "./resume";
-import type { Signer } from "./seal";
+import type { GateSigners } from "./seal";
 
 /** The relay's settings, from its environment. */
 export const RELAY_ENV = {
@@ -195,12 +195,14 @@ const norm = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
  * chat id gives the line's first principal that is not a chat id. Undefined
  * when no line lists it, or lines listing it name different principals.
  */
-export function principalFor(signers: Signer[] | null, chatUser: string): string | undefined {
+export function principalFor(signers: GateSigners, chatUser: string): string | undefined {
   const id = norm(chatUser);
+  const lines = new Map<number, string[]>();
+  for (const s of signers.signers) lines.set(s.line, [...(lines.get(s.line) ?? []), norm(s.principal)]);
   const found = new Set<string>();
-  for (const s of signers ?? []) {
-    if (!s.principals.includes(id)) continue;
-    const p = s.principals.find((x) => !CHAT_ID.test(x));
+  for (const principals of lines.values()) {
+    if (!principals.includes(id)) continue;
+    const p = principals.find((x) => !CHAT_ID.test(x));
     if (p) found.add(p);
   }
   return found.size === 1 ? [...found][0] : undefined;
@@ -211,7 +213,7 @@ export function principalFor(signers: Signer[] | null, chatUser: string): string
 /** What the relay reads and writes, so a test can stand in for the repo. */
 export interface RelayDeps {
   /** The rule on the default branch: the approval mode, the signers file, and `apply.resume`. */
-  rule(): Promise<{ mode: Approval; signers: Signer[] | null; signersPath: string; resume?: number }>;
+  rule(): Promise<{ mode: Approval; signers: GateSigners; signersPath: string; resume?: number }>;
   ledger(): GateLedger;
   record(r: ResolutionRecord): void;
   now?: () => Date;
