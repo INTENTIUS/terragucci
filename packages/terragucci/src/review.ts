@@ -45,7 +45,7 @@ import { approvalOf, MAY_APPLY, type Review } from "./comment-apply";
 import { ConfigError } from "./config";
 import { changesSomething } from "./report/changing";
 import { parseMarker, type NoteWaves } from "./report/marker";
-import type { Fetch } from "./forge";
+import { poster, type Fetch } from "./forge";
 
 /** The status a pull request's head carries under pr-review. */
 export const APPROVAL_CONTEXT = "terragucci/approval";
@@ -330,6 +330,6 @@ export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch
       description = `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
     }
   }
-  await f.post(`repos/${f.repo}/statuses/${pr.head}`, { state, context: APPROVAL_CONTEXT, description: description.slice(0, 135) });
+  await poster(o.forge, env, o.fetch ?? fetch).setStatus(pr.head, { state, context: APPROVAL_CONTEXT, description: description.slice(0, 135) });
   return { state, description };
 }

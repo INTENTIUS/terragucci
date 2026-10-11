@@ -315,6 +315,16 @@ describe("pollGitLabComments: the plan note (gitlab.token: protected)", () => {
     expect(w.notes[3][0].body).toContain(planJobMarker(503));
   });
 
+  it("leaves a plan note someone else wrote alone, and posts the job's own beside it", async () => {
+    const w = planned();
+    w.notes[3] = [{ id: 90, body: "<!-- terragucci:plan roots=network -->\nplanted", author: { id: 55, username: "mallory" }, created_at: NOW.toISOString() }];
+    const { api, run } = poll(w);
+    await run();
+    expect(api.calls.filter((c) => c.method === "PUT")).toEqual([]);
+    expect(w.notes[3].find((n) => n.id === 90)!.body).toBe("<!-- terragucci:plan roots=network -->\nplanted");
+    expect(w.notes[3].find((n) => n.author.username === "terragucci-bot")!.body).toContain(planJobMarker(502));
+  });
+
   it("waits for a plan job still running, and leaves a merged, fork or moved merge request alone", async () => {
     for (const w of [
       planned("running"),

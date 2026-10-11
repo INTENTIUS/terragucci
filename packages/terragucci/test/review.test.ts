@@ -19,8 +19,8 @@ function forge(routes: Record<string, unknown>): { fetch: Fetch; calls: { method
     const method = init?.method ?? "GET";
     calls.push({ method, path, ...(init?.body ? { body: init.body } : {}) });
     const key = `${method} ${path}`;
-    if (!(key in routes)) return { ok: false, status: 404, json: async () => ({}) } as never;
-    return { ok: true, status: 200, json: async () => routes[key] } as never;
+    if (!(key in routes)) return { ok: false, status: 404, json: async () => ({}), text: async () => "{}" } as never;
+    return { ok: true, status: 200, json: async () => routes[key], text: async () => JSON.stringify(routes[key]) } as never;
   };
   return { fetch, calls };
 }
