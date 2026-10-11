@@ -8,10 +8,13 @@
  * wave that a review of its pull request would approve links that pull
  * request's review page.
  *
- * The generic webhook gets one JSON event, `terragucci.notify/v1`, for a
- * program to read: the wave's context and the stage's outcome
- * (`terragucci.outcome/v1`), signed with HMAC-SHA256 over the raw body
- * (`X-Terragucci-Signature: sha256=<hex>`). It is never posted unsigned.
+ * Delivery, signing and the generic webhook's event are chant's
+ * (`@intentius/chant/notify`); terragucci decides when to send, renders its
+ * own Slack and Teams messages and keeps the relay's buttons. The generic
+ * webhook gets one `chant.notify/v1` event, with the stage's outcome
+ * (`terragucci.outcome/v1`) in `detail`, signed with HMAC-SHA256 over
+ * `<timestamp>.<body>` (`X-Terragucci-Signature: sha256=<hex>` beside
+ * `X-Terragucci-Timestamp`). It is never posted unsigned.
  *
  * It only tells people. Nothing here approves, applies or merges. With
  * `notify.relay` set, a waiting wave's Slack message carries Approve and
@@ -26,14 +29,14 @@
  * the page where a person runs the drift check again with their own forge
  * login.
  */
-import { createHash, createHmac } from "node:crypto";
+import { ciRun, makeNotifyEvent, sendNotify, type NotifyConfig, type NotifyDelivery, type NotifyEvent, type SendNotifyOptions } from "@intentius/chant/notify";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { OUTCOME_SCHEMA, type WaveOutcome } from "./apply";
 
 /** What the wave did. */
 export const NOTIFY_EVENTS = ["waiting", "refused", "failed"] as const;
-export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
+export type WaveEvent = (typeof NOTIFY_EVENTS)[number];
 
 /** The variables the jobs map the webhook secrets into. */
 export const SLACK_WEBHOOK_ENV = "TERRAGUCCI_SLACK_WEBHOOK";
@@ -48,11 +51,8 @@ export const APPROVE_ACTION = "terragucci-approve";
 export const DECLINE_ACTION = "terragucci-decline";
 export const REPLAN_ACTION = "terragucci-replan";
 
-/** The generic webhook's body. */
-export const NOTIFY_SCHEMA = "terragucci.notify/v1";
-
 export interface WaveNotice {
-  event: NotifyEvent;
+  event: WaveEvent;
   wave: number;
   project: string;
   roots: string[];
@@ -88,7 +88,7 @@ export function readOutcome(file: string): WaveOutcome | undefined {
  * `outcome`, the line its status carries), the wave's report and the job's
  * environment.
  */
-export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: string; result?: WaveOutcome; reportDir?: string; env?: NodeJS.ProcessEnv } = {}): WaveNotice {
+export function waveNotice(event: WaveEvent, wave: number, opts: { outcome?: string; result?: WaveOutcome; reportDir?: string; env?: NodeJS.ProcessEnv } = {}): WaveNotice {
   const env = opts.env ?? process.env;
   const result = opts.result?.wave === wave ? opts.result : undefined;
   const outcome = opts.outcome?.trim() || result?.line || undefined;
@@ -105,7 +105,7 @@ export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: s
 }
 
 /** The approval a person gives: the stage's own command for a waiting wave, `terragucci approve` for a refused one (it finds the new digest). */
-function approveText(event: NotifyEvent, wave: number, result?: WaveOutcome): string {
+function approveText(event: WaveEvent, wave: number, result?: WaveOutcome): string {
   // The pinned form: terragucci approve refuses when the plans moved past the digest the message names.
   const pinned = result?.set_digest ? `npx terragucci approve wave-${wave} --plan ${result.set_digest}` : `npx terragucci approve wave-${wave}`;
   // The stage's command is terragucci approve; an outcome from an older stage, which printed another command, gets the pinned form.
@@ -116,12 +116,8 @@ function approveText(event: NotifyEvent, wave: number, result?: WaveOutcome): st
   return "nothing to approve: the apply failed; read the job log";
 }
 
-/** The run's page: GitHub and Forgejo name the run, GitLab the job. */
-export function runUrl(env: NodeJS.ProcessEnv): string | undefined {
-  if (env.CI_JOB_URL) return env.CI_JOB_URL;
-  if (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID) return `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
-  return undefined;
-}
+/** The run's page, as chant reads it: GitHub and Forgejo name the run, GitLab the job. */
+export const runUrl = (env: NodeJS.ProcessEnv): string | undefined => ciRun(env).url;
 
 interface ReportShape {
   run?: { project?: string; report_url?: string };
@@ -139,15 +135,18 @@ function readReport(dir?: string): ReportShape | undefined {
   }
 }
 
-const HEADLINE: Record<NotifyEvent, string> = {
+const HEADLINE: Record<WaveEvent, string> = {
   waiting: "waits for an approval",
   refused: "was refused: its plans changed after approval, so nothing in it was applied",
   failed: "failed",
 };
 
+/** What happened to the wave: the first line, after `terragucci: `. */
+const summary = (n: WaveNotice): string => `wave ${n.wave} of ${n.project} ${HEADLINE[n.event]}`;
+
 /** The first line of every message. */
 export function headline(n: WaveNotice): string {
-  return `terragucci: wave ${n.wave} of ${n.project} ${HEADLINE[n.event]}`;
+  return `${NOTIFY_SOURCE}: ${summary(n)}`;
 }
 
 const rootsText = (n: WaveNotice): string => (n.roots.length > 0 ? n.roots.join(", ") : "see the run");
@@ -233,92 +232,73 @@ export function teamsMessage(n: WaveNotice): Record<string, unknown> {
   };
 }
 
-/** `terragucci.notify/v1`: the generic webhook's event. */
-export interface NotifyEventBody {
-  schema: typeof NOTIFY_SCHEMA;
-  /** The same for every post of one wave's event about one digest, so a receiver can drop a repeat (a re-run). */
-  id: string;
-  event: NotifyEvent;
-  sent_at: string;
-  project: string;
-  forge?: "github" | "gitlab" | "forgejo";
-  repo?: string;
-  sha?: string;
-  /** The pull request the job applied for (a comment's apply). */
-  pr?: number;
-  wave: number;
-  roots: string[];
-  run_url?: string;
-  report_url?: string;
-  /** The stage's outcome, `terragucci.outcome/v1`, when it wrote one. */
-  outcome?: WaveOutcome;
-}
+/** The product name chant's event carries as its `source`. */
+export const NOTIFY_SOURCE = "terragucci";
+/** The webhook headers' prefix: `x-terragucci-signature`, `-timestamp`, `-event` and `-delivery`. */
+export const HEADER_PREFIX = "x-terragucci";
 
-/** The forge the job runs on, from its environment. */
-function forgeOf(env: NodeJS.ProcessEnv): NotifyEventBody["forge"] {
-  if (env.GITLAB_CI === "true") return "gitlab";
-  if (env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true") return "forgejo";
-  if (env.GITHUB_REPOSITORY) return "github";
-  return undefined;
-}
-
-/** The generic webhook's event for a notice. */
-export function webhookEvent(n: WaveNotice, env: NodeJS.ProcessEnv = process.env, now: Date = new Date()): NotifyEventBody {
-  const forge = forgeOf(env);
-  const repo = env.GITHUB_REPOSITORY || env.CI_PROJECT_PATH || undefined;
-  const sha = env.TG_SHA || env.GITHUB_SHA || env.CI_COMMIT_SHA || undefined;
+/**
+ * The generic webhook's event, chant's `chant.notify/v1`, for a notice: the
+ * wave, its roots, the digest, how to approve a waiting wave, and the
+ * stage's outcome whole in `detail`.
+ */
+export function webhookEvent(n: WaveNotice, env: NodeJS.ProcessEnv = process.env, now: Date = new Date()): NotifyEvent {
+  const commit = env.TG_SHA?.trim() || undefined;
   const pr = /^\d+$/.test((env.TG_PR ?? "").trim()) ? Number(env.TG_PR) : undefined;
-  const id = createHash("sha256").update(JSON.stringify([n.project, n.wave, n.event, n.result?.set_digest ?? sha ?? ""])).digest("hex");
+  const digest = n.result?.set_digest;
+  return makeNotifyEvent(
+    {
+      source: NOTIFY_SOURCE,
+      event: n.event,
+      summary: summary(n),
+      project: n.project,
+      wave: { number: n.wave },
+      targets: n.roots,
+      ...(digest ? { digest } : {}),
+      ...(n.event === "waiting" ? { approve: { command: n.approve, ...(n.review ? { review: n.review } : {}) } } : {}),
+      ...(n.result?.status ? { status: n.result.status } : {}),
+      ...(n.outcome ? { reason: n.outcome } : {}),
+      ...(typeof n.result?.exit === "number" ? { exitCode: n.result.exit } : {}),
+      run: { ...(n.run ? { url: n.run } : {}), ...(commit ? { commit } : {}), ...(pr !== undefined ? { pr } : {}) },
+      ...(n.report ? { reportUrl: n.report } : {}),
+      ...(n.result ? { detail: n.result as unknown as Record<string, unknown> } : {}),
+    },
+    { env, now },
+  );
+}
+
+/** What {@link notify} and {@link notifyDrift} pass on to chant's sendNotify: tests set the fetch, the wait between tries and the clock (seconds). */
+export type SendOptions = Pick<SendNotifyOptions, "fetch" | "sleep" | "now" | "attempts">;
+
+const LABEL: Record<NotifyDelivery["target"], string> = { webhook: "the webhook", slack: "Slack", teams: "Teams" };
+
+/** The targets the job holds a secret for. chant's config names the variables; the webhook goes with its key. */
+function targets(env: NodeJS.ProcessEnv, webhook: boolean): NotifyConfig {
   return {
-    schema: NOTIFY_SCHEMA,
-    id,
-    event: n.event,
-    sent_at: now.toISOString(),
-    project: n.project,
-    ...(forge ? { forge } : {}),
-    ...(repo ? { repo } : {}),
-    ...(sha ? { sha } : {}),
-    ...(pr !== undefined ? { pr } : {}),
-    wave: n.wave,
-    roots: n.roots,
-    ...(n.run ? { run_url: n.run } : {}),
-    ...(n.report ? { report_url: n.report } : {}),
-    ...(n.result ? { outcome: n.result } : {}),
+    ...(webhook && env[WEBHOOK_ENV] ? { webhook: WEBHOOK_ENV, key: WEBHOOK_KEY_ENV } : {}),
+    ...(env[SLACK_WEBHOOK_ENV] ? { slack: SLACK_WEBHOOK_ENV } : {}),
+    ...(env[TEAMS_WEBHOOK_ENV] ? { teams: TEAMS_WEBHOOK_ENV } : {}),
   };
 }
 
-/** `sha256=<hex>`: HMAC-SHA256 of the raw body with the webhook's key. */
-export function signature(body: string, key: string): string {
-  return `sha256=${createHmac("sha256", key).update(body).digest("hex")}`;
+/** Send through chant, with terragucci's own Slack and Teams bodies, and make each delivery a log line. */
+async function send(config: NotifyConfig, event: NotifyEvent, render: SendNotifyOptions["render"], line: string, env: NodeJS.ProcessEnv, opts: SendOptions): Promise<string[]> {
+  const deliveries = await sendNotify(config, event, { ...opts, env, ...(render ? { render } : {}), prefix: HEADER_PREFIX, userAgent: NOTIFY_SOURCE, log: () => {} });
+  return deliveries.map((d) => (d.ok ? `posted to ${LABEL[d.target]}: ${line}` : `${LABEL[d.target]}: ${d.detail}; nothing was posted`));
 }
 
-/** Post the notice to every webhook the job holds. Returns one line per webhook for the log; never throws. */
-export async function notify(n: WaveNotice, env: NodeJS.ProcessEnv = process.env, post: typeof fetch = fetch): Promise<string[]> {
-  const json = { "content-type": "application/json" };
-  const lines: string[] = [];
-  const targets: { name: string; url: string; body: string; headers: Record<string, string> }[] = [
-    { name: "Slack", url: env[SLACK_WEBHOOK_ENV] ?? "", body: JSON.stringify(slackMessage(n)), headers: json },
-    { name: "Teams", url: env[TEAMS_WEBHOOK_ENV] ?? "", body: JSON.stringify(teamsMessage(n)), headers: json },
-  ].filter((t) => t.url);
-  if (env[WEBHOOK_ENV]) {
-    const key = env[WEBHOOK_KEY_ENV];
-    if (!key) lines.push(`the webhook was not posted to: ${WEBHOOK_KEY_ENV} is empty, and an event is never sent unsigned`);
-    else {
-      const event = webhookEvent(n, env);
-      const body = JSON.stringify(event);
-      targets.push({ name: "the webhook", url: env[WEBHOOK_ENV]!, body, headers: { ...json, "x-terragucci-event": n.event, "x-terragucci-delivery": event.id, "x-terragucci-signature": signature(body, key) } });
-    }
-  }
-  if (targets.length === 0 && lines.length === 0) return [`no webhook: ${SLACK_WEBHOOK_ENV}, ${TEAMS_WEBHOOK_ENV} and ${WEBHOOK_ENV} are empty`];
-  for (const t of targets) {
-    try {
-      const r = await post(t.url, { method: "POST", headers: t.headers, body: t.body, signal: AbortSignal.timeout(10_000) });
-      lines.push(r.ok ? `posted to ${t.name}: ${headline(n)}` : `${t.name} answered ${r.status}; nothing was posted`);
-    } catch (e) {
-      lines.push(`${t.name} did not answer (${(e as Error).message}); nothing was posted`);
-    }
-  }
-  return lines;
+/**
+ * Post the notice to every webhook the job holds, through chant's notify.
+ * Slack and Teams get terragucci's messages (with the relay's buttons); the
+ * generic webhook gets {@link webhookEvent}, signed over
+ * `<timestamp>.<body>`, and nothing without its key. Returns one line per
+ * webhook for the log; never throws.
+ */
+export async function notify(n: WaveNotice, env: NodeJS.ProcessEnv = process.env, opts: SendOptions = {}): Promise<string[]> {
+  const config = targets(env, true);
+  if (!config.webhook && !config.slack && !config.teams) return [`no webhook: ${SLACK_WEBHOOK_ENV}, ${TEAMS_WEBHOOK_ENV} and ${WEBHOOK_ENV} are empty`];
+  const event = webhookEvent(n, env, opts.now !== undefined ? new Date(opts.now * 1000) : new Date());
+  return send(config, event, { slack: () => slackMessage(n), teams: () => teamsMessage(n) }, headline(n), env, opts);
 }
 
 // ── drift ────────────────────────────────────────────────────────────────
@@ -417,22 +397,18 @@ export function teamsDrift(n: DriftNotice): Record<string, unknown> {
   };
 }
 
-/** Post a drift notice to the Slack and Teams webhooks the job holds. The generic webhook's event is a wave's, so it gets none. Never throws. */
-export async function notifyDrift(n: DriftNotice | undefined, env: NodeJS.ProcessEnv = process.env, post: typeof fetch = fetch): Promise<string[]> {
+/** chant's `drift` event for a drift notice. Only Slack and Teams get it, in terragucci's own messages. */
+function driftEvent(n: DriftNotice, env: NodeJS.ProcessEnv): NotifyEvent {
+  return makeNotifyEvent(
+    { source: NOTIFY_SOURCE, event: "drift", summary: driftHeadline(n).slice(`${NOTIFY_SOURCE}: `.length), project: n.project, targets: n.roots, drift: { changed: n.roots, ...(n.failed.length > 0 ? { failed: n.failed } : {}) }, run: n.run ? { url: n.run } : {}, ...(n.report ? { reportUrl: n.report } : {}) },
+    { env },
+  );
+}
+
+/** Post a drift notice to the Slack and Teams webhooks the job holds, through chant's notify. The generic webhook's event is a wave's, so it gets none. Never throws. */
+export async function notifyDrift(n: DriftNotice | undefined, env: NodeJS.ProcessEnv = process.env, opts: SendOptions = {}): Promise<string[]> {
   if (!n) return ["no drift found and every root refreshed; nothing posted"];
-  const targets = [
-    { name: "Slack", url: env[SLACK_WEBHOOK_ENV] ?? "", body: JSON.stringify(slackDrift(n)) },
-    { name: "Teams", url: env[TEAMS_WEBHOOK_ENV] ?? "", body: JSON.stringify(teamsDrift(n)) },
-  ].filter((t) => t.url);
-  if (targets.length === 0) return [`no chat webhook: ${SLACK_WEBHOOK_ENV} and ${TEAMS_WEBHOOK_ENV} are empty`];
-  const lines: string[] = [];
-  for (const t of targets) {
-    try {
-      const r = await post(t.url, { method: "POST", headers: { "content-type": "application/json" }, body: t.body, signal: AbortSignal.timeout(10_000) });
-      lines.push(r.ok ? `posted to ${t.name}: ${driftHeadline(n)}` : `${t.name} answered ${r.status}; nothing was posted`);
-    } catch (e) {
-      lines.push(`${t.name} did not answer (${(e as Error).message}); nothing was posted`);
-    }
-  }
-  return lines;
+  const config = targets(env, false);
+  if (!config.slack && !config.teams) return [`no chat webhook: ${SLACK_WEBHOOK_ENV} and ${TEAMS_WEBHOOK_ENV} are empty`];
+  return send(config, driftEvent(n, env), { slack: () => slackDrift(n), teams: () => teamsDrift(n) }, driftHeadline(n), env, opts);
 }

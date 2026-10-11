@@ -4,12 +4,15 @@ import { validateConfig } from "../src/config";
 import type { WaveOutcome } from "../src/apply";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { driftNotice, notify, notifyDrift, readOutcome, replanUrl, runUrl, signature, slackDrift, slackMessage, teamsDrift, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
+import { createRequire } from "node:module";
+import { verifyWebhook } from "@intentius/chant/notify-verify";
+import { driftNotice, notify, notifyDrift, readOutcome, replanUrl, runUrl, slackDrift, slackMessage, teamsDrift, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
 import { applyScript, renderPipeline } from "../src/render";
 import { tmp, validate, write } from "./helpers";
 
-const NOTIFY_SCHEMA = JSON.parse(readFileSync(join(import.meta.dirname, "../src/notify.schema.json"), "utf-8"));
+// chant's chant.notify/v1, which the package ships as @intentius/terragucci/notify.schema.json.
+const NOTIFY_SCHEMA = JSON.parse(readFileSync(createRequire(import.meta.url).resolve("@intentius/chant/notify.schema.json"), "utf-8"));
+const quick = { sleep: async () => {} };
 
 const ENV = { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" };
 const waiting: WaveOutcome = { schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 2, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 2 waits: terragucci approve wave-2 --plan jcs1-sha256:ab", set_digest: "jcs1-sha256:ab", approval: "waiting", approval_mode: "ledger", approve_command: "terragucci approve wave-2 --plan jcs1-sha256:ab" };
@@ -64,46 +67,67 @@ describe("notify: chat webhooks for a wave", () => {
 
   it("posts to each webhook set, and a webhook that fails is a line, not an error", async () => {
     const posted: string[] = [];
-    const post = (async (url: string) => {
+    const fetch = async (url: string) => {
       posted.push(url);
-      return new Response("no", { status: url.includes("teams") ? 500 : 200 });
-    }) as unknown as typeof fetch;
+      return { ok: !url.includes("teams"), status: url.includes("teams") ? 500 : 200 };
+    };
     const n = waveNotice("waiting", 1, { env: ENV });
-    const lines = await notify(n, { TERRAGUCCI_SLACK_WEBHOOK: "https://hooks.slack.test/a", TERRAGUCCI_TEAMS_WEBHOOK: "https://teams.test/b" }, post);
-    expect(posted).toEqual(["https://hooks.slack.test/a", "https://teams.test/b"]);
+    const lines = await notify(n, { TERRAGUCCI_SLACK_WEBHOOK: "https://hooks.slack.test/a", TERRAGUCCI_TEAMS_WEBHOOK: "https://teams.test/b" }, { ...quick, fetch });
+    // A 5xx is tried three times, through chant's notify.
+    expect(posted).toEqual(["https://hooks.slack.test/a", "https://teams.test/b", "https://teams.test/b", "https://teams.test/b"]);
     expect(lines[0]).toMatch(/^posted to Slack/);
-    expect(lines[1]).toBe("Teams answered 500; nothing was posted");
+    expect(lines[1]).toBe("Teams: HTTP 500; nothing was posted");
     expect(lines.join("\n")).not.toContain("teams.test");
-    expect(await notify(n, {}, post)).toEqual(["no webhook: TERRAGUCCI_SLACK_WEBHOOK, TERRAGUCCI_TEAMS_WEBHOOK and TERRAGUCCI_WEBHOOK are empty"]);
+    expect(await notify(n, {}, { fetch })).toEqual(["no webhook: TERRAGUCCI_SLACK_WEBHOOK, TERRAGUCCI_TEAMS_WEBHOOK and TERRAGUCCI_WEBHOOK are empty"]);
   });
 
-  it("posts terragucci.notify/v1 to the generic webhook, signed over the raw body, and never unsigned", async () => {
-    const env = { ...ENV, GITHUB_SHA: "c".repeat(40), TG_PR: "12", TERRAGUCCI_WEBHOOK: "https://hooks.test/tg", TERRAGUCCI_WEBHOOK_KEY: "k3y" };
+  it("posts chant.notify/v1 to the generic webhook, signed over <timestamp>.<body>, and never unsigned", async () => {
+    const env = { ...ENV, GITHUB_ACTIONS: "true", GITHUB_SHA: "c".repeat(40), TG_PR: "12", TERRAGUCCI_WEBHOOK: "https://hooks.test/tg", TERRAGUCCI_WEBHOOK_KEY: "k3y" };
     const n = waveNotice("waiting", 2, { outcome: waiting.line, result: waiting, reportDir: report(), env });
     const event = webhookEvent(n, env, new Date("2026-10-08T12:00:00Z"));
-    expect(event).toMatchObject({ schema: "terragucci.notify/v1", event: "waiting", sent_at: "2026-10-08T12:00:00.000Z", project: "github.com/acme/infra", forge: "github", repo: "acme/infra", sha: "c".repeat(40), pr: 12, wave: 2, roots: ["envs/prod/app", "envs/prod/db"], run_url: "https://github.com/acme/infra/actions/runs/42", outcome: waiting });
+    expect(event).toMatchObject({
+      schema: "chant.notify/v1",
+      source: "terragucci",
+      event: "waiting",
+      at: "2026-10-08T12:00:00.000Z",
+      project: "github.com/acme/infra",
+      summary: "wave 2 of github.com/acme/infra waits for an approval",
+      wave: { number: 2 },
+      targets: ["envs/prod/app", "envs/prod/db"],
+      digest: "jcs1-sha256:ab",
+      approve: { command: "npx terragucci approve wave-2 --plan jcs1-sha256:ab" },
+      status: "waiting",
+      exitCode: 3,
+      run: { url: "https://github.com/acme/infra/actions/runs/42", forge: "github", repository: "acme/infra", commit: "c".repeat(40), pr: 12 },
+      detail: waiting,
+    });
     expect(validate(NOTIFY_SCHEMA, JSON.parse(JSON.stringify(event)))).toEqual([]);
     // One id per wave, event and digest: a re-run's post repeats it; another digest does not.
     expect(webhookEvent(n, env).id).toBe(event.id);
     expect(webhookEvent(waveNotice("waiting", 2, { result: { ...waiting, set_digest: "jcs1-sha256:ef" }, env }), env).id).not.toBe(event.id);
     const sent: { url: string; headers: Record<string, string>; body: string }[] = [];
-    const post = (async (url: string, init: RequestInit) => {
-      sent.push({ url, headers: init.headers as Record<string, string>, body: init.body as string });
-      return new Response("", { status: 202 });
-    }) as unknown as typeof fetch;
-    expect(await notify(n, env, post)).toEqual(["posted to the webhook: terragucci: wave 2 of github.com/acme/infra waits for an approval"]);
+    const fetch = async (url: string, init: { headers: Record<string, string>; body: string }) => {
+      sent.push({ url, headers: init.headers, body: init.body });
+      return { ok: true, status: 202 };
+    };
+    expect(await notify(n, env, { fetch, now: 1_791_460_800 })).toEqual(["posted to the webhook: terragucci: wave 2 of github.com/acme/infra waits for an approval"]);
     const [hook] = sent;
     expect(hook!.headers["x-terragucci-event"]).toBe("waiting");
-    expect(hook!.headers["x-terragucci-signature"]).toBe(`sha256=${createHmac("sha256", "k3y").update(hook!.body).digest("hex")}`);
-    expect(hook!.headers["x-terragucci-signature"]).toBe(signature(hook!.body, "k3y"));
+    expect(hook!.headers["x-terragucci-timestamp"]).toBe("1791460800");
+    expect(hook!.headers["x-terragucci-signature"]).toBe(`sha256=${createHmac("sha256", "k3y").update(`1791460800.${hook!.body}`).digest("hex")}`);
+    expect(verifyWebhook({ body: hook!.body, headers: hook!.headers, key: "k3y", prefix: "x-terragucci", now: 1_791_460_800 })).toMatchObject({ ok: true });
+    // The old scheme, the raw body alone, no longer verifies, and a replay ten minutes on is refused.
+    expect(hook!.headers["x-terragucci-signature"]).not.toBe(`sha256=${createHmac("sha256", "k3y").update(hook!.body).digest("hex")}`);
+    expect(verifyWebhook({ body: hook!.body, headers: hook!.headers, key: "k3y", prefix: "x-terragucci", now: 1_791_461_400 })).toMatchObject({ ok: false });
     expect(JSON.parse(hook!.body).id).toBe(hook!.headers["x-terragucci-delivery"]);
     // No key: nothing is posted, and the log says why.
     sent.length = 0;
-    expect(await notify(n, { ...env, TERRAGUCCI_WEBHOOK_KEY: "" }, post)).toEqual(["the webhook was not posted to: TERRAGUCCI_WEBHOOK_KEY is empty, and an event is never sent unsigned"]);
+    expect(await notify(n, { ...env, TERRAGUCCI_WEBHOOK_KEY: "" }, { fetch })).toEqual(["the webhook: TERRAGUCCI_WEBHOOK_KEY is not set, and an event is never sent unsigned; nothing was posted"]);
     expect(sent).toEqual([]);
     // A refused and a failed wave validate too, with the roots that moved or failed.
     const refused = webhookEvent(waveNotice("refused", 2, { result: { ...waiting, status: "refused", exit: 4, refused: { reason: "approval", approved: "jcs1-sha256:aa", by: "alice", roots: ["envs/prod/app"] } }, env }), env);
-    expect(refused.roots).toEqual(["envs/prod/app"]);
+    expect(refused.targets).toEqual(["envs/prod/app"]);
+    expect(refused.approve).toBeUndefined();
     expect(validate(NOTIFY_SCHEMA, JSON.parse(JSON.stringify(refused)))).toEqual([]);
     expect(validate(NOTIFY_SCHEMA, JSON.parse(JSON.stringify(webhookEvent(waveNotice("failed", 1, { env: {} }), {}))))).toEqual([]);
   });
@@ -195,9 +219,9 @@ describe("notify: drift", () => {
   it("posts nothing when there is no drift, and only to Slack and Teams", async () => {
     expect(driftNotice(driftReport([{ path: "app", status: "planned", changes: [] }]), ENV)).toBeUndefined();
     const posted: string[] = [];
-    const post = (async (url: string) => (posted.push(url), { ok: true, status: 200 })) as any;
+    const fetch = async (url: string) => (posted.push(url), { ok: true, status: 200 });
     const n = driftNotice(driftReport([{ path: "app", status: "planned", changes: [{}] }]), ENV);
-    const lines = await notifyDrift(n, { TERRAGUCCI_SLACK_WEBHOOK: "https://s", TERRAGUCCI_WEBHOOK: "https://w", TERRAGUCCI_WEBHOOK_KEY: "k" }, post);
+    const lines = await notifyDrift(n, { TERRAGUCCI_SLACK_WEBHOOK: "https://s", TERRAGUCCI_WEBHOOK: "https://w", TERRAGUCCI_WEBHOOK_KEY: "k" }, { fetch });
     expect(posted).toEqual(["https://s"]);
     expect(lines).toEqual(["posted to Slack: terragucci: drift in github.com/acme/infra: 1 root changed outside Terraform"]);
   });

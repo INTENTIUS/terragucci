@@ -75,7 +75,6 @@ packages/terragucci/src/roles.ts          oidc/state-roles oidc/atmos-roles oidc
 packages/terragucci/src/export.ts         state/export state/terragrunt-export state/gcs state/azurerm
 packages/terragucci/src/branch-checkouts.ts drift/branches
 packages/terragucci/src/ephemeral.ts      ephemeral/pr ephemeral/ttl ephemeral/terragrunt ephemeral/cdktn
-packages/terragucci/src/notify.schema.json notify/webhook
 packages/terragucci/src/telemetry.ts      telemetry/traces telemetry/metrics lock/wait-span telemetry/provider-calls telemetry/summed-timings telemetry/headers telemetry/terragrunt-spans telemetry/dash-changes telemetry/dash-drift telemetry/dash-estate telemetry/dash-pipeline telemetry/dash-runs telemetry/dash-slos telemetry/dash-waves report/drill-down telemetry/alerts
 
 # Approvals.

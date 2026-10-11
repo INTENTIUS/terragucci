@@ -104,7 +104,8 @@ A message in your channel each time an apply job stops at a wave or the drift jo
 | If the webhook | The job |
 |---|---|
 | answers 2xx | logs `terragucci notify: posted to Slack` (or Teams) |
-| answers an error, or not within 10 seconds | logs the status and goes on; the wave's own exit code stands |
+| answers a 4xx | logs the status and goes on; the wave's own exit code stands |
+| answers a 5xx, or not within 10 seconds | tries twice more, then logs the last status and goes on; the wave's own exit code stands |
 
 A comment that applies (`/terragucci apply`) posts the same messages from its job.
 
@@ -173,27 +174,30 @@ After the review, run the wave again: comment `/terragucci apply` on the pull re
 
 3. Run `npx terragucci init` and merge. The apply jobs get the secrets as `TERRAGUCCI_WEBHOOK` and `TERRAGUCCI_WEBHOOK_KEY`.
 
-4. Verify each request before reading it. The body is a [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event.
+4. Verify each request before reading it. The body is a [`chant.notify/v1`](/terragucci/reference/notify-event/) event from `source: "terragucci"`.
 
    | Header | Holds |
    |---|---|
-   | `X-Terragucci-Signature` | `sha256=` and the hex HMAC-SHA256 of the raw body with the key |
+   | `X-Terragucci-Signature` | `sha256=` and the hex HMAC-SHA256, with the key, of `<timestamp>.<body>`: the timestamp header, a dot, and the raw body |
+   | `X-Terragucci-Timestamp` | when the job signed it, in seconds since the epoch; refuse one more than five minutes from your clock |
    | `X-Terragucci-Event` | `waiting`, `refused` or `failed` |
    | `X-Terragucci-Delivery` | the event's `id`, the same for each post of one wave's event about one digest; drop a repeat |
 
    ```js
    import { createHmac, timingSafeEqual } from "node:crypto";
 
-   function verified(rawBody, header, key) {
-     const want = Buffer.from("sha256=" + createHmac("sha256", key).update(rawBody).digest("hex"));
-     const got = Buffer.from(header ?? "");
+   function verified(rawBody, headers, key, now = Math.floor(Date.now() / 1000)) {
+     const ts = headers["x-terragucci-timestamp"] ?? "";
+     if (!/^\d+$/.test(ts) || Math.abs(now - Number(ts)) > 300) return false;
+     const want = Buffer.from("sha256=" + createHmac("sha256", key).update(`${ts}.${rawBody}`).digest("hex"));
+     const got = Buffer.from(headers["x-terragucci-signature"] ?? "");
      return got.length === want.length && timingSafeEqual(got, want);
    }
    ```
 
 </Steps>
 
-The event carries the wave's outcome as the stage wrote it ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
+The event carries the wave's outcome as the stage wrote it, in `detail` ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
 
 To approve from a chat click, [`terragucci relay`](/terragucci/guides/approve-from-chat/) does it without this event: the buttons carry the wave and its digest, and the relay checks who clicked.
 

@@ -404,7 +404,7 @@ migrate/resume-never|with gate: never and apply.resume set, init still writes th
 migrate/split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
 estate/dora|terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each|
 notify/chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
-notify/webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
+notify/webhook|with notify naming a generic webhook and its key, a wave that waits posts a chant.notify/v1 event from terragucci signed with HMAC-SHA256 over its timestamp and body, carrying the outcome, digest and approve command|
 cost/estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
 cost/gate|with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base|
 cost/policy|with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave|
@@ -19909,10 +19909,11 @@ claim_notify/webhook() {
   # its key: the secret HOOK_URL holds a stand-in receiver's address and
   # HOOK_KEY the key it verifies with. The push to main stops at wave 1, and
   # its job posts one event: X-Terragucci-Event waiting, a signature that
-  # verifies over the raw body with the key, and a terragucci.notify/v1 body
-  # naming the project, forgejo, the commit pushed, wave 1, canary/one and an
-  # id, whose outcome says waiting with the digest the job's terragucci approve
-  # command names, the gate, mode ledger and that command.
+  # verifies over X-Terragucci-Timestamp and the raw body with the key, and a
+  # chant.notify/v1 body from terragucci naming the project, forgejo, the
+  # commit pushed, wave 1, canary/one, the digest and an id, whose detail (the
+  # outcome) says waiting with the digest the job's terragucci approve command
+  # names, the gate, mode ledger and that command.
   # BREAK: HOOK_KEY holds another key than the receiver's, so the signature
   # does not verify.
   log() { echo "[smoke notify-webhook] $*" >&2; }
@@ -19946,14 +19947,14 @@ claim_notify/webhook() {
     [ -n "$hook" ] || { log "nothing was posted to the webhook"; rc=1; }
   fi
   if [ $rc = 0 ]; then
-    [ "$(jq -r '.verified' <<<"$hook")" = true ] || { log "the signature does not verify over the raw body with the receiver's key"; rc=1; }
+    [ "$(jq -r '.verified' <<<"$hook")" = true ] || { log "the signature does not verify over the timestamp and the raw body with the receiver's key"; rc=1; }
     [ "$(jq -r '.headers["x-terragucci-event"]' <<<"$hook")" = waiting ] || { log "X-Terragucci-Event is not waiting"; rc=1; }
-    jq -e --arg sha "$sha" --arg d "$digest" '.body | .schema == "terragucci.notify/v1" and .event == "waiting" and (.id | test("^[0-9a-f]{64}$")) and (.project | endswith("notify-webhook")) and .forge == "forgejo" and .sha == $sha and .wave == 1 and .roots == ["canary/one"] and (.run_url | contains("/actions/runs/")) and .outcome.schema == "terragucci.outcome/v1" and .outcome.status == "waiting" and .outcome.set_digest == $d and .outcome.gate.name == "wave-1" and .outcome.approval_mode == "ledger" and .outcome.approve_command == ("terragucci approve wave-1 --plan " + $d)' <<<"$hook" >/dev/null \
+    jq -e --arg sha "$sha" --arg d "$digest" '.body | .schema == "chant.notify/v1" and .source == "terragucci" and .event == "waiting" and (.id | test("^[0-9a-f]{64}$")) and (.project | endswith("notify-webhook")) and .run.forge == "forgejo" and .run.commit == $sha and .wave.number == 1 and .targets == ["canary/one"] and .digest == $d and (.run.url | contains("/actions/runs/")) and .detail.schema == "terragucci.outcome/v1" and .detail.status == "waiting" and .detail.set_digest == $d and .detail.gate.name == "wave-1" and .detail.approval_mode == "ledger" and .detail.approve_command == ("terragucci approve wave-1 --plan " + $d)' <<<"$hook" >/dev/null \
       || { log "the event body is not as expected"; rc=1; }
   fi
   stand_in_down
   drop_work "$work"
-  [ $rc = 0 ] && log "wave 1 waited, and the webhook got a signed terragucci.notify/v1 event with its outcome, digest and approve command"
+  [ $rc = 0 ] && log "wave 1 waited, and the webhook got a signed chant.notify/v1 event with its outcome, digest and approve command"
   return $rc
 }
 
