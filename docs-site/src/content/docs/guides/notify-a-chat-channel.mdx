@@ -1,7 +1,7 @@
 ---
 title: Tell a chat channel when a wave stops
 description: Post a Slack or Microsoft Teams message, or a signed JSON event to a webhook, when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run, and post drift with a Re-plan button.
-claims: [notify-chat, notify-webhook, chat-replan]
+claims: [notify/chat, notify/webhook, chat/replan]
 prompt: |
   Read https://intentius.io/terragucci/guides/notify-a-chat-channel/.
   Add a `notify:` block to terragucci.yml naming the secret SLACK_WEBHOOK_URL (or TEAMS_WEBHOOK_URL), run

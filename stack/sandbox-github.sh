@@ -488,31 +488,31 @@ HOLD="is held until someone policy.override lists lets it through"
 AGENT_SECRET=SANDBOX_AGENT_TOKEN
 
 # forge|claim|what it shows, as the validation page lists them.
-PROVE_CLAIMS='github.com|affected|a pull request that changes one root plans that root alone, and its plan note covers it alone
-github.com|comment-plan|/terragucci plan on a pull request re-plans it in a run of its own, and the re-plan edits the plan note
-github.com|pr-lock|with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder
-github.com|pr-lock-fmt|with locks: plan a pull request whose check job formats it, with a push that starts no workflow, still has its lock answered on the formatted head
-github.com|policy|a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial
-github.com|oidc|the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS
-github.com|gate-wait|a merged destroy stops its wave with the approve command, and after a sealed terragucci approve the re-run applies it
-github.com|note-footer|the plan note ends with the terragucci footer, and its taco image answers 200 with a PNG
-github.com|tips|the plan note counts the tips the run report holds, and each tip in the report names its rule and its page
-github.com|comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed
-github.com|comment-apply|/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused
-github.com|policy-override|a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing
-github.com|apply-serial|two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and the newer applies the tree, none is cancelled, and each commit ends with a terragucci/apply success
-github.com|explain-refusal|after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step
-github.com|approve-command|terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing
-github.com|pr-apply-lock|with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock
-github.com|pr-apply-stale|a comment on an approved pull request whose head is behind main is refused as not up to date, and nothing applies
-github.com|pr-apply|with apply.merge: auto a comment on an open, approved pull request applies its head in every wave, and pr-merge merges it with the job token
-github.com|pr-apply-token|with apply.merge: auto and merge_token_env the merge is made with that token, so the merge commit starts its own run on main
-github.com|publish|with modules.publish: git-tags a conventional commit to a module on main makes the publish job push the module tag
-github.com|rollout|once the roots pin that tag and the next version is published, terragucci rollout --mode apply opens one pull request for the canary wave that moves those pins alone
-github.com|drift-issue|the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it
-github.com|report-keys|with the bucket keys in repo secrets, which the pipeline maps, the plan job writes report.json to the bucket and the index lists the run; the bucket is floci, run in the job
-github.com|report-oidc|with no static keys, the plan job takes reports.role with its GitHub-signed OIDC token, writes report.json to the bucket, and the index lists the run; floci in the job stands in for STS and the bucket
-github.com|estate-job|the estate workflow of the see-every-project page, committed with its role in the account floci serves and the stand-ins added to its job, and run by workflow_dispatch with only its OIDC token, writes estate.html showing the project to the bucket and prints a presigned link; floci in the job stands in for STS and the bucket'
+PROVE_CLAIMS='github.com|affected/tofu|a pull request that changes one root plans that root alone, and its plan note covers it alone
+github.com|comment/plan|/terragucci plan on a pull request re-plans it in a run of its own, and the re-plan edits the plan note
+github.com|lock/comment|with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder
+github.com|lock/comment-fmt|with locks: plan a pull request whose check job formats it, with a push that starts no workflow, still has its lock answered on the formatted head
+github.com|policy/tofu|a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial
+github.com|oidc/job|the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS
+github.com|approval/gate|a merged destroy stops its wave with the approve command, and after a sealed terragucci approve the re-run applies it
+github.com|note/footer|the plan note ends with the terragucci footer, and its taco image answers 200 with a PNG
+github.com|tips/tofu|the plan note counts the tips the run report holds, and each tip in the report names its rule and its page
+github.com|agent/comment|a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed
+github.com|comment/apply|/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused
+github.com|policy/override|a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing
+github.com|apply/serial|two merges pushed back to back apply in the order they arrived, the older run stands down once the newer push lands and the newer applies the tree, none is cancelled, and each commit ends with a terragucci/apply success
+github.com|respond/explain-refusal|after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step
+github.com|note/approve-command|terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing
+github.com|lock/apply|with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock
+github.com|pr-apply/stale|a comment on an approved pull request whose head is behind main is refused as not up to date, and nothing applies
+github.com|pr-apply/tofu|with apply.merge: auto a comment on an open, approved pull request applies its head in every wave, and pr-merge merges it with the job token
+github.com|pr-apply/token|with apply.merge: auto and merge_token_env the merge is made with that token, so the merge commit starts its own run on main
+github.com|modules/publish|with modules.publish: git-tags a conventional commit to a module on main makes the publish job push the module tag
+github.com|rollout/tofu|once the roots pin that tag and the next version is published, terragucci rollout --mode apply opens one pull request for the canary wave that moves those pins alone
+github.com|drift/issue|the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it
+github.com|report/keys|with the bucket keys in repo secrets, which the pipeline maps, the plan job writes report.json to the bucket and the index lists the run; the bucket is floci, run in the job
+github.com|report/oidc|with no static keys, the plan job takes reports.role with its GitHub-signed OIDC token, writes report.json to the bucket, and the index lists the run; floci in the job stands in for STS and the bucket
+github.com|estate/job|the estate workflow of the see-every-project page, committed with its role in the account floci serves and the stand-ins added to its job, and run by workflow_dispatch with only its OIDC token, writes estate.html showing the project to the bucket and prints a presigned link; floci in the job stands in for STS and the bucket'
 
 OVERRIDE_LOCAL='# The sandbox keeps this root'"'"'s state in the repo, beside its code.
 terraform {
@@ -950,9 +950,9 @@ claim_pr_lock() {
     reply="$(replies_of "$b" | grep -F "is locked by pull request $a" | head -1 || true)"
     # shellcheck disable=SC2016 # the reply quotes the root in backticks
     if [ "$held" = "success holds envs/dev/orders" ] && [ "${locked%% *}" = failure ] && grep -qF '`envs/dev/orders`' <<<"$reply"; then
-      verdict pr-lock pass "pull request $a: terragucci/lock $held; pull request $b: terragucci/lock $locked; $reply"
+      verdict lock/comment pass "pull request $a: terragucci/lock $held; pull request $b: terragucci/lock $locked; $reply"
     else
-      verdict pr-lock fail "pull request $a: terragucci/lock ${held:-none}; pull request $b: terragucci/lock ${locked:-none}; reply: ${reply:-none}"
+      verdict lock/comment fail "pull request $a: terragucci/lock ${held:-none}; pull request $b: terragucci/lock ${locked:-none}; reply: ${reply:-none}"
     fi
   else
     unrun pr-lock "change orders-note failed"
@@ -986,9 +986,9 @@ claim_pr_lock_fmt() {
   else
     got="$(wait_status "$uf" terragucci/lock failure)"
     if [ "${got%% *}" = failure ] && grep -qF "pull request $a" <<<"$got"; then
-      verdict pr-lock-fmt pass "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: $got"
+      verdict lock/comment-fmt pass "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: $got"
     else
-      verdict pr-lock-fmt fail "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: ${got:-none}"
+      verdict lock/comment-fmt fail "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: ${got:-none}"
     fi
   fi
   gh pr close "$u" -R "$REPO" >/dev/null 2>&1 || true
@@ -1042,9 +1042,9 @@ claim_apply_serial() {
   ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])") | join(", ")' <<<"$spans")"
   if [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
     && [ "${s1%% *}" = success ] && [[ "$s1" == *"superseded by a newer push"* ]] && [ "${s2%% *}" = success ] && [[ "$s2" == *" applied" ]]; then
-    verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
+    verdict apply/serial pass "pull requests $m and $b merged back to back: $ran; none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
   else
-    verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
+    verdict apply/serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
   fi
   ( record_state ) || log "could not record the state after the two merges"
 }
@@ -1059,13 +1059,13 @@ prove_merge() {
     roots="$(note_of "$a" | head -1 | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p')"
     plan="$(status_on "$head_a" terragucci/plan)"
     if [ "$roots" = envs/dev/orders ] && [[ "$plan" == "success 1 roots,"* ]]; then
-      verdict affected pass "pull request $a: roots=$roots, terragucci/plan $plan"
+      verdict affected/tofu pass "pull request $a: roots=$roots, terragucci/plan $plan"
     else
-      verdict affected fail "pull request $a: roots=${roots:-none}, terragucci/plan ${plan:-none}"
+      verdict affected/tofu fail "pull request $a: roots=${roots:-none}, terragucci/plan ${plan:-none}"
     fi
   else
     a="" head_a=""
-    verdict affected fail "change one-root failed"
+    verdict affected/tofu fail "change one-root failed"
   fi
 
   # note-footer: the one-root note's last line is the taco footer, and its
@@ -1080,9 +1080,9 @@ prove_merge() {
       magic="$(head -c 8 "$WORK/taco.png" 2>/dev/null | od -An -tx1 | tr -d ' \n' || true)"
     fi
     if [[ "$footer" == "<sub><img "*"Posted by [terragucci]("*"</sub>" ]] && [[ "$got" == "200 image/png"* ]] && [ "$magic" = 89504e470d0a1a0a ]; then
-      verdict note-footer pass "pull request $a: the last line is the footer; $img answers $got with a PNG"
+      verdict note/footer pass "pull request $a: the last line is the footer; $img answers $got with a PNG"
     else
-      verdict note-footer fail "pull request $a: last line ${footer:-none}; ${img:-no image} answers ${got:-nothing}"
+      verdict note/footer fail "pull request $a: last line ${footer:-none}; ${img:-no image} answers ${got:-nothing}"
     fi
     run="$(gh run list -R "$REPO" --commit "$head_a" --event pull_request -L 1 --json databaseId -q '.[0].databaseId // empty' || true)"
     report="$(artifact_file "${run:-0}" terragucci-report report.json)"
@@ -1090,13 +1090,13 @@ prove_merge() {
     tips="$( [ -z "$report" ] || jq '[.tips // [] | .[] | select(.rule and (.url | startswith("https://")))] | length' "$report" 2>/dev/null || true)"
     rules="$( [ -z "$report" ] || jq -r '[.tips // [] | .[].rule] | unique | join(", ")' "$report" 2>/dev/null || true)"
     if [ -n "$counted" ] && [ "${tips:-0}" -gt 0 ] && [ "$counted" = "$tips" ]; then
-      verdict tips pass "pull request $a: the note counts $counted tip(s); the report names $rules, each with its page"
+      verdict tips/tofu pass "pull request $a: the note counts $counted tip(s); the report names $rules, each with its page"
     else
-      verdict tips fail "pull request $a: the note counts ${counted:-no} tips; the report of run ${run:-none} holds ${tips:-no} with a rule and page"
+      verdict tips/tofu fail "pull request $a: the note counts ${counted:-no} tips; the report of run ${run:-none} holds ${tips:-no} with a rule and page"
     fi
   else
-    verdict note-footer fail "no one-root pull request"
-    verdict tips fail "no one-root pull request"
+    verdict note/footer fail "no one-root pull request"
+    verdict tips/tofu fail "no one-root pull request"
   fi
 
   # comment-plan: the comment's own run re-plans, and the note is edited after it.
@@ -1107,15 +1107,15 @@ prove_merge() {
       replan="$(gh run view "$run" -R "$REPO" --json jobs -q '[.jobs[] | select(.name == "replan")][0].conclusion // "none"')"
       edited="$(gh api "repos/$REPO/issues/$a/comments?per_page=100" -q '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | first | .updated_at // empty')"
       if [ "$replan" = success ] && [[ "$edited" > "$since" || "$edited" == "$since" ]]; then
-        verdict comment-plan pass "run $run: replan $replan, the note edited at $edited"
+        verdict comment/plan pass "run $run: replan $replan, the note edited at $edited"
       else
-        verdict comment-plan fail "run $run: replan $replan, the note edited at ${edited:-never} (comment at $since)"
+        verdict comment/plan fail "run $run: replan $replan, the note edited at ${edited:-never} (comment at $since)"
       fi
     else
-      verdict comment-plan fail "plan-comment one-root failed"
+      verdict comment/plan fail "plan-comment one-root failed"
     fi
   else
-    verdict comment-plan fail "no one-root pull request to comment on"
+    verdict comment/plan fail "no one-root pull request to comment on"
   fi
 
   claim_pr_lock
@@ -1136,12 +1136,12 @@ prove_merge() {
     after="$(head_of "$b")"
     if [ "$parent" = "$before" ] && grep -qF "/commit/$pushed" <<<"$asked" && [ "${replanned%% *}" = success ] \
       && [ "$after" = "$pushed" ] && grep -qF '.github/workflows/terragucci.yml' <<<"$touched"; then
-      verdict comment-agent pass "pull request $b: ${asked#terragucci: }; terragucci/plan on ${pushed:0:8}: $replanned; the ask that touches CI: ${touched#terragucci: }"
+      verdict agent/comment pass "pull request $b: ${asked#terragucci: }; terragucci/plan on ${pushed:0:8}: $replanned; the ask that touches CI: ${touched#terragucci: }"
     else
-      verdict comment-agent fail "pull request $b: head ${before:0:8} then ${pushed:0:8} (parent ${parent:0:8}) then ${after:0:8}; reply: ${asked:-none}; terragucci/plan: $replanned; the ask that touches CI: ${touched:-no reply}"
+      verdict agent/comment fail "pull request $b: head ${before:0:8} then ${pushed:0:8} (parent ${parent:0:8}) then ${after:0:8}; reply: ${asked:-none}; terragucci/plan: $replanned; the ask that touches CI: ${touched:-no reply}"
     fi
   else
-    verdict comment-agent fail "no orders-note pull request to ask on"
+    verdict agent/comment fail "no orders-note pull request to ask on"
   fi
 
   # policy: replace plans a replaced table, which main's policy denies. The
@@ -1152,12 +1152,12 @@ prove_merge() {
     plan="$(status_on "$(head_of "$p")" terragucci/plan)"
     denied="$(note_of "$p" | grep -F "$DENIAL" | head -1 || true)"
     if [ "${plan%% *}" = failure ] && [ -n "$denied" ]; then
-      verdict policy pass "pull request $p: terragucci/plan $plan; the note: $denied"
+      verdict policy/tofu pass "pull request $p: terragucci/plan $plan; the note: $denied"
     else
-      verdict policy fail "pull request $p: terragucci/plan ${plan:-none}; the note names no denial"
+      verdict policy/tofu fail "pull request $p: terragucci/plan ${plan:-none}; the note names no denial"
     fi
   else
-    verdict policy fail "change replace opened no pull request"
+    verdict policy/tofu fail "change replace opened no pull request"
   fi
 
   # oidc: the probe root's plan on a pull request, then its apply on main.
@@ -1168,12 +1168,12 @@ prove_merge() {
     applied=""
     if step merge oidc; then applied="$(probe_found "$(cat "$DIR/last-run")" apply)"; fi
     if jq -e '.verified and .problems == []' >/dev/null 2>&1 <<<"$planned" && jq -e '.verified and .problems == []' >/dev/null 2>&1 <<<"$applied"; then
-      verdict oidc pass "$(jq -r '"plan job: \(.role), \(.sub), \(.aud)"' <<<"$planned"); $(jq -r '"apply job: \(.role), \(.sub)"' <<<"$applied")"
+      verdict oidc/job pass "$(jq -r '"plan job: \(.role), \(.sub), \(.aud)"' <<<"$planned"); $(jq -r '"apply job: \(.role), \(.sub)"' <<<"$applied")"
     else
-      verdict oidc fail "pull request $o, plan job: ${planned:-nothing found}; apply job: ${applied:-nothing found}"
+      verdict oidc/job fail "pull request $o, plan job: ${planned:-nothing found}; apply job: ${applied:-nothing found}"
     fi
   else
-    verdict oidc fail "change oidc failed"
+    verdict oidc/job fail "change oidc failed"
   fi
 
   # comment-apply, first part: /terragucci apply on the merged oidc pull
@@ -1228,12 +1228,12 @@ prove_merge() {
       [ "$third" != success ] || ( record_state ) || log "could not record the state after the override"
     fi
     if [ "$first" = failure ] && [ "$second" = failure ] && [ -n "${refused:-}" ] && [ "$third" = success ] && [ -n "$named" ]; then
-      verdict policy-override pass "pull request $po: run $run denied wave 1 ($rules); after $STRANGER's override it was denied again as not listed; after $SIGNER's it applied, and the report names the override by $named"
+      verdict policy/override pass "pull request $po: run $run denied wave 1 ($rules); after $STRANGER's override it was denied again as not listed; after $SIGNER's it applied, and the report names the override by $named"
     else
-      verdict policy-override fail "pull request ${po:-none}: run $run wave 1 $first; rules ${rules:-none}; after $STRANGER: $second (not listed named: ${refused:-no}); after $SIGNER: $third; report: ${named:-no override named}"
+      verdict policy/override fail "pull request ${po:-none}: run $run wave 1 $first; rules ${rules:-none}; after $STRANGER: $second (not listed named: ${refused:-no}); after $SIGNER: $third; report: ${named:-no override named}"
     fi
   else
-    verdict policy-override fail "change override failed"
+    verdict policy/override fail "change override failed"
   fi
 
   claim_apply_serial
@@ -1260,15 +1260,15 @@ prove_merge() {
     if step approve --hold; then
       gw_waited="run $run stopped $wave with: $waited"
     else
-      verdict gate-wait fail "run $run stopped $wave; chant approve did not record the approval"
+      verdict approval/gate fail "run $run stopped $wave; chant approve did not record the approval"
     fi
   else
-    verdict gate-wait fail "the merged destroy left no wave waiting"
+    verdict approval/gate fail "the merged destroy left no wave waiting"
   fi
   if [ -n "$ca_merged" ] && [ -n "$ca_open" ] && [ -n "${ca_wait:-}" ]; then
-    verdict comment-apply pass "$ca_merged; $ca_open; $ca_wait"
+    verdict comment/apply pass "$ca_merged; $ca_open; $ca_wait"
   else
-    verdict comment-apply fail "${ca_seen#; }"
+    verdict comment/apply fail "${ca_seen#; }"
   fi
 
   # explain-refusal: refuse destroys in wave 4 after the destroy's approval,
@@ -1284,12 +1284,12 @@ prove_merge() {
     explained="$(job_conclusion "$run" explain-refusal)"
     moved="$(grep -m1 '^roots that moved: ' "$(job_log "$run" explain-refusal)" | sed 's/^roots that moved: //' || true)"
     if [ -n "$refused_run" ] && [ "$explained" = success ] && grep -qF envs/staging/payments <<<"$moved"; then
-      verdict explain-refusal pass "run $run: apply-wave-4 refused; explain-refusal ran the page's steps and printed the roots that moved: $moved"
+      verdict respond/explain-refusal pass "run $run: apply-wave-4 refused; explain-refusal ran the page's steps and printed the roots that moved: $moved"
     else
-      verdict explain-refusal fail "run $run: apply-wave-4 $wave4 (refused: ${refused_run:+yes}); explain-refusal $explained; roots that moved: ${moved:-none}"
+      verdict respond/explain-refusal fail "run $run: apply-wave-4 $wave4 (refused: ${refused_run:+yes}); explain-refusal $explained; roots that moved: ${moved:-none}"
     fi
   else
-    verdict explain-refusal fail "change refuse failed"
+    verdict respond/explain-refusal fail "change refuse failed"
   fi
 
   # approve-command: with the refused wave waiting for its new plan,
@@ -1310,17 +1310,17 @@ prove_merge() {
     resumed="$(grep -m1 "^resumed: re-ran the failed jobs of run $refused_run" <<<"$out" || true)"
     again="$(rerun "$refused_run" "$attempt")"
     if grep -q 'chant approve tf-apply wave-4 --plan ' <<<"$dry" && [ "$before" = "$kept" ] && [ -n "$ran" ] && [ "$again" = success ]; then
-      verdict approve-command pass "run $refused_run: --dry-run printed the command and the ledger kept $kept lines; terragucci approve ${ran#running: }; ${resumed:-the harness re-ran it}; the re-run applied wave 4"
+      verdict note/approve-command pass "run $refused_run: --dry-run printed the command and the ledger kept $kept lines; terragucci approve ${ran#running: }; ${resumed:-the harness re-ran it}; the re-run applied wave 4"
       ( record_state ) || log "could not record the state after the approval"
-      [ -z "$gw_waited" ] || verdict gate-wait pass "$gw_waited; approved with --sign and re-run, it applied (run $refused_run)"
+      [ -z "$gw_waited" ] || verdict approval/gate pass "$gw_waited; approved with --sign and re-run, it applied (run $refused_run)"
     else
-      verdict approve-command fail "run $refused_run: dry run: $(tr '\n' ' ' <<<"$dry" | cut -c1-200); ledger $before then $kept lines; approve: $(tr '\n' ' ' <<<"$out" | cut -c1-200); re-run $again"
+      verdict note/approve-command fail "run $refused_run: dry run: $(tr '\n' ' ' <<<"$dry" | cut -c1-200); ledger $before then $kept lines; approve: $(tr '\n' ' ' <<<"$out" | cut -c1-200); re-run $again"
     fi
   else
-    verdict approve-command fail "no refused wave to approve"
+    verdict note/approve-command fail "no refused wave to approve"
   fi
   if [ -n "$gw_waited" ] && [ "${again:-}" != success ]; then
-    verdict gate-wait fail "$gw_waited; the re-run after the sealed approval did not succeed"
+    verdict approval/gate fail "$gw_waited; the re-run after the sealed approval did not succeed"
   fi
 
   # drift-issue: the drift job opens the drift issue, a second run updates
@@ -1346,12 +1346,12 @@ prove_merge() {
     state3="$(gh issue view "$issue" -R "$REPO" --json state -q .state 2>/dev/null || true)"
     closing="$(gh api "repos/$REPO/issues/$issue/comments?per_page=100" -q '[.[] | .body] | last // "" | split("\n")[0]' 2>/dev/null || true)"
     if [ -n "$issue" ] && [ "$open2" = "$issue" ] && [ -n "$second" ] && [[ "$second" > "$first" ]] && [ "$state3" = CLOSED ] && [[ "$closing" == "No drift at "* ]]; then
-      verdict drift-issue pass "issue $issue: opened by the first run, the only open issue after run $run2, which updated it; closed by run $run3: $closing"
+      verdict drift/issue pass "issue $issue: opened by the first run, the only open issue after run $run2, which updated it; closed by run $run3: $closing"
     else
-      verdict drift-issue fail "issue ${issue:-none}: open after run $run2: ${open2:-none}; updated by it: ${second:-no}; after run $run3: ${state3:-unknown}, ${closing:-no comment}"
+      verdict drift/issue fail "issue ${issue:-none}: open after run $run2: ${open2:-none}; updated by it: ${second:-no}; after run $run3: ${state3:-unknown}, ${closing:-no comment}"
     fi
   else
-    verdict drift-issue fail "the drift run opened no issue"
+    verdict drift/issue fail "the drift run opened no issue"
   fi
 }
 
@@ -1458,9 +1458,9 @@ claim_pr_apply_lock() {
       && grep -qF "\`envs/dev/orders\` is locked by pull request $x" <<<"$r2" \
       && grep -qE "released the locks pull request $x held on .*envs/dev/orders" <<<"$r3" \
       && grep -qF "applied wave 1, 2, 3, 4 of pull request $y" <<<"$r4"; then
-      verdict pr-apply-lock pass "pull request $x: ${r1#terragucci: }; pull request $y: ${r2#terragucci: }; unlock on $x: ${r3#terragucci: }; then $y: ${r4#terragucci: }"
+      verdict lock/apply pass "pull request $x: ${r1#terragucci: }; pull request $y: ${r2#terragucci: }; unlock on $x: ${r3#terragucci: }; then $y: ${r4#terragucci: }"
     else
-      verdict pr-apply-lock fail "pull request $x: ${r1:-no reply}; $y: ${r2:-no reply}; unlock on $x: ${r3:-no reply}; then $y: ${r4:-no reply}"
+      verdict lock/apply fail "pull request $x: ${r1:-no reply}; $y: ${r2:-no reply}; unlock on $x: ${r3:-no reply}; then $y: ${r4:-no reply}"
     fi
   else
     unrun pr-apply-lock "sandbox-open could not open and plan both pull requests"
@@ -1481,9 +1481,9 @@ claim_pr_apply_stale() {
     run="$(cat "$DIR/last-run")"
     applied="$(grep -c 'Apply complete' "$(job_log "$run" apply-comment)" || true)"
     if grep -qF "pull request $c is not up to date with main" <<<"$r1" && [ "${applied:-0}" = 0 ]; then
-      verdict pr-apply-stale pass "pull request $c, after main moved: ${r1#terragucci: }; run $run applied nothing"
+      verdict pr-apply/stale pass "pull request $c, after main moved: ${r1#terragucci: }; run $run applied nothing"
     else
-      verdict pr-apply-stale fail "pull request $c: ${r1:-no reply}; run $run has ${applied:-0} applies"
+      verdict pr-apply/stale fail "pull request $c: ${r1:-no reply}; run $run has ${applied:-0} applies"
     fi
   else
     unrun pr-apply-stale "sandbox-open could not open and plan the pull request"
@@ -1507,12 +1507,12 @@ prove_pull_request() {
     r1="$( (say "$d" "/terragucci apply") || true)"
     merged="$(gh pr view "$d" -R "$REPO" --json state,mergedBy -q '"\(.state) \(.mergedBy.login // "nobody")"' || true)"
     if grep -qF "applied wave 1, 2, 3, 4 of pull request $d at ${at:0:8}, and merged pull request $d" <<<"$r1" && [ "${merged%% *}" = MERGED ]; then
-      verdict pr-apply pass "pull request $d: ${r1#terragucci: }; $merged"
+      verdict pr-apply/tofu pass "pull request $d: ${r1#terragucci: }; $merged"
     else
-      verdict pr-apply fail "pull request $d: ${r1:-no reply}; ${merged:-unknown}"
+      verdict pr-apply/tofu fail "pull request $d: ${r1:-no reply}; ${merged:-unknown}"
     fi
   else
-    verdict pr-apply fail "sandbox-open could not open and plan the pull request"
+    verdict pr-apply/tofu fail "sandbox-open could not open and plan the pull request"
   fi
 
   # pr-apply-token: merge: auto with merge_token_env. e applies and is merged
@@ -1532,12 +1532,12 @@ prove_pull_request() {
     done
     if grep -qF "applied wave 1, 2, 3, 4 of pull request $e at ${at:0:8}, and merged pull request $e" <<<"$r1" && [ "${merged%% *}" = MERGED ] \
       && [ "$by" != "github-actions" ] && [ -n "$pushed" ]; then
-      verdict pr-apply-token pass "pull request $e: ${r1#terragucci: }; merged by $by with the merge token, and its push started run $pushed on main"
+      verdict pr-apply/token pass "pull request $e: ${r1#terragucci: }; merged by $by with the merge token, and its push started run $pushed on main"
     else
-      verdict pr-apply-token fail "pull request $e: ${r1:-no reply}; ${merged:-unknown}; run on the merge commit: ${pushed:-none}"
+      verdict pr-apply/token fail "pull request $e: ${r1:-no reply}; ${merged:-unknown}; run on the merge commit: ${pushed:-none}"
     fi
   else
-    verdict pr-apply-token fail "sandbox-open could not open and plan the pull request"
+    verdict pr-apply/token fail "sandbox-open could not open and plan the pull request"
   fi
 }
 
@@ -1592,15 +1592,15 @@ prove_modules() {
     (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-modules-init.log" 2>&1) || fail "terragucci init failed"
     grep -q '^  publish:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no publish job"
     commit "$tree" "Publish the modules as git tags [skip ci]"
-    push "$tree" main >/dev/null ) || { verdict publish fail "main could not be set up"; verdict rollout fail "main could not be set up"; return 0; }
+    push "$tree" main >/dev/null ) || { verdict modules/publish fail "main could not be set up"; verdict rollout/tofu fail "main could not be set up"; return 0; }
 
   # publish: the first commit to modules/service publishes it.
   run1="$( (module_commit "feat(service): name the service in an output" service_name) || true)"
   t1="$(module_tags)"
   if [ "$(job_conclusion "${run1:-0}" publish)" = success ] && [[ "$t1" == modules/service/v* ]] && [[ "$t1" != *,* ]]; then
-    verdict publish pass "run $run1: the publish job pushed $t1"
+    verdict modules/publish pass "run $run1: the publish job pushed $t1"
   else
-    verdict publish fail "run ${run1:-none}: publish $(job_conclusion "${run1:-0}" publish); tags: ${t1:-none}"
+    verdict modules/publish fail "run ${run1:-none}: publish $(job_conclusion "${run1:-0}" publish); tags: ${t1:-none}"
   fi
 
   # rollout: the roots pin that tag, the next commit publishes another, and
@@ -1629,12 +1629,12 @@ prove_modules() {
     moved="$( [ -z "$pr" ] || gh pr diff "$pr" -R "$REPO" 2>/dev/null | grep -c "^+.*ref=$t2\"" || true)"
     others="$(tr ' ' '\n' <<<"$files" | grep -vc '^envs/dev/' || true)"
     if [ -n "$pr" ] && [ -n "$files" ] && [ "${others:-1}" = 0 ] && [ "${moved:-0}" -gt 0 ]; then
-      verdict rollout pass "after run $run2 published $t2, terragucci rollout opened pull request $pr for the canary wave: $files move to $t2"
+      verdict rollout/tofu pass "after run $run2 published $t2, terragucci rollout opened pull request $pr for the canary wave: $files move to $t2"
     else
-      verdict rollout fail "run ${run2:-none} published ${t2:-nothing}; rollout: $(tail -3 <<<"$out" | tr '\n' ' '); pull request ${pr:-none}: ${files:-no files}"
+      verdict rollout/tofu fail "run ${run2:-none} published ${t2:-nothing}; rollout: $(tail -3 <<<"$out" | tr '\n' ' '); pull request ${pr:-none}: ${files:-no files}"
     fi
   else
-    verdict rollout fail "no first module version to pin"
+    verdict rollout/tofu fail "no first module version to pin"
   fi
 }
 
@@ -1905,10 +1905,10 @@ claim_report_keys() {
   reports_plan
   [ -n "$PLANNED" ] || { unrun report-keys "change one-root failed"; return 0; }
   if seen="$(reports_landed "${HELD:-/nonexistent}" "$PLANNED")"; then
-    verdict report-keys pass "with the keys in the repo secrets, $seen"
+    verdict report/keys pass "with the keys in the repo secrets, $seen"
     [ -n "$BREAK" ] || SEED="$HELD" SEED_HEAD="$PLANNED"
   else
-    verdict report-keys fail "${BREAK:+with the secrets deleted, }$seen"
+    verdict report/keys fail "${BREAK:+with the secrets deleted, }$seen"
   fi
 }
 
@@ -1927,9 +1927,9 @@ claim_report_oidc() {
   seen="$(reports_landed "${HELD:-/nonexistent}" "$PLANNED")" || true
   took="$( [ -z "$HELD" ] || sts_took "$HELD" "$REPORTS_ROLE")"
   if [[ "$seen" == *"report.json is at"* ]] && [ -n "$took" ]; then
-    verdict report-oidc pass "with no keys, $(jq -r '"the job took \(.role | split("/") | last) as \(.session) with \(.sub), \(.aud)"' <<<"$took"); $seen"
+    verdict report/oidc pass "with no keys, $(jq -r '"the job took \(.role | split("/") | last) as \(.session) with \(.sub), \(.aud)"' <<<"$took"); $seen"
   else
-    verdict report-oidc fail "$seen; the recorder: $(recorded "$HELD")"
+    verdict report/oidc fail "$seen; the recorder: $(recorded "$HELD")"
   fi
 }
 
@@ -2018,9 +2018,9 @@ claim_estate_job() {
     || { seen="$seen; estate.json shows no project whose plan is ${SEED_HEAD:0:8}"; rc=1; }
   grep -q 'estate.html?.*X-Amz-Signature=' "$log" || { seen="$seen; the job printed no presigned link to estate.html"; rc=1; }
   if [ $rc = 0 ]; then
-    verdict estate-job pass "run $run: the job took $(jq -r '"\(.role | split("/") | last) with \(.sub)"' <<<"$took") and wrote $REPORTS_PREFIX/estate.html, whose project shows the plan of ${SEED_HEAD:0:8}, with a presigned link"
+    verdict estate/job pass "run $run: the job took $(jq -r '"\(.role | split("/") | last) with \(.sub)"' <<<"$took") and wrote $REPORTS_PREFIX/estate.html, whose project shows the plan of ${SEED_HEAD:0:8}, with a presigned link"
   else
-    verdict estate-job fail "run $run${seen}"
+    verdict estate/job fail "run $run${seen}"
   fi
 }
 

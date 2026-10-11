@@ -55,6 +55,15 @@ if (process.argv.includes("--hash")) {
 }
 
 const strict = process.argv.includes("--strict");
+// A claim is <area>/<part>. A page may name an area alone (lock): it passes
+// when every part of the area passes.
+const verdictOf = (c) => {
+  if (c.includes("/")) return verdict[c] ?? "unknown";
+  const parts = Object.keys(verdict).filter((k) => k.startsWith(`${c}/`));
+  if (!parts.length) return "unknown";
+  const failing = parts.filter((k) => verdict[k] !== "pass");
+  return failing.length ? `not passing in ${failing.join(", ")}` : "pass";
+};
 const problems = [];
 const stale = [];
 const capture = (step) => {
@@ -102,7 +111,8 @@ function checkDir(dir, kind) {
     const claims = (line?.[1] ?? "")
       .split(",").map((s) => s.trim().replace(/['"]/g, "")).filter(Boolean);
     for (const c of claims) {
-      if (verdict[c] !== "pass") problems.push(`${label}: claim ${c} is ${verdict[c] ?? "unknown"}, so the ${kind} must stay a draft`);
+      const v = verdictOf(c);
+      if (v !== "pass") problems.push(`${label}: claim ${c} is ${v}, so the ${kind} must stay a draft`);
     }
     checkCaptures(label, text, kind === "page");
     console.log(`ok    ${label}`);

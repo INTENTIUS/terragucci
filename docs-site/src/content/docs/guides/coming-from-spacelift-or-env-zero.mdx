@@ -1,7 +1,7 @@
 ---
 title: Coming from Spacelift or env zero
 description: Each Spacelift and env zero concept, the terragucci key or job that does the same work, how to move managed state into your own bucket, and what has no equivalent.
-claims: [pass-secrets, runner-label, import-spacelift, import-env0]
+claims: [init/pass-secrets, init/runner-label, import/spacelift, import/env0]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-spacelift-or-env-zero/.
   Run `npx terragucci import spacelift --dry-run` (or `import env0 --dry-run` for env zero) and report what it would write, each setting it lists as not mapped, and each stack or environment it names as sharing a directory. Propose a directory per stack or environment where one directory serves several.

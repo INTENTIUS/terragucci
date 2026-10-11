@@ -48,7 +48,7 @@ usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: aws s3,
 command -v docker >/dev/null 2>&1 || { echo "SKIP: docker is not installed"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: the docker daemon is not reachable"; exit 0; }
 
-if [ "$FORGE:$CLAIM" = "aws:s3" ]; then
+if [ "$FORGE:$CLAIM" = "aws:boot/s3" ]; then
   # floci answers S3 on the host's published port: create a bucket, see it,
   # delete it. BREAK=1 asks for a bucket that was never created, which must fail.
   FLOCI="${TERRAGUCCI_FLOCI_URL:-http://localhost:${TERRAGUCCI_FLOCI_PORT:-4580}}"
@@ -64,8 +64,8 @@ if [ "$FORGE:$CLAIM" = "aws:s3" ]; then
 fi
 
 case "$FORGE:$CLAIM" in
-  forgejo:check|forgejo:apply) ;;
-  forgejo:tg-*|forgejo:cdf-*|forgejo:pr-review|github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
+  forgejo:check/tofu|forgejo:apply/tofu) ;;
+  forgejo:*/terragrunt|forgejo:*/choudoufu|forgejo:approval/pr-review|github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
   fountain:*)
     echo "the $FORGE profile has no validate.sh claims; the steward smoke claim checks it (just smoke steward)" >&2; exit 2 ;;
   forgejo:*)
@@ -110,7 +110,7 @@ started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
 case "$CLAIM" in
-  check)
+  check/tofu)
     # The clean push must go green.
     prepare "$WORK/clean"
     [ -n "$BREAK" ] && add_unformatted "$WORK/clean"
@@ -135,7 +135,7 @@ case "$CLAIM" in
     log "the run failed at the fmt check and named infra/unformatted.tf"
     ;;
 
-  apply)
+  apply/tofu)
     curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
     [ "$(bucket_code)" = "404" ] || fail "could not clear $BUCKET from floci before the run"
     log "$BUCKET is absent from floci"

@@ -145,16 +145,16 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule|pr-apply|pr-apply-stale|pr-apply-lock|pr-apply-trust|gl-token-protected|gl-review-bot|gl-check-token|gl-managed-state) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:pr-apply*) ;; *:pr-apply*) echo "$CLAIM is gitlab's here; the smoke claims of that name run it on Forgejo" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:approve) ;; *:approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:gl-token-protected|gitlab:gl-review-bot|gitlab:gl-check-token|gitlab:gl-managed-state) ;; *:gl-token-protected|*:gl-review-bot|*:gl-check-token|*:gl-managed-state) echo "$CLAIM is gitlab's: it checks GitLab's variables, approvals and state" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:gl-comment-*) ;; *:gl-comment-*) echo "$CLAIM is gitlab's: it checks the comments schedule" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
+case "$CLAIM" in check/tofu|apply/tofu|reconcile/tofu|check/terragrunt|apply/terragrunt|check/choudoufu|apply/choudoufu|approval/gate|init/own-jobs|approval/pr-review|approval/approve|comment/plan|comment/apply|comment/drift-schedule|pr-apply/tofu|pr-apply/stale|lock/apply|pr-apply/trust|security/protected-token|approval/pr-review-bot|security/check-token|state/gitlab-managed) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:pr-apply/*|gitlab:lock/apply) ;; *:pr-apply/*|*:lock/apply) echo "$CLAIM is gitlab's here; the smoke claims of that name run it on Forgejo" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:approval/approve) ;; *:approval/approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in forgejo:approval/pr-review|gitlab:approval/pr-review) ;; *:approval/pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:approval/gate) ;; *:approval/gate) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:security/protected-token|gitlab:approval/pr-review-bot|gitlab:security/check-token|gitlab:state/gitlab-managed) ;; *:security/protected-token|*:approval/pr-review-bot|*:security/check-token|*:state/gitlab-managed) echo "$CLAIM is gitlab's: it checks GitLab's variables, approvals and state" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:comment/plan|gitlab:comment/apply|gitlab:comment/drift-schedule) ;; *:comment/plan|*:comment/apply|*:comment/drift-schedule) echo "$CLAIM is gitlab's: it checks the comments schedule" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:init/own-jobs) ;; *:init/own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
-case "$FORGE:$CLAIM" in forgejo:check|forgejo:apply|forgejo:reconcile) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in forgejo:check/tofu|forgejo:apply/tofu|forgejo:reconcile/tofu) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
 
 # shellcheck source=forge-github.sh
 . "$HERE/forge-$FORGE.sh"
@@ -1033,12 +1033,12 @@ started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
 case "$CLAIM" in
-  check) run_check validate prepare add_unformatted 'unformatted\.tf' "infra/unformatted.tf" ;;
-  apply) run_apply validate prepare "$BUCKET" ;;
-  tg-check) run_check validate-tg prepare_tg add_unformatted_hcl 'owner\.hcl' "live/one/owner.hcl" ;;
-  tg-apply) run_apply validate-tg prepare_tg terragucci-validate-tg-one terragucci-validate-tg-two ;;
-  cdf-check) run_check validate-cdf prepare_cdf add_refused 'refused: infra: .*(aws_s3_bucket\.ignored|ignored\.tf)' "the refused aws_s3_bucket.ignored" ;;
-  cdf-apply)
+  check/tofu) run_check validate prepare add_unformatted 'unformatted\.tf' "infra/unformatted.tf" ;;
+  apply/tofu) run_apply validate prepare "$BUCKET" ;;
+  check/terragrunt) run_check validate-tg prepare_tg add_unformatted_hcl 'owner\.hcl' "live/one/owner.hcl" ;;
+  apply/terragrunt) run_apply validate-tg prepare_tg terragucci-validate-tg-one terragucci-validate-tg-two ;;
+  check/choudoufu) run_check validate-cdf prepare_cdf add_refused 'refused: infra: .*(aws_s3_bucket\.ignored|ignored\.tf)' "the refused aws_s3_bucket.ignored" ;;
+  apply/choudoufu)
     run_apply validate-cdf prepare_cdf terragucci-validate-cdf
     # The bucket choudoufu created carries the estate's marker, so the apply
     # ran with live markers on rather than as stock OpenTofu.
@@ -1046,22 +1046,22 @@ case "$CLAIM" in
     grep -q 'tofu-estate' <<<"$tags" || { echo "$tags"; fail "terragucci-validate-cdf carries no tofu-estate tag, so choudoufu did not apply it as an estate"; }
     log "terragucci-validate-cdf carries the tofu-estate marker"
     ;;
-  gate-wait) run_gate_wait ;;
-  own-jobs) run_own_jobs ;;
-  pr-review) if [ "$FORGE" = gitlab ]; then run_pr_review_gitlab; else run_pr_review; fi ;;
-  approve) run_approve ;;
-  gl-comment-plan) run_comment_plan ;;
-  gl-comment-apply) run_comment_apply ;;
-  gl-comment-drift-schedule) run_comment_drift_schedule ;;
-  pr-apply) run_pr_apply_gitlab ;;
-  pr-apply-stale) run_pr_apply_stale_gitlab ;;
-  pr-apply-lock) run_pr_apply_lock_gitlab ;;
-  pr-apply-trust) run_pr_apply_trust_gitlab ;;
-  gl-token-protected) run_token_protected ;;
-  gl-review-bot) run_review_bot ;;
-  gl-check-token) run_check_token ;;
-  gl-managed-state) run_managed_state ;;
-  reconcile)
+  approval/gate) run_gate_wait ;;
+  init/own-jobs) run_own_jobs ;;
+  approval/pr-review) if [ "$FORGE" = gitlab ]; then run_pr_review_gitlab; else run_pr_review; fi ;;
+  approval/approve) run_approve ;;
+  comment/plan) run_comment_plan ;;
+  comment/apply) run_comment_apply ;;
+  comment/drift-schedule) run_comment_drift_schedule ;;
+  pr-apply/tofu) run_pr_apply_gitlab ;;
+  pr-apply/stale) run_pr_apply_stale_gitlab ;;
+  lock/apply) run_pr_apply_lock_gitlab ;;
+  pr-apply/trust) run_pr_apply_trust_gitlab ;;
+  security/protected-token) run_token_protected ;;
+  approval/pr-review-bot) run_review_bot ;;
+  security/check-token) run_check_token ;;
+  state/gitlab-managed) run_managed_state ;;
+  reconcile/tofu)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done
     curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"

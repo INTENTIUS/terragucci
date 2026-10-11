@@ -56,18 +56,18 @@ log()  { echo "[capture] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
 
 # step|needs|claims|views|what a reader sees
-STEPS='boot|fresh|boot|repo run|just example up; the repo in Forgejo and the first run'"'"'s jobs
-first-pr|chain|check|note files|just example change one-root; the pull request'"'"'s plan note, and its one-line diff
-check|chain|check|log|just example change unformatted and just example logs; the failed check job'"'"'s log, found from the push run on the commit the scenario pushed
-one-note|chain|affected grouped highlight|note|just example change module-bump; the plan note for 12 roots, 11 in one group and prod payments apart (the pull request is closed afterwards)
-wave-waiting|chain|waves sealed|note log|just example change destroy and merge destroy; the destroy pull request'"'"'s note, and wave 4'"'"'s job log with exit 3 and the approve command
-wave-refused|chain|waves sealed refuse|log|just example approve, change module-bump, merge module-bump; wave 4'"'"'s job log with both digests and the roots that moved
-approved|chain|sealed comment-apply wave-report||just example approve of the plans wave 4 refused, then /terragucci apply on the merged module bump; records nothing, and leaves the example where pin starts
-pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
-drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
-see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos||just see-runs; three runs of the example sent to the observability profile, which fill the dashboards the page describes
-tips|booted|tips|note report|just example change float and a tf-plan of it with reports.bucket on floci; the plan note'"'"'s tip line and the report'"'"'s Tips section (the pull request is closed afterwards)
-tg|alone|tg-check tg-pr-plan|check note|the Terragrunt example with its unformatted scenario pushed to a branch and its module-bump scenario as a pull request; the check job'"'"'s hcl fmt failure and the plan note (the example is reset afterwards)'
+STEPS='boot|fresh|boot/tofu|repo run|just example up; the repo in Forgejo and the first run'"'"'s jobs
+first-pr|chain|check/tofu|note files|just example change one-root; the pull request'"'"'s plan note, and its one-line diff
+check|chain|check/tofu|log|just example change unformatted and just example logs; the failed check job'"'"'s log, found from the push run on the commit the scenario pushed
+one-note|chain|affected/tofu note/grouped report/highlight|note|just example change module-bump; the plan note for 12 roots, 11 in one group and prod payments apart (the pull request is closed afterwards)
+wave-waiting|chain|waves/tofu approval/sealed|note log|just example change destroy and merge destroy; the destroy pull request'"'"'s note, and wave 4'"'"'s job log with exit 3 and the approve command
+wave-refused|chain|waves/tofu approval/sealed refuse/tofu|log|just example approve, change module-bump, merge module-bump; wave 4'"'"'s job log with both digests and the roots that moved
+approved|chain|approval/sealed comment/apply report/wave||just example approve of the plans wave 4 refused, then /terragucci apply on the merged module bump; records nothing, and leaves the example where pin starts
+pin|chain|modules/publish rollout/tofu|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
+drift|booted|drift/tofu|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
+see-runs|booted|telemetry/dash-pipeline telemetry/dash-changes telemetry/dash-waves telemetry/dash-drift telemetry/dash-estate telemetry/dash-runs telemetry/dash-slos||just see-runs; three runs of the example sent to the observability profile, which fill the dashboards the page describes
+tips|booted|tips/tofu|note report|just example change float and a tf-plan of it with reports.bucket on floci; the plan note'"'"'s tip line and the report'"'"'s Tips section (the pull request is closed afterwards)
+tg|alone|check/terragrunt note/terragrunt|check note|the Terragrunt example with its unformatted scenario pushed to a branch and its module-bump scenario as a pull request; the check job'"'"'s hcl fmt failure and the plan note (the example is reset afterwards)'
 
 field() { # step, field number -> that field of the step's row
   awk -F'|' -v s="$1" -v n="$2" '$1 == s { print $n }' <<<"$STEPS"

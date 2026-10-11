@@ -1,7 +1,7 @@
 ---
 title: Coming from HCP Terraform, Scalr or OTF
 description: Each HCP Terraform, Scalr and OTF workspace concept, the terragucci key or job that does the same work, how to move a workspace's state into your own bucket, and what has no equivalent.
-claims: [pass-secrets, runner-label, import-hcp, import-scalr]
+claims: [init/pass-secrets, init/runner-label, import/hcp, import/scalr]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/.
   Run `npx terragucci import hcp --organization <org> --dry-run` (`import otf --hostname <host>`, or `import scalr --hostname <account>.scalr.io`) with the token in `TF_TOKEN_<host>`, and show me what it prints. Propose a directory per workspace for each directory it lists as run by several workspaces.

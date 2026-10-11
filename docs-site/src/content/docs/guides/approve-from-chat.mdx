@@ -1,7 +1,7 @@
 ---
 title: Approve from Slack and Teams
 description: Approve or decline a waiting wave from its chat message, through a relay you run in your own cloud, which checks who clicked against the signers file and approves only the plans the message showed.
-claims: [chat-approve, chat-approve-teams, chat-approve-lambda]
+claims: [chat/slack, chat/teams, chat/lambda]
 prompt: |
   Read https://intentius.io/terragucci/guides/approve-from-chat/.
   Add `relay: terragucci` under `notify:` in terragucci.yml, and `apply.resume` if it is missing, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.

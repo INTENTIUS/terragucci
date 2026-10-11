@@ -1,7 +1,7 @@
 ---
 title: Export a state version
 description: Download one version of a root's state to your machine, once someone else approved the request, with the export recorded on chant/lifecycle and in the audit trail.
-claims: [state-export, tg-state-export, gl-state-export, gcs-state, azurerm-state]
+claims: [state/export, state/terragrunt-export, state/gcs, state/azurerm]
 prompt: |
   Read https://intentius.io/terragucci/guides/export-a-state-version/.
   Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3, gcs or azurerm backend that keeps versions), from the roots' backend blocks.

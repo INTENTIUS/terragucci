@@ -1,7 +1,7 @@
 ---
 title: Release a state lock a killed job left
 description: When a job is killed mid-apply, free the backend's state lock it left with terragucci unlock-state, which checks the job is gone, waits for an approval of that lock, and records the release.
-claims: [unlock-state, gl-unlock-state, gcs-unlock, azurerm-unlock]
+claims: [state/unlock, state/gcs-unlock, state/azurerm-unlock]
 prompt: |
   Read https://intentius.io/terragucci/guides/release-a-state-lock/.
   A plan or apply in this repo fails because the state of a root I name is locked. Read the lock for that root (a lock file, a gcs lock object, or an azurerm blob lease) and tell me its ID, who took it and when, and which of the forge's runs that began before then are still running.

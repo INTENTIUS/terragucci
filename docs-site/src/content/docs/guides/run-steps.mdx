@@ -1,7 +1,7 @@
 ---
 title: Run steps around a stage
 description: Run your own commands before and after each root's init, plan, apply and drift, hold a wave for an approval when one fails, and run the jobs in your own image.
-claims: [steps-before-plan, steps-stop, steps-gate, tg-steps-gate]
+claims: [steps/before-plan, steps/stop, steps/gate, steps/terragrunt-gate]
 prompt: |
   Read https://intentius.io/terragucci/guides/run-steps/.
   Propose the steps block for terragucci.yml that runs my repo's checks before each plan, with on_failure: approve on any check that should hold a wave for a person rather than fail it.

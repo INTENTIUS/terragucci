@@ -16,80 +16,80 @@
 # lab's floci are under the same name.
 #
 # A row of smoke.json from these claims carries forge: gitlab. A claim of the
-# same name on Forgejo is the claim_<name> in smoke.sh; GitLab's is
-# gitlab_claim_<name> here.
+# same name on Forgejo is the claim_<area>/<part> in smoke.sh; GitLab's is
+# gitlab_claim_<area>/<part> here.
 
 # name|what the site says|issue that builds it (empty: implemented here)
-GITLAB_CLAIMS='note-footer|the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG|
-tips|the plan note on a merge request counts the tips the plan report holds, each naming its rule and page|
-apply-serial|two pushes to main apply one after the other through the resource group, none is cancelled, and the commit carries one terragucci/apply success|
-policy-override|a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override|
-mr-widget|the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete|
-managed-state-parallelism|roots on GitLab-managed state apply at most 3 at once, and the apply job says so|
-report-keys|with the bucket keys in CI/CD variables, which the pipeline maps nowhere, the plan job writes report.json to the bucket and the index lists the run|
-report-oidc|with no static keys, the plan job assumes reports.role with its OIDC token from id_tokens, writes report.json to the bucket, and the index lists the run|
-drift-issue|the drift schedule opens one drift issue naming the root and attribute that drifted, updates the same issue when more drifts, and closes it when a run finds none|
-estate-job|the estate job of the see-every-project page, pasted into .gitlab-ci.yml and run by a pipeline schedule with only its OIDC token, writes estate.html listing the project to the bucket and prints a presigned link|
-explain-refusal|after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs|
-publish|the publish job pushes a git tag for each changed module on a merge to main, none when no module changed, and the next version for a changed module|
-rollout|a module version rolls out one merge request per wave, each changing only its roots and opened only after the last wave merged and applied|
-reconcile-mixed|a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1|
-gl-comments|the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note|
-gl-comment-plan|a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note|
-gl-protected-token|with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan|
-gl-mr-apply|with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it|
-pr-apply-lock|with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
-pr-close-release|with apply.when pull-request, closing a merge request releases the roots it locked: /terragucci lock on a second merge request then takes them|
-gl-pr-review|with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver|
-gl-wave-jobs|with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind|
-gl-comment-agent|a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file|
-gl-review-agent|the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk|
-gl-state-versions|on GitLab-managed state, each apply wave logs the state address of the root and the serial GitLab holds after it, and GitLab keeps each of those versions|
-gl-state-export|terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle|
-gl-unlock-state|terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies|
-gl-ephemeral|the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was|
-gl-state-edges|a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output|
-policy|a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial|
-affected|a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone|
-oidc|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|'
+GITLAB_CLAIMS='note/footer|the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG|
+tips/tofu|the plan note on a merge request counts the tips the plan report holds, each naming its rule and page|
+apply/serial|two pushes to main apply one after the other through the resource group, none is cancelled, and the commit carries one terragucci/apply success|
+policy/override|a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override|
+note/mr-widget|the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete|
+apply/gitlab-parallelism|roots on GitLab-managed state apply at most 3 at once, and the apply job says so|
+report/keys|with the bucket keys in CI/CD variables, which the pipeline maps nowhere, the plan job writes report.json to the bucket and the index lists the run|
+report/oidc|with no static keys, the plan job assumes reports.role with its OIDC token from id_tokens, writes report.json to the bucket, and the index lists the run|
+drift/issue|the drift schedule opens one drift issue naming the root and attribute that drifted, updates the same issue when more drifts, and closes it when a run finds none|
+estate/job|the estate job of the see-every-project page, pasted into .gitlab-ci.yml and run by a pipeline schedule with only its OIDC token, writes estate.html listing the project to the bucket and prints a presigned link|
+respond/explain-refusal|after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs|
+modules/publish|the publish job pushes a git tag for each changed module on a merge to main, none when no module changed, and the next version for a changed module|
+rollout/tofu|a module version rolls out one merge request per wave, each changing only its roots and opened only after the last wave merged and applied|
+reconcile/mixed|a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1|
+comment/poll|the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note|
+comment/plan|a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note|
+security/protected-token|with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan|
+pr-apply/tofu|with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it|
+lock/apply|with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
+lock/close-release|with apply.when pull-request, closing a merge request releases the roots it locked: /terragucci lock on a second merge request then takes them|
+approval/pr-review|with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver|
+waves/jobs|with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind|
+agent/comment|a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file|
+agent/review|the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk|
+state/versions|on GitLab-managed state, each apply wave logs the state address of the root and the serial GitLab holds after it, and GitLab keeps each of those versions|
+state/export|terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle|
+state/unlock|terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies|
+ephemeral/pr|the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was|
+linked/gitlab-state|a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output|
+policy/tofu|a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial|
+affected/tofu|a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone|
+oidc/gitlab|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
 # apply-serial's BREAK run holds it alone, so a lack of free slots never
 # orders its two applies.
 GITLAB_CLAIM_GROUPS='
-note-footer      runner weight=100
-tips             runner weight=100
-apply-serial     runner break:runner! weight=300
-policy-override  runner weight=250
-mr-widget        runner weight=150
-managed-state-parallelism runner weight=150
-report-keys      runner weight=100
-report-oidc      runner weight=100
-drift-issue      runner weight=300
-estate-job       runner weight=150
-explain-refusal  runner weight=250
-publish          runner weight=250
-rollout          runner weight=500
-reconcile-mixed  weight=60
-gl-comments      runner weight=200
-gl-comment-plan  runner weight=200
-gl-protected-token runner weight=200
-gl-mr-apply      runner weight=250
-pr-apply-lock    runner weight=400
-pr-close-release runner weight=250
-gl-pr-review     runner weight=200
-gl-wave-jobs     runner weight=400
-gl-comment-agent runner weight=350
-gl-review-agent  runner weight=400
-gl-state-versions weight=80
-gl-state-export  weight=100
-gl-unlock-state  weight=100
-gl-ephemeral     weight=100
-gl-state-edges   runner weight=200
-policy           runner weight=150
-affected         runner weight=150
-oidc             runner weight=250
+note/footer      runner weight=100
+tips/tofu             runner weight=100
+apply/serial     runner break:runner! weight=300
+policy/override  runner weight=250
+note/mr-widget        runner weight=150
+apply/gitlab-parallelism runner weight=150
+report/keys      runner weight=100
+report/oidc      runner weight=100
+drift/issue      runner weight=300
+estate/job       runner weight=150
+respond/explain-refusal  runner weight=250
+modules/publish          runner weight=250
+rollout/tofu          runner weight=500
+reconcile/mixed  weight=60
+comment/poll      runner weight=200
+comment/plan  runner weight=200
+security/protected-token runner weight=200
+pr-apply/tofu      runner weight=250
+lock/apply    runner weight=400
+lock/close-release runner weight=250
+approval/pr-review     runner weight=200
+waves/jobs     runner weight=400
+agent/comment runner weight=350
+agent/review  runner weight=400
+state/versions weight=80
+state/export  weight=100
+state/unlock  weight=100
+ephemeral/pr     weight=100
+linked/gitlab-state   runner weight=200
+policy/tofu           runner weight=150
+affected/tofu         runner weight=150
+oidc/gitlab             runner weight=250
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -274,7 +274,7 @@ gl_planned_mr() { # dir project title
 
 # ── the claims ────────────────────────────────────────────────────────────
 
-gitlab_claim_note_footer() {
+gitlab_claim_note/footer() {
   # A merge request's plan note on GitLab: its last line is the footer, GitLab
   # renders the footer's taco as an image, and the image answers 200 with a
   # PNG.
@@ -319,7 +319,7 @@ gitlab_claim_note_footer() {
   return $rc
 }
 
-gitlab_claim_tips() {
+gitlab_claim_tips/tofu() {
   # app's null provider is let float to "~> 3.2". The merge request's plan
   # note counts the tips, and the plan job's report.json holds as many, each
   # with its rule and an https page, terragucci-floating-range for app among
@@ -359,7 +359,7 @@ gitlab_claim_tips() {
   return $rc
 }
 
-gitlab_claim_apply_serial() {
+gitlab_claim_apply/serial() {
   # app's apply writes a mark to floci when it starts and another when it ends,
   # 60 seconds apart, longer than the second pipeline's check job takes. A second push lands on main once the first push's apply
   # has started. The marks must read start end start end: the second apply
@@ -431,7 +431,7 @@ TF
   return $rc
 }
 
-gitlab_claim_policy_override() {
+gitlab_claim_policy/override() {
   # The policy denies app's terraform_data (stack/fixtures/policy-wave's
   # plan.rego), so main's apply-wave-1 fails and records the denial on
   # chant/lifecycle. smoke-stranger, whom policy.override does not list,
@@ -582,7 +582,7 @@ gl_bucket_keys() { # bucket prefix
 
 # ── the claims of the site-claims audit (#362) ────────────────────────────
 
-gitlab_claim_mr_widget() {
+gitlab_claim_note/mr_widget() {
   # main applies app's probe, gone and swap. A merge request updates probe,
   # removes gone, replaces swap and adds fresh. GitLab's Terraform widget on
   # the merge request, read from the endpoint its page reads, counts 2
@@ -639,7 +639,7 @@ gitlab_claim_mr_widget() {
   return $rc
 }
 
-gitlab_claim_managed_state_parallelism() {
+gitlab_claim_apply/gitlab_parallelism() {
   # Five roots, r1 to r5, each on GitLab-managed state: an http backend at the
   # project's terraform/state/<root>, with the job token as its password. Each
   # root's apply marks in floci when it starts and when it ends, 20 seconds
@@ -731,7 +731,7 @@ gl_report_landed() { # project head
   log "the index lists ${2:0:8}, and its report.json is at tg-reports/$1/$path"
 }
 
-gitlab_claim_report_keys() {
+gitlab_claim_report/keys() {
   # reports.bucket is a bucket in the lab's floci, and the project's CI/CD
   # variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY hold its keys,
   # which the pipeline maps nowhere: the job reads them as they are. The
@@ -757,7 +757,7 @@ gitlab_claim_report_keys() {
   return $rc
 }
 
-gitlab_claim_report_oidc() {
+gitlab_claim_report/oidc() {
   # oidc names the plan and apply roles, reports.role a role that writes
   # reports, and the project's AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are
   # empty: the job has no static keys. The merge request's plan job takes its
@@ -786,7 +786,7 @@ gitlab_claim_report_oidc() {
 
 gl_sqs() { curl -fsS -X POST "$GL_FLOCI/" -H "X-Amz-Target: AmazonSQS.$1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
 
-gitlab_claim_drift_issue() {
+gitlab_claim_drift/issue() {
   # main's pipeline applies a queue with a visibility timeout of 30. In floci,
   # outside OpenTofu, the timeout goes to 45, and the drift schedule's
   # pipeline opens the project's drift issue naming app and the timeout. The
@@ -858,7 +858,7 @@ gitlab_claim_drift_issue() {
   return $rc
 }
 
-gitlab_claim_estate_job() {
+gitlab_claim_estate/job() {
   # A project whose merge request's plan job writes its report to a bucket
   # with the keys in CI/CD variables. Then the keys are emptied, and the
   # estate job of see-every-project's GitLab tab, pasted as it is into
@@ -913,7 +913,7 @@ gitlab_claim_estate_job() {
   return $rc
 }
 
-gitlab_claim_explain_refusal() {
+gitlab_claim_respond/explain_refusal() {
   # Two roots, a (the canary, wave 1) and b (wave 2), and the explain-refusal
   # job of agent-refused-wave's GitLab tab in ci/own-jobs.yml, which own_jobs
   # names and init writes into the pipeline, with a stand-in for Claude Code ahead of it on the PATH:
@@ -1004,7 +1004,7 @@ gitlab_claim_explain_refusal() {
   return $rc
 }
 
-gitlab_claim_publish() {
+gitlab_claim_modules/publish() {
   # modules.publish is git-tags. The first push to main publishes
   # modules/service and modules/queue: the pipeline's publish job pushes
   # modules/service/v0.1.0 and modules/queue/v0.1.0 to the project. A push
@@ -1057,7 +1057,7 @@ gitlab_claim_publish() {
   return $rc
 }
 
-gitlab_claim_rollout() {
+gitlab_claim_rollout/tofu() {
   # One project, three roots taking modules/network by git tag: dev/app (the
   # canary), prod/net, and prod/app, which reads prod/net's state. The module
   # changes and its publish job tags 0.2.0. terragucci rollout, run against
@@ -1153,7 +1153,7 @@ gitlab_claim_rollout() {
   return $rc
 }
 
-gitlab_claim_reconcile_mixed() {
+gitlab_claim_reconcile/mixed() {
   # A control repo whose projects are on two forges: a GitLab project on the
   # lab with one root and no pipeline, and a Forgejo project whose forge does
   # not answer. terragucci reconcile --mode apply opens the GitLab project's
@@ -1281,7 +1281,7 @@ gl_file() { # project ref path
 
 gl_comments_yml='comments: "*/5 * * * *"\n'
 
-gitlab_claim_gl_comments() {
+gitlab_claim_comment/poll() {
   # The comments schedule on a merge request planned on the lab. The project's
   # owner writes `/terragucci plan`, and smoke-outsider, no member of the
   # project, writes it too. The schedule plays twice. The owner's note gets one
@@ -1331,7 +1331,7 @@ gitlab_claim_gl_comments() {
   return $rc
 }
 
-gitlab_claim_gl_comment_plan() {
+gitlab_claim_comment/plan() {
   # A merge request planned on the lab, and the comments schedule.
   # smoke-dev, a Developer, writes `/terragucci plan app`. After the poll the
   # reply says it started a pipeline to re-plan, GitLab re-planning every
@@ -1385,7 +1385,7 @@ gitlab_claim_gl_comment_plan() {
   return $rc
 }
 
-gitlab_claim_gl_protected_token() {
+gitlab_claim_security/protected_token() {
   # gitlab.token: protected, with comments, and the project's GITLAB_TOKEN
   # variable protected. The merge request's pipeline runs on its unprotected
   # branch: its plan job holds no token and passes, and the merge request has
@@ -1430,7 +1430,7 @@ gitlab_claim_gl_protected_token() {
   return $rc
 }
 
-gitlab_claim_gl_mr_apply() {
+gitlab_claim_pr_apply/tofu() {
   # apply.when: pull-request with merge: auto and requires: [approved],
   # comments, and apply.merge_token_env TG_MERGE, a variable holding the
   # owner's token. smoke-reviewer, a Developer, approves a planned merge
@@ -1532,7 +1532,7 @@ gl_app_input() { # project -> the input app's state holds, empty when none
   curl -fsS "$GL_FLOCI/shop-terraform-state/$1/app.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty | if type == "object" then .value else . end' 2>/dev/null || true
 }
 
-gitlab_claim_pr_apply_lock() {
+gitlab_claim_lock/apply() {
   # gl_lock_mrs, then /terragucci apply on A: its mr-apply applies app (a) and
   # A stays open, holding app. /terragucci apply on B must be refused, naming
   # app and !A, with app still a. /terragucci unlock on A must say it released
@@ -1580,7 +1580,7 @@ gitlab_claim_pr_apply_lock() {
   return $rc
 }
 
-gitlab_claim_pr_close_release() {
+gitlab_claim_lock/close_release() {
   # gl_lock_mrs, then /terragucci lock on A locks app; A is closed unmerged;
   # /terragucci lock on B must then take app, which the closed A no longer
   # holds.
@@ -1610,7 +1610,7 @@ gitlab_claim_pr_close_release() {
   return $rc
 }
 
-gitlab_claim_gl_pr_review() {
+gitlab_claim_approval/pr_review() {
   # approval: pr-review and gate: always. A merge request is planned;
   # smoke-reviewer, a Developer, approves it after its latest push, and the
   # owner merges it. The merge commit's apply-wave-1 applies app: the pipeline
@@ -1658,7 +1658,7 @@ gitlab_claim_gl_pr_review() {
   return $rc
 }
 
-gitlab_claim_gl_wave_jobs() {
+gitlab_claim_waves/jobs() {
   # The gated-waves fixture on GitLab with waves.jobs: 2. Wave 1 (canary/one)
   # is one job; wave 2 (fleet/*, four roots) gets apply-wave-2, which plans
   # and gates the wave, and two share jobs of two roots each; no apply job
@@ -1747,7 +1747,7 @@ gitlab_claim_gl_wave_jobs() {
   return $rc
 }
 
-gitlab_claim_gl_comment_agent() {
+gitlab_claim_agent/comment() {
   # agent.comment with comments on the lab: AGENT_TOKEN holds the owner's
   # token, AGENT_KEY a stand-in key, and .smoke/agent.sh stands in for the
   # agent: it says which forge tokens it sees, sets app/rev.txt to 3, and with
@@ -1834,7 +1834,7 @@ SH
   return $rc
 }
 
-gitlab_claim_gl_review_agent() {
+gitlab_claim_agent/review() {
   # review.agent with comments on the lab, a stand-in reviewer, and a policy
   # that denies a wave whose review says risk high. main applies keep and old.
   # A merge request drops terraform_data.old, says only that it tidies app's
@@ -2034,7 +2034,7 @@ gl_state_setup() { # claim [extra terragucci.yml] [forge] -> work in WORK, the p
   audit_origin "$WORK"
 }
 
-gitlab_claim_gl_state_versions() {
+gitlab_claim_state/versions() {
   # One root, app, on GitLab-managed state. tf-apply wave 1 applies it, then
   # again with a new input. Each wave's log names app's state at its GitLab
   # address with the serial GitLab holds then, the second one greater, and
@@ -2073,7 +2073,7 @@ gitlab_claim_gl_state_versions() {
   return $rc
 }
 
-gitlab_claim_gl_state_export() {
+gitlab_claim_state/export() {
   # app on GitLab-managed state applies twice. As a person at a shell would:
   # terragucci state export app --version <the first serial> --actor alice
   # records a request naming the state's address and that serial, and exits
@@ -2138,7 +2138,7 @@ gitlab_claim_gl_state_export() {
   return $rc
 }
 
-gitlab_claim_gl_unlock_state() {
+gitlab_claim_state/unlock() {
   # app on GitLab-managed state applies, then a killed apply's lock is left
   # on its state: taken on GitLab's lock endpoint with an ID of its own. As a
   # person at a shell would, with the project's pipelines as the forge's
@@ -2209,7 +2209,7 @@ gitlab_claim_gl_unlock_state() {
   return $rc
 }
 
-gitlab_claim_gl_ephemeral() {
+gitlab_claim_ephemeral/pr() {
   # app on GitLab-managed state applies, and ephemeral names it. terragucci
   # ephemeral up --pr 7 applies app's copy to the GitLab state app-pr-7,
   # which then holds app's resource, unlocked, and app's own state keeps its
@@ -2261,7 +2261,7 @@ gitlab_claim_gl_ephemeral() {
   return $rc
 }
 
-gitlab_claim_gl_state_edges() {
+gitlab_claim_linked/gitlab_state() {
   # Two roots on GitLab-managed state with the job token: net, and app, which
   # reads net's state through terraform_remote_state by its address. init
   # puts net in wave 1 and app in wave 2, and main's pipeline applies them in
@@ -2308,7 +2308,7 @@ gitlab_claim_gl_state_edges() {
 
 # ── the sandbox's set on GitLab (#401) ────────────────────────────────────
 
-gitlab_claim_policy() {
+gitlab_claim_policy/tofu() {
   # main turns on policy with stack/fixtures/policy-wave's plan.rego, which
   # denies terraform_data. A merge request changes app and rewrites that
   # policy to deny nothing: the plan job reads main's copy, so the merge
@@ -2366,7 +2366,7 @@ gitlab_claim_policy() {
   return $rc
 }
 
-gitlab_claim_affected() {
+gitlab_claim_affected/tofu() {
   # Two roots, app and other, alike but for their state keys. A merge request
   # changes app alone. Its plan job selects against origin/main, the target
   # branch: report.json plans app and not other, and the plan note's first
@@ -2408,7 +2408,7 @@ gitlab_claim_affected() {
   return $rc
 }
 
-gitlab_claim_oidc() {
+gitlab_claim_oidc/gitlab() {
   # oidc names a plan role and an apply role, and app, on a local backend,
   # reads a data source whose program (probe.mjs) checks the job it runs in:
   # the job's TERRAGUCCI_OIDC id_token, in AWS_WEB_IDENTITY_TOKEN_FILE, must
