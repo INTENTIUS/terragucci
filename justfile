@@ -275,6 +275,10 @@ binary-claims binary *names:
 see-runs:
     stack/see-runs.sh
 
+[doc("Let a coding agent run the named claims (or `capture`) without typing run each time: `just grant <name>... [--runs N] [--hours H]`, `just grant --show`, `just grant --end`. Asks you to type run once.")]
+grant +args:
+    stack/grant.sh {{args}}
+
 [doc("Run the named smoke claims, plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to run claims for a change you name.")]
 claims +names:
     stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
