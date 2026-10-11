@@ -86,10 +86,10 @@ describe("the moved block", () => {
   it("is a tip on the report, unless tips are off", async () => {
     const renames = [{ root: "app", type: "aws_s3_bucket", from: "aws_s3_bucket.old", to: "aws_s3_bucket.logs" }];
     const dir = tmp();
-    const tips = await repoTips(dir, ["app"], { settings: { gate: "on-destroy", tips: true }, renames });
+    const tips = await repoTips(dir, ["app"], { settings: { gate: "on-destructive", tips: true }, renames });
     expect(tips).toEqual([expect.objectContaining({ rule: "terragucci-moved", root: "app", url: "https://intentius.io/terragucci/reference/tips/#terragucci-moved" })]);
     expect(tips[0]!.message).toContain("aws_s3_bucket.old is destroyed and aws_s3_bucket.logs created");
-    expect(await repoTips(dir, ["app"], { settings: { gate: "on-destroy", tips: false }, renames })).toEqual([]);
+    expect(await repoTips(dir, ["app"], { settings: { gate: "on-destructive", tips: false }, renames })).toEqual([]);
   });
 });
 

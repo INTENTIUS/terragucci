@@ -439,7 +439,7 @@ jobs:
           done_waves=""
           for wave in $(seq 1 "$last"); do
             : >"$outcome"
-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --on-held refuse 2>&1 | tee "$log"
+            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --on-held refuse 2>&1 | tee "$log"
             rc=${PIPESTATUS[0]}
             case "$rc" in
               0) done_waves="${done_waves:+$done_waves, }$wave" ;;
@@ -571,7 +571,7 @@ jobs:
           tg status terragucci/apply pending "applying"
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -668,7 +668,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -765,7 +765,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -862,7 +862,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;

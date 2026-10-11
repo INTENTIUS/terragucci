@@ -186,7 +186,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
     for (const root of [...destroying].sort()) {
       tips.push(ownTip(
         "terragucci-ungated-destroy",
-        `${root} plans a destroy or replacement and gate is never, so nothing stops it but the forge's own reviewers. Use gate: on-destroy.`,
+        `${root} plans a destroy or replacement and gate is never, so nothing stops it but the forge's own reviewers. Use gate: on-destructive.`,
         root,
       ));
     }

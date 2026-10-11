@@ -281,9 +281,9 @@ describe("init", () => {
 
   it("a control repo's project carries its approval in the pipeline, which has no config of its own to read at base", async () => {
     const dir = withRemote("https://github.com/acme/infra.git");
-    const r = await init(dir, { settings: { gate: "on-destroy", drift: false, runtime: "forge", tips: true, env: {}, binary: "tofu", approval: "sealed" } });
+    const r = await init(dir, { settings: { gate: "on-destructive", drift: false, runtime: "forge", tips: true, env: {}, binary: "tofu", approval: "sealed" } });
     const text = readFileSync(r.files[0].path, "utf-8");
-    expect(text).toContain("--gate on-destroy --approval sealed");
+    expect(text).toContain("--gate on-destructive --approval sealed");
     expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8")).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
   });
 

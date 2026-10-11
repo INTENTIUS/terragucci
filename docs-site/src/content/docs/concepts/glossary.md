@@ -47,7 +47,7 @@ The hash over the plan digests of the roots in a wave whose plan changes somethi
 
 ### gate
 
-Where a wave waits for a person, per the `gate` setting: `on-destroy` (default), `always` or `never`. A waiting job exits 3 and prints its `terragucci approve` command.
+Where a wave waits for a person, per the `gate` setting: `on-destructive` (default), `always` or `never`. A waiting job exits 3 and prints its `terragucci approve` command.
 
 ## Approvals
 

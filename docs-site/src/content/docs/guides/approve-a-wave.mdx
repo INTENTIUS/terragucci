@@ -23,7 +23,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | You need | Detail |
 |---|---|
 | A wave that ran | After a merge, or from `/terragucci apply` on an open pull request when [`apply.when`](/terragucci/reference/config/#apply-before-merge) is `pull-request`. |
-| A gate | `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits ([Gate policy](/terragucci/reference/stages/#gate-policy)). |
+| A gate | `gate` set to `on-destructive` (the default) or `always`. With `never`, no wave waits ([Gate policy](/terragucci/reference/stages/#gate-policy)). |
 | terragucci | `npm i -D @intentius/terragucci`, where you approve. |
 | Write access | `terragucci approve` pushes a commit to `chant/lifecycle` with your own git credentials. |
 | Under `approval: sealed` only | An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo). |

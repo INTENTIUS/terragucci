@@ -58,7 +58,7 @@
           "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read." },
           "state": { "enum": ["not-started", "planned", "waiting", "applying", "applied", "refused", "failed"] },
           "gate": { "type": "string", "description": "Its gate on the ledger, wave-<n>." },
-          "policy": { "type": "string", "description": "The gate policy it ran under: always, on-destroy or never." },
+          "policy": { "type": "string", "description": "The gate policy it ran under: always, on-destructive or never." },
           "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
           "digest": { "type": ["string", "null"], "description": "The set digest its gate decided on." },
           "command": { "type": "string", "description": "The command that approves it, while it waits." },

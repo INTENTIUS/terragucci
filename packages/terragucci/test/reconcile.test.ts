@@ -223,7 +223,7 @@ describe("reconcile", () => {
       {
         defaults: {
           binary: "tofu",
-          gate: "on-destroy",
+          gate: "on-destructive",
           parallelism: 1,
           waves: { canary: ["envs/dev/*"] },
           respond: { tips: "off" },

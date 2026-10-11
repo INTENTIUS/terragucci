@@ -10,7 +10,7 @@
  * then decides whether the wave waits:
  *
  *   always      every wave with a change waits for an approval of its digest
- *   on-destroy  a wave waits when one of its plans destroys or replaces
+ *   on-destructive  a wave waits when one of its plans destroys or replaces
  *   never       no wave waits
  *
  * A waiting wave reads the gate ledger (`_gates/tf-apply.jsonl` on the
@@ -100,7 +100,7 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
+import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
 import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates } from "./detect";
 import { detectShape } from "./shape";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
@@ -894,7 +894,11 @@ export interface ApplyWaveOptions {
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
-export async function applyWave(repo: string, options: ApplyWaveOptions): Promise<number> {
+export async function applyWave(repo: string, input: Omit<ApplyWaveOptions, "gate"> & { gate: GateName }): Promise<number> {
+  // A pipeline rendered before on-destructive passes --gate on-destroy; the rest of the wave sees the policy's one name.
+  const gate = normalizeGate(input.gate);
+  if (gate === undefined) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
+  let options: ApplyWaveOptions = { ...input, gate };
   if (options.branches && Object.keys(options.branches).length > 0) {
     // A Terragrunt repo's units map to branches by the same globs: the waves are then cut from the units this branch applies.
     const cut = branchLayers(options.layers, options.branches, options.branch || undefined);
@@ -1954,7 +1958,7 @@ async function gateWave(
   const { label, roots, planned, members, digest, changes, destroys } = ctx;
   let mode: Approval = "ledger";
   // A wave with nothing to change has nothing to approve. A step that asks for an approval, or a change over cost.approve_above at base, holds it whatever the gate policy says.
-  const byGate = gate === "always" || (gate === "on-destroy" && destroys > 0) || (ctx.heldBySteps?.length ?? 0) > 0;
+  const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || (ctx.heldBySteps?.length ?? 0) > 0;
   const byCost = w.waveCost?.over === true;
   const gated = changes > 0 && (byGate || byCost);
   if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);

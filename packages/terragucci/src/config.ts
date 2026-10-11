@@ -22,7 +22,17 @@ export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_S
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
-export const GATES = ["always", "on-destroy", "never"] as const;
+export const GATES = ["always", "on-destructive", "never"] as const;
+/** Older spellings of a gate policy, still accepted from terragucci.yml and --gate: `on-destroy` is `on-destructive`. */
+export const GATE_ALIASES = { "on-destroy": "on-destructive" } as const satisfies Record<string, Gate>;
+/** Every gate name terragucci accepts: the policies and their older spellings. */
+export const GATE_NAMES: readonly GateName[] = [...GATES, ...(Object.keys(GATE_ALIASES) as (keyof typeof GATE_ALIASES)[])];
+/** The policy a gate name means, or undefined when it names none. */
+export function normalizeGate(v: unknown): Gate | undefined {
+  if (typeof v !== "string") return undefined;
+  if ((GATES as readonly string[]).includes(v)) return v as Gate;
+  return Object.hasOwn(GATE_ALIASES, v) ? GATE_ALIASES[v as keyof typeof GATE_ALIASES] : undefined;
+}
 /**
  * What counts as the approval of a waiting wave (`approval:`). `ledger` (the
  * default): any `chant approve` of the wave's set digest on chant/lifecycle,
@@ -64,6 +74,8 @@ export const APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
 export type Gate = (typeof GATES)[number];
+/** A gate as terragucci.yml or --gate may spell it: a policy, or an older name for one. */
+export type GateName = Gate | keyof typeof GATE_ALIASES;
 export type Approval = (typeof APPROVALS)[number];
 
 /**
@@ -394,8 +406,8 @@ export interface ProjectSettings {
   forge?: ForgeName;
   /** Where the project lives, for a forge not on https or the default port. */
   url?: string;
-  /** When a wave waits for an approval. */
-  gate?: Gate;
+  /** When a wave waits for an approval. A loaded config holds the policy's current name: on-destroy reads as on-destructive. */
+  gate?: GateName;
   /** What counts as a waiting wave's approval; see APPROVALS. Read from the config at base, never the applied commit's own. */
   approval?: Approval;
   /** When a change applies; see ApplySettings. */
@@ -678,7 +690,7 @@ export interface ResolvedSettings extends ProjectSettings {
 }
 
 export const BUILT_IN: ResolvedSettings = {
-  gate: "on-destroy",
+  gate: "on-destructive",
   drift: false,
   runtime: "forge",
   tips: true,
@@ -804,7 +816,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   stringList(s.roots, `${where}.roots`, problems);
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
-  oneOf(s.gate, GATES, `${where}.gate`, problems);
+  if (s.gate !== undefined && normalizeGate(s.gate) === undefined) problems.push(`${where}.gate is ${JSON.stringify(s.gate)}; use one of ${GATES.join(", ")}`);
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
@@ -1647,7 +1659,11 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
   if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.
-  return JSON.parse(JSON.stringify(raw)) as TerragucciConfig;
+  const out = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+  // An older gate name becomes the policy it names here, so every later comparison sees one value.
+  const settings = [out, out.defaults, ...(isObject(out.projects) ? Object.values(out.projects) : [])];
+  for (const s of settings) if (isObject(s) && s.gate !== undefined) s.gate = normalizeGate(s.gate);
+  return out as TerragucciConfig;
 }
 
 // ── loading ──────────────────────────────────────────────────────────────────
@@ -1779,7 +1795,7 @@ export function resolveProject(config: TerragucciConfig, key: string): ResolvedS
 
 function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings {
   const { defaults: _d, projects: _p, ...settings } = over as TerragucciConfig;
-  const out: ResolvedSettings = { ...base, ...settings, env: { ...base.env, ...(settings.env ?? {}) } };
+  const out: ResolvedSettings = { ...base, ...settings, gate: normalizeGate(settings.gate) ?? base.gate, env: { ...base.env, ...(settings.env ?? {}) } };
   if (settings.oidc) out.oidc = { ...base.oidc, ...settings.oidc };
   if (base.terragrunt || settings.terragrunt) out.terragrunt = { ...base.terragrunt, ...settings.terragrunt };
   if (base.respond || settings.respond) out.respond = { ...base.respond, ...settings.respond };

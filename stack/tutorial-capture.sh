@@ -519,7 +519,7 @@ step_one_note() {
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$REPO/branches/change%2Fmodule-bump" || true
 }
 
-# The example's gate is on-destroy, so only a change that destroys makes a wave
+# The example's gate is on-destructive, so only a change that destroys makes a wave
 # wait. Merge the destroy scenario as the reader would, and read what waits.
 step_wave_waiting() {
   run_cmd wave-waiting "just example change destroy" "$HERE/example.sh" change destroy

@@ -65,8 +65,8 @@ describe("the plan note's marker", () => {
     expect(renderNote(report)).toContain(`| 1 | 1 | \`${d}\` | waits for an approval: \`terragucci approve wave-1 --plan ${d}\` |`);
     expect(renderNote(report, { sealed: true })).toContain(`\`terragucci approve wave-1 --plan ${d} --sign\``);
     expect(renderNote(report)).toContain("| 2 | 1 | no change | applies |");
-    // Under on-destroy a create waits for nothing.
-    expect(buildReport({ run, roots, waves: [{ number: 1, roots: ["a"] }], gate: "on-destroy" } as never).waves[0]!.waits).toBe(false);
+    // Under on-destructive a create waits for nothing.
+    expect(buildReport({ run, roots, waves: [{ number: 1, roots: ["a"] }], gate: "on-destructive" } as never).waves[0]!.waits).toBe(false);
   });
 });
 

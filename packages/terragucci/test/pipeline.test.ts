@@ -682,7 +682,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
     const manual = commentApplyScript("tofu", layers, "github", OIDC, { when: "pull-request" });
     expect(manual).toContain('if [ "$TG_OPEN" = 1 ]; then what="the head"; tf_base="--base origin/$TG_BASE"; fi');
     expect(manual).toContain('terragucci stage tf-apply --wave "$wave" --layers');
-    expect(manual).toMatch(/--gate on-destroy --on-held refuse \$tf_base/);
+    expect(manual).toMatch(/--gate on-destructive --on-held refuse \$tf_base/);
     // The responses read the base's settings on an open pull request, and carry no flag after a merge.
     expect(manual).toContain('terragucci respond wave-refused --wave "$wave" --approved terragucci-report/approved --current terragucci-report/current $tf_base || true');
     expect(manual).toContain('terragucci respond apply-failed --log "$log" $tf_base || true');
@@ -723,7 +723,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       // The decision comes before the apply role.
       expect(run.indexOf("terragucci comment-apply")).toBeLessThan(run.indexOf(OIDC.apply_role));
       expect(run).toContain('tf_base="--base origin/$TG_BASE"');
-      expect(run).toMatch(/--gate on-destroy --on-held refuse \$tf_base/);
+      expect(run).toMatch(/--gate on-destructive --on-held refuse \$tf_base/);
       // No status on the head: a failed one would fail the merge request's own pipeline.
       expect(run).not.toContain("tg status");
       expect(run).toContain("Merge it when you are ready");
@@ -1743,7 +1743,7 @@ describe("a Terragrunt wave in the step's own shell", () => {
       expect(r.status, r.out).toBe(1);
       const calls = readFileSync(log, "utf-8").trim().split("\n");
       expect(calls[0]).toBe("prelude");
-      expect(calls.find((c) => c.startsWith("terragucci stage tf-apply"))).toBe("terragucci stage tf-apply --wave 1 --layers live/a;live/b --binary tofu --gate on-destroy --stand-down --terragrunt");
+      expect(calls.find((c) => c.startsWith("terragucci stage tf-apply"))).toBe("terragucci stage tf-apply --wave 1 --layers live/a;live/b --binary tofu --gate on-destructive --stand-down --terragrunt");
       expect(calls.some((c) => c.startsWith("terragucci respond apply-failed --log "))).toBe(true);
       const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
       expect(s.at(-1)).toEqual(["failure", "an apply failed"]);
@@ -1903,7 +1903,7 @@ describe("a wave split across jobs (waves.jobs), with a repo-wide scope", () => 
     expect(doc.jobs["apply-done"].needs).toEqual(["apply-wave-2-share-1", "apply-wave-2-share-2"]);
     const step = (j: string): string => doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
     expect(step("apply-wave-1")).not.toContain("--shares");
-    expect(step("apply-wave-2")).toContain("--wave 2 --layers 'net;a,b,c,d,e' --binary tofu --gate on-destroy --shares 2");
+    expect(step("apply-wave-2")).toContain("--wave 2 --layers 'net;a,b,c,d,e' --binary tofu --gate on-destructive --shares 2");
     expect(step("apply-wave-2")).not.toContain("--share ");
     expect(step("apply-wave-2-share-2")).toContain("--shares 2 --share 2");
     // Only the done job posts the success; the deciding job and the shares post none.
@@ -1959,7 +1959,7 @@ describe("a wave split across jobs (waves.jobs), with a repo-wide scope", () => 
     expect(step("apply-wave-2-share-1")).toContain("--terragrunt --shares 2 --share 1");
     // The job after the shares applies like a wave's: credentials, caches and the stage with --rest from the wave past the pipeline's.
     expect(doc.jobs["apply-rest"].needs).toEqual(["apply-wave-2-share-1", "apply-wave-2-share-2"]);
-    expect(step("apply-rest")).toContain("terragucci stage tf-apply --wave 3 --layers 'live/net;live/a,live/b,live/c' --binary tofu --gate on-destroy --terragrunt --rest");
+    expect(step("apply-rest")).toContain("terragucci stage tf-apply --wave 3 --layers 'live/net;live/a,live/b,live/c' --binary tofu --gate on-destructive --terragrunt --rest");
     expect(step("apply-rest")).toContain('tg status terragucci/apply success "every wave of units applied"');
     expect(step("apply-rest")).toContain('hold_ref="${hold_prefix}apply-rest"');
     // A Terragrunt wave that is not the last keeps --rest on the last wave's job.

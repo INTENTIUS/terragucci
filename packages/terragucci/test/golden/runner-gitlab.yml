@@ -257,7 +257,7 @@ apply-wave-1:
       git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
       outcome="$(mktemp)"
       log="$(mktemp)"
-      TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+      TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
       rc=${PIPESTATUS[0]}
       case "$rc" in
         0) ;;
@@ -354,7 +354,7 @@ apply-wave-2:
       git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
       outcome="$(mktemp)"
       log="$(mktemp)"
-      TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destroy --stand-down 2>&1 | tee "$log"
+      TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
       rc=${PIPESTATUS[0]}
       case "$rc" in
         0) ;;

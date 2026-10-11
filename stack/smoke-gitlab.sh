@@ -375,7 +375,7 @@ gitlab_claim_apply_serial() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   project="$(gl_project apply-serial)" || { drop_work "$work"; return 1; }
   log "project $GL_URL/$GL_USER/$project"
-  # The second push replaces the resource, which on-destroy would hold for an
+  # The second push replaces the resource, which on-destructive would hold for an
   # approval; this claim is about the order, so no wave waits.
   gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
   cat >> "$work/tree/app/main.tf" <<TF

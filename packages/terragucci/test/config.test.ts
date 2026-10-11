@@ -14,7 +14,7 @@ import { tmp, write } from "./helpers";
 
 const YAML = `defaults:
   binary: tofu
-  gate: on-destroy
+  gate: on-destructive
 projects:
   github.com/acme/infra:
     roots: ["envs/*/*"]
@@ -31,7 +31,7 @@ const TS = `import type { TerragucciConfig } from "@intentius/terragucci";
 const repo = (roots: string[]) => ({ roots });
 
 export default {
-  defaults: { binary: "tofu", gate: "on-destroy" },
+  defaults: { binary: "tofu", gate: "on-destructive" },
   projects: {
     "github.com/acme/infra": { ...repo(["envs/*/*"]), waves: { canary: ["envs/dev/*"] } },
     "gitlab.example.com/platform/network": { binary: "terraform", drift: "17 4 * * *" },
@@ -47,6 +47,25 @@ describe("loading", () => {
     const ts = await loadConfig(join(dir, "b/terragucci.ts"));
     expect(ts).toEqual(yml);
     expect(yml.projects?.["codeberg.org/acme/edge"]).toEqual({});
+  });
+
+  it.each(["on-destructive", "on-destroy"])("gate: %s loads as on-destructive, at the top, under defaults and under a project", async (gate) => {
+    const dir = write(tmp(), {
+      "repo/terragucci.yml": `gate: ${gate}\n`,
+      "control/terragucci.yml": `defaults:\n  gate: ${gate}\nprojects:\n  github.com/acme/a: {}\n  github.com/acme/b:\n    gate: ${gate}\n`,
+    });
+    const repo = await loadConfig(join(dir, "repo/terragucci.yml"));
+    expect(repo.gate).toBe("on-destructive");
+    expect(resolveRepo(repo).gate).toBe("on-destructive");
+    const control = await loadConfig(join(dir, "control/terragucci.yml"));
+    expect(control.defaults?.gate).toBe("on-destructive");
+    expect(control.projects?.["github.com/acme/b"]?.gate).toBe("on-destructive");
+    expect(resolveProject(control, "github.com/acme/a").gate).toBe("on-destructive");
+  });
+
+  it("the built-in gate is on-destructive, and a gate that names no policy lists the current names", () => {
+    expect(BUILT_IN.gate).toBe("on-destructive");
+    expect(() => validateConfig({ gate: "on-delete" }, "terragucci.yml")).toThrow('config.gate is "on-delete"; use one of always, on-destructive, never');
   });
 
   it("folding refuses a config that reads the environment, and names the rule", async () => {
@@ -66,7 +85,7 @@ describe("loading", () => {
 
   // #803: a top-level list used to parse as {} and pass as the empty config.
   it.each([
-    ["a list", "- binary: tofu\n- gate: on-destroy\n", "a list"],
+    ["a list", "- binary: tofu\n- gate: on-destructive\n", "a list"],
     ["an empty flow list", "[]\n", "a list"],
     ["a quoted string", '"binary"\n', "a string"],
     ["a number", "5\n", "a number"],

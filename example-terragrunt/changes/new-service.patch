@@ -1,5 +1,5 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 79c4618..cfc559e 100644
+index da853d0..4251b87 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -152,7 +152,7 @@ jobs:
@@ -42,8 +42,8 @@ index 79c4618..cfc559e 100644
            for wave in $(seq 1 "$last"); do
              : >"$outcome"
              rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi
--            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --on-held refuse --terragrunt $rest 2>&1 | tee "$log"
-+            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --on-held refuse --terragrunt $rest 2>&1 | tee "$log"
+-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --on-held refuse --terragrunt $rest 2>&1 | tee "$log"
++            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --on-held refuse --terragrunt $rest 2>&1 | tee "$log"
              rc=${PIPESTATUS[0]}
              [ -s "$outcome" ] && wave="$(sed -n 's/^wave \([0-9]*\) .*/\1/p' "$outcome")"
              case "$rc" in
@@ -60,8 +60,8 @@ index 79c4618..cfc559e 100644
            tg status terragucci/apply pending "applying"
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
@@ -69,8 +69,8 @@ index 79c4618..cfc559e 100644
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
@@ -78,8 +78,8 @@ index 79c4618..cfc559e 100644
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
@@ -87,8 +87,8 @@ index 79c4618..cfc559e 100644
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
@@ -96,8 +96,8 @@ index 79c4618..cfc559e 100644
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 5 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt --rest 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 5 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --stand-down --terragrunt --rest 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 5 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt --rest 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 5 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destructive --stand-down --terragrunt --rest 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;

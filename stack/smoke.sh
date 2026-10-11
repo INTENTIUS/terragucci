@@ -688,7 +688,7 @@ TF
     sed "s#serial/app.tfstate#$name/app.tfstate#; s#/serial-marks/#/$name-marks/#" "$work/app/main.tf" > "$work/app/main.tf.new" && mv "$work/app/main.tf.new" "$work/app/main.tf"
   fi
   echo 1 > "$work/app/rev.txt"
-  # The second push replaces the resource, which on-destroy would hold for an
+  # The second push replaces the resource, which on-destructive would hold for an
   # approval; this claim is about the lock, so no wave waits.
   printf 'forge: forgejo\nbinary: %s\ngate: never\n' "$SMOKE_BINARY" > "$work/terragucci.yml"
   (cd "$work" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
@@ -18899,7 +18899,7 @@ claim_migrate_resume_never() {
 
 claim_migrate_resume() {
   # stack/fixtures/migrate-roots: one root, mono, holding keep and moved, with
-  # the default gate (on-destroy) and apply.resume: 5, so init writes the
+  # the default gate (on-destructive) and apply.resume: 5, so init writes the
   # resume workflow, pushed to Forgejo; its run applies mono, which destroys
   # nothing and so does not wait.
   # A second push moves moved to a new root, split, with
