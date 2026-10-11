@@ -53,11 +53,11 @@ Where a wave waits for a person, per the `gate` setting: `on-destroy` (default),
 
 ### chant
 
-The record format terragucci writes to [`chant/lifecycle`](#chantlifecycle): approvals, applies and lock releases, one line each. Approvers' keys are in [`.chant/allowed_signers`](#chantallowed_signers).
+The record format terragucci writes to [`chant/lifecycle`](#chantlifecycle): approvals, applies and lock releases, one line each. [chant](https://intentius.io/chant/) is the toolkit terragucci is built on. Approvers' keys are in [`.chant/allowed_signers`](#chantallowed_signers).
 
 ### chant/lifecycle
 
-A branch holding the apply job's records and one commit per approval. Let only the apply job's identity push to it and block force pushes and deletion. [Approvals as records](/terragucci/concepts/approvals-as-records/) says why.
+A branch holding the apply job's records and one commit per approval. Let only the apply job's identity push to it and block force pushes and deletion. [Approvals as records](/terragucci/concepts/approvals-as-records/) says why, and chant's [gate steps](https://intentius.io/chant/guide/ops/#gate-steps) describe the gate ledger it holds.
 
 ### chant.workspace.json
 
@@ -69,7 +69,7 @@ The gates in `chant.workspace.json` (`init` lists all under `approval: sealed`) 
 
 ### .chant/allowed_signers
 
-The signers file holds one ssh public key per approver in ssh-keygen's allowed_signers format and is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
+The signers file holds one ssh public key per approver in ssh-keygen's allowed_signers format and is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file). chant documents the file under [`chant workspace signers`](https://intentius.io/chant/cli/workspace-signers/).
 
 ### pr-review
 
