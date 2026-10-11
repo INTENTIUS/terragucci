@@ -156,7 +156,7 @@ The site is for people using terragucci. It describes what works today and is tr
 
 A claim is named `<area>/<part>`: the area is the behaviour it proves (`lock`, `waves`, `refuse`, `policy`), the part the flavor, forge case or variant (`lock/terragrunt`, `lock/plan`, `waves/atmos`). Forgejo, GitLab and the validation forges record the same id, told apart by their row's forge. A page's `claims:` line names parts, or an area alone, which passes only when every part of it does.
 
-To prove a change on the stack, run `just claims-affected` (or `just claims <area or area/part>...`). `stack/claims-affected.sh` picks the claims from the change since `origin/main` and prints why it picked each one:
+Claims are a person's runs, apart from making a change: nothing waits on one, and no page is held back by one. To run them, use `just claims-affected` (or `just claims <area or area/part>...`). `stack/claims-affected.sh` picks the claims from the change since `origin/main` and prints why it picked each one:
 
 | Changed | Claims picked |
 |---|---|

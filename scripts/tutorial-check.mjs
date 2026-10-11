@@ -1,6 +1,5 @@
 // Keeps the tutorial and the guides honest. For every tutorial page and every
 // guide that is not a draft:
-//   - every smoke claim it names in `claims:` passes in smoke.json;
 //   - captures (<Captured step="…"> and <Recorded step="…" view="…">) appear on
 //     tutorial pages only;
 //   - a capture a tutorial page embeds without `optional` exists.
@@ -8,7 +7,7 @@
 // or a release. So an optional capture that was never taken, and a capture made
 // from an older example/ (its source_hash does not match), are listed and do
 // not fail the check; `--strict` fails on them.
-// Draft pages and guides are skipped; they leave draft when their claims pass.
+// Draft pages and guides are skipped. Smoke claims hold no page back.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -16,14 +15,6 @@ import { join, relative } from "node:path";
 const root = new URL("..", import.meta.url).pathname;
 const pages = join(root, "docs-site/src/content/docs/tutorial");
 const data = join(root, "docs-site/src/data/tutorial");
-const smoke = JSON.parse(readFileSync(join(root, "docs-site/src/data/smoke.json"), "utf8"));
-// A page's claims are the OpenTofu rows on Forgejo; a Terraform or choudoufu row carries binary, and a
-// GitLab row forge: "gitlab", which counts for a claim that runs on GitLab alone (no Forgejo row of its name).
-const forgejoRows = smoke.claims.filter((c) => (c.forge ?? "forgejo") === "forgejo" && !c.binary);
-const verdict = Object.fromEntries([
-  ...smoke.claims.filter((c) => c.forge === "gitlab" && !forgejoRows.some((f) => f.claim === c.claim)).map((c) => [c.claim, c.verdict]),
-  ...forgejoRows.map((c) => [c.claim, c.verdict]),
-]);
 
 // The same hash stack/tutorial-capture.sh writes: each file under example/,
 // in byte order, as its path, a NUL, then its content. In the pipeline the
@@ -55,15 +46,6 @@ if (process.argv.includes("--hash")) {
 }
 
 const strict = process.argv.includes("--strict");
-// A claim is <area>/<part>. A page may name an area alone (lock): it passes
-// when every part of the area passes.
-const verdictOf = (c) => {
-  if (c.includes("/")) return verdict[c] ?? "unknown";
-  const parts = Object.keys(verdict).filter((k) => k.startsWith(`${c}/`));
-  if (!parts.length) return "unknown";
-  const failing = parts.filter((k) => verdict[k] !== "pass");
-  return failing.length ? `not passing in ${failing.join(", ")}` : "pass";
-};
 const problems = [];
 const stale = [];
 const capture = (step) => {
@@ -88,9 +70,7 @@ function checkCaptures(label, text, tutorial) {
   }
 }
 
-// A tutorial page, a guide, a concept or a standards page. A published one names its smoke
-// claims in `claims:`, and each must pass. A guide must carry the line:
-// `claims: []` says that no recorded claim backs it.
+// A tutorial page, a guide, a concept or a standards page that is not a draft.
 let checked = 0;
 const guides = join(root, "docs-site/src/content/docs/guides");
 const concepts = join(root, "docs-site/src/content/docs/concepts");
@@ -106,14 +86,6 @@ function checkDir(dir, kind) {
       continue;
     }
     checked++;
-    const line = front.match(/^claims:\s*\[(.*)\]\s*$/m);
-    if (!line && kind === "guide") problems.push(`${label}: no claims: line; list the smoke claims that back it, or write claims: [] when none does`);
-    const claims = (line?.[1] ?? "")
-      .split(",").map((s) => s.trim().replace(/['"]/g, "")).filter(Boolean);
-    for (const c of claims) {
-      const v = verdictOf(c);
-      if (v !== "pass") problems.push(`${label}: claim ${c} is ${v}, so the ${kind} must stay a draft`);
-    }
     checkCaptures(label, text, kind === "page");
     console.log(`ok    ${label}`);
   }
