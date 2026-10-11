@@ -518,7 +518,7 @@ terragucci view [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project 
 Starts [behold](https://intentius.io/behold/using/terragucci/) with `npx`, at the version this terragucci pins, on the repo's checkout and its reports bucket. It waits until behold answers on `http://127.0.0.1:<port>`, opens the browser, and runs until Ctrl-C. Each root is drawn as a box of its resources, and a resource a run flagged carries a mark with that run's finish time.
 
 ```bash
-npx --yes -p @intentius/behold@0.23.0 -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0 \
+npx --yes -p @intentius/behold@0.24.0 -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0 \
   behold serve <repo> --terragucci <reports> --terragucci-project <project> --port 4600
 ```
 
@@ -537,14 +537,14 @@ npx --yes -p @intentius/behold@0.23.0 -p @intentius/chant-lexicon-terraform@^0.1
 | S3 | `s3://<bucket>/<prefix>`, with your shell's AWS credentials; `reports.endpoint` is passed as `AWS_ENDPOINT_URL_S3` |
 | GCS or Azure Blob | `reports.url` with the prefix; with no `reports.url`, the command stops and asks for `--reports <dir>` with a copy made by `gcloud storage rsync` or `azcopy` |
 
-`--publish` writes to S3 only. A read-only identity needs `s3:GetObject` on the prefix; `--publish` also needs `s3:PutObject` on `<prefix>/views/behold/*`.
+`--publish` writes to S3 only. A read-only identity needs `s3:GetObject` on the prefix; `--publish` also needs `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on `<prefix>/views/behold/*`: it reads the last view's file list and removes the files the new view no longer uses.
 
 When behold stops, the command prints one line and exits 1:
 
 | Cause | The line says |
 |---|---|
 | no `npx` | `npx` is not on the path |
-| the repo's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) asks for a newer `minReader` than behold 0.23.0 reads | the repo asks for a newer reader than the pinned behold reads |
+| the repo's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) asks for a newer `minReader` than behold 0.24.0 reads | the repo asks for a newer reader than the pinned behold reads |
 | the Terraform reader did not install | the package behold could not load |
 | AWS refused or found no credentials | the source, and which error AWS gave |
 | behold refused a report as malformed | behold's own error and what to fix |

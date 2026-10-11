@@ -9797,7 +9797,7 @@ claim_behold_view() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 prefix queue url out dom chrome="${CHROME:-}" card="behold-drift/queue/aws_sqs_queue.jobs" view snap
-  local behold="${SMOKE_BEHOLD:-@intentius/behold}"
+  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.24.0}"
   local reads=(--terragucci) ; [ -n "${BREAK:-}" ] && reads=()
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
@@ -9864,7 +9864,7 @@ HCL
   if [ $rc = 0 ]; then
     # The step the guide gives, with the job's credentials (AWS_DOCKER_ENV); the
     # view is built outside the checkout so the checkout stays as it was.
-    out="$(in_image npx --yes -p "$behold" -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0 \
+    out="$(in_image npx --yes -p "$behold" -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0 \
       behold export . ${reads[@]+"${reads[@]}"} ${reads[@]+"s3://$REPORT_BUCKET/$prefix"} --no-source --out /tmp/behold-view \
       --publish "s3://$REPORT_BUCKET/$prefix/views/behold" 2>&1)" || { printf '%s\n' "$out" >&2; log "behold export failed"; rc=1; }
     printf '%s\n' "$out" >&2
@@ -9910,7 +9910,7 @@ claim_behold_serve() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 code=0 prefix queue url out api card="behold-serve/queue/aws_sqs_queue.jobs"
-  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.23.0}"
+  local behold="${SMOKE_BEHOLD:-@intentius/behold@0.24.0}"
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
@@ -9995,7 +9995,7 @@ JS
   if [ $rc = 0 ]; then
     # The command the guide gives, with the reader's own credentials
     # (AWS_DOCKER_ENV), served while the probe reads it.
-    out="$(in_image sh -c 'npx --yes -p "$1" -p @intentius/chant-lexicon-terraform@^0.102.0 -p @cdktn/hcl2json@^0.24.0 behold serve . --terragucci "$2" --port 4600 >/tmp/behold.log 2>&1 & pid=$!; node /probe/probe.mjs; rc=$?; kill $pid 2>/dev/null; tail -n 40 /tmp/behold.log; exit $rc' sh "$behold" "s3://$REPORT_BUCKET/$prefix" 2>&1)" || { log "the probe did not reach behold serve"; rc=1; }
+    out="$(in_image sh -c 'npx --yes -p "$1" -p @intentius/chant-lexicon-terraform@^0.121.0 -p @cdktn/hcl2json@^0.24.0 behold serve . --terragucci "$2" --port 4600 >/tmp/behold.log 2>&1 & pid=$!; node /probe/probe.mjs; rc=$?; kill $pid 2>/dev/null; tail -n 40 /tmp/behold.log; exit $rc' sh "$behold" "s3://$REPORT_BUCKET/$prefix" 2>&1)" || { log "the probe did not reach behold serve"; rc=1; }
     printf '%s\n' "$out" >&2
     clean_mounted "$work/behold-serve" "$image"
   fi
