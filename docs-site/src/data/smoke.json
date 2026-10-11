@@ -1107,6 +1107,14 @@
       "commit": "41460da8"
     },
     {
+      "claim": "terragucci-view",
+      "says": "terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "54129f30"
+    },
+    {
       "claim": "drift-overdue",
       "says": "the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run",
       "needs": null,

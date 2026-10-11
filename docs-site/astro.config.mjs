@@ -166,6 +166,7 @@ export default defineConfig({
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
 								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
+								{ label: 'See your estate in behold', slug: 'guides/see-your-estate-in-behold' },
 								{ label: 'Find the state version an apply left', slug: 'guides/find-a-state-version' },
 								{ label: 'Export a state version', slug: 'guides/export-a-state-version' },
 								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
