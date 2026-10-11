@@ -27,5 +27,9 @@
     "test/**/*.ts",
     "chant.config.ts",
     "vitest.config.ts"
+  ],
+  "exclude": [
+    "packages/terragucci/src/import/terrateam.ts",
+    "packages/terragucci/test/import-terrateam.test.ts"
   ]
 }

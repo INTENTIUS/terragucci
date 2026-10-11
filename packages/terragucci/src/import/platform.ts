@@ -6,9 +6,8 @@
  * each unit has; `finish` decides what one repo-wide key can hold.
  */
 import { PASS_RESERVED, PASS_RESERVED_PREFIXES, PR_APPLY_NEEDS_ON_GITLAB, RELEASE_VERSION, type ApplyWhen, type Binary, type ForgeName, type ProjectSettings, type StepSettings } from "../config";
-import { Notes, wavesAfterOf, type ImportNote } from "./notes";
+import { Notes, wavesAfterOf, type ImportNote, type RepoShape } from "./notes";
 import { noteConcept, type SpaceliftEnv0Row } from "./spacelift-env0-guide";
-import type { RepoShape } from "./terrateam";
 
 export interface PlatformOptions {
   forge?: ForgeName;

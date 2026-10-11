@@ -2,9 +2,16 @@
  * The notes an import prints, one per setting, and the small readers every
  * source shares.
  */
-import { GUIDE_URL, leftOut, settingCell, terrateamCell, tgScaleCell, type LeftOutRow, type SettingRow, type TerrateamRow, type TgScaleRow } from "./guide";
+import { GUIDE_URL, leftOut, settingCell, tgScaleCell, type LeftOutRow, type SettingRow, type TgScaleRow } from "./guide";
 
 export type NoteKind = "mapped" | "default" | "unmapped" | "left-out";
+
+/** The repo as terragucci finds it: its roots, their dependency layers, and which roots each one reads. */
+export interface RepoShape {
+  roots: string[];
+  layers: string[][];
+  reads: Map<string, Set<string>>;
+}
 
 export interface ImportNote {
   /** The setting, as a path in the source file. */
@@ -42,10 +49,6 @@ export class Notes {
   }
   unknown(key: string, detail?: string): void {
     this.add("unmapped", key, "", `the guide has no row for it, so nothing was written; see ${this.url}`, detail);
-  }
-  /** A note by a row of the guide's Terrateam table. */
-  terrateam(kind: Exclude<NoteKind, "left-out">, key: string, row: TerrateamRow, detail?: string): void {
-    this.add(kind, key, row, terrateamCell(row), detail);
   }
   /** A note by a row of another guide's table, with that row's terragucci cell as its text. */
   cell(kind: NoteKind, key: string, row: string, text: string, detail?: string): void {

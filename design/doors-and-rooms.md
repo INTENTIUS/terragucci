@@ -29,7 +29,7 @@ One data file, `docs-site/src/data/rooms.ts`, feeds the picker, the rooms and th
 | App developer | a plan note on my pull request with nothing new to learn | getting started |
 | Security reviewer | what each job can reach, who approves, the record | I review security |
 | Buyer or evaluator | what it proves, what it costs, what it leaves out | I am evaluating, Proof |
-| Atlantis, OpenTaco or Terrateam user | my comment workflow keeps working | coming from |
+| Atlantis or OpenTaco user | my comment workflow keeps working | coming from |
 | HCP, Scalr, OTF, Spacelift or env zero user | state and policy move over | coming from |
 | Terragrunt, Atmos, Terramate or CDK Terrain user | my repo shape is understood, not flattened | repo shape picker |
 | choudoufu user | what the fork adds | binary picker, choudoufu room |
