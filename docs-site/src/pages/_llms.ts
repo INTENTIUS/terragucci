@@ -69,7 +69,7 @@ export const PREAMBLE = `# terragucci
 
 Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci. The validation page (${SITE}/reference/validation/) lists the checks every generated pipeline passes.
 
-terragucci is built on chant (https://intentius.io/chant/), which keeps the approvals and records on \`chant/lifecycle\`. SQL Yodeler (https://intentius.io/sql-yodeler/) manages ClickHouse and Postgres schemas on the same approvals.
+terragucci is built on chant (https://intentius.io/chant/), which keeps the approvals and records on \`chant/lifecycle\`. terragucci provisions databases as Terraform resources; SQL Yodeler (https://intentius.io/sql-yodeler/) manages the ClickHouse and Postgres schemas inside them, on the same approvals.
 
 Agents adopting terragucci in a repository: start with ${SITE}/getting-started/agents/.
 
