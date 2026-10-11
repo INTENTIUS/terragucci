@@ -10,7 +10,7 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Result
@@ -217,7 +217,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
    [The reports bucket](/terragucci/reference/reports-bucket/) lists every key under the prefix and the JSON Schema of each object.
 
-   <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
+   <Recorded step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
 
 </Steps>
 

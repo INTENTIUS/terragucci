@@ -2,7 +2,7 @@
 #
 # The GitHub sandbox: a plan-only copy of the example on github.com
 # (INTENTIUS/terragucci-sandbox), run by the pipeline `npx terragucci init`
-# writes, on the published images. The docs' GitHub screenshots come from it.
+# writes, on the published images. The docs' GitHub views come from it.
 # It needs no stack, no cloud account and no secret in the repo.
 #
 #   stack/sandbox-github.sh up [--fresh]   push the plan-only example as the
@@ -34,7 +34,7 @@
 #                                     the code, run the drift job and wait for
 #                                     its issue
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
-#                                     the docs show, screenshotted into
+#                                     the docs show, recorded as text into
 #                                     docs-site as step `github`, then reset
 #   stack/sandbox-github.sh prove [merge|pull-request|modules|reports] [--break] [--record FILE]
 #                                     from a reset sandbox, each phase (all
@@ -53,9 +53,6 @@
 #                                     delete every other branch, every tag and
 #                                     every secret, and put main back to its
 #                                     first commit
-#   stack/sandbox-github.sh shot <view>|all|list
-#                                     screenshot a page a step recorded, logged
-#                                     out, light and dark
 #   stack/sandbox-github.sh minutes [ISO-time]
 #                                     the sandbox's Actions run time since then
 #
@@ -63,7 +60,7 @@
 # time. It is handed to gh and git through the environment of this process
 # only: never written to a file, a git config or a log.
 #
-# Scratch files (the signer key, the recorded views, job logs, screenshots) go
+# Scratch files (the signer key, the recorded views, job logs) go
 # in TERRAGUCCI_SANDBOX_DIR, default $TMPDIR/terragucci-sandbox. The signer key
 # is made for one run and its private half never leaves that directory.
 set -euo pipefail
@@ -71,7 +68,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
 CMD="${1:-}"; shift || true
-# Everything but minutes, shot and usage acts on the github.com sandbox; a person starts it (stack/human-gate.sh).
+# Everything but minutes and usage acts on the github.com sandbox; a person starts it (stack/human-gate.sh).
 case "$CMD" in up|change|merge|approve|plan-comment|pr-apply|drift|capture|prove|reset) . "$HERE/human-gate.sh"; human_gate "the github.com sandbox ($CMD), on GitHub-hosted runners, for up to an hour";; esac
 
 REPO="${TERRAGUCCI_SANDBOX_REPO:-INTENTIUS/terragucci-sandbox}"
@@ -79,8 +76,6 @@ DIR="${TERRAGUCCI_SANDBOX_DIR:-${TMPDIR:-/tmp}/terragucci-sandbox}"
 DIR="${DIR%/}"
 # The published release whose `init` writes the pipeline, and so its images.
 RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.4.7}"
-# The container stack/shot.mjs runs in: Node 22 and Chromium.
-SHOT_IMAGE="${TERRAGUCCI_SHOT_IMAGE:-mcr.microsoft.com/playwright:v1.55.0-noble}"
 SIGNER="sandbox-signer"
 # 1: the sandbox's terragucci.yml marks the checkout safe for git (build_main).
 SAFE_DIRECTORY="${TERRAGUCCI_SANDBOX_SAFE_DIRECTORY:-0}"
@@ -93,11 +88,11 @@ log()  { echo "[sandbox] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
 
 usage() { sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
-case "$CMD" in up|change|merge|approve|plan-comment|pr-apply|drift|capture|prove|reset|shot|minutes) ;; *) usage; exit 2 ;; esac
+case "$CMD" in up|change|merge|approve|plan-comment|pr-apply|drift|capture|prove|reset|minutes) ;; *) usage; exit 2 ;; esac
 
 command -v gh >/dev/null 2>&1 || fail "gh is not installed"
 command -v jq >/dev/null 2>&1 || fail "jq is not installed"
-mkdir -p "$DIR/views" "$DIR/logs" "$DIR/shots"
+mkdir -p "$DIR/views" "$DIR/logs"
 chmod 700 "$DIR"
 
 TOKEN="${TERRAGUCCI_SANDBOX_TOKEN:-}"
@@ -239,7 +234,7 @@ readme() { # dir
   cat > "$1/README.md" <<EOF
 # terragucci sandbox
 
-A plan-only copy of the [terragucci example](https://github.com/INTENTIUS/terragucci/tree/main/example), run by \`stack/sandbox-github.sh\` in [INTENTIUS/terragucci](https://github.com/INTENTIUS/terragucci). The GitHub screenshots in terragucci's docs are taken here.
+A plan-only copy of the [terragucci example](https://github.com/INTENTIUS/terragucci/tree/main/example), run by \`stack/sandbox-github.sh\` in [INTENTIUS/terragucci](https://github.com/INTENTIUS/terragucci). The GitHub views in terragucci's docs are recorded here.
 
 | What | How |
 |---|---|
@@ -373,20 +368,25 @@ wait_run() { # event, since, [sha]
   echo "$RUN_ID" > "$DIR/last-run"
 }
 
-# A view is a page a step leaves for `shot`: its URL, and optionally the CSS
-# selector of the element the picture is cropped to, a regex its text matches,
-# a height (a number, or "fit" for the element's own height), the text of a
-# button to click first, a regex the last later element of the picture
-# matches (stack/shot.mjs --through), and the share of it that may be blank
-# when a page is airy by design (--blank-max). The fields are split by the unit
-# separator, since a regex can hold a tab or a bar.
-record_view() { # name, url, [selector], [regex], [height], [click], [through], [blank max]
-  printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\n' "$2" "${3:-}" "${4:-}" "${5:-900}" "${6:-}" "${7:-}" "${8:-}" > "$DIR/views/$1"
-  log "view $1: $2"
+# A view is what a step leaves for the docs in place of a page: a note, a
+# reply or an issue, as its Markdown from the API and GitHub's own rendering of
+# it, in $DIR/views/<name>.json, which capture puts in the step's JSON. A view
+# with nothing to record is left empty, so capture finds it missing.
+md_view() { # name, markdown source
+  local html=""
+  if [ -n "$2" ]; then
+    html="$(jq -n --arg t "$2" --arg c "$REPO" '{text: $t, mode: "gfm", context: $c}' | gh api markdown --input - 2>/dev/null)" || html=""
+  fi
+  if [ -z "$html" ]; then
+    : > "$DIR/views/$1.json"
+    log "view $1: nothing recorded"
+    return 0
+  fi
+  jq -n --arg s "$2" --arg h "$html" '{kind: "markdown", source: $s, html: $h}' > "$DIR/views/$1.json"
+  log "view $1: $DIR/views/$1.json"
 }
 
-# A job's log, as text: GitHub shows job logs only to a signed-in reader, so
-# the logged-out picture of a job page lists its steps, and this is the log.
+# A job's log, as text.
 save_job_log() { # job id, name
   gh run view -R "$REPO" --job "$1" --log 2>/dev/null \
     | cut -f3- | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //; s/\x1b\[[0-9;]*m//g' > "$DIR/logs/$2.log" || true
@@ -450,9 +450,8 @@ record_state() {
 }
 
 # The default branch requires terragucci/plan, as the docs' add-to page asks,
-# through a ruleset: unlike a classic protection rule, a logged-out reader can
-# open it, so it can be screenshotted. Repository admins (the script's token)
-# may bypass it, so reset and the state commits still push to main.
+# through a ruleset. Repository admins (the script's token) may bypass it, so
+# reset and the state commits still push to main.
 RULESET="terragucci/plan required"
 ensure_ruleset() {
   local id
@@ -466,7 +465,6 @@ ensure_ruleset() {
       | gh api -X POST "repos/$REPO/rulesets" --input - -q .id)" || fail "could not add the ruleset"
     log "main requires terragucci/plan (ruleset $id)"
   fi
-  record_view required "$WEB/rules/$id" '[class*="RulesetPage-module__RulesetPageHeader"], [data-testid="rules-panel"]' "" fit "Show additional settings" . 0.6
 }
 
 # ── the claims prove runs ────────────────────────────────────────────────────
@@ -2090,7 +2088,6 @@ case "$CMD" in
       gh api -X PATCH "repos/$REPO" -f default_branch=main >/dev/null
       log "pushed the first commit ${sha:0:8}; the pipeline applies every root"
       wait_run push "$since" "$sha"
-      record_view run "$RUN_URL"
       [ "$RUN_CONCLUSION" = success ] || fail "the first run ended $RUN_CONCLUSION: $RUN_URL"
     fi
     ensure_ruleset
@@ -2135,18 +2132,13 @@ case "$CMD" in
     # The pull request's run posts the plan note; the push's run checks the format.
     wait_run pull_request "$since" "$sha"
     plan_url="$RUN_URL" plan_status="$RUN_CONCLUSION"
-    record_view plan-run "$RUN_URL"
     wait_run push "$since" "$sha"
-    # The push's run: a failed check marks its job. The picture ends below the
-    # job graph.
-    record_view check "$RUN_URL" "" "" 640
+    # The push's run: a failed check marks its job.
     if [ "$RUN_CONCLUSION" = failure ]; then
       IFS=$'\t' read -r job _ < <(stopped_job "$RUN_ID")
       [ -z "${job:-}" ] || save_job_log "$job" check
     fi
-    record_view note "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" fit
-    # Logged out, a pull request shows no merge box; its Checks tab lists the runs.
-    record_view checks "$WEB/pull/$pr/checks"
+    md_view note "$(note_of "$pr")"
     printf '\n  Pull request  %s/pull/%s (the plan note is in its conversation)\n  Plan          %s (%s)\n  Check         %s (%s)\n' \
       "$WEB" "$pr" "$plan_url" "$plan_status" "$RUN_URL" "$RUN_CONCLUSION"
     ;;
@@ -2163,7 +2155,6 @@ case "$CMD" in
     sha="$(gh pr view "$pr" -R "$REPO" --json mergeCommit -q .mergeCommit.oid)"
     log "merged pull request $pr into main at ${sha:0:8}"
     wait_run push "$since" "$sha"
-    record_view merged "$RUN_URL"
     printf '\n  Merged    pull request %s into main\n  Pipeline  %s (%s)\n' "$pr" "$RUN_URL" "$RUN_CONCLUSION"
     if [ "$RUN_CONCLUSION" = success ]; then
       record_state
@@ -2175,8 +2166,6 @@ case "$CMD" in
       # A refusal also prints the approve command for the new plan.
       if grep -qE 'changed after it was approved|planned differently since' <<<"$lines"; then view=refused; else view=waiting; fi
       cp "$DIR/logs/$RUN_ID-$job.log" "$DIR/logs/$view.log"
-      record_view "$view" "$WEB/actions/runs/$RUN_ID/job/$job"
-      record_view "$view-run" "$RUN_URL" "" "" 640
       # The run, and the wave and plan digest its approve command names.
       printf '%s\t%s\t%s\n' "$RUN_ID" \
         "$(grep -o 'terragucci approve wave-[0-9]*' <<<"$lines" | head -1 | sed 's/.* //')" \
@@ -2216,11 +2205,9 @@ case "$CMD" in
     log "run $run again…"
     gh run watch "$run" -R "$REPO" --interval 10 >"$DIR/logs/watch-$run-again.log" 2>&1 || true
     read -r conclusion url < <(gh run view "$run" -R "$REPO" --json conclusion,url -q '"\(.conclusion) \(.url)"')
-    record_view applied "$url"
     job="$(gh run view "$run" -R "$REPO" --json jobs -q "[.jobs[] | select(.name | startswith(\"apply-$wave\"))][0].databaseId // empty")"
     if [ -n "$job" ]; then
       save_job_log "$job" applied
-      record_view applied-job "$WEB/actions/runs/$run/job/$job"
     fi
     rm -f "$DIR/waiting"
     printf '  Pipeline  %s (%s)\n' "$url" "$conclusion"
@@ -2236,9 +2223,8 @@ case "$CMD" in
     gh pr comment "$pr" -R "$REPO" --body "/terragucci plan" >/dev/null
     log "commented /terragucci plan on pull request $pr"
     wait_run issue_comment "$since"
-    record_view replan-run "$RUN_URL"
-    # The re-plan edits the note in place; the picture ends below the comment.
-    record_view reply "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" fit "" "/terragucci plan"
+    # The re-plan edits the note in place; the reply view is the note as edited.
+    md_view reply "$(note_of "$pr")"
     printf '\n  Pull request  %s/pull/%s (the reply is in its conversation)\n  Re-plan       %s (%s)\n' "$WEB" "$pr" "$RUN_URL" "$RUN_CONCLUSION"
     ;;
 
@@ -2247,8 +2233,7 @@ case "$CMD" in
     pr="$(bot_pr apply envs/dev/orders 600 "Keep dev orders' jobs ten minutes")"
     at="$(head_of "$pr")"
     reply="$(say "$pr" "/terragucci apply")"
-    record_view pr-apply-run "$WEB/actions/runs/$(cat "$DIR/last-run")"
-    record_view pr-apply "$WEB/pull/$pr" ".timeline-comment" "and merged pull request" fit
+    md_view pr-apply "$(gh api "repos/$REPO/issues/$pr/comments?per_page=100" -q '[.[] | select(.body | test("and merged pull request"))] | first | .body // empty')"
     state="$(gh pr view "$pr" -R "$REPO" --json state -q .state)"
     printf '\n  Pull request  %s/pull/%s at %s (%s)\n  Reply         %s\n' "$WEB" "$pr" "${at:0:8}" "$state" "${reply:-none}"
     [ "$state" = MERGED ] || fail "pull request $pr was not merged after /terragucci apply"
@@ -2280,24 +2265,24 @@ EOF
     since="$(now)"
     gh workflow run terragucci.yml -R "$REPO" --ref main >/dev/null || fail "could not start the drift job"
     wait_run workflow_dispatch "$since"
-    record_view drift-run "$RUN_URL"
     issue="$(gh issue list -R "$REPO" --state open -L 1 --json number -q '.[0].number // empty')"
     [ -n "$issue" ] || fail "the drift run ($RUN_CONCLUSION) opened no issue: $RUN_URL"
-    record_view drift "$WEB/issues/$issue" '[data-testid="issue-viewer-issue-container"]' "" fit
+    md_view drift "$(gh api "repos/$REPO/issues/$issue" -q '.body // empty')"
     printf '\n  Drift run  %s (%s)\n  Issue      %s/issues/%s\n' "$RUN_URL" "$RUN_CONCLUSION" "$WEB" "$issue"
     ;;
 
   capture)
     # Each step runs as its own command, so what it prints is what a reader of
-    # the docs would see, and each view is shot right after its step: the
-    # re-plan edits the note the `note` view shows.
+    # the docs would see, and each view is taken right after its step: the
+    # re-plan edits the note the `note` view holds.
     ROOT="$(cd "$HERE/.." && pwd)"
-    DATA="$ROOT/docs-site/src/data/tutorial" SHOTS="$ROOT/docs-site/src/assets/tutorial"
-    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "capture needs Docker, for the state and the screenshots"; fi
+    DATA="$ROOT/docs-site/src/data/tutorial"
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "capture needs Docker, for the roots' state"; fi
     started="$(date +%s)"
     "$0" reset
     ensure_ruleset
     : > "$WORK/commands"
+    mkdir -p "$WORK/views"
     step() { # command words...
       local out rc=0
       out="$("$0" "$@")" || rc=$?
@@ -2312,56 +2297,51 @@ EOF
       [ -n "$out" ] || fail "no lines from /$3/ in $2"
       jq -n --arg cmd "$1" --arg output "$out" '{cmd: $cmd, output: $output, exit: 3}' >> "$WORK/commands"
     }
-    take() { # view...
-      local v
-      for v in "$@"; do "$0" shot "$v"; done
+    # A view the last step recorded, kept under the name the docs give it
+    # before a later step records it again.
+    take() { # view, name in the docs
+      [ -s "$DIR/views/$1.json" ] || fail "the $1 view was not recorded"
+      cp "$DIR/views/$1.json" "$WORK/views/$2.json"
     }
-    # GitHub shows job logs only to a signed-in reader, so the check and the
-    # waiting wave are their log lines (log_lines), not pictures.
-    pairs="required:required note:note reply:reply"
-    take required
+    # The check and the waiting wave are their log lines (log_lines), as
+    # commands, not views.
+    names="note reply"
     step change one-root || fail "change one-root failed"
-    take note
+    take note note
     step plan-comment one-root || fail "plan-comment one-root failed"
-    take reply
+    take reply reply
     step change unformatted || fail "change unformatted failed"
-    take check
     log_lines "gh run view --log-failed  # the check job of change/unformatted" "$DIR/logs/check.log" '^envs/.*[.]tf$' 'Process completed'
     step change destroy || fail "change destroy failed"
     step merge destroy || fail "merge destroy failed"
-    take waiting-run
     log_lines "gh run view --log-failed  # wave 4 on main" "$DIR/logs/waiting.log" '^wave [0-9]+ of [0-9]+:' 'Process completed'
     # Drift comes last: the file it deletes would be planned back by any later
     # merge. A release whose drift job cannot keep its issue on github.com
     # leaves the drift view out, and any committed one stands.
     if step drift; then
-      take drift
-      pairs="$pairs drift:drift"
+      take drift drift
+      names="$names drift"
     else
       log "no drift issue on $RELEASE; the drift view is left as it was"
     fi
     # Apply before merge changes main's pipeline, so it runs on a reset sandbox.
     "$0" reset
     step pr-apply || fail "pr-apply failed"
-    take pr-apply
-    pairs="$pairs pr-apply:apply"
+    take pr-apply apply
+    names="$names apply"
     # The files the docs use: step `github`, beside the Forgejo steps.
     # The example's hash, computed the way tutorial-check computes it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
-    # A view this run left out keeps the hash the last capture recorded.
-    shots="$(jq -c '.shots // {} | del(.["check-light"], .["check-dark"], .["waiting-light"], .["waiting-dark"])' "$DATA/github.json" 2>/dev/null || echo '{}')"
-    for pair in $pairs; do
-      from="${pair%%:*}" to="${pair#*:}"
-      for scheme in light dark; do
-        cp "$DIR/shots/$from-$scheme.png" "$SHOTS/github-$to-$scheme.png"
-        h="$(shasum -a 256 "$SHOTS/github-$to-$scheme.png" | cut -c1-16)"
-        shots="$(jq --arg k "$to-$scheme" --arg h "$h" '. + {($k): $h}' <<<"$shots")"
-      done
+    # A view this run left out keeps what the last capture recorded.
+    views="$(jq -c '.views // {}' "$DATA/github.json" 2>/dev/null || echo '{}')"
+    for name in $names; do
+      views="$(jq -c --arg k "$name" --slurpfile v "$WORK/views/$name.json" '. + {($k): $v[0]}' <<<"$views")"
     done
-    jq -s --arg h "$hash" --argjson shots "$shots" '{step: "github", source_hash: $h, commands: ., shots: $shots}' \
+    printf '%s\n' "$views" > "$WORK/views.json"
+    jq -s --arg h "$hash" --slurpfile views "$WORK/views.json" '{step: "github", source_hash: $h, commands: ., views: $views[0]}' \
       "$WORK/commands" > "$DATA/github.json"
     "$0" reset
-    printf '\n  Wrote  docs-site/src/data/tutorial/github.json and docs-site/src/assets/tutorial/github-*.png\n  Took   %s minutes\n' \
+    printf '\n  Wrote  docs-site/src/data/tutorial/github.json\n  Took   %s minutes\n' \
       "$(( ($(date +%s) - started + 59) / 60 ))"
     ;;
 
@@ -2450,42 +2430,6 @@ EOF
     rm -f "$DIR/waiting" "$DIR"/views/*
     new_key
     log "main is back at its first commit ${first:0:8}"
-    ;;
-
-  shot)
-    view="${1:-}"
-    [ -n "$view" ] || fail "usage: sandbox-github.sh shot <view>|all|list"
-    if [ "$view" = list ]; then
-      for f in "$DIR"/views/*; do [ -f "$f" ] && printf '%-12s %s\n' "$(basename "$f")" "$(cut -d$'\037' -f1 "$f")"; done
-      exit 0
-    fi
-    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "shot needs Docker, to run Chromium"; fi
-    if [ "$view" = all ]; then views=("$DIR"/views/*); else views=("$DIR/views/$view"); fi
-    for f in "${views[@]}"; do
-      [ -f "$f" ] || fail "no view '$(basename "$f")'; 'shot list' names them"
-      name="$(basename "$f")"
-      IFS=$'\037' read -r url scroll match height click through blank < "$f"
-      for scheme in light dark; do
-        # Each scheme reads the view afresh: "fit" turned into a height for the
-        # light pass left the dark one a fixed 900px, cut short.
-        h="$height" hooks=()
-        [ -z "$click" ] || hooks+=(--click "$click")
-        [ -z "$scroll" ] || hooks+=(--scroll "$scroll")
-        [ -z "$match" ] || hooks+=(--match "$match")
-        [ -z "$through" ] || hooks+=(--through "$through")
-        [ -z "$blank" ] || hooks+=(--blank-max "$blank")
-        if [ "$h" = fit ]; then hooks+=(--fit 1); h=900; fi
-        # A fresh profile in a container: the page as a logged-out reader sees it.
-        docker run --rm --ipc=host -v "$HERE/shot.mjs:/shot/shot.mjs:ro" -v "$HERE/png.mjs:/shot/png.mjs:ro" -v "$DIR/shots:/out" "$SHOT_IMAGE" sh -c '
-          chrome="$(ls -d /ms-playwright/chromium-*/chrome-linux/chrome | head -1)"
-          printf "#!/bin/sh\nexec %s --no-sandbox \"\$@\"\n" "$chrome" > /tmp/chrome && chmod +x /tmp/chrome
-          exec node /shot/shot.mjs --chrome /tmp/chrome "$@"' sh \
-          --url "$url" --out "/out/$name-$scheme.png" --width 1280 --height "$h" --scheme "$scheme" "${hooks[@]}" \
-          || fail "no screenshot of $url"
-        node "$HERE/../scripts/png-compress.mjs" "$DIR/shots/$name-$scheme.png" >/dev/null || fail "cannot compress $name-$scheme.png"
-        log "shot $DIR/shots/$name-$scheme.png"
-      done
-    done
     ;;
 
   minutes)

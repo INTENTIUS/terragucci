@@ -10,7 +10,6 @@ import PlanNote from '../../components/PlanNote.astro';
 import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
 import ScaleLine from '../../components/ScaleLine.astro';
-import Shot from '../../components/Shot.astro';
 import Limits from '../../components/Limits.astro';
 
 <Landing />
@@ -32,7 +31,7 @@ terragucci reads your roots and runs your binary. Code, state backend and provid
 
 Every plan, apply and drift run sends one OpenTelemetry trace and the pipeline's metrics over OTLP to your collector.
 
-<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, wave 2, the root span for envs/dev/orders, the tofu init and plan spans under it, and OpenTofu's own spans inside them" />
+In Grafana's Explore, a run's trace starts at its stage span. Each root, such as `envs/dev/orders`, gets a span below it, and OpenTofu's own spans nest inside the root's.
 
 | The trace shows | Page |
 |---|---|

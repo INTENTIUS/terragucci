@@ -9,7 +9,7 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import { Steps } from '@astrojs/starlight/components';
 
 ## Result
@@ -85,7 +85,7 @@ A rule in your repo that fails `tf-plan` for each root whose plan it denies, nam
 
 6. Open a pull request with a change the rule denies. The plan job fails, and the note names the root and the denial:
 
-   <Shot step="policy" view="note" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
+   <Recorded step="policy" view="note" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
 
    The denial and its rule id, such as `main.deny_long_retention`, are in `roots[].policy` of the report. A sensitive value in a message is redacted before it reaches the note or the log.
 

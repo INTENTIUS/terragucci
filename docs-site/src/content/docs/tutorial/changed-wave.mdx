@@ -14,7 +14,7 @@ prompt: |
 ---
 
 import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
@@ -56,7 +56,7 @@ The wave's plans now differ from the approved ones, so it applies nothing:
 | the job fails with exit code 4 | the wave's job |
 | the approved digest beside the new one, and each root whose plan moved | the job's log |
 
-<Shot step="wave-refused" view="log" alt="Wave 4's apply job in Forgejo, refusing: the approved digest beside the planned one, and the eight roots that planned differently" optional />
+<Recorded step="wave-refused" view="log" alt="Wave 4's apply job in Forgejo, refusing: the approved digest beside the planned one, and the eight roots that planned differently" optional />
 
 `npx terragucci respond wave-refused --approved <approved report> --current <current report> --wave 4` prints what changed; [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) describes the reports.
 

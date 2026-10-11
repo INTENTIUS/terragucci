@@ -8,18 +8,18 @@
 #   stack/tutorial-capture.sh --list           every step, what it needs and what it writes
 #
 # For each step it runs the step's commands, normalizes their output, and
-# screenshots the pages the step points at in light and dark. It writes:
+# records as text what the pages the step points at show: a plan note or a
+# reply as its Markdown and Forgejo's rendering of it, a job's log, a diff, a
+# report page's HTML, or a list Forgejo shows as a table. It writes:
 #
 #   docs-site/src/data/tutorial/<step>.json      commands, output, exit codes,
 #                                                the example's hash, and the
-#                                                hash of each screenshot
-#   docs-site/src/assets/tutorial/<step>-<view>-<theme>.png
+#                                                step's views
 #   docs-site/src/data/tutorial/manifest.json    date, commit and versions
 #
-# A step whose output and screenshots are what is committed keeps its files (a
-# screenshot differing only by Forgejo's relative times counts as the same); any
-# other difference rewrites the step's JSON and its screenshots together. Only the steps that ran are written, so one step's
-# capture never touches another step's files.
+# A step whose output and views are what is committed keeps its file; any
+# other difference rewrites it. Only the steps that ran are written, so one
+# step's capture never touches another step's file.
 #
 # The steps run in the order below, and each one starts where the one before it
 # left the example. What a step needs (the STEPS table):
@@ -50,7 +50,6 @@ export TG_STACK="${TG_STACK:-capture}"
 ROOT="$(cd "$HERE/.." && pwd)"
 EXAMPLE="$ROOT/example"
 DATA="$ROOT/docs-site/src/data/tutorial"
-SHOTS="$ROOT/docs-site/src/assets/tutorial"
 SMOKE="$ROOT/docs-site/src/data/smoke.json"
 
 log()  { echo "[capture] $*" >&2; }
@@ -67,8 +66,8 @@ approved|chain|sealed comment-apply wave-report|record reply log|just example ap
 pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
 report|booted|report highlight|top root plan index|four tf-plan runs of the example with reports.bucket on floci; the report.html of the module bump with a destroy beside it, from its destroys through its groups, one root'"'"'s row, that root'"'"'s plan.txt, and the project'"'"'s report index
 drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
-see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|waves estate slos|just see-runs; the panels of three of the dashboards the example'"'"'s runs fill
-trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, sent to the observability profile; that run'"'"'s trace in Grafana'"'"'s Explore, found by the trace id in its report
+see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos||just see-runs; three runs of the example sent to the observability profile, which fill the dashboards the page describes
+trace|booted|traces||a tf-plan of the one-root change with telemetry on, sent to the observability profile; the trace id its report names, and Tempo holding that trace'"'"'s spans
 responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
 tips|booted|tips respond-tips|note report fix|just example change float, a tf-plan of it with reports.bucket on floci, and the respond-tips claim; the plan note'"'"'s tip line, the report'"'"'s Tips section, and the files of the pull request one tip opens (the pull request is closed afterwards)
 policy|booted|policy check-diagnostics|note log|a pull request on the example that adds a policy denying dev orders'"'"' change, and the check-diagnostics claim; the plan note naming the denial, and the check job'"'"'s log naming the failing policy test (the pull request is closed afterwards)
@@ -88,9 +87,9 @@ field() { # step, field number -> that field of the step's row
 
 if [ "${1:-}" = --list ]; then
   while IFS='|' read -r step needs claims views what; do
-    printf '%s\n  needs     %s\n  claims    %s\n  writes    data/tutorial/%s.json' "$step" "$needs" "$claims" "$step"
-    for v in $views; do printf ', assets/tutorial/%s-%s-{light,dark}.png' "$step" "$v"; done
-    printf '\n  shows     %s\n' "$what"
+    printf '%s\n  needs     %s\n  claims    %s\n  writes    data/tutorial/%s.json\n' "$step" "$needs" "$claims" "$step"
+    [ -z "$views" ] || printf '  views     %s\n' "$views"
+    printf '  shows     %s\n' "$what"
   done <<<"$STEPS"
   exit 0
 fi
@@ -110,16 +109,7 @@ command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
   || { echo "SKIP: Docker is not available, so nothing can be captured."; exit 0; }
 [ -f "$SMOKE" ] || fail "no $SMOKE; run 'just smoke-record' first"
 
-CHROME="${CHROME:-}"
-if [ -z "$CHROME" ]; then
-  for c in google-chrome google-chrome-stable chromium chromium-browser \
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
-    if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then CHROME="$c"; break; fi
-  done
-fi
-[ -n "$CHROME" ] || fail "no Chrome or Chromium found; set CHROME"
-
-mkdir -p "$DATA" "$SHOTS"
+mkdir -p "$DATA"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-capture.XXXXXX")"
 # shellcheck source=mounted.sh
 . "$HERE/mounted.sh"
@@ -141,7 +131,7 @@ export SMOKE_LOCK_DIR="$STAGE/locks"
 # The example's pipeline runs terragucci from the published CI image its pins
 # name, not from this tree. A pipeline that calls a command the image does
 # not have yet (plan-note, before 0.4.4) fails that job on every pull request,
-# and every picture of a plan note would show a pull request without one. So
+# and every recorded plan note would be missing from its pull request. So
 # the capture checks the image first.
 pipeline_commands_known() {
   local wf="$EXAMPLE/.forgejo/workflows/terragucci.yml" image tree have missing="" c
@@ -190,7 +180,7 @@ normalize() {
 }
 
 # A replayed step runs its commands to put the example where the next step
-# expects it, but takes no screenshots and writes nothing.
+# expects it, but records no view and writes nothing.
 REPLAY=""
 
 # step name -> appends one command's record to $STAGE/<step>.cmds, and keeps
@@ -205,128 +195,176 @@ run_cmd() { # step, shown command, real command...
   log "$shown -> exit $rc"
 }
 
-# Forgejo's yellow "Workflow warnings" box: the permissions fields of the
-# example's workflow, which Forgejo ignores. A job page's picture hides it.
-FORGEJO_HIDE='.ui.warning.message.pre-execution-error'
+# A step's views are staged in $STAGE/<step>.views, one JSON object keyed by
+# view, in the shapes docs-site reads (kind markdown, log, diff, html or
+# table). A recorder that cannot fetch what its view shows, or finds the
+# page without the line or element the view is about, logs why and records
+# nothing: commit_step then finds the view missing, and the step is not
+# written. Under $REPLAY a recorder does nothing.
+record() { # step, view; the view's JSON on stdin
+  local views="$STAGE/$1.views"
+  cat > "$STAGE/view.json"
+  [ -f "$views" ] || printf '{}\n' > "$views"
+  jq --arg v "$2" --slurpfile j "$STAGE/view.json" '. + {($v): $j[0]}' "$views" > "$views.new"
+  mv "$views.new" "$views"
+  log "recorded $1-$2"
+}
+unrecorded() { log "FAIL: $1-$2: $3"; }
 
-# Every picture is stack/shot.mjs's: shot.mjs's flags after the URL say what
-# the page opens first and which element the picture is cropped to (see the
-# top of shot.mjs). A job page has the warnings hidden. A picture shot.mjs
-# refuses (a hook found nothing, or it is mostly blank) is logged, and its
-# step is not written: commit_step finds the view missing.
-shot() { # step, view, url, [shot.mjs flags...]
-  local step="$1" view="$2" url="$3" theme png hooks=()
-  shift 3
+# Text with what changes run to run made stable, as one JSON string without
+# its last newline.
+json_text() { normalize | jq -Rs 'sub("\n+$"; "")'; }
+
+# Markdown as Forgejo renders it on a page of the repo: the body as written,
+# and the HTML of Forgejo's POST /api/v1/markdown in gfm mode, with links
+# Forgejo builds from its in-network address made the ones a reader opens.
+markdown_view() { # step, view, repo; the Markdown on stdin
+  local step="$1" view="$2" repo="$3"
+  cat > "$STAGE/md.src"
+  [ -s "$STAGE/md.src" ] || { unrecorded "$step" "$view" "the Markdown is empty"; return 0; }
+  jq -n --rawfile t "$STAGE/md.src" --arg c "$repo" '{Text: $t, Mode: "gfm", Context: $c}' > "$STAGE/md.req"
+  api -H 'content-type: application/json' -X POST --data-binary @"$STAGE/md.req" -o "$STAGE/md.html" "$URL/api/v1/markdown" \
+    || { unrecorded "$step" "$view" "Forgejo did not render its Markdown"; return 0; }
+  jq -n --argjson s "$(json_text < "$STAGE/md.src")" \
+    --argjson h "$(sed "s#http://forgejo:3000#$URL#g" "$STAGE/md.html" | json_text)" \
+    '{kind: "markdown", source: $s, html: $h}' | record "$step" "$view"
+}
+
+# The description of a pull request or an issue: its first comment.
+body_view() { # step, view, repo, pull request or issue number
+  local step="$1" view="$2" repo="$3" body
   [ -z "$REPLAY" ] || return 0
-  [[ "$url" == */actions/runs/* ]] && hooks=(--hide "$FORGEJO_HIDE")
-  for theme in light dark; do
-    png="$STAGE/$step-$view-$theme.png"
-    if ! node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
-        --width 1280 --height 860 --scheme "$theme" "${hooks[@]}" "$@"; then
-      log "FAIL: $step-$view-$theme: no picture of $url"
-      return 0
-    fi
-    node "$ROOT/scripts/png-compress.mjs" "$png" >/dev/null || fail "$step: cannot compress $png"
-  done
-  log "screenshot $step-$view ($url)"
+  body="$(api "$URL/api/v1/repos/$repo/issues/$4" | jq -r '.body // empty')" || true
+  [ -n "$body" ] || { unrecorded "$step" "$view" "$repo#$4 has no description"; return 0; }
+  printf '%s\n' "$body" | markdown_view "$step" "$view" "$repo"
 }
 
-# A job's log: the job panel, with one step opened, cropped to the panel, and
-# ending at the line the 6th argument names when given.
-job_shot() { # step, view, job page, job step to open, a log line in it (regex), [last line (regex)], [shot.mjs flags...]
-  local step="$1" view="$2" url="$3" open="$4" focus="$5" last="${6:-}"
-  shift $(( $# < 6 ? $# : 6 ))
-  local panel=(--style '.action-view-left { visibility: hidden; }' --expand "$open" --focus "$focus" --scroll '.action-view-right')
-  if [ -n "$last" ]; then
-    shot "$step" "$view" "$url" "${panel[@]}" --until "$last" "$@"
-  else
-    shot "$step" "$view" "$url" "${panel[@]}" --fit 1 "$@"
+# A pull request's or a commit's files as a unified diff, from Forgejo's API
+# (pulls/<n>.diff, git/commits/<sha>.diff), which takes the token on a
+# private repo as the web routes do not.
+diff_view() { # step, view, repo, pulls/<n> or git/commits/<sha>
+  local step="$1" view="$2" diff
+  [ -z "$REPLAY" ] || return 0
+  diff="$(api "$URL/api/v1/repos/$3/$4.diff")" || true
+  [ -n "$diff" ] || { unrecorded "$step" "$view" "$3 $4 has no diff"; return 0; }
+  printf '%s\n' "$diff" | json_text | jq '{kind: "diff", text: .}' | record "$step" "$view"
+}
+
+# A list Forgejo shows as a widget, as a table: the columns, and the rows as
+# a JSON array of arrays (empty when the list could not be read).
+table_view() { # step, view, columns (JSON array), rows (JSON array)
+  local step="$1" view="$2" rows
+  [ -z "$REPLAY" ] || return 0
+  rows="$(normalize <<<"${4:-}" | jq -c 'if type == "array" then . else [] end' 2>/dev/null)" || true
+  [ "$(jq length <<<"${rows:-[]}")" -gt 0 ] || { unrecorded "$step" "$view" "the list is empty"; return 0; }
+  jq -n --argjson c "$3" --argjson r "$rows" '{kind: "table", columns: $c, rows: $r}' | record "$step" "$view"
+}
+
+# A page floci serves (a report, an index), as served. The site shows it in
+# a sandboxed frame, opened at the anchor when one is given, which the page
+# must have.
+html_view() { # step, view, url, [anchor (an element id)]
+  local step="$1" view="$2" url="$3" anchor="${4:-}" page
+  [ -z "$REPLAY" ] || return 0
+  page="$(fetch "$url")" || true
+  [ -n "$page" ] || { unrecorded "$step" "$view" "no page at $url"; return 0; }
+  if [ -n "$anchor" ] && ! grep -qF "id=\"$anchor\"" <<<"$page"; then
+    unrecorded "$step" "$view" "$url has no element #$anchor"; return 0
   fi
+  printf '%s\n' "$page" | json_text | jq --arg a "$anchor" '{kind: "html", html: .} + (if $a != "" then {anchor: $a} else {} end)' \
+    | record "$step" "$view"
 }
 
-# The first comment of a pull request or an issue: its description.
-body_shot() { # step, view, page, [shot.mjs flags...]
-  local step="$1" view="$2" url="$3"
-  shift 3
-  shot "$step" "$view" "$url" --scroll '.timeline-item.comment.first' --fit 1 "$@"
+# A text file floci serves (a root's plan.txt), as a log.
+text_view() { # step, view, url
+  local step="$1" view="$2" text
+  [ -z "$REPLAY" ] || return 0
+  text="$(fetch "$3")" || true
+  [ -n "$text" ] || { unrecorded "$step" "$view" "nothing at $3"; return 0; }
+  printf '%s\n' "$text" | json_text | jq '{kind: "log", text: .}' | record "$step" "$view"
 }
 
-# A pull request's or a commit's files: the diffs, without the page around them.
-diff_shot() { # step, view, page, [shot.mjs flags...]
-  local step="$1" view="$2" url="$3"
-  shift 3
-  shot "$step" "$view" "$url" --scroll '#diff-file-boxes' --fit 1 "$@"
+# The part of a job's log a reader is shown: from the first line matching
+# the start (or the focus line, without one) through the first line after it
+# matching the last line, or without one through the line act ends a failed
+# step with ("exitcode"), or the log's end. The focus line must be in the
+# log. The runner's own lines are left out and Forgejo's group markers
+# stripped, as stack/example.sh logs does. Forgejo's raw log carries no step
+# boundaries, so the step to open names the step in a message only.
+log_section() { # focus, last, start (regexes; last and start may be empty)
+  awk -v focus="$1" -v last="$2" -v from="$3" '
+    /^(::endgroup::|##\[endgroup\])/ { next }
+    { sub(/^(::group::|##\[group\])/, "") }
+    /exitcode/ { line[++n] = $0; next }
+    /^(⚙|⭐|🐳|🏁|☁|  ✅|  ❌)/ { next }
+    { line[++n] = $0 }
+    END {
+      for (i = 1; i <= n; i++) if (line[i] ~ focus) { seen = 1; break }
+      if (!seen) exit 1
+      for (i = 1; i <= n; i++) if (line[i] ~ (from != "" ? from : focus)) { start = i; break }
+      if (!start) exit 1
+      for (i = start; i <= n; i++) if (last != "" ? line[i] ~ last : line[i] ~ /exitcode/) { end = i; break }
+      if (!end) { if (last != "") exit 1; end = n }
+      for (i = start; i <= end; i++) print line[i]
+    }'
+}
+
+# A job's log, from its raw log (job_logs gives the URL), cut to the lines
+# the page shows.
+job_log() { # step, view, job's raw log URL, job step it is about, a log line in it (regex), [last line (regex)], [first line (regex)]
+  local step="$1" view="$2" url="$3" open="$4" focus="$5" last="${6:-}" from="${7:-}" raw text
+  [ -z "$REPLAY" ] || return 0
+  raw="$(api "$url")" || true
+  [ -n "$raw" ] || { unrecorded "$step" "$view" "no log at $url"; return 0; }
+  text="$(normalize <<<"$raw" | log_section "$focus" "$last" "$from")" \
+    || { unrecorded "$step" "$view" "the log at $url has no line of the $open step matching '$focus', or none after it matching '${last:-exitcode}'"; return 0; }
+  printf '%s\n' "$text" | json_text | jq '{kind: "log", text: .}' | record "$step" "$view"
 }
 
 # A step's precondition failed: the step writes nothing, and the capture fails.
 refuse() { # step, why
-  log "FAIL: $1: $2; its pictures would not show what the page says, so it is not written"
+  log "FAIL: $1: $2; its views would not show what the page says, so it is not written"
   REFUSED="$REFUSED $1"
 }
 REFUSED=""
 
-png_hash() { shasum -a 256 "$1" | cut -c1-16; }
-
-# Write a step's files when its output or any of its screenshots differs from
-# what is committed. The JSON records each screenshot's hash, so a screenshot
-# belongs to the capture that took it and `just tutorial-check` can tell.
+# Write a step's file when its output or any of its views differs from what
+# is committed.
 #
-# A step that did not take every screenshot it should have (a view in the
-# STEPS table with no picture, because a page was not found) writes nothing:
-# its JSON would claim a capture the screenshots do not back. The step is
-# listed and the capture fails at the end.
-#
-# A screenshot that differs from the committed one only in Forgejo's relative
-# times ("2 minutes ago") is the same screenshot: stack/png-same.mjs compares
-# the pictures with a tolerance, and the committed file and its hash stay.
+# A step that did not record every view it should have (a view in the STEPS
+# table that a recorder could not fetch, because a page was not found)
+# writes nothing: its JSON would claim a capture its views do not back. The
+# step is listed and the capture fails at the end.
 INCOMPLETE=""
 commit_step() { # step
   local step="$1"
-  local new="$STAGE/$step.json" old="$DATA/$step.json" shots='{}' v theme png key missing="" same=1 h
+  local new="$STAGE/$step.json" old="$DATA/$step.json" views="$STAGE/$step.views" v missing=""
   case " $REFUSED " in *" $step "*) INCOMPLETE="$INCOMPLETE $step"; return ;; esac
+  [ -f "$views" ] || printf '{}\n' > "$views"
   for v in $(field "$step" 4); do
-    for theme in light dark; do
-      png="$STAGE/$step-$v-$theme.png"
-      if [ ! -f "$png" ]; then missing="$missing $v-$theme"; continue; fi
-      key="$v-$theme"
-      h="$(png_hash "$png")"
-      # The committed picture stands when this one is the same within the tolerance.
-      if [ -f "$old" ] && [ -f "$SHOTS/$step-$key.png" ] && [ "$(jq -r --arg k "$key" '.shots[$k] // empty' "$old")" = "$(png_hash "$SHOTS/$step-$key.png")" ] \
-        && node "$HERE/png-same.mjs" "$SHOTS/$step-$key.png" "$png"; then
-        h="$(png_hash "$SHOTS/$step-$key.png")"
-        cp "$SHOTS/$step-$key.png" "$png"
-      fi
-      shots="$(jq --arg k "$key" --arg h "$h" '. + {($k): $h}' <<<"$shots")"
-    done
+    jq -e --arg v "$v" 'has($v)' "$views" >/dev/null || missing="$missing $v"
   done
   if [ -n "$missing" ]; then
-    log "$step: not written, it took no screenshot for:$missing"
+    log "$step: not written, it recorded no view for:$missing"
     INCOMPLETE="$INCOMPLETE $step"
     return
   fi
   touch "$STAGE/$step.cmds"
-  jq -s --arg s "$step" --arg h "$SOURCE_HASH" --argjson shots "$shots" \
-    '{step: $s, source_hash: $h, commands: .} + (if ($shots | length) > 0 then {shots: $shots} else {} end)' \
+  jq -s --arg s "$step" --arg h "$SOURCE_HASH" --slurpfile views "$views" \
+    '{step: $s, source_hash: $h, commands: .} + (if ($views[0] | length) > 0 then {views: $views[0]} else {} end)' \
     "$STAGE/$step.cmds" > "$new"
   if [ -f "$old" ] && [ "$(jq -S . "$old")" = "$(jq -S . "$new")" ]; then
-    log "$step: unchanged, files kept"
+    log "$step: unchanged, file kept"
     return
   fi
   cp "$new" "$old"
-  for v in $(field "$step" 4); do
-    for theme in light dark; do
-      png="$STAGE/$step-$v-$theme.png"
-      [ -f "$png" ] && cp "$png" "$SHOTS/"
-    done
-  done
   CHANGED=1
   log "$step: written"
 }
 
 CHANGED=0
-FORGEJO=""
 
-# The stack's Forgejo: URL, TOKEN, USER, api, REPO and FORGEJO (the repo's page).
+# The stack's Forgejo: URL, TOKEN, USER, api and REPO.
 forge() {
   # shellcheck disable=SC1091
   . "${TG_STATE:-$HERE/.state}/forgejo.env"
@@ -336,11 +374,7 @@ forge() {
   eval "lib_api() $(declare -f api | tail -n +2)"
   api() { lib_api "$@" || { local rc=$?; log "${STEP:-capture}: ${*: -1} failed (curl exit $rc)"; return "$rc"; }; }
   REPO="$USER/example"
-  FORGEJO="$URL/$REPO"
 }
-
-# Forgejo builds links from its in-network address; a browser opens this one.
-browser_url() { sed "s#^http://forgejo:3000#$URL#"; }
 
 # A GET outside Forgejo (floci's S3 endpoint) that names the step and the URL
 # when it fails.
@@ -372,26 +406,28 @@ push_run() { # commit
   done
 }
 
-# The page of the first job in a run that matches a jq condition. Forgejo
-# numbers a run's jobs from 0 in the order they were created.
-job_page() { # run json, jq condition on a job
-  local run="$1" cond="$2" pos
+# The raw log of the first job in a run that matches a jq condition, as a
+# URL. Forgejo 16.0.5 (stack/docker-compose.yml) serves a job's plain log at
+# the API's /repos/<repo>/actions/jobs/<job id>/logs, the route stack/lib.sh
+# and stack/example.sh read: it takes the token, so a private repo's log is
+# read as a public one's, and it names the job by id. The web route
+# <repo>/actions/runs/<run>/jobs/<job>/attempt/<n>/logs serves the same file
+# but needs a signed-in session on a private repo.
+job_logs() { # run json, jq condition on a job
+  local run="$1" cond="$2" id
   [ -n "$run" ] || return 0
-  pos="$(api "$URL/api/v1/repos/$REPO/actions/runs/$(jq -r .id <<<"$run")/jobs" \
-    | jq -r "sort_by(.id) | to_entries | map(select(.value | $cond)) | .[0].key // empty")"
-  if [ -n "$pos" ]; then echo "$FORGEJO/actions/runs/$(jq -r .index_in_repo <<<"$run")/jobs/$pos/attempt/1"; fi
+  id="$(api "$URL/api/v1/repos/$REPO/actions/runs/$(jq -r .id <<<"$run")/jobs" \
+    | jq -r "sort_by(.id) | map(select($cond)) | .[0].id // empty")"
+  if [ -n "$id" ]; then echo "$URL/api/v1/repos/$REPO/actions/jobs/$id/logs"; fi
 }
 
-# A pull request's plan note, opened at the note itself; nothing when it has
-# none.
-note_page() { # pull request number, [repo]
-  local url
-  url="$(api "$URL/api/v1/repos/${2:-$REPO}/issues/$1/comments" \
-    | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .html_url // empty')"
-  [ -z "$url" ] || browser_url <<<"$url"
+# A pull request's plan note, its Markdown; nothing when it has none.
+note_body() { # pull request number, [repo]
+  api "$URL/api/v1/repos/${2:-$REPO}/issues/$1/comments" \
+    | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty'
 }
 
-# Is a pull request's note there to be shot? Its head's pull_request run has
+# Is a pull request's note there to be recorded? Its head's pull_request run has
 # finished, its plan-note job passed (it posts the note and terragucci/plan),
 # and the note is on the pull request. Says why not, and returns 1.
 note_ready() { # pull request number, [repo]
@@ -414,7 +450,7 @@ note_ready() { # pull request number, [repo]
     log "pull request $1's run $RUN_INDEX: plan-note did not pass ($jobs); open $RUN_URL"
     return 1
   fi
-  [ -n "$(note_page "$1" "$repo")" ] || { log "pull request $1 on $repo has no plan note"; return 1; }
+  [ -n "$(note_body "$1" "$repo")" ] || { log "pull request $1 on $repo has no plan note"; return 1; }
 }
 
 # The run a scenario printed, as example.sh prints it: "run N for <sha>
@@ -449,9 +485,21 @@ say() { # repo, pull request number, text
   echo "$run"
 }
 
-# One reply of terragucci's on a pull request, the first whose text matches.
-reply_shot() { # step, view, pull request page, regex
-  shot "$1" "$2" "$3" --scroll '.timeline-item.comment' --match "$4" --fit 1
+# One reply of terragucci's on a pull request, the first comment whose text
+# matches; with a last regex, the comments from that one through the last
+# later comment matching it, a horizontal rule between each two.
+reply_view() { # step, view, repo, pull request number, regex, [last (regex)]
+  local step="$1" view="$2" repo="$3" text
+  [ -z "$REPLAY" ] || return 0
+  text="$(api "$URL/api/v1/repos/$repo/issues/$4/comments" | jq -r --arg m "$5" --arg t "${6:-}" '
+    [.[].body // ""] as $b
+    | ([range($b | length) | select($b[.] | test($m))] | first) as $i
+    | if $i == null then empty
+      elif $t == "" then $b[$i]
+      else ([range($i; $b | length) | select($b[.] | test($t))] | last // $i) as $j | $b[$i:$j + 1] | join("\n\n---\n\n")
+      end')" || true
+  [ -n "$text" ] || { unrecorded "$step" "$view" "no comment on $repo#$4 matches '$5'"; return 0; }
+  printf '%s\n' "$text" | markdown_view "$step" "$view" "$repo"
 }
 
 # ── the steps ──────────────────────────────────────────────────────────────
@@ -464,10 +512,16 @@ step_boot() {
   # them after this capture lets go of the stack lock.
   run_cmd boot "just example up" "$HERE/example.sh" up --fresh
   forge
-  shot boot repo "$FORGEJO"
-  # Forgejo redirects a run to its first job at its in-network address, so
-  # ask for the job page directly; jobs count from 0, and 0 is check.
-  shot boot run "$FORGEJO/actions/runs/1/jobs/0/attempt/1"
+  [ -z "$REPLAY" ] || return 0
+  local rows run
+  # The repo's top-level files, as its page lists them.
+  rows="$(api "$URL/api/v1/repos/$REPO/contents" | jq -c 'map([.name, .type])')" || true
+  table_view boot repo '["Name", "Type"]' "$rows"
+  # The first run's jobs, in the order Forgejo created them (check first).
+  run="$(api "$URL/api/v1/repos/$REPO/actions/runs?limit=50" | jq -r '[.workflow_runs[] | select(.index_in_repo == 1)][0].id // empty')" || true
+  rows=""
+  [ -z "$run" ] || rows="$(api "$URL/api/v1/repos/$REPO/actions/runs/$run/jobs" | jq -c 'sort_by(.id) | map([.name, .status])')" || true
+  table_view boot run '["Job", "Status"]' "$rows"
 }
 
 step_first_pr() {
@@ -475,13 +529,13 @@ step_first_pr() {
   local pr; pr="$(pr_in_output)"
   [ -n "$pr" ] || { log "first-pr: the output named no pull request"; return; }
   [ "$(run_status pull_request)" = success ] || { refuse first-pr "the pull request's plan run ended '$(run_status pull_request)'"; return 0; }
-  note_shot first-pr note "$pr"
-  diff_shot first-pr files "$FORGEJO/pulls/$pr/files"
+  note_view first-pr note "$pr"
+  diff_view first-pr files "$REPO" "pulls/$pr"
 }
 
 step_check() {
   run_cmd check "just example change unformatted" "$HERE/example.sh" change unformatted
-  local pr sha page; pr="$(pr_in_output)"
+  local pr sha logs rows; pr="$(pr_in_output)"
   sha="$(sed -n 's#.*pushed change/unformatted at \([0-9a-f]*\).*#\1#p' "$STAGE/last.out" | head -1)"
   run_cmd check "just example logs" "$HERE/example.sh" logs
   # The fmt job's commit on the branch, after the reader's, in the pull
@@ -490,15 +544,22 @@ step_check() {
     local deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} ))
     until [ -z "$sha" ] || [ "$(remote_head "$REPO" change/unformatted)" != "$(api "$URL/api/v1/repos/$REPO/git/commits/$sha" | jq -r '.sha // empty')" ] \
       || [ "$(date +%s)" -ge "$deadline" ]; do sleep 3; done
-    shot check pull "$FORGEJO/pulls/$pr" --scroll '.timeline-item.commits-list' --match 'without running' --through 'style: tofu fmt'
+    # The commits from the reader's through the fmt job's, as the pull
+    # request's commit list shows them.
+    rows="$(api "$URL/api/v1/repos/$REPO/pulls/$pr/commits" | jq -c '
+      map([.commit.author.name, .sha[0:10], (.commit.message | split("\n")[0])]) as $c
+      | ([range($c | length) | select($c[.][2] | test("without running"))] | first) as $i
+      | ([range($c | length) | select($c[.][2] | test("style: tofu fmt"))] | last) as $j
+      | if $i == null or $j == null or $j < $i then [] else $c[$i:$j + 1] end')" || true
+    table_view check pull '["Author", "SHA", "Message"]' "$rows"
   fi
   # The check job fails on the commit the scenario pushed, and its "Commit the
   # formatting" step then pushes tofu fmt's fix to the branch. So the branch's
   # head is that later commit, whose check passes: look up the push run on the
-  # commit the scenario pushed, and open its failed job at the format step.
-  page="$(job_page "$(push_run "$sha")" '.status == "failure"')"
-  if [ -n "$page" ]; then
-    job_shot check log "$page" "Format check" '[.]tf$' 
+  # commit the scenario pushed, and read its failed job's log at the format step.
+  logs="$(job_logs "$(push_run "$sha")" '.status == "failure"')"
+  if [ -n "$logs" ]; then
+    job_log check log "$logs" "Format check" '[.]tf$'
   else
     log "check: no failed job in the push run on ${sha:-the pushed commit}"
   fi
@@ -511,7 +572,7 @@ step_one_note() {
   run_cmd one-note "just example change module-bump" "$HERE/example.sh" change module-bump
   local pr; pr="$(pr_in_output)"
   if [ -n "$pr" ]; then
-    note_shot one-note note "$pr"
+    note_view one-note note "$pr"
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$REPO/pulls/$pr" || true
   else
     log "one-note: the output named no pull request"
@@ -523,13 +584,13 @@ step_one_note() {
 # wait. Merge the destroy scenario as the reader would, and read what waits.
 step_wave_waiting() {
   run_cmd wave-waiting "just example change destroy" "$HERE/example.sh" change destroy
-  local pr page; pr="$(pr_in_output)"
+  local pr logs; pr="$(pr_in_output)"
   # The note's destroys come first, then the waves table with wave 4 waiting.
-  if [ -n "$pr" ]; then note_shot wave-waiting note "$pr" --until 'waits for an approval'; fi
+  if [ -n "$pr" ]; then note_view wave-waiting note "$pr" 'waits for an approval'; fi
   run_cmd wave-waiting "just example merge destroy" "$HERE/example.sh" merge destroy
   # The run on main's new head: wave 4's job stopped with exit 3.
-  page="$(job_page "$(run_on main)" '.status == "failure"')"
-  if [ -n "$page" ]; then job_shot wave-waiting log "$page" "Apply wave" "waits for an approval of digest" "terragucci approve wave-"; else log "wave-waiting: no stopped job on main's head"; fi
+  logs="$(job_logs "$(run_on main)" '.status == "failure"')"
+  if [ -n "$logs" ]; then job_log wave-waiting log "$logs" "Apply wave" "waits for an approval of digest" "terragucci approve wave-"; else log "wave-waiting: no stopped job on main's head"; fi
 }
 
 # Approve that wave, then merge a change that moves its plans: it refuses.
@@ -537,9 +598,9 @@ step_wave_refused() {
   run_cmd wave-refused "just example approve" "$HERE/example.sh" approve
   run_cmd wave-refused "just example change module-bump" "$HERE/example.sh" change module-bump
   run_cmd wave-refused "just example merge module-bump" "$HERE/example.sh" merge module-bump
-  local page
-  page="$(job_page "$(run_on main)" '.status == "failure"')"
-  if [ -n "$page" ]; then job_shot wave-refused log "$page" "Apply wave" "changed after it was approved" "planned differently since"; else log "wave-refused: no refused job on main's head"; fi
+  local logs
+  logs="$(job_logs "$(run_on main)" '.status == "failure"')"
+  if [ -n "$logs" ]; then job_log wave-refused log "$logs" "Apply wave" "changed after it was approved" "planned differently since"; else log "wave-refused: no refused job on main's head"; fi
 }
 
 # A reader who read the moved plans approves them, and asks for the apply
@@ -547,15 +608,15 @@ step_wave_refused() {
 # chant/lifecycle; the comment's apply-comment job resumes at wave 4.
 step_approved() {
   run_cmd approved "just example approve" "$HERE/example.sh" approve
-  local sha pr run page
+  local sha pr run logs
   sha="$(remote_head "$REPO" chant/lifecycle)"
-  if [ -n "$sha" ]; then diff_shot approved record "$FORGEJO/commit/$sha"; else log "approved: no chant/lifecycle branch"; fi
+  if [ -n "$sha" ]; then diff_view approved record "$REPO" "git/commits/$sha"; else log "approved: no chant/lifecycle branch"; fi
   pr="$(api "$URL/api/v1/repos/$REPO/pulls?state=closed&limit=50" | jq -r '[.[] | select(.head.ref == "change/module-bump" and .merged)] | max_by(.number) | .number // empty')"
   [ -n "$pr" ] || { log "approved: no merged module-bump pull request"; return 0; }
   run="$(say "$REPO" "$pr" "/terragucci apply")"
-  reply_shot approved reply "$FORGEJO/pulls/$pr" 'terragucci: applied wave'
-  page="$(job_page "$run" '.name == "apply-comment"')"
-  if [ -n "$page" ]; then job_shot approved log "$page" "Apply a merged pull request" "approved by" "wave 4 of 4 applied" --from "wave 4 of 4: set digest"; else log "approved: the comment's run has no apply-comment job"; fi
+  reply_view approved reply "$REPO" "$pr" 'terragucci: applied wave'
+  logs="$(job_logs "$run" '.name == "apply-comment"')"
+  if [ -n "$logs" ]; then job_log approved log "$logs" "Apply a merged pull request" "approved by" "wave 4 of 4 applied" "wave 4 of 4: set digest"; else log "approved: the comment's run has no apply-comment job"; fi
 }
 
 # Publish modules/service and open the first rollout wave. The scenario pins
@@ -568,8 +629,8 @@ step_pin() {
   if [ -n "$pr" ]; then
     # The rollout's own run on the pull request first, so its conversation is settled.
     wait_run "$REPO" "$(api "$URL/api/v1/repos/$REPO/pulls/$pr" | jq -r '.head.sha')" pull_request || { refuse pin "the rollout pull request's run did not finish"; return 0; }
-    body_shot pin pull "$FORGEJO/pulls/$pr"
-    diff_shot pin files "$FORGEJO/pulls/$pr/files"
+    body_view pin pull "$REPO" "$pr"
+    diff_view pin files "$REPO" "pulls/$pr"
   else
     log "pin: the output named no pull request"
   fi
@@ -655,19 +716,20 @@ step_report() {
   plan="$(fetch "$at/report.json" | jq -r --arg r "$root" '.roots[] | select(.path == $r) | .plan.text // empty')"
   [ "$(fetch "$at/report.json" | jq '[.named[]? | select(.action == "delete" or .action == "replace")] | length')" -gt 0 ] \
     || { refuse report "the report at $at names no destroy"; return 0; }
-  # From the destroys through the last group: what is named, and what is folded.
-  shot report top "$at/report.html" --scroll '#pinned, details.group' --through 'Group' --hide '.filters, #waves, #reads, h2:has(+ #waves), h3:has(+ #reads)'
-  shot report root "$at/report.html" --scroll "details[id=\"root-$root\"]" --fit 1 --open "details[id=\"root-$root\"]::"
-  if [ -n "$plan" ]; then shot report plan "$at/$plan" --scroll pre --fit 1; else refuse report "report.json names no plan for $root"; fi
-  shot report index "$top/$project/index.html" --scroll table --fit 1
+  # The page opens at the destroys, ahead of the groups: what is named, and
+  # what is folded.
+  html_view report top "$at/report.html" pinned
+  html_view report root "$at/report.html" "root-$root"
+  if [ -n "$plan" ]; then text_view report plan "$at/$plan"; else refuse report "report.json names no plan for $root"; fi
+  html_view report index "$top/$project/index.html"
 }
 
 # Drift: delete a queue outside Terraform, start the pipeline's drift job as a
-# reader does from the Actions tab, and photograph the issue it keeps. Reset
+# reader does from the Actions tab, and record the issue it keeps. Reset
 # afterwards: the queue comes back and the drift job's pull request closes.
 step_drift() {
   run_cmd drift "just example change drift" "$HERE/example.sh" change drift
-  local before deadline run status url
+  local before deadline run status issue
   # Forgejo lists runs newest id first. The run is found by its id, never by
   # a head sha (the branches API can lag a push, so a sha read from it may
   # not match the commit the run is created on) and never by a count.
@@ -687,10 +749,10 @@ step_drift() {
       sleep 5
     done
     log "drift: the dispatched run ended '${status:-unknown}'"
-    url="$(api "$URL/api/v1/repos/$REPO/issues?state=open&type=issues&limit=50" \
-      | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))][0].html_url // empty')"
+    issue="$(api "$URL/api/v1/repos/$REPO/issues?state=open&type=issues&limit=50" \
+      | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))][0].number // empty')"
     [ "$status" = success ] || refuse drift "the drift run ended '${status:-unknown}'"
-    if [ -n "$url" ]; then body_shot drift issue "$(browser_url <<<"$url")"; else log "drift: no drift issue is open"; fi
+    if [ -n "$issue" ]; then body_view drift issue "$REPO" "$issue"; else log "drift: no drift issue is open"; fi
   else
     log "drift: Forgejo did not start the drift job"
   fi
@@ -698,35 +760,15 @@ step_drift() {
 }
 
 # The dashboards (the see-your-runs page): three runs of the example sent to
-# the observability profile, and the panels of seven dashboards that show
-# them, over the minutes the runs took (a wider window leaves the runs a
-# sliver at a chart's right edge). Each picture is the panels the page's text
-# names, cropped from a viewport tall enough that Grafana draws them all.
-# Grafana follows the browser's light or dark preference.
+# the observability profile, which fill the dashboards the page describes.
+# Their panels have no text form, so the step records the command only.
 step_see_runs() {
-  local from
-  from="$(( ($(date +%s) - 120) * 1000 ))"
   run_cmd see-runs "just see-runs" "$HERE/see-runs.sh"
   [ "$(jq -s '.[-1].exit' "$STAGE/see-runs.cmds")" = 0 ] || fail "see-runs: just see-runs failed, so the dashboards would be empty: $(tail -3 "$STAGE/last.out")"
-  local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" d uid view panels sel p
-  # The example only: the stack's Prometheus also holds the smoke claims' projects.
-  forge
-  # uid:view:first panel-last panel (grid item ids; the picture runs from one to the other)
-  # uid:view:first panel-last panel (grid item ids; the picture runs from one
-  # to the other):blank share allowed (a table of one row in a tall panel)
-  # Only panels the example's few runs fill: its time series hold a point
-  # or two over these minutes, so a chart of them draws nothing.
-  for d in terragucci-rollouts-waves:waves:2-3:0.8 terragucci-estate:estate:2-3:0.8 slo-terragucci-plan-time:slos:2-5:0.7; do
-    IFS=: read -r uid view panels blank <<<"$d"
-    sel=""
-    for p in ${panels%-*} ${panels#*-}; do sel="${sel:+$sel, }[data-griditem-key=\"grid-item-$p\"]"; done
-    shot see-runs "$view" "$grafana/d/$uid?orgId=1&kiosk&from=$from&to=now&var-project=forgejo:3000/$REPO" \
-      --height 2400 --scroll "$sel" --through . --blank-max "$blank"
-  done
 }
 
 # ── the reference pages' steps ─────────────────────────────────────────────
-# Several of these run a smoke claim as it is recorded and photograph what it
+# Several of these run a smoke claim as it is recorded and record what it
 # leaves on Forgejo: a claim that responds on Forgejo keeps its scratch repo,
 # its branches and its pull requests until its next run starts it afresh. The
 # claim's own output is not recorded; it carries times and stamps.
@@ -745,21 +787,19 @@ open_pull() { # repo, branch
   api "$URL/api/v1/repos/$1/pulls?state=open&limit=50" | jq -r --arg b "$2" '.[] | select(.head.ref == $b) | .number' | head -1
 }
 
-# A pull request's plan note, the picture starting at the note: the page
-# without its #issuecomment- fragment, and that comment as the element.
-# The step is refused when the note is not there (note_ready). The picture is
-# the note's own box; more flags (--until, --open) are shot.mjs's.
-note_shot() { # step, view, pull request number, [shot.mjs flags...]
-  local step="$1" view="$2" pr="$3" url
-  shift 3
+# A pull request's plan note, the whole note. The step is refused when the
+# note is not there (note_ready). The page names a line of the note it
+# shows, which the note must have.
+note_view() { # step, view, pull request number, [a line the note must have (regex)]
+  local step="$1" view="$2" pr="$3" line="${4:-}" body
   [ -z "$REPLAY" ] || return 0
   note_ready "$pr" || { refuse "$step" "pull request $pr has no plan note to show"; return 0; }
-  url="$(note_page "$pr")"
-  shot "$step" "$view" "${url%%#*}" --scroll "#${url#*#}" --fit 1 --style "$NOTE_STYLE" "$@"
+  body="$(note_body "$pr")"
+  if [ -n "$line" ] && ! grep -qE "$line" <<<"$body"; then
+    unrecorded "$step" "$view" "pull request $pr's note has no line matching '$line'"; return 0
+  fi
+  printf '%s\n' "$body" | markdown_view "$step" "$view" "$REPO"
 }
-# Forgejo lets a wide table scroll inside the comment, which a picture cuts
-# off: the note's tables are laid out to the comment's width instead.
-NOTE_STYLE='.markup table { display: table !important; width: 100% !important; } .markup table code { white-space: normal !important; word-break: break-all; }'
 
 
 # Close a scenario's pull request on the example and delete its branch, so
@@ -772,18 +812,19 @@ close_change() { # pull request number, branch
 # The trace (reference/observability): one plan of the one-root change, as the
 # plan job runs it with OTEL_EXPORTER_OTLP_ENDPOINT set, sent to the
 # observability profile's collector. The report names the run's trace id
-# (run.trace_id); Grafana's Explore opens that trace from Tempo, once Tempo
-# holds the binary's spans as well as terragucci's.
+# (run.trace_id), and Tempo holds the binary's spans as well as terragucci's.
+# Grafana's view of the trace has no text form, so the step records no view;
+# a report with no trace id refuses it.
 step_trace() {
   "$HERE/bootstrap.sh" observability >/dev/null 2>&1 || fail "trace: the observability profile did not start; run 'just stack-up observability' to see why"
   forge
   ci_ready trace
-  local work="$STAGE/trace" trace i services=0 panes
-  local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" tempo="http://localhost:${TERRAGUCCI_TEMPO_PORT:-3210}"
+  local work="$STAGE/trace" trace i services=0
+  local tempo="http://localhost:${TERRAGUCCI_TEMPO_PORT:-3210}"
   plan_example trace "$work" one-root "" \
     -e OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_REPOSITORY="$REPO"
   trace="$(jq -r '.run.trace_id // empty' "$work/terragucci-report/report.json" 2>/dev/null || true)"
-  [ -n "$trace" ] || { log "trace: the plan's report records no trace id"; return 0; }
+  [ -n "$trace" ] || { refuse trace "the plan's report records no trace id"; return 0; }
   for i in $(seq 1 30); do   # up to a minute for the collector to flush
     services="$(curl -fsS "$tempo/api/traces/$trace" 2>/dev/null \
       | jq '[(.batches // .trace.resourceSpans // .resourceSpans // [])[] | .resource.attributes[]? | select(.key == "service.name") | .value.stringValue] | unique | length' 2>/dev/null || echo 0)"
@@ -791,10 +832,6 @@ step_trace() {
     sleep 2
   done
   [ "${services:-0}" -ge 2 ] || log "trace: Tempo holds trace $trace without the binary's spans"
-  panes="$(jq -rn --arg t "$trace" '{t: {datasource: "tempo", queries: [{refId: "A", datasource: {type: "tempo", uid: "tempo"}, queryType: "traceql", query: $t}], range: {from: "now-1h", to: "now"}}} | tostring | @uri')"
-  # The trace's timeline, without Explore's query editor above it.
-  shot trace trace "$grafana/explore?schemaVersion=1&orgId=1&kiosk&panes=$panes" --height 1400 \
-    --hide '[data-testid="query-editor-rows"], [data-testid="data-testid Query editor row"], [aria-label="Query editor row"]' --blank-max 0.7
 }
 
 # What responses leave on Forgejo (reference/responses): the drift pull
@@ -807,8 +844,8 @@ step_responses() {
     repo="$USER/respond-drift"
     pr="$(open_pull "$repo" terragucci/drift)"
     if [ -n "$pr" ]; then
-      body_shot responses drift "$URL/$repo/pulls/$pr"
-      diff_shot responses drift-files "$URL/$repo/pulls/$pr/files"
+      body_view responses drift "$repo" "$pr"
+      diff_view responses drift-files "$repo" "pulls/$pr"
     else
       log "responses: no drift pull request on $repo"
     fi
@@ -816,7 +853,7 @@ step_responses() {
   if claim_run responses respond-fmt; then
     repo="$USER/respond-fmt"
     sha="$(remote_head "$repo" smoke-fmt)"
-    if [ -n "$sha" ]; then diff_shot responses fmt "$URL/$repo/commit/$sha"; else log "responses: $repo has no smoke-fmt branch"; fi
+    if [ -n "$sha" ]; then diff_view responses fmt "$repo" "git/commits/$sha"; else log "responses: $repo has no smoke-fmt branch"; fi
   fi
 }
 
@@ -830,7 +867,7 @@ step_tips() {
   run_cmd tips "just example change float" "$HERE/example.sh" change float
   local pr top index path repo
   pr="$(pr_in_output)"
-  if [ -n "$pr" ]; then note_shot tips note "$pr" --until 'tips? on how the roots'; else log "tips: the output named no pull request"; fi
+  if [ -n "$pr" ]; then note_view tips note "$pr" 'tips? on how the roots'; else log "tips: the output named no pull request"; fi
   close_change "$pr" change/float
   ci_ready tips
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
@@ -839,11 +876,11 @@ step_tips() {
   top="$FLOCI/$REPORT_BUCKET/tips"
   index="$(fetch "$top/index.json" || true)"
   path="$(jq -r '.reports[0].path // empty' <<<"${index:-null}" 2>/dev/null || true)"
-  if [ -n "$path" ]; then shot tips report "$top/$path/report.html" --scroll "#tips" --fit 1; else log "tips: the index at $top lists no run"; fi
+  if [ -n "$path" ]; then html_view tips report "$top/$path/report.html" tips; else log "tips: the index at $top lists no run"; fi
   if claim_run tips respond-tips; then
     repo="$USER/respond-tips"
     pr="$(open_pull "$repo" terragucci/tip/pin-hashicorp-aws)"
-    if [ -n "$pr" ]; then diff_shot tips fix "$URL/$repo/pulls/$pr/files"; else log "tips: no pin-hashicorp-aws pull request on $repo"; fi
+    if [ -n "$pr" ]; then diff_view tips fix "$repo" "pulls/$pr"; else log "tips: no pin-hashicorp-aws pull request on $repo"; fi
   fi
 }
 
@@ -866,7 +903,7 @@ deny contains msg if {
 }'
 step_policy() {
   forge
-  local work="$STAGE/policy" branch=change/policy title="Keep dev orders' jobs for seven days, under a retention policy" sha pr run page repo
+  local work="$STAGE/policy" branch=change/policy title="Keep dev orders' jobs for seven days, under a retention policy" sha pr run logs repo
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git" "$work/tree" 2>/dev/null || fail "policy: cannot clone $REPO"
   git -C "$work/tree" apply "$EXAMPLE/changes/one-root.patch" || fail "policy: changes/one-root.patch does not apply to main"
   mkdir -p "$work/tree/policy"
@@ -877,7 +914,7 @@ step_policy() {
     -d "$(jq -n --arg t "$title" --arg h "$branch" '{title: $t, head: $h, base: "main"}')" "$URL/api/v1/repos/$REPO/pulls" | jq -r '.number // empty')"
   if [ -n "$pr" ]; then
     wait_run "$REPO" "$sha" pull_request
-    note_shot policy note "$pr" --until 'refused to plan|keeps messages longer' 
+    note_view policy note "$pr" 'refused to plan|keeps messages longer'
   else
     log "policy: no pull request for $branch"
   fi
@@ -886,28 +923,30 @@ step_policy() {
     repo="$USER/checkdiag"
     sha="$(remote_head "$repo" diag-policy)"
     run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -c '.workflow_runs[0] // empty')"
-    page="$(REPO="$repo"; FORGEJO="$URL/$repo"; job_page "$run" '.name == "check"')"
-    if [ -n "$page" ]; then job_shot policy log "$page" "Format check and validate" "FAILED policy tests"; else log "policy: no check job on $repo's diag-policy"; fi
+    logs="$(REPO="$repo"; job_logs "$run" '.name == "check"')"
+    if [ -n "$logs" ]; then job_log policy log "$logs" "Format check and validate" "FAILED policy tests"; else log "policy: no check job on $repo's diag-policy"; fi
   fi
 }
 
 # Commit statuses and the apply comment (reference/pipeline). The one-root
 # change's pull request on the example, once its plan job has posted
-# terragucci/plan: its merge box's list of the head's statuses, opened out
-# (Forgejo shows six and scrolls the rest), then the pull request is closed.
-# And the merged pull request the comment-apply claim leaves, with the
-# replies to /terragucci apply.
-COMMIT_STATUS_PANEL='.commit-status-panel'
-COMMIT_STATUS_STYLE='.commit-status-list { max-height: none !important; overflow: visible !important; } .commit-status-item:has(.octicon-skip) { display: none !important; }'
+# terragucci/plan: the head's statuses, as its merge box lists them, without
+# the skipped ones, then the pull request is closed. And the merged pull
+# request the comment-apply claim leaves, with the replies to /terragucci
+# apply.
 step_statuses() {
   forge
-  local repo="$USER/comment-apply" pr merged
+  local repo="$USER/comment-apply" pr merged sha rows
   run_cmd statuses "just example change one-root" "$HERE/example.sh" change one-root
   pr="$(pr_in_output)"
   if [ -n "$pr" ]; then
     # terragucci/plan settles once plan-note has posted it.
     if note_ready "$pr"; then
-      shot statuses checks "$FORGEJO/pulls/$pr" --style "$COMMIT_STATUS_STYLE" --scroll "$COMMIT_STATUS_PANEL" --fit 1
+      sha="$(api "$URL/api/v1/repos/$REPO/pulls/$pr" | jq -r '.head.sha // empty')" || true
+      rows=""
+      [ -z "$sha" ] || rows="$(api "$URL/api/v1/repos/$REPO/commits/$sha/status" \
+        | jq -c '[.statuses[]? | select(.status != "skipped") | [.context, .status, (.description // "")]]')" || true
+      table_view statuses checks '["Context", "State", "Description"]' "$rows"
     else
       refuse statuses "the one-root pull request's terragucci/plan did not settle"
     fi
@@ -918,7 +957,7 @@ step_statuses() {
   claim_run statuses comment-apply || return 0
   merged="$(api "$URL/api/v1/repos/$repo/pulls?state=closed&limit=50" | jq -r '.[] | select(.head.ref == "change" and .merged) | .number' | head -1)"
   if [ -n "$merged" ]; then
-    shot statuses reply "$URL/$repo/pulls/$merged" --scroll '.timeline-item.comment' --match 'wave 1 waits' --through 'applied: wave 1'
+    reply_view statuses reply "$repo" "$merged" 'wave 1 waits' 'applied: wave 1'
   else
     log "statuses: no merged pull request on $repo"
   fi
@@ -934,10 +973,10 @@ step_replan() {
   local pr; pr="$(pr_in_output)"
   [ -n "$pr" ] || { log "replan: the output named no pull request"; return 0; }
   say "$REPO" "$pr" "/terragucci plan" >/dev/null
-  note_shot replan note "$pr"
+  note_view replan note "$pr"
   say "$REPO" "$pr" "/terragucci plan envs/prod/payments" >/dev/null
   say "$REPO" "$pr" "/terragucci plan envs/nope" >/dev/null
-  shot replan replies "$FORGEJO/pulls/$pr" --scroll '.timeline-item.comment' --match 'terragucci plan envs/prod/payments' --through 'envs/nope'
+  reply_view replan replies "$REPO" "$pr" 'terragucci plan envs/prod/payments' 'envs/nope'
   close_change "$pr" change/one-root
 }
 
@@ -949,19 +988,19 @@ step_pr_apply() {
   if claim_run pr-apply pr-apply; then
     repo="$USER/pr-apply"
     pr="$(api "$URL/api/v1/repos/$repo/pulls?state=closed&limit=50" | jq -r '[.[] | select(.head.ref == "change")][0].number // empty')"
-    if [ -n "$pr" ]; then reply_shot pr-apply reply "$URL/$repo/pulls/$pr" 'terragucci: applied wave'; else log "pr-apply: no pull request on $repo"; fi
+    if [ -n "$pr" ]; then reply_view pr-apply reply "$repo" "$pr" 'terragucci: applied wave'; else log "pr-apply: no pull request on $repo"; fi
   fi
   if claim_run pr-apply pr-apply-lock; then
     repo="$USER/pr-apply-lock"
     pr="$(open_pull "$repo" change-b)"
-    if [ -n "$pr" ]; then reply_shot pr-apply lock "$URL/$repo/pulls/$pr" 'is locked by pull request'; else log "pr-apply: no change-b pull request on $repo"; fi
+    if [ -n "$pr" ]; then reply_view pr-apply lock "$repo" "$pr" 'is locked by pull request'; else log "pr-apply: no change-b pull request on $repo"; fi
     pr="$(open_pull "$repo" change-a)"
-    if [ -n "$pr" ]; then reply_shot pr-apply unlock "$URL/$repo/pulls/$pr" 'released the locks'; else log "pr-apply: no change-a pull request on $repo"; fi
+    if [ -n "$pr" ]; then reply_view pr-apply unlock "$repo" "$pr" 'released the locks'; else log "pr-apply: no change-a pull request on $repo"; fi
   fi
   if claim_run pr-apply pr-apply-stale; then
     repo="$USER/pr-apply-stale"
     pr="$(open_pull "$repo" change)"
-    if [ -n "$pr" ]; then reply_shot pr-apply stale "$URL/$repo/pulls/$pr" 'is not up to date with main'; else log "pr-apply: no pull request on $repo"; fi
+    if [ -n "$pr" ]; then reply_view pr-apply stale "$repo" "$pr" 'is not up to date with main'; else log "pr-apply: no pull request on $repo"; fi
   fi
 }
 
@@ -973,10 +1012,10 @@ step_agent() {
   local repo="$USER/comment-agent" pr sha
   pr="$(open_pull "$repo" agent-change)"
   [ -n "$pr" ] || { log "agent: no agent-change pull request on $repo"; return 0; }
-  reply_shot agent reply "$URL/$repo/pulls/$pr" 'terragucci: pushed'
+  reply_view agent reply "$repo" "$pr" 'terragucci: pushed'
   sha="$(remote_head "$repo" agent-change)"
-  if [ -n "$sha" ]; then diff_shot agent commit "$URL/$repo/commit/$sha"; else log "agent: no agent-change branch on $repo"; fi
-  reply_shot agent refused "$URL/$repo/pulls/$pr" 'terragucci: .*touches'
+  if [ -n "$sha" ]; then diff_view agent commit "$repo" "git/commits/$sha"; else log "agent: no agent-change branch on $repo"; fi
+  reply_view agent refused "$repo" "$pr" 'terragucci: .*touches'
 }
 
 # Drift with attribution (turn-on-drift-checks): the drift-attribute claim's
@@ -984,10 +1023,10 @@ step_agent() {
 step_drift_attribute() {
   forge
   claim_run drift-attribute drift-attribute || return 0
-  local repo="$USER/drift-attribute" url
-  url="$(api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" \
-    | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))][0].html_url // empty')"
-  if [ -n "$url" ]; then body_shot drift-attribute issue "$(browser_url <<<"$url")"; else log "drift-attribute: no drift issue on $repo"; fi
+  local repo="$USER/drift-attribute" issue
+  issue="$(api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" \
+    | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))][0].number // empty')"
+  if [ -n "$issue" ]; then body_view drift-attribute issue "$repo" "$issue"; else log "drift-attribute: no drift issue on $repo"; fi
 }
 
 # The config check (reference/config): terragucci config check and init
@@ -1009,15 +1048,18 @@ step_config() {
 # version-bump job opened.
 step_publish() {
   forge
-  local repo pr
+  local repo pr rows
   if claim_run publish publish; then
     repo="$(api "$URL/api/v1/repos/search?q=publish-&limit=50" | jq -r '[.data[] | select(.name | test("^publish-[0-9]+$"))] | max_by(.id) | .full_name // empty')"
-    if [ -n "$repo" ]; then shot publish tags "$URL/$repo/tags" --scroll 'table, #tags-table, .ui.table' --fit 1; else log "publish: no publish repo"; fi
+    if [ -n "$repo" ]; then
+      rows="$(api "$URL/api/v1/repos/$repo/tags?limit=50" | jq -c 'map([.name, .commit.sha[0:10]])')" || true
+      table_view publish tags '["Tag", "Commit"]' "$rows"
+    else log "publish: no publish repo"; fi
   fi
   if claim_run publish version-bump-job; then
     repo="$USER/version-bump"
     pr="$(open_pull "$repo" terragucci/release/modules-queue)"
-    if [ -n "$pr" ]; then body_shot publish release "$URL/$repo/pulls/$pr"; else log "publish: no release pull request on $repo"; fi
+    if [ -n "$pr" ]; then body_view publish release "$repo" "$pr"; else log "publish: no release pull request on $repo"; fi
   fi
 }
 
@@ -1029,10 +1071,8 @@ step_reconcile() {
   local repo="$USER/two-roots" pr
   pr="$(api "$URL/api/v1/repos/$repo/pulls?state=all&limit=50" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
   [ -n "$pr" ] || { log "reconcile: no pipeline pull request on $repo"; return 0; }
-  body_shot reconcile pull "$URL/$repo/pulls/$pr"
-  # The pipeline file is long: its first screenful says what it is.
-  diff_shot reconcile files "$URL/$repo/pulls/$pr/files" --style '.diff-file-box .file-body { max-height: 900px; overflow: hidden; }'
-
+  body_view reconcile pull "$repo" "$pr"
+  diff_view reconcile files "$repo" "pulls/$pr"
 }
 
 # Terragrunt (tutorial/terragrunt, use-terragrunt): the Terragrunt example
@@ -1043,7 +1083,7 @@ step_reconcile() {
 # own approval.
 step_tg() {
   forge
-  local repo="$USER/example-terragrunt" work="$STAGE/tg" sha page run pr
+  local repo="$USER/example-terragrunt" work="$STAGE/tg" sha logs run pr
   if "$HERE/example-terragrunt.sh" verify >/dev/null 2>&1; then
     "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
   else
@@ -1052,21 +1092,21 @@ step_tg() {
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work" 2>/dev/null || fail "tg: cannot clone $repo"
   git -C "$work" apply "$ROOT/example-terragrunt/changes/unformatted.patch" || fail "tg: changes/unformatted.patch does not apply to main"
   sha="$(TG_FIXED_DATE=1 push_tree "$work" "$repo" change/unformatted "Name dev orders' owner, without running terragrunt hcl fmt")"
-  page="$(REPO="$repo"; FORGEJO="$URL/$repo"; job_page "$(REPO="$repo"; push_run "$sha")" '.status == "failure"')"
-  if [ -n "$page" ]; then job_shot tg check "$page" "Format check" "needs formatting"; else log "tg: no failed job in the push run on ${sha:-the pushed commit}"; fi
+  logs="$(REPO="$repo"; job_logs "$(REPO="$repo"; push_run "$sha")" '.status == "failure"')"
+  if [ -n "$logs" ]; then job_log tg check "$logs" "Format check" "needs formatting"; else log "tg: no failed job in the push run on ${sha:-the pushed commit}"; fi
   "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
   # change opens the pull request and waits for its plan.
   if "$HERE/example-terragrunt.sh" change module-bump >"$STAGE/tg-change.out" 2>&1; then
     pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open&limit=50" | jq -r '.[] | select(.head.ref == "change/module-bump") | .number' | head -1)"
-    if [ -n "$pr" ]; then (REPO="$repo"; FORGEJO="$URL/$repo"; note_shot tg note "$pr" --height 1400); else log "tg: no module-bump pull request"; fi
+    if [ -n "$pr" ]; then (REPO="$repo"; note_view tg note "$pr"); else log "tg: no module-bump pull request"; fi
   else
     log "tg: 'just example-terragrunt change module-bump' failed: $(tail -3 "$STAGE/tg-change.out" | tr '\n' ' ')"
   fi
   "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
   if claim_run tg tg-gate-wait; then
     run="$(api "$URL/api/v1/repos/$USER/tg-gate-wait/actions/runs?event=push&limit=50" | jq -c '.workflow_runs[0] // empty')"
-    page="$(REPO="$USER/tg-gate-wait"; FORGEJO="$URL/$USER/tg-gate-wait"; job_page "$run" '.status == "failure"')"
-    if [ -n "$page" ]; then job_shot tg waiting "$page" "Apply wave" "waits for an approval of digest" "terragucci approve wave-"; else log "tg: no stopped job on tg-gate-wait"; fi
+    logs="$(REPO="$USER/tg-gate-wait"; job_logs "$run" '.status == "failure"')"
+    if [ -n "$logs" ]; then job_log tg waiting "$logs" "Apply wave" "waits for an approval of digest" "terragucci approve wave-"; else log "tg: no stopped job on tg-gate-wait"; fi
   fi
 }
 
@@ -1144,6 +1184,6 @@ if [ "$CHANGED" = 1 ] || [ ! -f "$DATA/manifest.json" ]; then
     > "$DATA/manifest.json"
   log "wrote manifest.json"
 fi
-if [ -n "$INCOMPLETE" ]; then fail "not written, a screenshot is missing:$INCOMPLETE"; fi
+if [ -n "$INCOMPLETE" ]; then fail "not written, a view is missing:$INCOMPLETE"; fi
 if [ -z "$ALL" ] && [ -n "$SKIPPED" ]; then fail "not captured, their claims do not pass:$SKIPPED"; fi
 log "done"

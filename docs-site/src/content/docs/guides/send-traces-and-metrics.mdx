@@ -10,7 +10,6 @@ prompt: |
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import Shot from '../../../components/Shot.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Result
@@ -136,7 +135,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
 
 8. Check the next pull request that changes a root. Its plan job sends a trace with a span per root and the binary's spans inside it, and the Pipeline health and Change review dashboards show the run.
 
-   <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
+   In Grafana's Explore, the run's trace starts at its stage span, with a span per root below it and OpenTofu's own spans inside each.
 
 </Steps>
 

@@ -15,7 +15,6 @@
     "pages/**/*.ts",
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
-    "capture/**/*.ts",
     "publish/**/*.ts",
     "ci-red/**/*.ts",
     "diff-guard/**/*.ts",

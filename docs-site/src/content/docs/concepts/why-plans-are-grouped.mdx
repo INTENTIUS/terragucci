@@ -3,7 +3,7 @@ title: Plan grouping
 description: What grouping does to two hundred plans, what it never folds away, and why no approval is bound to it.
 ---
 
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 
 A shared module change can reach two hundred roots with near-identical plans, and a reviewer scrolling for the odd one out can miss a destroy.
 
@@ -20,7 +20,7 @@ destroys: prod-eu/db (delete aws_db_instance.main)
 
 The reviewer reads the shared change once, then the 20 roots that differ.
 
-<Shot step="report" view="top" alt="The top of a plan report for a shared-module change with a destroy beside it: the destroy named on its own, two outliers to read first, and ten identical roots folded into one group" />
+<Recorded step="report" view="top" alt="The top of a plan report for a shared-module change with a destroy beside it: the destroy named on its own, two outliers to read first, and ten identical roots folded into one group" />
 
 ## Rules by change
 

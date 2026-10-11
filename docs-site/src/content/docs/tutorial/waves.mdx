@@ -14,7 +14,7 @@ prompt: |
 ---
 
 import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
@@ -36,7 +36,7 @@ With the default gate `on-destructive` a wave waits only when its plans destroy 
 
 That pull request drops the records table of staging email. Its note names the destroy at the top:
 
-<Shot step="wave-waiting" view="note" alt="The plan note on the destroy pull request in Forgejo: the records table of staging email named under destroys, and wave 4 waiting for an approval, with the terragucci approve command for its digest" optional />
+<Recorded step="wave-waiting" view="note" alt="The plan note on the destroy pull request in Forgejo: the records table of staging email named under destroys, and wave 4 waiting for an approval, with the terragucci approve command for its digest" optional />
 
 The example runs `approval: sealed`, so its approvals need a key. Your own repo defaults to `ledger`, with no key:
 
@@ -55,7 +55,7 @@ The example runs `approval: sealed`, so its approvals need a key. Your own repo 
 
 2. Wave 4 plans the destroy and stops. Its job exits with code 3 and prints the approve command:
 
-   <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing terragucci approve wave-4 with the plan's digest" optional />
+   <Recorded step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing terragucci approve wave-4 with the plan's digest" optional />
 
 3. Read the wave's plans in the report. The [`terragucci approve`](/terragucci/reference/cli/#approve) command carries the digest the wave planned, so the approval covers those plans and no others.
 

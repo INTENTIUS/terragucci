@@ -14,13 +14,14 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
+import ForgePicture from '../../../components/ForgePicture.astro';
 
 ## Result
 
 A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Everything runs as jobs in your own CI and lands in your git and your bucket; there is no account to create. Pick your forge in any tab and the other forge tabs on the site follow.
 
-<Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green" />
+<Recorded step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green" />
 
 ## Per forge
 
@@ -208,7 +209,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    git push -u origin add-terragucci
    ```
 
-   <Shot step="github" view="note" alt="terragucci's plan note on a GitHub pull request: one instance in one group, no destroys, the slowest resources, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
+   <Recorded step="github" view="note" alt="terragucci's plan note on a GitHub pull request: one instance in one group, no destroys, the slowest resources, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
 
    </TabItem>
    <TabItem label="GitLab">
@@ -220,7 +221,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    git push -u origin add-terragucci
    ```
 
-   <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
+   <Recorded step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
 
    </TabItem>
    <TabItem label="Forgejo">
@@ -232,7 +233,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    git push -u origin add-terragucci
    ```
 
-   <Shot step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
+   <Recorded step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
 
    </TabItem>
    </Tabs>
@@ -246,7 +247,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
 
    Add `terragucci/plan` to the default branch's protection rule as a required status.
 
-   <Shot step="github" view="required" alt="A GitHub ruleset named terragucci/plan required, active on the default branch, requiring the status check terragucci/plan" />
+   <ForgePicture name="github-required" alt="A GitHub ruleset named terragucci/plan required, active on the default branch, requiring the status check terragucci/plan" />
 
    When the check fails, so does the run; its log shows the diff `tofu fmt` would make:
 
@@ -257,22 +258,22 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
 
    Turn on "Pipelines must succeed" under Settings, Merge requests.
 
-   <Shot step="gitlab" view="required" alt="GitLab's merge request settings with Pipelines must succeed checked: merge requests cannot be merged if the latest pipeline did not succeed or is still running" />
+   <ForgePicture name="gitlab-required" alt="GitLab's merge request settings with Pipelines must succeed checked: merge requests cannot be merged if the latest pipeline did not succeed or is still running" />
 
    The pipeline fails with the check:
 
-   <Shot step="gitlab" view="check" alt="A GitLab check job's log for a change pushed without tofu fmt: the diff tofu fmt would make to envs/dev/orders/locals.tf" />
+   <Recorded step="gitlab" view="check" alt="A GitLab check job's log for a change pushed without tofu fmt: the diff tofu fmt would make to envs/dev/orders/locals.tf" />
 
    </TabItem>
    <TabItem label="Forgejo">
 
    In the default branch's protection rule, enable status checks with `terragucci/plan` as the pattern.
 
-   <Shot step="statuses" view="checks" alt="A pull request's checks in Forgejo, all successful: the plan job, terragucci/plan with its counts of roots, groups and destroys, the plan-note job and the check" />
+   <Recorded step="statuses" view="checks" alt="A pull request's checks in Forgejo, all successful: the plan job, terragucci/plan with its counts of roots, groups and destroys, the plan-note job and the check" />
 
    The failed check is a red cross on the commit, and the fmt job pushes the formatting after it:
 
-   <Shot step="check" view="pull" alt="A Forgejo pull request: the pushed commit with a red cross from its failed check, the plan note, and the style: tofu fmt commit the fmt job pushed after it" />
+   <Recorded step="check" view="pull" alt="A Forgejo pull request: the pushed commit with a red cross from its failed check, the plan note, and the style: tofu fmt commit the fmt job pushed after it" />
 
    </TabItem>
    </Tabs>

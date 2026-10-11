@@ -15,7 +15,6 @@ prompt: |
 ---
 
 import Captured from '../../../components/Captured.astro';
-import Shot from '../../../components/Shot.astro';
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
@@ -39,7 +38,7 @@ It runs three stages on a copy of the example, with `OTEL_EXPORTER_OTLP_ENDPOINT
 
 The ledger goes to a scratch repo, so the Forgejo example stays as it was.
 
-The dashboards are in the `terragucci` folder of Grafana at [localhost:3310](http://localhost:3310). The picture below shows the minutes the runs took.
+The dashboards are in the `terragucci` folder of Grafana at [localhost:3310](http://localhost:3310).
 
 ## Pipeline health
 
@@ -47,7 +46,7 @@ Each stage run is one span counted by stage and outcome. The plan and drift runs
 
 ## Rollouts and waves
 
-<Shot step="see-runs" view="waves" alt="The Rollouts and waves dashboard: one wave waiting, wave 2 of the example, and how long it has waited" />
+The Rollouts and waves dashboard lists each wave that waits for an approval, wave 2 of the example here, and how long it has waited.
 
 No wave was refused or failed. Past `wave_wait` (four hours by default), a waiting wave fires `TerragucciWaveWaiting`.
 

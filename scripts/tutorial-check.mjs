@@ -2,13 +2,12 @@
 // guide that is not a draft:
 //   - every smoke claim it names in `claims:` passes in smoke.json;
 //   - every <Captured step="…"> has a capture;
-//   - every <Shot step="…" view="…"> has its light and dark screenshot, each
-//     the one its step's capture recorded (the hash in <step>.json).
+//   - every <Recorded step="…" view="…"> has that view in its step's capture.
 // A capture made from an older example/ (its source_hash does not match) is
 // stale. Captures are refreshed by hand, never as part of a change or a release,
 // so a stale one is listed and does not fail the check; `--strict` fails on it.
 // Draft pages and guides are skipped; they leave draft when their claims pass. Every
-// other page of the site that embeds a capture or a screenshot is held to the
+// other page of the site that embeds a capture or a recorded view is held to the
 // same capture rules.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -17,7 +16,6 @@ import { join, relative } from "node:path";
 const root = new URL("..", import.meta.url).pathname;
 const pages = join(root, "docs-site/src/content/docs/tutorial");
 const data = join(root, "docs-site/src/data/tutorial");
-const shots = join(root, "docs-site/src/assets/tutorial");
 const smoke = JSON.parse(readFileSync(join(root, "docs-site/src/data/smoke.json"), "utf8"));
 // A page's claims are the OpenTofu rows on Forgejo; a Terraform or choudoufu row carries binary, and a
 // GitLab row forge: "gitlab", which counts for a claim that runs on GitLab alone (no Forgejo row of its name).
@@ -59,34 +57,25 @@ if (process.argv.includes("--hash")) {
 const strict = process.argv.includes("--strict");
 const problems = [];
 const stale = [];
-const shaOf = (file) => createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
 const capture = (step) => {
   const file = join(data, `${step}.json`);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
 };
-// The github step is shot on the sandbox on github.com, not on the stack.
+// The github step is recorded on the sandbox on github.com, not on the stack.
 const fix = (step) => (step === "github" ? "run just sandbox capture" : `run just capture ${step}`);
 
-// The <Captured> and <Shot> on one page.
+// The <Captured> and <Recorded> on one page.
 function checkCaptures(label, text) {
   for (const [, step] of text.matchAll(/<Captured\s+step="([^"]+)"/g)) {
     const c = capture(step);
     if (!c) { problems.push(`${label}: no capture for step ${step}; ${fix(step)}`); continue; }
     if (c.source_hash !== exampleHash) stale.push([step, `${label}: capture ${step} was made from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`]);
   }
-  for (const [tag, step, view] of text.matchAll(/<Shot\s+step="([^"]+)"\s+view="([^"]+)"[^>]*>/g)) {
-    // An optional shot (as the Shot component reads it) may be missing until its step is captured.
-    const optional = /\soptional(\s|\/|>)/.test(tag);
+  for (const [, step, view] of text.matchAll(/<Recorded\s+step="([^"]+)"\s+view="([^"]+)"[^>]*>/g)) {
     const c = capture(step);
-    if (!c) { problems.push(`${label}: no capture for step ${step}, so no screenshot ${step}-${view}; ${fix(step)}`); continue; }
-    if (c.source_hash !== exampleHash) stale.push([step, `${label}: screenshot ${step}-${view} was taken from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`]);
-    for (const theme of ["light", "dark"]) {
-      const png = join(shots, `${step}-${view}-${theme}.png`);
-      const want = c.shots?.[`${view}-${theme}`];
-      if (!existsSync(png)) { if (!optional) problems.push(`${label}: no screenshot ${step}-${view}-${theme}.png; ${fix(step)}`); }
-      else if (!want) problems.push(`${label}: capture ${step} records no screenshot ${view}-${theme}; ${fix(step)}`);
-      else if (shaOf(png) !== want) problems.push(`${label}: ${step}-${view}-${theme}.png is not the screenshot capture ${step} took; ${fix(step)}`);
-    }
+    if (!c) { problems.push(`${label}: no capture for step ${step}, so no view ${view}; ${fix(step)}`); continue; }
+    if (!c.views?.[view]) { problems.push(`${label}: capture ${step} recorded no view ${view}; ${fix(step)}`); continue; }
+    if (c.source_hash !== exampleHash) stale.push([step, `${label}: view ${step} ${view} was recorded from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`]);
   }
 }
 
@@ -123,7 +112,7 @@ checkDir(pages, "page");
 checkDir(guides, "guide");
 checkDir(concepts, "concept");
 checkDir(standards, "standards page");
-// Every other page that embeds a capture or a screenshot.
+// Every other page that embeds a capture or a recorded view.
 const docs = join(root, "docs-site/src/content/docs");
 for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/") && !p.startsWith(concepts + "/") && !p.startsWith(standards + "/")).sort()) {
   checkCaptures(relative(docs, file), readFileSync(file, "utf8"));

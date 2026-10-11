@@ -10,7 +10,7 @@ prompt: |
 ---
 
 import { Steps } from '@astrojs/starlight/components';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 
 ## Result
 
@@ -84,9 +84,9 @@ A [control repo](/terragucci/concepts/control-repo/) whose `terragucci.yml` list
 
    Each project gets a pull request instead of a push to its main branch, and current projects are left alone; `--mode apply` runs no `terraform apply`. The exit code is 1 when any project failed.
 
-   <Shot step="reconcile" view="pull" alt="The description of the pull request reconcile opened in a Forgejo project with no pipeline: the control repo's config changed what the pipeline should be, so it adds .forgejo/workflows/terragucci.yml and terragucci.yml, for the project to review and merge" />
+   <Recorded step="reconcile" view="pull" alt="The description of the pull request reconcile opened in a Forgejo project with no pipeline: the control repo's config changed what the pipeline should be, so it adds .forgejo/workflows/terragucci.yml and terragucci.yml, for the project to review and merge" />
 
-   <Shot step="reconcile" view="files" alt="That pull request's files: the start of the generated .forgejo/workflows/terragucci.yml, its triggers and its check job pinned by digest, and the two-line terragucci.yml naming the token" />
+   <Recorded step="reconcile" view="files" alt="That pull request's files: the start of the generated .forgejo/workflows/terragucci.yml, its triggers and its check job pinned by digest, and the two-line terragucci.yml naming the token" />
 
 5. Merge in each project.
 

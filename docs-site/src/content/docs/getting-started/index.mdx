@@ -13,7 +13,7 @@ prompt: |
 
 import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import PlanNote from '../../../components/PlanNote.astro';
-import Shot from '../../../components/Shot.astro';
+import Recorded from '../../../components/Recorded.astro';
 import Captured from '../../../components/Captured.astro';
 
 <Badge text="About 10 minutes" variant="note" size="medium" />
@@ -176,19 +176,19 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
    A pull request comment, with the status in the checks box.
 
-   <Shot step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
+   <Recorded step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
 
    </TabItem>
    <TabItem label="GitLab">
 
    A merge request note; the widget above it counts creates, updates and deletes.
 
-   <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
+   <Recorded step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
 
    </TabItem>
    <TabItem label="Forgejo">
 
-   <Shot step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
+   <Recorded step="first-pr" view="note" alt="The plan note on a Forgejo pull request for a change to one root: one instance in one group, no destroys, wave 2 with its set digest, and the change to the jobs queue, which keeps messages for seven days" />
 
    </TabItem>
    </Tabs>
