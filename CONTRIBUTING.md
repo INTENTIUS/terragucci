@@ -115,12 +115,12 @@ The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/rend
 
 ## CI on main, and the one pull request check
 
-A pull request runs one check, `diff-guard`, which takes seconds. The test suite and the validation stack (`ci.yml`: `check`, `validate-aws`, `validate-forgejo`, `validate-github`) run on each push to main, so many merges can land without waiting for a run each. A branch runs them by hand: `gh workflow run ci.yml --ref <branch>`.
+A pull request runs one check, `diff-guard`, which takes seconds. The test suite (`ci.yml`: `check`) runs on each push to main, so many merges can land without waiting for a run each. A branch runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
 
 | Workflow | Runs | What it does |
 |---|---|---|
 | `diff-guard.yml` | every pull request to main | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has |
-| `ci.yml` | each push to main, and by hand | `just check` and each stack profile's claims, plain and under `BREAK=1` |
+| `ci.yml` | each push to main, and by hand | `just check` |
 | `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
 | `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
 | `nightly.yml` | nightly | the GitLab claims, too heavy for every push |
@@ -137,7 +137,7 @@ just diff-guard             # origin/main against HEAD
 
 ### Green commits
 
-`chant.workspace.json` declares `ci.green` for main over the four `ci.yml` jobs, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.
+`chant.workspace.json` declares `ci.green` for main over the `ci.yml` check job, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.
 
 ```bash
 git fetch origin --tags
