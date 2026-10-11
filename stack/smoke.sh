@@ -10036,7 +10036,7 @@ JS
   if [ $rc = 0 ]; then
     # The command as a reader runs it, with credentials in the environment
     # (AWS_DOCKER_ENV); SIGTERM stops it once the probe has read the marks.
-    out="$(in_image sh -c 'terragucci view --no-open >/tmp/view.log 2>&1 & pid=$!; node /probe/probe.mjs "$pid"; rc=$?; kill -TERM "$pid" 2>/dev/null; wait "$pid"; echo "view exited $?"; cat /tmp/view.log; exit $rc' 2>&1)" || { log "the probe did not reach behold through terragucci view"; rc=1; }
+    out="$(in_image sh -c 'terragucci view --no-open >/tmp/view.log 2>&1 & pid=$!; node /probe/probe.mjs "$pid"; rc=$?; kill -TERM "$pid" 2>/dev/null; i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then echo "view still running 30 s after SIGTERM"; cat /tmp/view.log; exit 1; fi; wait "$pid"; echo "view exited $?"; cat /tmp/view.log; exit $rc' 2>&1)" || { log "the probe did not reach behold through terragucci view"; rc=1; }
     printf '%s\n' "$out" >&2
     clean_mounted "$work/terragucci-view" "$image"
   fi
