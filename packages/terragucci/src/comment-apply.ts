@@ -904,9 +904,7 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
   if (!SHA.test(o.sha)) throw new ConfigError("--sha must be a commit sha");
   const { api, repo } = apiOf(env);
   const read = env.TG_TOKEN;
-  // apply.merge_token_env's secret, when set: Forgejo refuses a merge made with the job's own token.
-  const token = env.TG_MERGE_TOKEN || read;
-  if (!token || !read) throw new ConfigError("pr-merge needs TG_TOKEN in the environment");
+  if (!read) throw new ConfigError("pr-merge needs TG_TOKEN in the environment");
   const get = async (path: string): Promise<any> => {
     const r = await doFetch(`${api}/repos/${repo}/${path}`, { method: "GET", headers: { "content-type": "application/json", authorization: `token ${read}` } });
     if (!r.ok) throw new Error(`GET ${path} answered ${r.status}`);
@@ -928,33 +926,9 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
   };
   const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, o.sha, mayWrite);
   if (approval.changes.length > 0 || approval.by.length === 0) throw new Error(`no reviewer other than its author approved its head ${short(o.sha)}`);
-  const [url, method, body] = o.forge === "forgejo"
-    ? [`${api}/repos/${repo}/pulls/${o.pr}/merge`, "POST", { Do: "merge", head_commit_id: o.sha }]
-    : [`${api}/repos/${repo}/pulls/${o.pr}/merge`, "PUT", { sha: o.sha, merge_method: "merge" }];
-  const r = await doFetch(url, {
-    method,
-    headers: { "content-type": "application/json", authorization: `token ${token}` },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`the forge refused the merge (${method} answered ${r.status}${await refusal(r)})`);
+  // The forge merges only while the head is still `sha`, with apply.merge_token_env's secret when set: Forgejo refuses a merge made with the job's own token.
+  const merged = await poster(o.forge ?? "github", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
+  if (!merged.merged) throw new Error(`the forge refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);
   const released = releaseLocks(o.repo ?? process.cwd(), o.pr);
   return `merged pull request ${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
-}
-
-/** The forge's own words for a refused merge, as ": <message>", or nothing when its answer has none. */
-async function refusal(r: { text(): Promise<string> }): Promise<string> {
-  let said = "";
-  try {
-    const raw = await r.text();
-    try {
-      const m = (JSON.parse(raw) as { message?: unknown })?.message;
-      said = typeof m === "string" ? m : raw;
-    } catch {
-      said = raw;
-    }
-  } catch {
-    return "";
-  }
-  said = said.replace(/\s+/g, " ").trim().slice(0, 300);
-  return said ? `: ${said}` : "";
 }

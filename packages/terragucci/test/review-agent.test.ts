@@ -305,7 +305,8 @@ function fakeForge(comments: unknown[]): { fetch: Fetch; hits: { method: string;
   const fetch = (async (url: string, init?: { method?: string; body?: string }) => {
     const method = init?.method ?? "GET";
     hits.push({ method, url, ...(init?.body ? { body: JSON.parse(init.body) } : {}) });
-    return { ok: true, status: 200, json: async () => (method === "GET" ? comments : {}) };
+    const v = method === "GET" ? comments : {};
+    return { ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) };
   }) as unknown as Fetch;
   return { fetch, hits };
 }
@@ -318,7 +319,7 @@ describe("terragucci review post", () => {
     const first = fakeForge([{ id: 1, user: { login: "someone" }, body: `${REVIEW_MARK}{"head":"${HEAD}","risk":"low"} -->` }]);
     const r = await postReview({ dir, env, fetch: first.fetch });
     expect(r).toMatchObject({ posted: true, risk: "high" });
-    expect(first.hits.map((h) => `${h.method} ${h.url}`)).toEqual(["GET https://api.example/repos/o/r/issues/7/comments?per_page=100&limit=50", "POST https://api.example/repos/o/r/issues/7/comments"]);
+    expect(first.hits.map((h) => `${h.method} ${h.url}`)).toEqual(["GET https://api.example/repos/o/r/issues/7/comments?per_page=100&page=1", "POST https://api.example/repos/o/r/issues/7/comments"]);
     expect(first.hits[1]!.body.body).toContain("Destroys b");
     expect(first.hits.some((h) => /reviews|statuses|merge/.test(h.url))).toBe(false);
     const again = fakeForge([{ id: 9, user: { login: "forgejo-actions" }, body: `${REVIEW_MARK}{"head":"${HEAD}","risk":"low"} -->` }]);

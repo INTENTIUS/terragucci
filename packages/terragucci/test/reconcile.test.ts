@@ -22,7 +22,7 @@ function recordingFetch(existing: Record<string, boolean> = {}): { fetch: Fetch;
     const has = Object.entries(existing).some(([k, v]) => v && url.includes(k));
     if (call.method === "GET" && /\/projects\/[^/]+$/.test(url)) return json({ default_branch: "main" });
     if (call.method === "GET" && /\/repos\/[^/]+\/[^/?]+$/.test(url)) return json({ default_branch: "main" });
-    if (call.method === "GET" && url.includes("merge_requests")) return json(has ? [{ web_url: "https://gl/mr/1", iid: 1 }] : []);
+    if (call.method === "GET" && url.includes("merge_requests")) return json(has ? [{ web_url: "https://gl/mr/1", iid: 1, source_branch: BRANCH }] : []);
     if (call.method === "GET" && url.includes("/pulls")) return json(has ? [{ html_url: "https://x/pull/1", number: 1, head: { ref: BRANCH } }] : []);
     if (call.method === "POST" && url.includes("merge_requests")) return json({ web_url: "https://gl/mr/7", iid: 7 });
     if (call.method === "POST" && url.includes("/pulls")) return json({ html_url: "https://x/pull/7", number: 7 });
@@ -86,7 +86,7 @@ describe("reconcile", () => {
       ["https://gitlab.example.com/api/v4/projects/platform%2Fnetwork/merge_requests", BRANCH],
       ["https://codeberg.org/api/v1/repos/acme/edge/pulls", BRANCH],
     ]);
-    expect(posts.map((c) => c.headers.authorization ?? c.headers["private-token"])).toEqual(["Bearer gh", "gl", "token fj"]);
+    expect(posts.map((c) => c.headers.Authorization ?? c.headers["PRIVATE-TOKEN"])).toEqual(["Bearer gh", "gl", "token fj"]);
   });
 
   it("an open pull request from the branch is reused, not duplicated", async () => {

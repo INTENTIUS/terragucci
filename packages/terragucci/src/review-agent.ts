@@ -42,7 +42,8 @@ import { apiOf, BRANCH, SHA } from "./comment";
 import { TOKEN_USERS } from "./comment-apply";
 import { unzipEntry } from "./install";
 import { ConfigError, type ProjectSettings } from "./config";
-import type { Fetch } from "./forge";
+import { detectForge } from "@intentius/chant/pr-forge";
+import { poster, type Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
 import { planNoteBodyOf } from "./plan-note";
 import type { ForgeCalls, ReviewedPull } from "./review";
@@ -391,17 +392,9 @@ export async function postReview(o: PostReviewOptions): Promise<{ posted: boolea
   const rc = read("rc").trim();
   const body = reviewNoteBody({ head, review: read(REVIEW_FILE), rc, instructions: read("instructions") });
   const risk = parseReviewMarker(body)?.risk ?? "unknown";
-  const { api, repo, token } = apiOf(env);
-  const call = async (method: string, path: string, payload?: unknown): Promise<any> => {
-    const r = await doFetch(`${api}/${path}`, { method, headers: { "content-type": "application/json", authorization: `token ${token}` }, body: payload === undefined ? undefined : JSON.stringify(payload) });
-    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
-    return r.status === 204 ? null : r.json();
-  };
   try {
-    const comments = (await call("GET", `repos/${repo}/issues/${pr}/comments?per_page=100&limit=50`)) as any[];
-    const old = (Array.isArray(comments) ? comments : []).find((c) => typeof c?.body === "string" && c.body.startsWith(REVIEW_MARK) && TOKEN_USERS.has(c?.user?.login));
-    if (old) await call("PATCH", `repos/${repo}/issues/comments/${old.id}`, { body });
-    else await call("POST", `repos/${repo}/issues/${pr}/comments`, { body });
+    // Only a note the run's own token wrote is the review note: a pull request's author cannot plant one for the job to edit.
+    await poster(detectForge(env) === "forgejo" ? "forgejo" : "github", env, doFetch).upsertComment(Number(pr), REVIEW_MARK, body, { author: [...TOKEN_USERS] });
   } catch (e) {
     return { posted: false, risk, reason: `the review note was not posted: ${(e as Error).message}` };
   }
