@@ -40,7 +40,8 @@ import { detectShape, fullDriftPlans, type Shape } from "../shape";
 import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
-import { findIssue, ForgeError, type Fetch } from "../forge";
+import { ForgeApiError } from "@intentius/chant/pr-forge";
+import { prForgeOf, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
@@ -1837,18 +1838,18 @@ async function finish(
       const reader = token ? undefined : targetFromEnv(options.forge, env, undefined, true);
       if (reader && drifted(report).roots > 0) {
         try {
-          const open = await findIssue(options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), reader, DRIFT_MARKER);
+          const open = await prForgeOf(reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch)).findIssue(DRIFT_MARKER, { match: "anywhere" });
           if (open?.created) observer.drift = { since: open.created };
         } catch (e) {
-          if (!(e instanceof ForgeError) && !(e instanceof TypeError)) throw e;
+          if (!(e instanceof ForgeApiError) && !(e instanceof TypeError)) throw e;
         }
       }
     } else {
       try {
-        issue = await trackDrift(options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), target, report, issueOptions);
+        issue = await trackDrift(prForgeOf(target, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch)), report, issueOptions);
         if (issue.action !== "none") log(`drift issue ${issue.action}: ${issue.issue.url}`);
       } catch (e) {
-        if (!(e instanceof ForgeError) && !(e instanceof TypeError)) throw e;
+        if (!(e instanceof ForgeApiError) && !(e instanceof TypeError)) throw e;
         issue = { action: "none", error: e.message };
         log(`the drift issue could not be kept: ${e.message}`);
       }

@@ -140,9 +140,10 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
     if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
     return r.status === 204 ? null : r.json();
   };
+  const forge = poster(o.forge ?? "github", env, doFetch);
   const reply = async (text: string): Promise<void> => {
     try {
-      await call("POST", `repos/${repo}/issues/${number}/comments`, { body: `terragucci: ${text}` });
+      await forge.addComment(number, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }
@@ -584,14 +585,14 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
     if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
     return r.status === 204 ? null : r.json();
   };
+  const forge = poster(o.forge ?? "github", env, doFetch);
   const replyOn = (number: number) => async (text: string): Promise<void> => {
     try {
-      await call("POST", `repos/${repo}/issues/${number}/comments`, { body: `terragucci: ${text}` });
+      await forge.addComment(number, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }
   };
-  const forge = poster(o.forge ?? "github", env, doFetch);
   const status = async (sha: string, state: "success" | "failure", description: string): Promise<void> => {
     try {
       await forge.setStatus(sha, { state, context: LOCK_CONTEXT, description: description.length > 140 ? `${description.slice(0, 137)}...` : description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });

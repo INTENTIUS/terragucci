@@ -3,11 +3,11 @@
  * request from a branch, and open one. `fetch` is injectable so the clients
  * are tested against recorded requests.
  *
- * Notes, statuses and the comments found again by a marker are posted
- * through chant's forge clients (`@intentius/chant/pr-forge`), with the
- * job's TG_TOKEN (poster). What they say stays here.
+ * Notes, statuses, replies and the drift issue go through chant's forge
+ * clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
+ * prForgeOf, for a target built here. What they say stays with terragucci.
  */
-import { ForgeEnvironmentError, forgeClient, forgeTargetFromEnv, type PrForge } from "@intentius/chant/pr-forge";
+import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge } from "@intentius/chant/pr-forge";
 import { ConfigError, type ForgeName } from "./config";
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
@@ -132,60 +132,22 @@ export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch): 
   }
 }
 
+/**
+ * chant's client for a target terragucci built itself (report/drift.ts's
+ * targetFromEnv). A target with no token reads a public repository and sends
+ * no credential.
+ */
+export function prForgeOf(t: ForgeTarget, fetch?: Fetch): PrForge {
+  const host = new URL(t.origin).host.toLowerCase();
+  const common = { apiBase: apiBase(t), ...(t.token ? { token: t.token } : {}), host, ...(fetch ? { fetch } : {}) };
+  if (t.forge === "gitlab") return gitlabForge({ ...common, project: t.path });
+  if (t.forge === "forgejo") return forgejoForge({ ...common, repo: t.path });
+  return githubForge({ ...common, repo: t.path });
+}
+
 /** The environment variable a forge's token is read from when the config names none. */
 export const DEFAULT_TOKEN_ENV: Record<ForgeName, string> = {
   github: "GITHUB_TOKEN",
   gitlab: "GITLAB_TOKEN",
   forgejo: "FORGEJO_TOKEN",
 };
-
-export interface Issue {
-  url: string;
-  /** GitHub and Forgejo number; GitLab iid. */
-  number: number;
-  body: string;
-  /** When it was opened (ISO 8601), when the forge said. */
-  created?: string;
-}
-
-const gitlabId = (t: ForgeTarget): string => encodeURIComponent(t.path);
-
-/** The open issue whose body carries `marker`, if any. */
-export async function findIssue(fetch: Fetch, t: ForgeTarget, marker: string): Promise<Issue | undefined> {
-  if (t.forge === "gitlab") {
-    const list = (await call(fetch, t, "GET", `/projects/${gitlabId(t)}/issues?state=opened&per_page=100`)) as Array<{ web_url: string; iid: number; description?: string | null; created_at?: string }>;
-    const hit = list.find((i) => (i.description ?? "").includes(marker));
-    return hit ? { url: hit.web_url, number: hit.iid, body: hit.description ?? "", ...(hit.created_at ? { created: hit.created_at } : {}) } : undefined;
-  }
-  // Forgejo filters pull requests out with type=issues; github.com answers 422
-  // to that parameter, so there pull requests are dropped from the list below.
-  const only = t.forge === "forgejo" ? "&type=issues" : "";
-  const list = (await call(fetch, t, "GET", `/repos/${t.path}/issues?state=open${only}&per_page=100`)) as Array<{ html_url: string; number: number; body?: string | null; pull_request?: unknown; created_at?: string }>;
-  const hit = list.find((i) => !i.pull_request && (i.body ?? "").includes(marker));
-  return hit ? { url: hit.html_url, number: hit.number, body: hit.body ?? "", ...(hit.created_at ? { created: hit.created_at } : {}) } : undefined;
-}
-
-export async function openIssue(fetch: Fetch, t: ForgeTarget, issue: { title: string; body: string }): Promise<Issue> {
-  if (t.forge === "gitlab") {
-    const i = (await call(fetch, t, "POST", `/projects/${gitlabId(t)}/issues`, { title: issue.title, description: issue.body })) as { web_url: string; iid: number };
-    return { url: i.web_url, number: i.iid, body: issue.body };
-  }
-  const i = (await call(fetch, t, "POST", `/repos/${t.path}/issues`, { title: issue.title, body: issue.body })) as { html_url: string; number: number };
-  return { url: i.html_url, number: i.number, body: issue.body };
-}
-
-export async function updateIssue(fetch: Fetch, t: ForgeTarget, number: number, issue: { title: string; body: string }): Promise<void> {
-  if (t.forge === "gitlab") await call(fetch, t, "PUT", `/projects/${gitlabId(t)}/issues/${number}`, { title: issue.title, description: issue.body });
-  else await call(fetch, t, "PATCH", `/repos/${t.path}/issues/${number}`, { title: issue.title, body: issue.body });
-}
-
-/** Comment on an issue, then close it. */
-export async function closeIssue(fetch: Fetch, t: ForgeTarget, number: number, comment: string): Promise<void> {
-  if (t.forge === "gitlab") {
-    await call(fetch, t, "POST", `/projects/${gitlabId(t)}/issues/${number}/notes`, { body: comment });
-    await call(fetch, t, "PUT", `/projects/${gitlabId(t)}/issues/${number}`, { state_event: "close" });
-    return;
-  }
-  await call(fetch, t, "POST", `/repos/${t.path}/issues/${number}/comments`, { body: comment });
-  await call(fetch, t, "PATCH", `/repos/${t.path}/issues/${number}`, { state: "closed" });
-}

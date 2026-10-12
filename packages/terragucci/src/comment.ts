@@ -29,7 +29,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { ConfigError } from "./config";
-import type { Fetch } from "./forge";
+import { poster, type Fetch } from "./forge";
 import { commentCell, leftOut } from "./import/guide";
 
 /** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
@@ -262,9 +262,10 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
     return r.status === 204 ? null : r.json();
   };
+  const forge = poster(o.forge ?? "github", env, doFetch);
   const reply = async (text: string): Promise<void> => {
     try {
-      await call("POST", `repos/${repo}/issues/${number}/comments`, { body: `terragucci: ${text}` });
+      await forge.addComment(number, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }
