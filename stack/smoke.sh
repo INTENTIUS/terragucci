@@ -339,8 +339,8 @@ rollout/pins|rollout moves a provider alone in the lock file and its exact const
 policy/opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
 policy/hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
 policy/hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
-policy/sources-module|with sources.modules set, tf-plan fails a root that calls a module from an unlisted host before its init, and the report names the call and the source|
-policy/sources-provider|with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and the report names the provider|
+policy/sources-module|with sources.modules set, tf-plan and the check job fail a root that calls a module from an unlisted host before its init, and tf-plan fails one whose listed remote module calls an unlisted one after its init and before its plan, naming the module path|
+policy/sources-provider|with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and one whose remote module brings in an unlisted provider after its init and before its plan, naming the module|
 policy/sources-at-base|a pull request that adds an unlisted host to its own sources list is still refused, checked against the list of the base branch|
 oidc/terragrunt|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
 affected/terragrunt-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
@@ -7840,30 +7840,48 @@ awk '/^policy:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv te
 # host does not resolve: a root that reaches init fails there instead, with
 # init's words, never the refusal's.
 #   sources_claim <module|provider|at-base>
-#     module    the root calls a module from an unlisted git host
-#     provider  the root's required_providers names an unlisted provider
+#     module    the root calls a module from an unlisted git host. The change
+#               also adds envs/dev/sources-nested, which calls a listed module
+#               on Forgejo that calls an unlisted one: it inits, and is failed
+#               after init and before plan, named by its module path. Then the
+#               check job init renders with the key runs on the same change,
+#               and must refuse sources-probe before its init.
+#     provider  the root's required_providers names an unlisted provider. The
+#               change also adds envs/dev/sources-locked, which calls a module
+#               on Forgejo whose null_resource brings in hashicorp/null, with no
+#               required_providers entry in the root: it inits, and is failed
+#               after init and before plan, the lock file's provider named by
+#               the module that uses it.
 #     at-base   as module, and the change adds that host to its own copy of the
 #               list: the refusal names the base's entries
+# One BREAK cut covers each kind's steps: sources.ts matches every source,
+# before init and after it, on the one line the cut takes out.
 sources_claim() {
   local kind="$1"
   log() { echo "[smoke policy-sources-$kind] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work tree rc=0 run=0 r root=envs/dev/sources-probe edit body want list bundle=""
-  local host="git::https://git.unlisted.example/acme"
-  local backend="  required_version = \"~> 1.13.0\"
-
-  backend \"s3\" {
-    bucket         = \"shop-terraform-state\"
-    key            = \"envs/dev/sources-probe.tfstate\"
-    region         = \"us-east-1\"
-    use_lockfile   = true
-    use_path_style = true
-  }"
+  local work tree rc=0 run=0 r root=envs/dev/sources-probe edit body want list bundle="" after="" after_body="" after_block="" after_what=""
+  local host="git::https://git.unlisted.example/acme" forgejo="git::http://forgejo:3000/$USER" sfx="${BREAK:+-break}"
+  backend_of() { # root -> the terraform block's version and s3 backend for it
+    printf '  required_version = "~> 1.13.0"\n\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "%s.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }' "$1"
+  }
+  # A module repo on Forgejo, its main.tf as given, tagged v1.
+  module_repo() { # name, main.tf
+    local d
+    fresh_repo "$1" || return 1
+    d="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$d"
+    printf '%s\n' "$2" > "$d/main.tf"
+    ( cd "$d" && git init -q -b main && git add -A \
+      && git -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "$1" \
+      && git -c user.name=smoke -c user.email=smoke@localhost tag v1 \
+      && git push -q --tags "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" main ) >/dev/null 2>&1 || { log "could not push $USER/$1"; return 1; }
+    drop_work "$d"
+  }
   case "$kind" in
     module|at-base)
       body="terraform {
-$backend
+$(backend_of "$root")
 }
 
 module \"probe\" {
@@ -7871,17 +7889,45 @@ module \"probe\" {
 }"
       want="refused: $root: module.probe ($root/main.tf) uses module source $host/probe.git?ref=v1.0.0, which no entry of sources.modules matches"
       list='sources:\n  modules: ["./**", "../**"]\n'
+      if [ "$kind" = module ]; then
+        after=envs/dev/sources-nested
+        module_repo "sources-inner$sfx" 'resource "terraform_data" "inner" {}' || return 1
+        module_repo "sources-outer$sfx" "module \"inner\" {
+  source = \"$forgejo/sources-inner$sfx.git?ref=v1\"
+}" || return 1
+        after_body="terraform {
+$(backend_of "$after")
+}
+
+module \"outer\" {
+  source = \"$forgejo/sources-outer$sfx.git?ref=v1\"
+}"
+        after_block="module.outer > module.inner ("
+        after_what="uses module source $forgejo/sources-inner$sfx.git?ref=v1, which no entry of sources.modules matches"
+        list="sources:\n  modules: [\"./**\", \"../**\", \"$forgejo/sources-outer$sfx.git\"]\n"
+      fi
       ;;
     provider)
       body="terraform {
-$backend
+$(backend_of "$root")
 
   required_providers {
     probe = { source = \"registry.unlisted.example/acme/probe\" }
   }
 }"
       want="refused: $root: required_providers.probe ($root/main.tf) uses provider registry.unlisted.example/acme/probe, which no entry of sources.providers matches"
-      list='sources:\n  providers: ["hashicorp/*"]\n'
+      list='sources:\n  providers: ["hashicorp/aws"]\n'
+      after=envs/dev/sources-locked
+      module_repo "sources-locked$sfx" 'resource "null_resource" "probe" {}' || return 1
+      after_body="terraform {
+$(backend_of "$after")
+}
+
+module \"probe\" {
+  source = \"$forgejo/sources-locked$sfx.git?ref=v1\"
+}"
+      after_block="module.probe > provider.null ("
+      after_what="hashicorp/null (implied by resource \"null_resource\" \"probe\", with no required_providers entry), which no entry of sources.providers matches"
       ;;
     *) log "no such case $kind"; return 1 ;;
   esac
@@ -7902,6 +7948,11 @@ $backend
 cat > $root/main.tf <<'TF'
 $body
 TF"
+  [ -n "$after" ] && edit="$edit
+mkdir -p $after
+cat > $after/main.tf <<'TF'
+$after_body
+TF"
   [ "$kind" = at-base ] && edit="$edit
 awk '/^sources:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv terragucci.yml.new terragucci.yml
 printf 'sources:\n  modules: [\"./**\", \"../**\", \"$host/**\"]\n' >> terragucci.yml"
@@ -7917,22 +7968,51 @@ printf 'sources:\n  modules: [\"./**\", \"../**\", \"$host/**\"]\n' >> terragucc
   if [ "$kind" = at-base ]; then
     jq -e --arg n "$root" '.roots[] | select(.path == $n) | .error | contains("(sources.modules: ./**, ../**)")' "$r" >/dev/null || { log "the refusal does not name the base's entries"; rc=1; }
   fi
+  # After init: the root inits (what it fetches resolves), and is failed before its plan, named by the module path.
+  if [ -n "$after" ]; then
+    jq -e --arg n "$after" '.roots[] | select(.path == $n and .status == "failed")' "$r" >/dev/null || { log "$after is not failed in the report: it planned"; rc=1; }
+    jq -e --arg n "$after" --arg b "refused: $after: $after_block" --arg w "$after_what" '.roots[] | select(.path == $n) | .error | contains($b) and contains($w)' "$r" >/dev/null \
+      || { log "the report does not refuse $after with: $after_block ... $after_what"; log "its error: $(jq -r --arg n "$after" '.roots[] | select(.path == $n) | .error' "$r" | head -3)"; rc=1; }
+    if jq -e --arg n "$after" '.roots[] | select(.path == $n) | .error | test("init failed|plan failed")' "$r" >/dev/null; then log "$after failed at init or plan, not at the check between them"; rc=1; fi
+  fi
+  # tf-check: the check job init renders with the key, run on the change in the CI image, refuses the probe before its init.
+  if [ "$kind" = module ]; then
+    local wf="$work/.forgejo/workflows/terragucci.yml" image base code=0
+    image="$(bin_image)"
+    base="$(git -C "$work" rev-parse HEAD~1)"
+    (cd "$work" && "$TERRAGUCCI" init >/dev/null 2>&1) || { log "init did not render the pipeline with sources set"; rc=1; }
+    awk '/- name: Format check and validate, every root/ { f = 1 } f && /run: \|/ { r = 1; next } r { if ($0 == "" || $0 ~ /^          /) { sub(/^          /, ""); print } else exit }' "$wf" > "$work/.tg-check.sh"
+    # shellcheck disable=SC2016 # the rendered line, as written
+    grep -qF 'terragucci check-sources "$dir"' "$work/.tg-check.sh" || { log "the rendered check job runs no check-sources"; rc=1; }
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work:/repo" -w /repo -v "${bundle:-$HERE/../packages/terragucci/dist/terragucci.mjs}:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TG_BASE=$base" \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" sh -e /repo/.tg-check.sh > "$work/check.log" 2>&1 || code=$?
+    clean_mounted "$work" "$image"
+    [ "$code" != 0 ] || { log "the check job passed"; rc=1; }
+    grep -qF "$want" "$work/check.log" || { log "the check job does not refuse $root with: $want"; tail -20 "$work/check.log" >&2; rc=1; }
+    grep -qF "FAILED $root: refused by sources, so it was not initialised" "$work/check.log" || { log "the check job does not say $root was not initialised"; rc=1; }
+  fi
   drop_work "$work"; drop_work "$tree"
-  [ $rc = 0 ] && log "$root failed tf-plan before its init, refused by the list at base: $want"
+  [ $rc = 0 ] && log "$root failed tf-plan before its init, refused by the list at base: $want${after:+; $after failed after its init and before its plan: $after_block}${after:+$after_what}"
   return $rc
 }
 
 claim_policy/sources_module() {
   # A root calling a module from a git host sources.modules does not list is
-  # refused before init. BREAK: the bundle checks no module source, so the
-  # root reaches init and fails there.
+  # refused before init, by tf-plan and by the check job; a root whose listed
+  # remote module calls an unlisted one is refused after init, before plan.
+  # BREAK: the bundle checks no module source, so the first root reaches init
+  # and fails there in both jobs, and the nested root plans.
   sources_claim module
 }
 
 claim_policy/sources_provider() {
   # A root whose required_providers names a provider sources.providers does
-  # not list is refused before init. BREAK: the bundle checks no provider, so
-  # the root reaches init and fails there.
+  # not list is refused before init; a root whose remote module brings in an
+  # unlisted provider is refused after init, before plan, named by the module.
+  # BREAK: the bundle checks no provider, so the first root reaches init and
+  # fails there, and the second plans.
   sources_claim provider
 }
 

@@ -226,6 +226,20 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
   return { ok, log, report };
 }
 
+/**
+ * tf-check's step before a root's `init` under `sources:`: the refusal lines
+ * sourceChecker gave for the root, into the log and the report. A root that
+ * passes prints nothing, so the check report gains no section for it.
+ */
+export function checkSourcesResult(dir: string, refused: readonly string[]): CheckResult {
+  if (refused.length === 0) return { ok: true, log: [], report: [] };
+  return {
+    ok: false,
+    log: [...refused, `FAILED ${dir}: refused by sources, so it was not initialised`],
+    report: [`### ${dir}`, "", ...refused.map((l) => `- ${l.replace(`refused: ${dir}: `, `refused: \`${dir}\`: `)}`), "", "Refused by `sources`, so it was not initialised.", ""],
+  };
+}
+
 /** Whether a directory holds Rego tests (`*_test.rego`), at any depth. */
 export function hasPolicyTests(dir: string): boolean {
   if (!existsSync(dir)) return false;

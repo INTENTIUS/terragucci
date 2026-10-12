@@ -5,7 +5,11 @@ import { applyWave } from "../src/apply";
 import { ConfigError, validateConfig } from "../src/config";
 import { runStage } from "../src/report/stage";
 import { loadHclParser } from "../src/rollout/parser";
-import { checkRootSources, governingSources, moduleForms, providerForms, rootSources, sourceAllowed, sourceChecker, sourceGlob, sourceRefusalLines } from "../src/sources";
+import { checkSourcesResult } from "../src/check";
+import { main } from "../src/cli";
+import { init } from "../src/init";
+import { checkScript } from "../src/render";
+import { checkLockedSources, checkRootSources, governingSources, lockedSources, moduleForms, providerForms, rootSources, sourceAllowed, sourceChecker, sourceGlob, sourceRefusalLines } from "../src/sources";
 import { git, tmp, write } from "./helpers";
 
 const parser = await loadHclParser();
@@ -340,5 +344,258 @@ describe("a tf-apply wave with sources", () => {
     expect(await applyWave(work, opts(bin))).toBe(0);
     expect(readFileSync(calls, "utf-8")).toContain("a apply");
     expect(out.mock.calls.flat().join("\n")).not.toMatch(/\bsources[:.]|by sources/);
+  });
+});
+
+describe("forms of an address at a default registry", () => {
+  it("matches a module or provider address that names registry.terraform.io or registry.opentofu.org against a glob without a host", () => {
+    expect(moduleForms("registry.terraform.io/terraform-aws-modules/vpc/aws")).toEqual(["registry.terraform.io/terraform-aws-modules/vpc/aws", "terraform-aws-modules/vpc/aws", "registry.opentofu.org/terraform-aws-modules/vpc/aws"]);
+    expect(providerForms("registry.opentofu.org/HashiCorp/null")).toEqual(["registry.opentofu.org/hashicorp/null", "hashicorp/null", "registry.terraform.io/hashicorp/null"]);
+    expect(sourceAllowed("provider", "registry.opentofu.org/hashicorp/aws", ["hashicorp/*"])).toBe(true);
+    expect(sourceAllowed("provider", "registry.opentofu.org/hashicorp/null", ["hashicorp/aws"])).toBe(false);
+    expect(sourceAllowed("module", "registry.terraform.io/terraform-aws-modules/vpc/aws", ["terraform-aws-modules/**"])).toBe(true);
+    expect(providerForms("registry.example.com/acme/x")).toEqual(["registry.example.com/acme/x"]);
+  });
+});
+
+/** A root as init leaves it: a remote module that calls an unlisted one and a local one, a registry module, and a lock file with providers from each. */
+const ROOT_TF = `terraform {
+  backend "local" {}
+  required_providers {
+    aws = { source = "hashicorp/aws" }
+  }
+}
+module "outer" {
+  source = "${GIT_HOST}/outer.git?ref=v1"
+}
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+}
+`;
+const INITED = (data = ".terraform"): Record<string, string> => ({
+  [`${data}/modules/modules.json`]: JSON.stringify({
+    Modules: [
+      { Key: "", Source: "", Dir: "." },
+      { Key: "outer", Source: `${GIT_HOST}/outer.git?ref=v1`, Dir: `${data}/modules/outer` },
+      { Key: "outer.inner", Source: `${OTHER_HOST}/inner.git?ref=v2`, Dir: `${data}/modules/outer.inner` },
+      { Key: "outer.sub", Source: "./sub", Dir: `${data}/modules/outer/sub` },
+      { Key: "vpc", Source: "registry.terraform.io/terraform-aws-modules/vpc/aws", Version: "5.0.0", Dir: `${data}/modules/vpc` },
+    ],
+  }),
+  [`${data}/modules/outer/main.tf`]: `module "inner" {\n  source = "${OTHER_HOST}/inner.git?ref=v2"\n}\nmodule "sub" {\n  source = "./sub"\n}\n`,
+  [`${data}/modules/outer/sub/main.tf`]: 'resource "null_resource" "n" {}\n',
+  [`${data}/modules/outer.inner/main.tf`]: 'terraform {\n  required_providers {\n    acme = { source = "registry.evil.example/acme/acme" }\n  }\n}\n',
+  [`${data}/modules/vpc/main.tf`]: 'resource "aws_vpc" "v" {}\n',
+  ".terraform.lock.hcl": ["registry.opentofu.org/hashicorp/aws", "registry.opentofu.org/hashicorp/null", "registry.evil.example/acme/acme", "registry.opentofu.org/hashicorp/stray"]
+    .map((p) => `provider "${p}" {\n  version = "1.0.0"\n}\n`)
+    .join("\n"),
+});
+const LISTS = { modules: [`${GIT_HOST}/**`, "terraform-aws-modules/**"], providers: ["hashicorp/aws"] };
+const INNER_LINE = `refused: app: module.outer > module.inner (app/.terraform/modules/outer/main.tf) uses module source ${OTHER_HOST}/inner.git?ref=v2, which no entry of sources.modules matches (sources.modules: ${GIT_HOST}/**, terraform-aws-modules/**)`;
+const NULL_LINE =
+  'refused: app: module.outer > module.sub > provider.null (app/.terraform/modules/outer/sub/main.tf) uses provider registry.opentofu.org/hashicorp/null (implied by resource "null_resource" "n", with no required_providers entry), which no entry of sources.providers matches (sources.providers: hashicorp/aws)';
+
+/** Prefix each path with a directory. */
+const under = (dir: string, files: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(files).map(([k, v]) => [`${dir}/${k}`, v]));
+
+describe("what init fetched and locked", () => {
+  it("refuses a nested remote module and providers that came in through modules, naming the module path that brought each in", async () => {
+    const repo = write(tmp("tg-sources-locked-"), { "app/main.tf": ROOT_TF, ...under("app", INITED()) });
+    expect(sourceRefusalLines("app", await checkLockedSources(repo, "app", LISTS, parser))).toEqual([
+      INNER_LINE,
+      NULL_LINE,
+      "refused: app: module.outer > module.inner > required_providers.acme (app/.terraform/modules/outer.inner/main.tf) uses provider registry.evil.example/acme/acme, which no entry of sources.providers matches (sources.providers: hashicorp/aws)",
+      "refused: app: lock file (app/.terraform.lock.hcl) uses provider registry.opentofu.org/hashicorp/stray, which no entry of sources.providers matches (sources.providers: hashicorp/aws)",
+    ]);
+  });
+
+  it("names a local call no more, checks only the kinds whose list is set, and passes what every list names", async () => {
+    const repo = write(tmp("tg-sources-locked-kinds-"), { "app/main.tf": ROOT_TF, ...under("app", INITED()) });
+    const used = await lockedSources(repo, "app", parser);
+    expect(used.filter((u) => u.kind === "module").map((u) => u.block)).toEqual(["module.outer", "module.outer > module.inner", "module.vpc"]);
+    expect(sourceRefusalLines("app", await checkLockedSources(repo, "app", { modules: LISTS.modules }, parser))).toEqual([INNER_LINE]);
+    expect(sourceRefusalLines("app", await checkLockedSources(repo, "app", { providers: LISTS.providers }, parser))).toHaveLength(3);
+    expect(await checkLockedSources(repo, "app", { modules: ["git::https://**", "terraform-aws-modules/**"], providers: ["hashicorp/*", "registry.evil.example/acme/*"] }, parser)).toEqual([]);
+  });
+
+  it("reads modules.json under TF_DATA_DIR, and finds nothing in a root init has not run in", async () => {
+    const repo = write(tmp("tg-sources-locked-data-"), { "app/main.tf": ROOT_TF, ...under("app", INITED("data")), "fresh/main.tf": ROOT_TF });
+    const lines = sourceRefusalLines("app", await checkLockedSources(repo, "app", { modules: LISTS.modules }, parser, { TF_DATA_DIR: "data" }));
+    expect(lines).toEqual([INNER_LINE.replace("app/.terraform/modules/outer/main.tf", "app/data/modules/outer/main.tf")]);
+    expect(await lockedSources(repo, "fresh", parser)).toEqual([]);
+  });
+
+  it("matches a call as written in the module that makes it, and as modules.json records it only when that module cannot be read", async () => {
+    const recorded = (dir: string) =>
+      JSON.stringify({
+        Modules: [
+          { Key: "", Source: "", Dir: "." },
+          { Key: "net", Source: "git::https://github.com/acme/net.git", Dir: dir },
+        ],
+      });
+    const repo = write(tmp("tg-sources-locked-written-"), {
+      "app/main.tf": 'module "net" {\n  source = "github.com/acme/net"\n}\n',
+      "app/.terraform/modules/modules.json": recorded(".terraform/modules/net"),
+      "gone/main.tf": "# its files are gone\n",
+      "gone/.terraform/modules/modules.json": recorded(".terraform/modules/net"),
+    });
+    expect(await checkLockedSources(repo, "app", { modules: ["github.com/acme/**"] }, parser)).toEqual([]);
+    expect(sourceRefusalLines("gone", await checkLockedSources(repo, "gone", { modules: ["github.com/acme/**"] }, parser))).toEqual([
+      "refused: gone: module.net (gone/.terraform/modules/modules.json) uses module source git::https://github.com/acme/net.git, which no entry of sources.modules matches (sources.modules: github.com/acme/**)",
+    ]);
+  });
+});
+
+/** A fake tofu for tf-plan whose init leaves the root as INITED does. */
+function initingTofu(dir: string): string {
+  const fixture = write(join(dir, "fixture"), INITED());
+  const path = join(dir, "tofu");
+  writeFileSync(path, `#!/bin/sh
+chdir="\${1#-chdir=}"; shift
+echo "$chdir $*" >> "${dir}/calls.log"
+case "$1" in
+  init) cp -R "${fixture}/." "$chdir/"; exit 0 ;;
+  plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add"; exit 0 ;;
+  show) if [ "$2" = "-json" ]; then echo '{"format_version":"1.2","resource_changes":[]}'; else echo "plan text"; fi ;;
+esac
+`);
+  chmodSync(path, 0o755);
+  return path;
+}
+
+describe("tf-plan checks what init fetched before plan", () => {
+  const calls = (bin: string): string => (existsSync(join(bin, "calls.log")) ? readFileSync(join(bin, "calls.log"), "utf-8") : "");
+  const yml = `sources:\n  modules: ['${GIT_HOST}/**', 'terraform-aws-modules/**']\n`;
+
+  it("fails a root whose remote module calls an unlisted one after its init, and never plans it", { timeout: 60_000 }, async () => {
+    const { repo } = branched({ "terragucci.yml": yml }, { "app/main.tf": ROOT_TF });
+    const bin = tmp();
+    const lines: string[] = [];
+    const result = await runStage("tf-plan", repo, { binary: initingTofu(bin), base: "main", env: { PATH: process.env.PATH }, noCost: true, out: join(bin, "out") }, (l) => lines.push(l));
+    expect(result.failed).toBe(true);
+    expect(result.report.roots[0].error).toContain(INNER_LINE);
+    expect(calls(bin)).toContain("init");
+    expect(calls(bin)).not.toContain(" plan");
+    expect(lines.join("\n")).toContain("app: refused by sources after init, so it was not planned");
+  });
+
+  it("with no sources key inits and plans the same root as before", { timeout: 60_000 }, async () => {
+    const { repo } = branched({ "terragucci.yml": "gate: never\n" }, { "app/main.tf": ROOT_TF });
+    const bin = tmp();
+    const lines: string[] = [];
+    const result = await runStage("tf-plan", repo, { binary: initingTofu(bin), base: "main", env: { PATH: process.env.PATH }, noCost: true, out: join(bin, "out") }, (l) => lines.push(l));
+    expect(result.failed).toBe(false);
+    expect(calls(bin)).toContain(" plan");
+    expect(lines.join("\n")).not.toMatch(/\bsources[:.]|by sources/);
+  });
+});
+
+/** FAKE, whose init also leaves the root as INITED does. */
+const INITING_FAKE = FAKE.replace('case "$2" in\n', 'case "$2" in\n  init) cp -R "$FIXTURE/." "$dir/" ;;\n');
+
+describe("a tf-apply wave checks what init fetched before plan", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  function setup(config: string): { work: string; bin: string; calls: string } {
+    const dir = tmp("tg-sources-wave-locked-");
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    const work = join(dir, "work");
+    mkdirSync(work, { recursive: true });
+    git(work, "init", "-q", "-b", "main");
+    write(work, { "terragucci.yml": config, "a/main.tf": ROOT_TF });
+    git(work, "add", "-A");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "two");
+    git(work, "remote", "add", "origin", origin);
+    git(work, "push", "-q", "origin", "main");
+    const bin = join(dir, "tofu");
+    writeFileSync(bin, INITING_FAKE);
+    chmodSync(bin, 0o755);
+    vi.stubEnv("CALLS", join(dir, "calls.log"));
+    vi.stubEnv("FIXTURE", write(join(dir, "fixture"), INITED()));
+    return { work, bin, calls: join(dir, "calls.log") };
+  }
+  const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: { ...process.env } });
+
+  it("refuses a root after its init and before its plan, naming the module path", async () => {
+    const { work, bin, calls } = setup(`gate: never\nsources:\n  modules: ['${GIT_HOST}/**', 'terraform-aws-modules/**']\n`);
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await applyWave(work, opts(bin))).toBe(1);
+    const ran = readFileSync(calls, "utf-8");
+    expect(ran).toContain("a init");
+    expect(ran).not.toContain("a plan");
+    expect(out.mock.calls.flat().join("\n")).toContain(`refused: a: module.outer > module.inner (a/.terraform/modules/outer/main.tf) uses module source ${OTHER_HOST}/inner.git?ref=v2`);
+  });
+
+  it("applies as before with no sources key", async () => {
+    const { work, bin, calls } = setup("gate: never\n");
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await applyWave(work, opts(bin))).toBe(0);
+    expect(readFileSync(calls, "utf-8")).toContain("a apply");
+    expect(out.mock.calls.flat().join("\n")).not.toMatch(/\bsources[:.]|by sources/);
+  });
+});
+
+describe("tf-check with sources", () => {
+  afterEach(() => vi.restoreAllMocks());
+  const CHECK_LINE = '  terragucci check-sources "$dir" || { failed=1; continue; }';
+  const PLAIN_ROOT = 'terraform {\n  backend "local" {}\n}\n';
+
+  it("runs check-sources on each root before its init when the key is set, and renders the job as before without it", async () => {
+    for (const rootPins of [false, true]) {
+      const lines = checkScript("tofu", ["a"], undefined, rootPins, false, false, true).split("\n");
+      const at = lines.indexOf(CHECK_LINE);
+      expect(at).toBeGreaterThan(-1);
+      expect(at).toBeLessThan(lines.findIndex((l) => l.includes('-chdir="$dir" init')));
+    }
+    expect(checkScript("tofu", ["a"])).toBe(checkScript("tofu", ["a"], undefined, false, false, false, false));
+    expect(checkScript("tofu", ["a"])).not.toContain("check-sources");
+    const withKey = await init(write(tmp(), { "terragucci.yml": "forge: github\nbinary: tofu\nsources:\n  modules: ['./**']\n", "envs/a/main.tf": PLAIN_ROOT }), { dryRun: true });
+    expect(withKey.files[0]!.content).toContain('terragucci check-sources "$dir"');
+    const without = await init(write(tmp(), { "terragucci.yml": "forge: github\nbinary: tofu\n", "envs/a/main.tf": PLAIN_ROOT }), { dryRun: true });
+    expect(without.files[0]!.content).not.toContain("check-sources");
+  });
+
+  it("refuses a root outside the list at base before its init, and prints nothing with no key", async () => {
+    const { repo, baseSha } = branched(
+      { "terragucci.yml": "sources:\n  modules: ['./**']\n", "app/main.tf": PLAIN_ROOT },
+      { "terragucci.yml": `sources:\n  modules: ['./**', '${OTHER_HOST}/**']\n`, "app/mod.tf": `module "bad" {\n  source = "${OTHER_HOST}/bad.git?ref=v1"\n}\n` },
+    );
+    const cwd = process.cwd();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      process.chdir(repo);
+      expect(await main(["check-sources", "app", "--base", baseSha])).toBe(1);
+      expect(await main(["check-sources"])).toBe(2);
+    } finally {
+      process.chdir(cwd);
+    }
+    const logged = out.mock.calls.flat().join("\n");
+    expect(logged).toContain(`refused: app: module.bad (app/mod.tf) uses module source ${OTHER_HOST}/bad.git?ref=v1, which no entry of sources.modules matches (sources.modules: ./**)`);
+    expect(logged).toContain("FAILED app: refused by sources, so it was not initialised");
+    expect(readFileSync(join(repo, "terragucci-check", "report.md"), "utf-8")).toContain("refused: `app`: module.bad");
+
+    const plain = branched({ "terragucci.yml": "gate: never\n", "app/main.tf": PLAIN_ROOT }, { "app/mod.tf": `module "bad" {\n  source = "${OTHER_HOST}/bad.git"\n}\n` });
+    out.mockClear();
+    try {
+      process.chdir(plain.repo);
+      expect(await main(["check-sources", "app", "--base", plain.baseSha])).toBe(0);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(out).not.toHaveBeenCalled();
+    expect(existsSync(join(plain.repo, "terragucci-check"))).toBe(false);
+  });
+
+  it("names a passing root nowhere, and a refused one in the log and the report", () => {
+    expect(checkSourcesResult("a", [])).toEqual({ ok: true, log: [], report: [] });
+    const r = checkSourcesResult("a", ["refused: a: module.x (a/main.tf) uses module source y"]);
+    expect(r.ok).toBe(false);
+    expect(r.report).toContain("- refused: `a`: module.x (a/main.tf) uses module source y");
   });
 });

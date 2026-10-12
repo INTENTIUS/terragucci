@@ -137,7 +137,7 @@ import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
-import { sourceChecker, waveSourcesBase } from "./sources";
+import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
@@ -635,16 +635,22 @@ function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
   return { dir: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "cache-")), initTurn: oneAtATime(), outputs: new Map() };
 }
 
-async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps, refused?: string[]): Promise<PlannedRoot> {
+/** sources: what refused a root before its init, and the check after its init (./sources.ts). */
+interface RootSources {
+  refused?: string[];
+  check?: SourceChecker;
+}
+
+async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps, sources?: RootSources): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
-    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws, refused);
+    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws, sources);
   } finally {
     observer.endRoot(timing);
   }
 }
 
-async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, refused?: string[]): Promise<PlannedRoot> {
+async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, sources?: RootSources): Promise<PlannedRoot> {
   const dir = join(repo, root);
   // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
   // An Atmos instance names its workspace (./atmos.ts): it plans and applies there, not in default.
@@ -653,6 +659,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const planFile = join(work, `${i}.tfplan`);
   const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
   // sources: a root using a source outside the list at base is not initialised (./sources.ts).
+  const refused = sources?.refused;
   if (refused?.length) return { ...failed, error: `refused by sources, so it was not initialised\n${refused.join("\n")}` };
   let resolved: RootBinary;
   try {
@@ -673,6 +680,16 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   if (wsInit) {
     const sel = await timed(observer, timing, binary, wsInit.select, wsInit.selectEnv, dir);
     if (sel.code !== 0) return { ...base, error: `workspace select failed\n${sel.out}` };
+  }
+  // sources: the modules init fetched and the providers it locked, before any of their code plans (./sources.ts).
+  if (sources?.check) {
+    let fetched: string[];
+    try {
+      fetched = await sources.check.afterInit(root, repo, env);
+    } catch (e) {
+      return { ...base, error: (e as Error).message };
+    }
+    if (fetched.length) return { ...base, error: `refused by sources after init, so it was not planned\n${fetched.join("\n")}` };
   }
   // An Atmos instance that reads another's outputs plans on their values. Its upstreams applied in the waves before, so a missing one stops it.
   const filled = await fillReads(repo, root, (up) => {
@@ -1502,10 +1519,11 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const binaries = new RootBinaries(repo, binary, settings.version, options.env ?? process.env, options.installer);
   // sources: each root's module and provider sources against the list at base, before any root of the wave inits (./sources.ts).
   const outside = new Map<string, string[]>();
+  let sourcesOf: SourceChecker | undefined;
   try {
-    const sourcesOf = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`) });
+    sourcesOf = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`) });
     for (const r of sourcesOf ? roots : []) {
-      const refused = await sourcesOf!(r);
+      const refused = await sourcesOf!.before(r);
       if (refused.length) outside.set(r, refused);
     }
   } catch (e) {
@@ -1513,7 +1531,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     return EXIT.failed;
   }
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, outside.get(r));
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined);
   });
   w.plannedAt = new Date().toISOString();
   w.planned = planned;
@@ -2433,10 +2451,10 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   // sources: each unit's terraform source and the module and provider sources under it, against the list at base, before the wave's run --all (./sources.ts).
   try {
-    const sourcesOf = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`) });
+    const sourcesOf = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`), afterInit: false });
     const refused: string[] = [];
     for (const u of sourcesOf ? roots : []) {
-      const lines = await sourcesOf!(u);
+      const lines = await sourcesOf!.before(u);
       if (lines.length === 0) continue;
       refused.push(u);
       console.log(`FAILED ${u}: refused by sources, so it was not initialised`);
