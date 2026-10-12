@@ -89,7 +89,6 @@
     "comment/atlantis": "Plan and review",
     "comment/not-affected": "Plan and review",
     "comment/plan": "Plan and review",
-    "comment/refused": "Locks and safety",
     "init/config-ts": "Setup and runtime",
     "cost/estimate": "Plan and review",
     "cost/gate": "Policy",
