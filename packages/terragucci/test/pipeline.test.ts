@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { createServer, type IncomingMessage } from "node:http";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
@@ -1224,7 +1224,9 @@ function fakeBin(script: string, scripts: Record<string, string> = {}): { dir: s
   const bin = join(dir, "bin");
   mkdirSync(bin);
   for (const [name, text] of Object.entries({ tofu: script, ...scripts })) {
-    writeFileSync(join(bin, name), text);
+    // A stand-in terragucci still says things on the forge as the real one does: `tg status|note|reply|stale` runs `terragucci post`.
+    const body = name === "terragucci" && CLI ? text.replace(/^(#![^\n]*\n)/, (shebang) => `${shebang}if [ "$1" = post ]; then exec node ${JSON.stringify(CLI)} "$@"; fi\n`) : text;
+    writeFileSync(join(bin, name), body);
     chmodSync(join(bin, name), 0o755);
   }
   return { dir, env: { PATH: `${bin}:${process.env.PATH}` } };
@@ -1341,6 +1343,10 @@ const rc = (address: string, actions: string[], before: unknown, after: unknown)
 const planOf = (changes: unknown[]) => JSON.stringify({ format_version: "1.2", resource_changes: changes, output_changes: {}, errored: false });
 
 let CLI: string | undefined;
+// The real CLI, built once: the stand-in terragucci of each step hands `post` to it (fakeBin).
+beforeAll(async () => {
+  await terragucciBin(tmp("tg-cli-bin-"));
+}, 120_000);
 /** A `terragucci` on the path, bundled from this tree as the CI image carries it. */
 async function terragucciBin(bin: string): Promise<void> {
   if (!CLI) {
@@ -1988,8 +1994,8 @@ describe("a wave split across jobs (waves.jobs), with a repo-wide scope", () => 
     const plain = parseYAML(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {} }).content) as any;
     expect(plain["apply-wave-2"].resource_group).toBe("terragucci-apply");
     // `tg alive` asks GitLab for the pipeline.
-    expect(forgeApi("gitlab")).toContain('call("GET", repo + "/pipelines/" + a[0])');
-    expect(forgeApi("forgejo")).toContain('call("GET", repo + "/actions/runs/" + a[0])');
+    expect(forgeApi("gitlab")).toContain('repo + "/pipelines/" + a[0]');
+    expect(forgeApi("forgejo")).toContain('repo + "/actions/runs/" + a[0]');
   });
 
   it("is refused with apply.when: pull-request, by config check and by init", () => {

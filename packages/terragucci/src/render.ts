@@ -555,16 +555,16 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
 }
 
 /**
- * The forge calls the pipeline makes beyond running the binary: commit statuses,
- * the plan note, marking a note stale, and the OIDC token. Plain Node, because
- * the CI images carry node and git but not curl or jq. A failed status or note
- * never fails the job; a failed token request does.
+ * The two forge calls the pipeline makes that are not something said on a
+ * pull request or commit: the OIDC token, and whether a run still runs
+ * (`tg alive`, for the shared apply lock of waves.jobs). Plain Node, because
+ * the CI images carry node and git but not curl or jq. A failed token request
+ * fails the job.
  */
 const FORGE_API_JS = [
-  'import { writeFileSync, readFileSync } from "node:fs";',
+  'import { writeFileSync } from "node:fs";',
   "const [cmd, ...a] = process.argv.slice(1);",
   "const e = process.env, gl = e.TG_FORGE === \"gitlab\", tok = e.TG_TOKEN;",
-  'const MARK = "<!-- terragucci:plan";',
   "try {",
   '  if (cmd === "oidc") {',
   '    const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });',
@@ -572,44 +572,13 @@ const FORGE_API_JS = [
   "    writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });",
   "  } else if (!tok) {",
   '    console.log("terragucci: no forge token, so no " + cmd);',
-  "  } else {",
+  '  } else if (cmd === "alive") {',
   '    const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";',
   '    const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;',
-  "    const call = async (m, p, b) => {",
-  '      const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });',
-  '      if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);',
-  "      return r.status === 204 ? null : r.json();",
-  "    };",
-  '    const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";',
-  '    const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));',
-  '    const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });',
-  '    if (cmd === "status") {',
-  "      const [context, state, description] = a;",
-  '      const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;',
-  '      const sha = e.TG_SHA;',
-  '      if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });',
-  '      else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });',
-  '    } else if (cmd === "note") {',
-  "      const body = readFileSync(a[0], \"utf-8\"), old = await find(e.TG_PR);",
-  '      if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });',
-  '    } else if (cmd === "reply") {',
-  '      await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });',
-  '    } else if (cmd === "alive") {',
-  '      const run = await call("GET", repo + "/actions/runs/" + a[0]);',
-  '      console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");',
-  '    } else if (cmd === "stale") {',
-  '      const moved = a[0].split(",");',
-  '      const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");',
-  "      for (const pr of open) {",
-  "        const n = gl ? pr.iid : pr.number, note = await find(n);",
-  "        if (!note || note.body.includes(\"<!-- terragucci:stale -->\")) continue;",
-  '        const hit = (note.body.match(/roots=(\\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));',
-  "        if (!hit.length) continue;",
-  '        const lines = note.body.split("\\n");',
-  '        lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");',
-  '        await edit(n, note.id, lines.join("\\n"));',
-  "      }",
-  "    }",
+  '    const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });',
+  '    if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);',
+  "    const run = await r.json();",
+  '    console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");',
   "  }",
   "} catch (err) {",
   '  console.log("terragucci: " + cmd + " failed: " + err.message);',
@@ -617,24 +586,26 @@ const FORGE_API_JS = [
   "}",
 ].join("\n");
 
-/**
- * GitLab's copy: a status on the job's own commit names the job's pipeline.
- * Without it GitLab files the status under the newest pipeline of that
- * commit, which may be another one (the comments schedule's, after the poll
- * retried a wave), and a waiting wave's failed status then fails that one.
- */
+/** GitLab's copy: a run is a pipeline there (`tg alive`). */
 const FORGE_API_JS_GITLAB = FORGE_API_JS.replace(
-  `{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });`,
-  '{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url, ...(sha === e.CI_COMMIT_SHA && /^[0-9]+$/.test(e.CI_PIPELINE_ID || "") ? { pipeline_id: Number(e.CI_PIPELINE_ID) } : {}) });',
+  `"/actions/runs/" + a[0]`,
+  `"/pipelines/" + a[0]`,
 ).replace(
-  // A run is a pipeline on GitLab (`tg alive`, for the shared apply lock of waves.jobs).
-  `call("GET", repo + "/actions/runs/" + a[0]);\n      console.log(["success", "failure", "cancelled", "skipped", "completed"]`,
-  `call("GET", repo + "/pipelines/" + a[0]);\n      console.log(["success", "failed", "canceled", "skipped"]`,
+  `["success", "failure", "cancelled", "skipped", "completed"]`,
+  `["success", "failed", "canceled", "skipped"]`,
 );
 
-/** Shell that defines `tg`, the forge calls above. */
+/**
+ * Shell that defines `tg`. What a job says on the forge (`tg status`, `tg
+ * note`, `tg reply`, `tg stale`) goes through `terragucci post`, which the
+ * job's image carries (forge-post.ts); `tg oidc` and `tg alive` are the Node
+ * above.
+ */
 export function forgeApi(forge: ForgeName): string {
-  return [`export TG_FORGE=${forge}`, `tg() { node --input-type=module -e '${forge === "gitlab" ? FORGE_API_JS_GITLAB : FORGE_API_JS}' -- "$@"; }`].join("\n");
+  return [
+    `export TG_FORGE=${forge}`,
+    `tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e '${forge === "gitlab" ? FORGE_API_JS_GITLAB : FORGE_API_JS}' -- "$@" ;; esac; }`,
+  ].join("\n");
 }
 
 const AUDIENCE = "sts.amazonaws.com";

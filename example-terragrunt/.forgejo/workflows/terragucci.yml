@@ -81,10 +81,9 @@ jobs:
           TG_TOKEN: '${{ github.token }}'
         run: |
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -92,49 +91,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           tg status terragucci/plan pending "planning"
       - uses: https://code.forgejo.org/actions/checkout@v4
         with:
@@ -220,10 +188,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -231,49 +198,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           terragucci comment --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
           read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
@@ -391,10 +327,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -402,49 +337,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           terragucci comment-apply --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
           read -r TG_PR TG_SHA TG_WAVE <<EOF
           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
@@ -528,10 +432,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -539,49 +442,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           if [ -n "${TG_BEFORE:-}" ] && [ "${TG_BEFORE#0000000}" = "$TG_BEFORE" ] && git fetch -q --depth=1 origin "$TG_BEFORE" 2>/dev/null; then
             changed="$(git diff --name-only "$TG_BEFORE" HEAD)"
@@ -644,10 +516,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -655,49 +526,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
@@ -748,10 +588,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -759,49 +598,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
@@ -852,10 +660,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -863,49 +670,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
@@ -956,10 +732,9 @@ jobs:
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          const MARK = "<!-- terragucci:plan";
           try {
             if (cmd === "oidc") {
               const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
@@ -967,49 +742,18 @@ jobs:
               writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
             } else if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
-            } else {
+            } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
               const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const call = async (m, p, b) => {
-                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
-                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
-                return r.status === 204 ? null : r.json();
-              };
-              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
-              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
-              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
-              if (cmd === "status") {
-                const [context, state, description] = a;
-                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
-                const sha = e.TG_SHA;
-                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
-                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
-              } else if (cmd === "note") {
-                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
-                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
-              } else if (cmd === "reply") {
-                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
-              } else if (cmd === "alive") {
-                const run = await call("GET", repo + "/actions/runs/" + a[0]);
-                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-              } else if (cmd === "stale") {
-                const moved = a[0].split(",");
-                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
-                for (const pr of open) {
-                  const n = gl ? pr.iid : pr.number, note = await find(n);
-                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
-                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
-                  if (!hit.length) continue;
-                  const lines = note.body.split("\n");
-                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
-                  await edit(n, note.id, lines.join("\n"));
-                }
-              }
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
-          }' -- "$@"; }
+          }' -- "$@" ;; esac; }
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
