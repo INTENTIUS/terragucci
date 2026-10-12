@@ -93,7 +93,7 @@ packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts security/plan-token-free note/diff note/footer note/report-link note/split note/stale agent/comment comment/apply comment/atlantis comment/not-affected comment/plan note/drift-overdue
 packages/terragucci/src/plan-note.ts      security/plan-token-free note/diff note/footer note/report-link note/split note/stale agent/comment comment/apply comment/atlantis comment/not-affected comment/plan note/drift-overdue approval/pr-review approval/pr-review-status refuse/pr-review review/description agent/review
 packages/terragucci/src/gitlab-ci.ts
-packages/terragucci/src/comment-apply.ts  comment/apply lock/apply pr-apply/stale pr-apply/tofu pr-apply/confirm pr-apply/guard waves/after lock/atmos lock/terramate lock/cdktn lock/terragrunt lock/plan lock/plan-fmt lock/plan-release lock/comment
+packages/terragucci/src/comment-apply.ts  comment/apply comment/plan lock/apply pr-apply/stale pr-apply/tofu pr-apply/confirm pr-apply/guard waves/after lock/atmos lock/terramate lock/cdktn lock/terragrunt lock/plan lock/plan-fmt lock/plan-release lock/comment
 packages/terragucci/src/comment.ts        agent/comment comment/apply comment/atlantis comment/not-affected comment/plan pr-apply/confirm pr-apply/guard comment/dispatch
 packages/terragucci/src/import/guide.ts   import/atlantis import/terragrunt-scale agent/comment comment/apply comment/atlantis comment/not-affected comment/plan
 packages/terragucci/src/import/spacelift.ts import/spacelift
