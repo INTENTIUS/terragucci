@@ -6562,6 +6562,22 @@ setup_shared() { # name, make-fn -> $work/tree a copy of the setup's tree at mai
     || { log "could not bring the copy of the $name setup to its main"; return 1; }
 }
 
+# A setup with no forge repo (a bare origin and a work tree, local runs in
+# the CI image): made once per record under a lock of its own, and copied by
+# each part, so its parts need not take turns.
+setup_local() { # name, make-fn -> SETUP_DIR the setup's dir, made once; a part copies from it and never writes there
+  local dir="${SMOKE_RUN_DIR:-${TMPDIR:-/tmp}}/setup.$1"
+  with_lock "setup-$1" setup_local_make "$dir" "$2" || { log "the $1 setup failed"; return 1; }
+  SETUP_DIR="$dir"
+}
+
+setup_local_make() { # dir, make-fn
+  [ ! -f "$1/ready" ] || return 0
+  rm -rf "$1"; mkdir -p "$1" || return 1
+  ( work="$1"; "$2" ) || { rm -rf "$1"; return 1; }
+  touch "$1/ready"
+}
+
 # ── apply before merge (apply.when: pull-request) ──
 # Each of the three claims below runs on a repo of its own made by gated_repo:
 # the five roots, gate never (so no wave waits and the claim is about the pull
@@ -16303,6 +16319,37 @@ audit_run() { # work, flags... -> AUDIT_OUT and AUDIT_CODE of terragucci audit, 
   clean_mounted "$work/wave" "$(image_tag "$SMOKE_BINARY")"
 }
 
+# The audit setup, which audit/tofu and audit/refused share on OpenTofu:
+# audit_repo's repo, its first wave waiting (its exit code in first.code)
+# and approved by smoke-approver as smoke-relay relays it. A part copies it
+# and commits a reports prefix of its own, so no two runs write one record:
+# the request and the approval come from the ledger, which the copy holds.
+# Under another binary each part makes its own, since audit_repo writes the
+# root for an estate named by its prefix.
+audit_make() { # [prefix]
+  audit_repo "$work" "${1:-audit-setup-$STAMP}" || return 1
+  audit_wave "$work" always
+  echo "$AUDIT_CODE" > "$work/first.code"
+  [ "$AUDIT_CODE" = 3 ] || return 0
+  audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 "" smoke-relay || return 1
+  # The ledger clone pushes to the origin it came from: a part clones its own copy.
+  rm -rf "$work/ledger"
+}
+
+audit_setup() { # work, prefix -> $1 holds the setup, wave 1 approved, its reports going under prefix; AUDIT_FIRST the first run's exit code
+  local work="$1" prefix="$2"
+  if [ "$SMOKE_BINARY" = tofu ]; then
+    setup_local audit audit_make || return 1
+    cp -R "$SETUP_DIR/." "$work/" || return 1
+    rm -f "$work/ready"
+    sed -i.bak "s#^  prefix: .*#  prefix: $prefix#" "$work/wave/terragucci.yml" && rm -f "$work/wave/terragucci.yml.bak"
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "reports under $prefix" || return 1
+  else
+    ( audit_make "$prefix" ) || return 1
+  fi
+  AUDIT_FIRST="$(cat "$work/first.code" 2>/dev/null)"
+}
+
 audit_approve() { # origin.git, clone dir, actor, gate, [digest], [relayer] -> an approval line on chant/lifecycle: the digest given, else the gate's newest pending one; with a relayer, written by it for the actor (relayedBy)
   local origin="$1" clone="$2" actor="$3" gate="$4" digest="${5:-}" relayer="${6:-}"
   if [ -d "$clone" ]; then git -C "$clone" pull -q --ff-only origin chant/lifecycle || return 1
@@ -16389,8 +16436,9 @@ claim_report/outcome() {
 }
 
 claim_audit/tofu() {
-  # A repo whose reports go to the bucket: wave 1 waits, smoke-approver
-  # approves its digest on chant/lifecycle, and the next run applies it.
+  # On the audit setup: a repo whose reports go to the bucket, wave 1
+  # waiting, and smoke-approver's approval of its digest on chant/lifecycle.
+  # The next run applies it.
   # terragucci audit, run in the repo, writes audit.jsonl, audit.html and
   # audit.json to the prefix with a presigned link. Every approval line on the
   # ledger has an entry with its approver, digest and time, the request has
@@ -16409,10 +16457,8 @@ claim_audit/tofu() {
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
-  audit_repo "$work" "$prefix" || { log "the repo was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
-  audit_wave "$work" always
-  [ "$AUDIT_CODE" = 3 ] || { log "the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; }
-  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 "" smoke-relay || { log "could not approve wave 1"; rc=1; }; fi
+  audit_setup "$work" "$prefix" || { log "the audit setup failed (under $SMOKE_BINARY)"; drop_work "$work"; return 1; }
+  [ "$AUDIT_FIRST" = 3 ] || { log "the first run exited $AUDIT_FIRST, not 3: wave 1 did not wait"; rc=1; }
   if [ $rc = 0 ]; then
     audit_wave "$work" always
     [ "$AUDIT_CODE" = 0 ] || { log "the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
@@ -16507,7 +16553,8 @@ claim_audit/override() {
 }
 
 claim_audit/refused() {
-  # Wave 1 waits and smoke-approver approves its digest; then app changes in
+  # On the audit setup, where wave 1 waits and smoke-approver approves its
+  # digest (relayed by smoke-relay); then app changes in
   # a new commit and wave 1 runs again. Its plans moved, so it applies nothing
   # and exits 4, and its report says why in waves[].refused. terragucci audit
   # records the refusal: changed-after-approval, by smoke-approver, with the
@@ -16522,12 +16569,10 @@ claim_audit/refused() {
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
-  audit_repo "$work" "$prefix"
-  audit_wave "$work" always
-  [ "$AUDIT_CODE" = 3 ] || { log "the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; }
-  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  audit_setup "$work" "$prefix" || { log "the audit setup failed"; drop_work "$work"; return 1; }
+  [ "$AUDIT_FIRST" = 3 ] || { log "the first run exited $AUDIT_FIRST, not 3: wave 1 did not wait"; rc=1; }
   if [ $rc = 0 ]; then
-    approved="$(jq -rs '[.[] | select(.kind == "resolution" and .gate == "wave-1")] | last | .planDigest' "$work/ledger/_gates/tf-apply.jsonl")"
+    approved="$(git -C "$work/origin.git" show chant/lifecycle:_gates/tf-apply.jsonl | jq -rs '[.[] | select(.kind == "resolution" and .gate == "wave-1")] | last | .planDigest')"
     if [ -z "${BREAK:-}" ]; then
       printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "moved"\n}\n' > "$work/wave/app/main.tf"
       git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app moves after its approval"
