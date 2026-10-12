@@ -11,7 +11,11 @@
  * A unit the lists refuse never runs `plan`: the wrapper exits 1, Terragrunt
  * fails the unit, and the stage reports the refusal lines, which name the
  * unit and the module path or provider. Every other call (init, show,
- * output, version) runs the binary as it is.
+ * output, version) runs the binary as it is. A `plan` call whose `-out`
+ * names no unit under the run's plan directories is refused too, since the
+ * unit it plans could not be checked, and the stage holds a unit that planned
+ * without being asked about as unchecked (uncheckedUnit): the check fails
+ * closed.
  *
  * The check runs in the stage's own process, so the wrapper only carries the
  * question and the answer, over a socket on 127.0.0.1 that lives as long as
@@ -32,6 +36,11 @@ export const SOURCES_NEXT_ENV = "TERRAGUCCI_SOURCES_NEXT";
 /** What the wrapper says before the refusal lines, and what a refused unit's report says it was not. */
 export const UNIT_REFUSED = "refused by sources after init, so it was not planned";
 
+/** Why a unit that planned although the wrapper never asked about it is not used: its plan was never checked. */
+export function uncheckedUnit(what: "planned" | "applied"): string {
+  return `what its init fetched and locked was not checked against sources before its plan, so it is not ${what}`;
+}
+
 /**
  * The client the wrapper runs with node: it sends the unit and its working
  * directory, prints what the stage answers to stderr, and exits 1 when the
@@ -50,7 +59,8 @@ const CLIENT_JS =
  * `--out-dir` as given and as its real path: Terragrunt hands each unit's
  * plan `-out=<out-dir>/<unit>/tfplan.tfplan`, which names the unit. That
  * plan call asks the stage on `port` first, from the unit's working
- * directory, and runs only when the answer is empty.
+ * directory, and runs only when the answer is empty. A `plan` call that
+ * names no unit there exits 1 unasked, unless it only asks for help.
  */
 export function sourcesWrapper(binary: string, plans: readonly string[], node: string, port: number): string {
   const lines = [
@@ -61,8 +71,9 @@ export function sourcesWrapper(binary: string, plans: readonly string[], node: s
     'if [ "$1" = plan ]; then',
     '  out=""',
     '  prev=""',
+    '  help=""',
     '  for a in "$@"; do',
-    '    case "$a" in -out=*|--out=*) out="${a#*=}" ;; esac',
+    '    case "$a" in -out=*|--out=*) out="${a#*=}" ;; -help|--help|-h) help=1 ;; esac',
     '    if [ "$prev" = "-out" ] || [ "$prev" = "--out" ]; then out="$a"; fi',
     '    prev="$a"',
     "  done",
@@ -74,6 +85,9 @@ export function sourcesWrapper(binary: string, plans: readonly string[], node: s
     "  esac",
     '  if [ -n "$unit" ]; then',
     `    ${shq(node)} -e ${shq(CLIENT_JS)} ${port} "\${unit%/tfplan.tfplan}" "$(pwd -P)" || exit 1`,
+    '  elif [ -z "$help" ]; then',
+    `    echo "terragucci: a plan in $(pwd -P) names no unit under ${[...new Set(plans)].join(" or ").replace(/["$`\\]/g, "")} (-out=\${out:-none}), so what its init fetched and locked cannot be checked against sources; it is not run" >&2`,
+    "    exit 1",
     "  fi",
     "fi",
     'exec "$next" "$@"',
@@ -91,11 +105,12 @@ function planOutDir(args: readonly string[]): string | undefined {
 
 /**
  * The runner whose `run --all plan` calls check each unit through the
- * wrapper before its plan. `refused` collects each refused unit's lines;
+ * wrapper before its plan. `asked` collects every unit the wrapper asked
+ * about, and `refused` each refused unit's lines;
  * `binary` is what Terragrunt calls when the run's environment names none.
  * The runner's other calls (render, output, find, apply) pass through.
  */
-export function unitSourcesExec(inner: TerragruntExec, check: SourceChecker, binary: string, env: NodeJS.ProcessEnv, refused: Map<string, string[]>): TerragruntExec {
+export function unitSourcesExec(inner: TerragruntExec, check: SourceChecker, binary: string, env: NodeJS.ProcessEnv, refused: Map<string, string[]>, asked: Set<string>): TerragruntExec {
   return async (file, args, opts) => {
     const outDir = planOutDir(args);
     if (outDir === undefined) return inner(file, args, opts);
@@ -116,9 +131,10 @@ export function unitSourcesExec(inner: TerragruntExec, check: SourceChecker, bin
           let lines: string[];
           let unit = "";
           try {
-            const asked = JSON.parse(body) as { unit: string; dir: string };
-            unit = asked.unit;
-            lines = await check.unitAfterInit(asked.unit, asked.dir, env);
+            const q = JSON.parse(body) as { unit: string; dir: string };
+            unit = q.unit;
+            asked.add(unit);
+            lines = await check.unitAfterInit(q.unit, q.dir, env);
           } catch (e) {
             lines = [`${unit || "a unit"}: ${(e as Error).message}`];
           }

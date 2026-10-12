@@ -1,6 +1,6 @@
 // sources for Terragrunt: the check job's check before its validate, and each
 // unit's check after its init and before its plan (../src/sources-terragrunt.ts).
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ import { main } from "../src/cli";
 import { init } from "../src/init";
 import { runStage } from "../src/report/stage";
 import { terragruntCheckScript } from "../src/render-terragrunt";
-import { sourcesWrapper } from "../src/sources-terragrunt";
+import { SOURCES_NEXT_ENV, sourcesWrapper } from "../src/sources-terragrunt";
 import { git, tmp, write } from "./helpers";
 
 const GIT_HOST = "git::https://git.example.com/platform";
@@ -48,9 +48,11 @@ const calls = (bin: string): string => (existsSync(join(bin, "calls.log")) ? rea
  * Terragrunt as a wave sees it: each unit inits in its working directory under
  * the unit's .terragrunt-cache, then runs `TG_TF_PATH plan -out=...` there. A
  * plan call that exits non-zero fails the unit, which writes no plan. `envs`
- * keeps the environment of each run --all.
+ * keeps the environment of each run --all. A unit in `bypass` plans with the
+ * binary the wrapper would have run, never calling TG_TF_PATH, as a
+ * Terragrunt whose plan call the wrapper did not recognise would.
  */
-function initingTerragrunt(repo: string, units: Record<string, Record<string, string>>): { exec: TerragruntExec; envs: Record<string, string>[] } {
+function initingTerragrunt(repo: string, units: Record<string, Record<string, string>>, bypass: string[] = []): { exec: TerragruntExec; envs: Record<string, string>[] } {
   const envs: Record<string, string>[] = [];
   const flag = (args: readonly string[], name: string): string => args[args.indexOf(name) + 1]!;
   const exec: TerragruntExec = async (file, args, options) => {
@@ -71,7 +73,7 @@ function initingTerragrunt(repo: string, units: Record<string, Record<string, st
       }
       const wd = write(join(repo, u, ".terragrunt-cache", "w"), units[u]!);
       const r = await new Promise<{ code: number; stderr: string }>((done) =>
-        execFile(options.env.TG_TF_PATH!, ["plan", "-input=false", `-out=${join(out, u, "tfplan.tfplan")}`], { cwd: wd, env: { ...process.env, ...options.env } }, (err, _o, stderr) =>
+        execFile(bypass.includes(u) ? (options.env[SOURCES_NEXT_ENV] ?? options.env.TG_TF_PATH!) : options.env.TG_TF_PATH!, ["plan", "-input=false", `-out=${join(out, u, "tfplan.tfplan")}`], { cwd: wd, env: { ...process.env, ...options.env } }, (err, _o, stderr) =>
           done({ code: err ? 1 : 0, stderr: String(stderr) }),
         ),
       );
@@ -104,6 +106,27 @@ describe("the wrapper between a unit's init and its plan", () => {
     expect(w).toContain(`'/real/w/plans'/*/tfplan.tfplan) unit="\${out#'/real/w/plans'/}" ;;`);
     expect(w).toMatch(/'\/usr\/bin\/node' -e '.*' 4242 "\$\{unit%\/tfplan\.tfplan\}" "\$\(pwd -P\)" \|\| exit 1/);
     expect(w.trimEnd().split("\n").pop()).toBe('exec "$next" "$@"');
+  });
+
+  it("refuses a plan whose -out names no unit under the run's plan directories, and passes help, show and init through", () => {
+    const dir = tmp("tg-sources-wrapper-");
+    const tofu = loggingTofu(dir);
+    const wrapper = join(dir, "wrapper");
+    writeFileSync(wrapper, sourcesWrapper(tofu, [join(dir, "plans")], process.execPath, 1));
+    chmodSync(wrapper, 0o755);
+    const run = (...args: string[]): { code: number; stderr: string } => {
+      const r = spawnSync(wrapper, args, { cwd: dir, encoding: "utf-8" });
+      return { code: r.status ?? 1, stderr: r.stderr };
+    };
+    for (const out of [["-out=/elsewhere/live/a/tfplan.tfplan"], ["-out=plans/live/a/tfplan.tfplan"], []]) {
+      const r = run("plan", "-input=false", ...out);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("names no unit under");
+      expect(r.stderr).toContain("cannot be checked against sources; it is not run");
+    }
+    expect(calls(dir)).toBe("");
+    for (const args of [["plan", "-help"], ["show", "-json", "x"], ["init", "-input=false"], ["version"]]) expect(run(...args).code).toBe(0);
+    expect(calls(dir).trim().split("\n").map((l) => l.split(" ").pop())).toEqual(["plan", "show", "init", "version"]);
   });
 });
 
@@ -139,6 +162,19 @@ describe("a Terragrunt unit checks what init fetched before plan", () => {
     expect(calls(bin)).not.toMatch(/live\/a\/\.terragrunt-cache\/w plan/);
   });
 
+  it("tf-plan holds a unit planned without the wrapper asking about it as unchecked, and uses no plan of it", { timeout: 60_000 }, async () => {
+    const repo = tgRepo(`sources:\n  modules: ['${GIT_HOST}/**']\n`);
+    const bin = tmp();
+    const tg = initingTerragrunt(repo, { "live/a": UNIT_PLAIN, "live/b": UNIT_PLAIN }, ["live/b"]);
+    const lines: string[] = [];
+    const r = await runStage("tf-plan", repo, { out: join(bin, "out"), binary: loggingTofu(bin), terragrunt: true, terragruntExec: tg.exec, noCost: true, env: { PATH: process.env.PATH } }, (l) => lines.push(l));
+    expect(r.failed).toBe(true);
+    const unchecked = "live/b: what its init fetched and locked was not checked against sources before its plan, so it is not planned";
+    expect(r.report.roots.find((u) => u.path === "live/b")!.error).toBe(unchecked);
+    expect(r.report.roots.find((u) => u.path === "live/a")!.error).toBeUndefined();
+    expect(lines).toContain(unchecked);
+  });
+
   it("with no sources key runs Terragrunt as before: no wrapper of its own, and every unit plans", { timeout: 60_000 }, async () => {
     const repo = tgRepo("gate: never\n");
     const bin = tmp();
@@ -166,6 +202,16 @@ describe("a Terragrunt unit checks what init fetched before plan", () => {
     expect(logged).toContain(UNIT_INNER);
     expect(calls(bin)).not.toMatch(/live\/a\/\.terragrunt-cache\/w plan/);
     expect(tg.envs.map((e) => e.TERRAGUCCI_SOURCES_NEXT !== undefined)).toEqual([true]);
+  });
+
+  it("a tf-apply wave holds a unit planned without the wrapper asking about it as unchecked, and applies nothing", async () => {
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { work } = setupUnits(`gate: never\nsources:\n  modules: ['${GIT_HOST}/**']\n`);
+    const bin = tmp();
+    const tg = initingTerragrunt(work, { "live/a": UNIT_PLAIN, "live/b": UNIT_PLAIN }, ["live/b"]);
+    expect(await applyWave(work, { wave: 1, layers: [["live/a", "live/b"]], binary: loggingTofu(bin), gate: "never", env: { PATH: process.env.PATH! }, terragrunt: true, terragruntExec: tg.exec })).toBe(1);
+    expect(out.mock.calls.flat().join("\n")).toContain("FAILED live/b: what its init fetched and locked was not checked against sources before its plan, so it is not applied");
+    expect(tg.envs).toHaveLength(1);
   });
 
   it("a tf-apply wave with no sources key plans and applies as before", async () => {

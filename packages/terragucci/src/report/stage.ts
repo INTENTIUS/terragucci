@@ -46,7 +46,7 @@ import { buildReport, planFiles, type RootInput, type WaveInput } from "./build"
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
 import { sourceChecker, type SourceChecker } from "../sources";
-import { UNIT_REFUSED, unitSourcesExec } from "../sources-terragrunt";
+import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "../sources-terragrunt";
 import { describeTips, repoTips } from "../tips";
 import { renamesIn } from "../tips/moved";
 import type { DecideOptions } from "../decide";
@@ -552,7 +552,8 @@ async function planUnits(
   const timed = drift ? refreshOnlyExec(options.terragruntExec) : lockTimeoutExec(options.terragruntExec, env);
   // sources: what each unit's init fetched and locked, checked between its init and its plan (../sources-terragrunt.ts).
   const sourcesRefused = new Map<string, string[]>();
-  const exec = options.sources ? unitSourcesExec(timed, options.sources, binary, env, sourcesRefused) : timed;
+  const sourcesAsked = new Set<string>();
+  const exec = options.sources ? unitSourcesExec(timed, options.sources, binary, env, sourcesRefused, sourcesAsked) : timed;
   const edges = new Map(options.graph.map((u) => [u.path, u.dependencies]));
   const includes = new Map(options.graph.map((u) => [u.path, [...Object.values(u.include ?? {}), ...(u.reading ?? [])]]));
   /** Every unit this run planned or meant to: its plan, when it has one, and its wave. */
@@ -665,6 +666,14 @@ async function planUnits(
         inputs.push({ path, planner, error: refusedLines.join("\n"), preventDestroy: new Set(), terragrunt: unit, ...(bin ? { binary: bin } : {}) });
         log(`${path}: ${UNIT_REFUSED}`);
         for (const l of refusedLines) log(`  ${l}`);
+        continue;
+      }
+      // A unit that planned without the wrapper asking about it was never checked: its plan is not used.
+      if (options.sources && plan !== undefined && !sourcesAsked.has(path)) {
+        const error = `${path}: ${uncheckedUnit("planned")}`;
+        run.set(path, { wave: number });
+        inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: unit, ...(bin ? { binary: bin } : {}) });
+        log(error);
         continue;
       }
       if (plan === undefined) {

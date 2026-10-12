@@ -138,7 +138,7 @@ import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
-import { UNIT_REFUSED, unitSourcesExec } from "./sources-terragrunt";
+import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
@@ -2477,7 +2477,8 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   if (bootstrap) console.log(`wave ${wave}: generate gives a unit disable_init: false, so Terragrunt bootstraps its backend (TG_BACKEND_BOOTSTRAP)`);
   const timedExec = unitLockTimeoutExec(bootstrapExec(options.terragruntExec ?? terragruntExec, bootstrap), env);
   const sourcesRefused = new Map<string, string[]>();
-  const exec = unitSources ? unitSourcesExec(timedExec, unitSources, binary, env, sourcesRefused) : timedExec;
+  const sourcesAsked = new Set<string>();
+  const exec = unitSources ? unitSourcesExec(timedExec, unitSources, binary, env, sourcesRefused, sourcesAsked) : timedExec;
   const run = { dir: repo, binary, terragrunt, exec };
   w.started = new Date().toISOString();
   w.roots = roots;
@@ -2567,6 +2568,11 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     const refusedLines = sourcesRefused.get(path);
     if (refusedLines) {
       planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: `${UNIT_REFUSED}\n${refusedLines.join("\n")}`, ...(bin ? { bin } : {}) });
+      continue;
+    }
+    // A unit that planned without the wrapper asking about it was never checked: its plan is not applied.
+    if (unitSources && plan !== undefined && !sourcesAsked.has(path)) {
+      planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: uncheckedUnit("applied"), ...(bin ? { bin } : {}) });
       continue;
     }
     if (plan === undefined) {
