@@ -10494,8 +10494,9 @@ claim_choudoufu/concurrency() {
 #   records   first's record is in the record store, and second's is not;
 # then wave 1 runs once more:
 #   resume    it applies second alone under the same approval: exit 0, no
-#             pending fact or approval added to the ledger, first's record the
-#             one the killed run wrote, and both recorded at the end.
+#             pending fact added to the ledger and one approval, the wave's
+#             own record of the rest under smoke-approver's, first's record
+#             the one the killed run wrote, and both recorded at the end.
 # Sets CDF_FAILED to the checks that failed. A step the checks need that
 # fails fails every check. UPTO=records stops after the records check.
 CDF_FAILED=""
@@ -10598,7 +10599,11 @@ HCL
       || { log "resume: wave 1 did not resume under the approval of $digest"; failed resume; }
     grep -q "^estate: Plan: 1 to add, 0 to change, 0 to destroy" "$d/resumed.log" || { log "resume: wave 1 run again did not plan second alone"; failed resume; }
     grep -q "^applied estate: Resources: 1 added, 0 changed, 0 destroyed" "$d/resumed.log" || { log "resume: wave 1 run again did not apply one resource"; failed resume; }
-    [ "$(ledger_lines resolution)" = 1 ] || { log "resume: the ledger holds $(ledger_lines resolution) approvals, not the one"; failed resume; }
+    # smoke-approver's approval, and the one the wave records for the rest under it, naming the stopped apply's digest (apply.ts beforeGate).
+    [ "$(ledger_lines resolution)" = 2 ] || { log "resume: the ledger holds $(ledger_lines resolution) approvals, not smoke-approver's and the rest's under it"; failed resume; }
+    git --git-dir="$d/origin.git" show chant/lifecycle:_gates/tf-apply.jsonl 2>/dev/null | grep '"kind":"resolution"' | tail -1 \
+      | jq -e --arg d "$digest" '.resolvedBy == "smoke-approver" and .planDigest != $d and (.note | startswith("the rest of the apply of \($d), which smoke-approver approved at "))' >/dev/null \
+      || { log "resume: the second approval is not the rest of the apply of $digest under smoke-approver's"; failed resume; }
     [ "$(ledger_lines pending)" = 1 ] || { log "resume: the ledger holds $(ledger_lines pending) pending facts, not the one wave 1 asked first"; failed resume; }
     v2="$(cdf_record_version "$estate" first)"
     [ -n "$v1" ] && [ "$v1" = "$v2" ] || { log "resume: first's record moved from version '$v1' to '$v2': it was written again"; failed resume; }
@@ -15874,8 +15879,12 @@ cdf_migrations() { # dir bundle carve|adopt...
     cp "$d/wave/terragucci-report/migrations/"*.json "$d/records/" 2>/dev/null || true
     [ "$AUDIT_CODE" = 0 ] && break
     [ "$AUDIT_CODE" = 3 ] || { log "wave 1 run $n exited $AUDIT_CODE, not 0 or 3"; return 1; }
-    w="$(sed -n 's/^migration \([^ ]*\) waits for an approval of digest \([^ ]*\)\. .*/\1 \2/p' "$d/run-$n.log")"
+    # The hold chant ends the run on. A run after an approval prints the
+    # approved migration's wait first: the hook runs once before chant finds
+    # the approval, then again (chant#3847), and holds on the next one.
+    w="$(sed -n 's/.*It waits on tf-migrate \/ \([^ .]*\)\. approve: chant approve tf-migrate [^ ]* --plan \([^ ]*\).*/\1 \2/p' "$d/run-$n.log" | tail -1)"
     [ -n "$w" ] || { log "wave 1 run $n waited, but for no migration"; return 1; }
+    grep -q "^migration ${w%% *} waits for an approval of digest ${w#* }\. " "$d/run-$n.log" || { log "wave 1 run $n holds on ${w%% *} at ${w#* }, which no migration said it waits for"; return 1; }
     while read -r name digest; do
       case " $approved " in *" $name "*) log "wave 1 run $n waits again for $name, which was approved"; return 1 ;; esac
       # Before its approval, the retag has written nothing.
