@@ -2157,7 +2157,7 @@ gitlab_claim_state/unlock() {
   gl_state_setup gl-unlock-state "" forge || return 1
   if [ -n "${BREAK:-}" ]; then
     GL_STATE_BUNDLE="$WORK/break.mjs"
-    break_bundle "$GL_STATE_BUNDLE" unlock.ts '      read: () => asked(() => probeLock(gl, fetchFn)),' '      read: async () => undefined,' || { drop_work "$WORK"; return 1; }
+    break_bundle "$GL_STATE_BUNDLE" unlock.ts '        const text = await asked(() => probeLock(gl, fetchFn));' '        const text = undefined as string | undefined;' || { drop_work "$WORK"; return 1; }
   fi
   gl_state_apply "$WORK" 1 || rc=1
   gl_locked() { glapi -H 'content-type: application/json' "$GL_URL/api/graphql" -d "{\"query\":\"{ projects(ids: [\\\"gid://gitlab/Project/$GS_PID\\\"]) { nodes { terraformStates { nodes { name lockedAt } } } } }\"}" | jq -r '.data.projects.nodes[0].terraformStates.nodes[] | select(.name == "app") | .lockedAt // "free"'; }

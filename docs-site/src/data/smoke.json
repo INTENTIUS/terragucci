@@ -2214,14 +2214,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "apply/provider-cache",
-      "says": "a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "state/unlock",
       "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
       "needs": null,

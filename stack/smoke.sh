@@ -2258,9 +2258,27 @@ build_cli() {
 
 # The CLI bundle with cuts in its sources (stack/break-bundle.mjs), for a
 # claim whose BREAK takes its property out of the code itself: written to
-# out, and mounted in place of the bundle build_cli wrote.
+# out, and mounted in place of the bundle build_cli wrote. scripts/check-breaks.mjs
+# (just lint) checks every call's finds against the sources.
 break_bundle() { # out, then file find replace, once or more
-  (cd "$HERE/.." && node stack/break-bundle.mjs "$@") >&2
+  (cd "$HERE/.." && node stack/break-bundle.mjs "$@") >&2 || break_setup_failed "its BREAK bundle did not build"
+}
+
+# A BREAK run whose own setup failed broke nothing, so it fails rather than
+# counting as caught. The helpers that make a BREAK (break_bundle,
+# break_image, break_unowned) write why to SMOKE_BREAK_SETUP, which run_claim
+# makes for each BREAK run and reads when the claim returns. A file, so a
+# helper run in $(...) reaches it too.
+break_setup_failed() { # why -> returns 1
+  [ -z "${SMOKE_BREAK_SETUP:-}" ] || printf '%s\n' "$1" >>"$SMOKE_BREAK_SETUP"
+  return 1
+}
+
+# A claim whose BREAK took out a property terragucci no longer owns (it moved
+# to chant) has nothing left to cut here: its BREAK run fails, naming why.
+break_unowned() { # why -> returns 1
+  echo "[smoke] no BREAK: $1" >&2
+  break_setup_failed "no BREAK: $1"
 }
 
 report_run() {
@@ -7006,12 +7024,23 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   started=$(date +%s)
   trap 'cleanup_works; exit 130' INT
   trap 'cleanup_works; exit 143' TERM
+  SMOKE_BREAK_SETUP=""
+  [ -z "${BREAK:-}" ] || SMOKE_BREAK_SETUP="$(mktemp "${TMPDIR:-/tmp}/tgs-break-setup.XXXXXX")"
   if "$CLAIM_FN${name//-/_}"; then held=1; else held=0; fi
   cleanup_works
   secs=$(( $(date +%s) - started ))
   if [ -z "${BREAK:-}" ]; then
     if [ $held = 1 ]; then say "$name" pass "seconds=$secs"; else say "$name" fail "seconds=$secs"; return 1; fi
   else
+    # A claim that fails under BREAK is caught only when its BREAK was made:
+    # one that failed setting it up (break_setup_failed) proved nothing.
+    local setup=""
+    [ -z "$SMOKE_BREAK_SETUP" ] || { setup="$(head -1 "$SMOKE_BREAK_SETUP")"; rm -f "$SMOKE_BREAK_SETUP"; }
+    SMOKE_BREAK_SETUP=""
+    if [ -n "$setup" ]; then
+      echo "[smoke] $name: $setup, so its BREAK run proves nothing" >&2
+      say "$name" fail "seconds=$secs break=setup-failed"; return 1
+    fi
     if [ $held = 0 ]; then say "$name" caught "seconds=$secs"; else say "$name" fail "seconds=$secs break=not-caught"; return 1; fi
   fi
 }
@@ -8160,14 +8189,14 @@ claim_apply/atmos_workspace() {
 break_image() { # bundle [image, default tofu] -> prints the image suffix (-t<12 hex>)
   local base tag suffix ctx
   base="$(image_tag "${2:-tofu}")"
-  docker image inspect "$base" >/dev/null 2>&1 || { echo "[smoke] no CI image $base" >&2; return 1; }
+  docker image inspect "$base" >/dev/null 2>&1 || { echo "[smoke] no CI image $base" >&2; break_setup_failed "no CI image $base for its BREAK image"; return 1; }
   suffix="-t$(shasum -a 256 "$1" | cut -c1-12)"
   tag="$(perl -pe 's/-t[0-9a-f]{12}$//' <<<"$base")$suffix"
   if ! docker image inspect "$tag" >/dev/null 2>&1; then
-    ctx="$(mktemp -d "${TMPDIR:-/tmp}/tgs-brk.XXXXXX")" || return 1
-    cp "$1" "$ctx/terragucci.mjs" || return 1
+    ctx="$(mktemp -d "${TMPDIR:-/tmp}/tgs-brk.XXXXXX")" || { break_setup_failed "its BREAK image did not build"; return 1; }
+    cp "$1" "$ctx/terragucci.mjs" || { break_setup_failed "its BREAK image did not build"; return 1; }
     printf 'FROM %s\nCOPY --chmod=0755 terragucci.mjs /usr/local/bin/terragucci\n' "$base" > "$ctx/Dockerfile"
-    docker build -q -t "$tag" "$ctx" >/dev/null || { echo "[smoke] the BREAK image $tag did not build" >&2; return 1; }
+    docker build -q -t "$tag" "$ctx" >/dev/null || { echo "[smoke] the BREAK image $tag did not build" >&2; break_setup_failed "its BREAK image did not build"; return 1; }
   fi
   echo "$suffix"
 }
@@ -8194,7 +8223,7 @@ claim_affected/atmos() {
   TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
   export TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" report/stage.ts 'env, log, atmosDependencies(repo, all));' 'env, log, new Map());' \
+    break_bundle "$work/break.mjs" report/stage.ts 'env, log, withOrder(atmosDependencies(repo, all), explicit));' 'env, log, withOrder(new Map(), explicit));' \
       && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
   fi
   atmos_bucket "$bucket"
@@ -8543,7 +8572,7 @@ claim_affected/terramate() {
   TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
   export TERRAGUCCI_TERRAMATE TG_IMAGE_SUFFIX
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" report/stage.ts '  const order = atmosDependencies(repo, all);' '  const order = new Map<string, Set<string>>();' \
+    break_bundle "$work/break.mjs" report/stage.ts '  const order = withOrder(atmosDependencies(repo, all), explicitOrder(after, all));' '  const order = withOrder(new Map(), explicitOrder(after, all));' \
       && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
   fi
   gated_repo terramate-affected terramate-stacks || { drop_work "$work"; return 1; }
@@ -14546,7 +14575,7 @@ claim_apply/provider_cache() {
     break_bundle "$bundle" \
       report/stage.ts 'const initTurn = oneAtATime();' 'const initTurn = oneAtATime();
   const rootCache = (i: number): string => { const d = join(binEnv.TF_PLUGIN_CACHE_DIR!, `root-${i}`); mkdirSync(d, { recursive: true }); return d; };' \
-      report/stage.ts 'observer.commandAsync(timing, path, args, binEnv, (e) =>' 'observer.commandAsync(timing, path, args, { ...binEnv, TF_PLUGIN_CACHE_DIR: rootCache(index) }, (e) =>' \
+      report/stage.ts 'const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);' 'const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...binEnv, TF_PLUGIN_CACHE_DIR: rootCache(index) }, root), dir), dir, bin.name);' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   for i in 1 2 3 4 5 6 7 8; do
@@ -20690,8 +20719,9 @@ claim_drift/github() {
   # type=issues. One root's queue is applied, then its timeout changed in
   # floci. tf-drift --forge github must open the drift issue on the mock, and
   # a second run must find that issue and update it: one open drift issue.
-  # BREAK: a bundle whose findIssue sends type=issues on GitHub too
-  # (break_bundle), which the mock refuses, so no issue opens.
+  # BREAK: was a bundle whose findIssue sent type=issues on GitHub too,
+  # which the mock refuses. findIssue is chant's pr-forge's since #899, so
+  # the BREAK run fails as unowned (break_unowned) until chant carries it.
   log() { echo "[smoke github-drift-issue] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -20702,7 +20732,9 @@ claim_drift/github() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
-    break_bundle "$bundle" forge.ts 'const only = t.forge === "forgejo" ? "&type=issues" : "";' 'const only = "&type=issues";' \
+    # The issue query is chant's since #899 (pr-forge's findIssue): no cut
+    # here sends type=issues to GitHub.
+    break_unowned "drift/github's issue query moved to chant's pr-forge (#899)" \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   docker run -d --name "$mock" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
