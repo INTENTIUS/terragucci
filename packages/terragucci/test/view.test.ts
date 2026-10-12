@@ -4,11 +4,11 @@ import { BEHOLD_PIN, beholdArgv, beholdEnv, explainBehold, explainRefusal, opene
 
 const PROJECT = "github.com/acme/infra";
 const S3: ViewSource = { source: "s3://acme-reports/tg", kind: "s3" };
-const NPX = ["--yes", "-p", "@intentius/behold@0.25.0", "-p", "@intentius/chant-lexicon-terraform@^0.121.0", "-p", "@cdktn/hcl2json@^0.24.0"];
+const NPX = ["--yes", "-p", "@intentius/behold@0.26.0", "-p", "@intentius/chant-lexicon-terraform@^0.124.0", "-p", "@cdktn/hcl2json@^0.24.0"];
 
 describe("the pin", () => {
   it("names behold and the two peers it reads Terraform with", () => {
-    expect(BEHOLD_PIN).toEqual({ behold: "@intentius/behold@0.25.0", lexicon: "@intentius/chant-lexicon-terraform@^0.121.0", hcl2json: "@cdktn/hcl2json@^0.24.0" });
+    expect(BEHOLD_PIN).toEqual({ behold: "@intentius/behold@0.26.0", lexicon: "@intentius/chant-lexicon-terraform@^0.124.0", hcl2json: "@cdktn/hcl2json@^0.24.0" });
   });
 });
 
@@ -106,13 +106,13 @@ describe("explainBehold", () => {
 
   it("says the repo asks for a newer reader than the pinned behold reads", () => {
     const line = explainBehold("behold serve: chant workspace ls refused: this declaration needs chant 0.130.0 or newer to read it, and this is chant 0.121.1\n        Run `chant workspace ls` in the workspace root.\n", o);
-    expect(line).toBe("chant.workspace.json asks for chant 0.130.0 or newer to read it, and behold 0.25.0, the version terragucci runs, reads with chant 0.121.1: the repo asks for a newer reader than the pinned behold reads");
+    expect(line).toBe("chant.workspace.json asks for chant 0.130.0 or newer to read it, and behold 0.26.0, the version terragucci runs, reads with chant 0.121.1: the repo asks for a newer reader than the pinned behold reads");
     expect(explainBehold('{"code":"reader-too-old"}', o)).toMatch(/the repo asks for a newer reader than the pinned behold reads/);
   });
 
   it("names a peer behold could not load", () => {
     const line = explainBehold("Reading a Terraform estate needs chant's terraform lexicon, which behold does not install: @cdktn/hcl2json is not resolvable from /x.", o);
-    expect(line).toBe("behold could not load @cdktn/hcl2json, the Terraform reader npx installs beside it (@intentius/chant-lexicon-terraform@^0.121.0, @cdktn/hcl2json@^0.24.0)");
+    expect(line).toBe("behold could not load @cdktn/hcl2json, the Terraform reader npx installs beside it (@intentius/chant-lexicon-terraform@^0.124.0, @cdktn/hcl2json@^0.24.0)");
     expect(explainBehold("Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@intentius/chant-lexicon-terraform' imported from /x", o)).toMatch(/^behold could not load @intentius\/chant-lexicon-terraform,/);
     expect(explainBehold("npm error notarget No matching version found for @intentius/behold@9.9.9.\n", o)).toMatch(/^npx could not fetch @intentius\/behold@9\.9\.9 from the npm registry/);
   });
@@ -313,7 +313,7 @@ describe("view, exporting", () => {
   it("maps a missing peer to one line", async () => {
     const f = fake([], { onSpawn: (f) => (f.child.write("Reading a Terraform estate needs chant's terraform lexicon, which behold does not install: @intentius/chant-lexicon-terraform and @cdktn/hcl2json are not resolvable from /x.\n"), f.child.exit(1)) });
     expect(await view({ ...serve, export: "/out" }, f.deps)).toBe(1);
-    expect(f.warned).toEqual(["terragucci view: behold could not load @intentius/chant-lexicon-terraform and @cdktn/hcl2json, the Terraform reader npx installs beside it (@intentius/chant-lexicon-terraform@^0.121.0, @cdktn/hcl2json@^0.24.0)"]);
+    expect(f.warned).toEqual(["terragucci view: behold could not load @intentius/chant-lexicon-terraform and @cdktn/hcl2json, the Terraform reader npx installs beside it (@intentius/chant-lexicon-terraform@^0.124.0, @cdktn/hcl2json@^0.24.0)"]);
   });
 });
 
