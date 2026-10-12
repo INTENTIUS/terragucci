@@ -6,6 +6,8 @@
  *                                   and `_gates/policy-override.jsonl`, and every
  *                                   approval or override line a commit removed,
  *                                   read from the branch's git history
+ *                                   through chant's gate audit reader
+ *                                   (`@intentius/chant/lifecycle/gate-audit`)
  *   the reports in the bucket       every `tf-apply` wave report a project's
  *                                   index lists
  *
@@ -16,6 +18,7 @@
  * entries whose id it lacks.
  */
 import { createHash } from "node:crypto";
+import { deriveGateAudit, type GateAuditEntry, type GateLedgerLine } from "@intentius/chant/lifecycle/gate-audit";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { esc } from "./html";
 import type { Report, ReportRefusal } from "./schema";
@@ -66,15 +69,6 @@ export interface AuditEntry {
   detail?: Record<string, unknown>;
 }
 
-/** One line a commit added to or removed from a ledger file. */
-export interface LedgerChange {
-  line: string;
-  added: boolean;
-  commit: string;
-  author: string;
-  date: string;
-}
-
 export const LEDGER_BRANCH = "chant/lifecycle";
 export const APPLY_LEDGER = "_gates/tf-apply.jsonl";
 export const OVERRIDE_LEDGER_FILE = "_gates/policy-override.jsonl";
@@ -93,35 +87,6 @@ export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
 
 const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
 
-/**
- * The lines each commit added and removed, from `git log -p --unified=0`
- * written with `--format=%x1e%H%x1f%an%x1f%aI`, oldest first. A line removed
- * and added again in one commit (a newline fixed at the end of the file) is
- * neither.
- */
-export function parseLedgerLog(log: string): LedgerChange[] {
-  const out: LedgerChange[] = [];
-  for (const block of log.split("\x1e").slice(1)) {
-    const [head, ...rest] = block.split("\n");
-    const [commit = "", author = "", date = ""] = head.split("\x1f");
-    const net = new Map<string, number>();
-    const order: string[] = [];
-    for (const l of rest) {
-      const sign = l[0];
-      if ((sign !== "+" && sign !== "-") || l[1] !== "{") continue;
-      const text = l.slice(1).trim();
-      if (!net.has(text)) order.push(text);
-      net.set(text, (net.get(text) ?? 0) + (sign === "+" ? 1 : -1));
-    }
-    for (const text of order) {
-      const n = net.get(text)!;
-      const when = Date.parse(date.trim());
-      for (let i = 0; i < Math.abs(n); i++) out.push({ line: text, added: n > 0, commit: commit.trim(), author, date: Number.isNaN(when) ? date.trim() : new Date(when).toISOString() });
-    }
-  }
-  return out;
-}
-
 type Line = Record<string, unknown>;
 
 const parse = (text: string): Line | undefined => {
@@ -135,99 +100,92 @@ const parse = (text: string): Line | undefined => {
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
 
-/** How a ledger line was signed: a pull request's review, a seal, or neither. */
-function signed(r: Line): "review" | "sealed" | "unsigned" {
-  if (r.via === "pr-review") return "review";
-  const seal = r.seal as { signature?: unknown } | null | undefined;
-  return seal && seal.signature ? "sealed" : "unsigned";
-}
-
 const drop = <T extends Record<string, unknown>>(o: T): Partial<T> => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0))) as Partial<T>;
 
+/** The op a gate-ledger file belongs to: `_gates/<op>.jsonl`. */
+const opOf = (path: string): string => path.replace(/^_gates\//, "").replace(/\.jsonl$/, "");
+
+const membersOf = (e: GateAuditEntry): { member?: string; planDigest?: string }[] => (Array.isArray(e.detail.members) ? (e.detail.members as { member?: string; planDigest?: string }[]) : []);
+
 /**
- * The entries of one project's ledger file, from its history. `path` says
- * which file: the waves' gates or the policy overrides. `commitUrl` gives the
- * commit's page on the forge, when one is known.
+ * The entries of one project's ledger file, from its history
+ * (`gateLedgerLinesFromLog`). A gate ledger is read through chant's gate
+ * audit reader; the `done.jsonl` records beside them are terragucci's own.
+ * `commitUrl` gives the commit's page on the forge, when one is known.
  */
-export function ledgerEntries(project: string, path: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined = () => undefined): AuditEntry[] {
-  if (path === MIGRATE_DONE_FILE) return migrationEntries(project, changes, commitUrl);
-  if (path === UNLOCK_DONE_FILE) return unlockEntries(project, changes, commitUrl);
-  if (path === EXPORT_DONE_FILE) return exportEntries(project, changes, commitUrl);
-  if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, changes, commitUrl);
+export function ledgerEntries(project: string, path: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined = () => undefined): AuditEntry[] {
+  if (path === MIGRATE_DONE_FILE) return migrationEntries(project, lines, commitUrl);
+  if (path === UNLOCK_DONE_FILE) return unlockEntries(project, lines, commitUrl);
+  if (path === EXPORT_DONE_FILE) return exportEntries(project, lines, commitUrl);
+  if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, lines, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
-  // An override line names its digest; the denial it answers (a pending line of that digest) holds the rules and the root's plan digest.
-  const denials = new Map<string, Line>();
-  for (const c of changes) {
-    const r = c.added ? parse(c.line) : undefined;
-    if (r && r.kind === "pending" && str(r.planDigest)) denials.set(`${String(r.gate)}\n${String(r.planDigest)}`, r);
-  }
+  const { entries } = deriveGateAudit({
+    ledgers: [{ op: opOf(path), path, lines }],
+    isOverride: () => override,
+    // The ids the record already holds: over the line's text, and for a revocation also the commit that removed it.
+    id: (e) => (e.kind === "revoked" ? sha("removed", project, path, e.source.commit ?? "", e.source.text ?? "") : e.source.text !== undefined ? sha("ledger", project, path, e.source.text) : e.id),
+  });
+  // In the order the history wrote them.
+  const ordered = [...entries].sort((a, b) => (a.source.line ?? 0) - (b.source.line ?? 0));
+  // An override answers the newest denial of its root and digest; that denial's member holds the root's plan digest.
+  const denials = new Map<string, GateAuditEntry>();
+  for (const e of ordered) if (e.kind === "override-requested" && e.digest) denials.set(`${e.gate}\n${e.digest}`, e);
   const out: AuditEntry[] = [];
-  for (const c of changes) {
-    const r = parse(c.line);
-    if (!r || r.version !== 1 || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
-    const url = commitUrl(c.commit);
-    const evidence: AuditEvidence = { source: "ledger", branch: LEDGER_BRANCH, path, commit: c.commit, ...(url ? { url } : {}) };
-    const base = { schema: AUDIT_SCHEMA, project, what: r.gate, digest: str(r.planDigest) ?? null, evidence } as const;
-    const pending = r.kind === "pending";
-    if (!pending && typeof r.resolvedBy !== "string") continue;
-    if (c.added && pending) {
-      const members = Array.isArray(r.members) ? (r.members as { member?: string; planDigest?: string }[]) : [];
+  for (const e of ordered) {
+    const commit = e.source.commit ?? "";
+    const url = commitUrl(commit);
+    const evidence: AuditEvidence = { source: "ledger", branch: LEDGER_BRANCH, path, commit, ...(url ? { url } : {}) };
+    const base = { schema: AUDIT_SCHEMA, id: e.id, project, at: e.at, what: e.gate, digest: e.digest ?? null, evidence } as const;
+    if (e.kind === "approval-requested" || e.kind === "override-requested") {
       out.push({
         ...base,
-        id: sha("ledger", project, path, c.line),
-        kind: override ? "override-requested" : "approval-requested",
-        at: r.timestamp,
+        kind: e.kind,
         who: null,
         result: override ? "denied" : "waiting",
         detail: drop({
-          expires: str(r.expiresAt),
-          run_id: str(r.runId),
-          description: str(r.description),
-          ...(override ? { rules: Array.isArray(r.rules) ? r.rules : [], plan_digest: members[0]?.planDigest } : { roots: members.map((m) => m.member).filter(Boolean) }),
+          expires: e.expiresAt,
+          run_id: e.runId,
+          description: e.description,
+          ...(override ? { rules: e.rules ?? [], plan_digest: membersOf(e)[0]?.planDigest } : { roots: membersOf(e).map((m) => m.member).filter(Boolean) }),
         }),
       });
-      continue;
-    }
-    if (pending) continue;
-    const seal = r.seal as { signer?: unknown } | null | undefined;
-    if (c.added) {
-      const denial = override ? denials.get(`${r.gate}\n${String(r.planDigest)}`) : undefined;
-      const denied = denial && Array.isArray(denial.members) ? (denial.members as { planDigest?: string }[])[0]?.planDigest : undefined;
+    } else if (e.kind === "approved" || e.kind === "override-recorded") {
+      const denial = override && e.digest ? denials.get(`${e.gate}\n${e.digest}`) : undefined;
       out.push({
         ...base,
-        id: sha("ledger", project, path, c.line),
         kind: override ? "override" : "approval",
-        at: r.timestamp,
-        who: r.resolvedBy as string,
-        result: signed(r),
+        who: e.by ?? null,
+        result: e.seal ?? "unsigned",
         detail: drop({
-          signer: seal && typeof seal.signer === "string" ? seal.signer : undefined,
-          via: str(r.via),
-          pr: typeof r.pr === "number" ? r.pr : undefined,
-          head: str(r.head),
-          reviewers: Array.isArray(r.reviewers) ? r.reviewers : undefined,
-          reason: override ? str(r.note) : undefined,
-          rules: denial && Array.isArray(denial.rules) ? denial.rules : undefined,
-          plan_digest: denied,
+          signer: e.signer,
+          via: str(e.detail.via),
+          pr: e.review?.pr,
+          head: e.review?.head,
+          reviewers: e.review?.approvers,
+          reason: override ? e.note : undefined,
+          rules: e.rules,
+          plan_digest: denial ? membersOf(denial)[0]?.planDigest : undefined,
           // A service that wrote the line on a person's behalf names itself in relayedBy.
-          relayed_by: str(r.relayedBy),
-          committed_by: c.author,
+          relayed_by: e.relayedBy,
+          committed_by: e.committedBy,
         }),
       });
-    } else {
+    } else if (e.kind === "revoked") {
       out.push({
         ...base,
-        id: sha("removed", project, path, c.commit, c.line),
-        kind: override ? "override-revoked" : "approval-revoked",
-        at: c.date,
-        who: c.author || null,
+        kind: e.subject === "override" ? "override-revoked" : "approval-revoked",
+        who: e.by ?? null,
         result: "revoked",
-        detail: drop({ approved_by: r.resolvedBy as string, approved_at: r.timestamp, signer: seal && typeof seal.signer === "string" ? seal.signer : undefined }),
+        detail: drop({ approved_by: str(e.detail.approvedBy), approved_at: str(e.detail.approvedAt), signer: str(e.detail.signer) }),
       });
     }
   }
   return out;
 }
+
+/** The lines commits added to one of terragucci's own records, with their text and commit. */
+const addedLines = (lines: readonly GateLedgerLine[]): { text: string; commit: string }[] =>
+  lines.flatMap((l) => (l.removed || l.text === undefined ? [] : [{ text: l.text, commit: l.commit ?? "" }]));
 
 /** The id a wave report's entry gets: its project, its path in the bucket and when it finished. Known from an index row before the report is read. */
 export const reportEntryId = (project: string, path: string, finished: string): string => sha("report", project, path, finished);
@@ -254,16 +212,15 @@ const REFUSED: Record<ReportRefusal["reason"], string> = {
  * its writes, with who approved it, its digest, and each root's state
  * version before and after. Never a state's contents: the line holds none.
  */
-function migrationEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+function migrationEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
   const out: AuditEntry[] = [];
-  for (const c of changes) {
-    if (!c.added) continue;
-    const r = parse(c.line);
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
     if (!r || r.version !== 1 || r.kind !== "migration" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
     const url = commitUrl(c.commit);
     out.push({
       schema: AUDIT_SCHEMA,
-      id: sha("ledger", project, MIGRATE_DONE_FILE, c.line),
+      id: sha("ledger", project, MIGRATE_DONE_FILE, c.text),
       kind: "migration",
       project,
       at: r.timestamp,
@@ -283,17 +240,16 @@ function migrationEntries(project: string, changes: LedgerChange[], commitUrl: (
  * with who released it, who approved it, and the lock it was: its ID, who
  * took it and when.
  */
-function unlockEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+function unlockEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
   const out: AuditEntry[] = [];
-  for (const c of changes) {
-    if (!c.added) continue;
-    const r = parse(c.line);
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
     if (!r || r.version !== 1 || r.kind !== "unlock" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
     const url = commitUrl(c.commit);
     const lock = r.lock && typeof r.lock === "object" ? (r.lock as Line) : {};
     out.push({
       schema: AUDIT_SCHEMA,
-      id: sha("ledger", project, UNLOCK_DONE_FILE, c.line),
+      id: sha("ledger", project, UNLOCK_DONE_FILE, c.text),
       kind: "unlock",
       project,
       at: r.timestamp,
@@ -322,16 +278,15 @@ function unlockEntries(project: string, changes: LedgerChange[], commitUrl: (com
  * exported, naming who exported it, the root and version, who approved it,
  * and the digest of the bytes written. Never the state's contents.
  */
-function exportEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+function exportEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
   const out: AuditEntry[] = [];
-  for (const c of changes) {
-    if (!c.added) continue;
-    const r = parse(c.line);
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
     if (!r || r.version !== 1 || r.kind !== "state-export" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
     const url = commitUrl(c.commit);
     out.push({
       schema: AUDIT_SCHEMA,
-      id: sha("ledger", project, EXPORT_DONE_FILE, c.line),
+      id: sha("ledger", project, EXPORT_DONE_FILE, c.text),
       kind: "state-export",
       project,
       at: r.timestamp,
@@ -352,17 +307,16 @@ function exportEntries(project: string, changes: LedgerChange[], commitUrl: (com
  * destroyed (its pull request closed, or its TTL passed), the digest of the
  * destroy's plans and each root's state. Never a state's contents.
  */
-function ephemeralEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+function ephemeralEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
   const out: AuditEntry[] = [];
-  for (const c of changes) {
-    if (!c.added) continue;
-    const r = parse(c.line);
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
     if (!r || r.version !== 1 || (r.kind !== "ephemeral-apply" && r.kind !== "ephemeral-destroy") || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
     const url = commitUrl(c.commit);
     const roots = Array.isArray(r.roots) ? (r.roots as Line[]).map((x) => drop({ root: str(x.root), location: str(x.location), result: str(x.result) })) : undefined;
     out.push({
       schema: AUDIT_SCHEMA,
-      id: sha("ledger", project, EPHEMERAL_DONE_FILE, c.line),
+      id: sha("ledger", project, EPHEMERAL_DONE_FILE, c.text),
       kind: r.kind,
       project,
       at: r.timestamp,

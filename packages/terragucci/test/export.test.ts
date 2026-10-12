@@ -4,7 +4,8 @@ import { isAbsolute, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { appendLifecycle } from "../src/apply";
 import { doneExports, EXPORT_DONE, EXPORT_LEDGER, exportState, requestDigest } from "../src/export";
-import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE, parseLedgerLog } from "../src/report/audit";
+import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE } from "../src/report/audit";
+import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import type { BinaryExec } from "../src/migrate";
 import type { S3Fetch } from "../src/report/s3";
@@ -182,7 +183,7 @@ describe("terragucci state export", () => {
     approve(work, first.digest!, "bob", T(1));
     const out = join(tmp(), "x.tfstate");
     await exportState(work, { root: "app", version: "v1", actor: "alice", out, env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} });
-    const log = (path: string) => parseLedgerLog(git(work, "log", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", "refs/remotes/origin/chant/lifecycle", "--", path));
+    const log = (path: string) => gateLedgerLinesFromLog(git(work, "log", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", "refs/remotes/origin/chant/lifecycle", "--", path));
     const exported = ledgerEntries("p", EXPORT_DONE_FILE, log(EXPORT_DONE_FILE));
     expect(exported).toEqual([expect.objectContaining({ kind: "state-export", who: "alice", what: "app", digest: first.digest, result: "exported", detail: expect.objectContaining({ version_id: "v1", approved_by: "bob", location: "s3://state/app.tfstate" }) })]);
     const asked = ledgerEntries("p", EXPORT_LEDGER_FILE, log(EXPORT_LEDGER_FILE));

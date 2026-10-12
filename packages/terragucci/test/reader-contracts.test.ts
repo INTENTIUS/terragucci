@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { estate } from "../src/estate";
 import { updateList } from "../src/ephemeral";
-import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDGER_FILE, readRecord, reportEntry, type LedgerChange } from "../src/report/audit";
+import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDGER_FILE, readRecord, reportEntry } from "../src/report/audit";
+import type { GateLedgerLine } from "@intentius/chant/lifecycle/gate-audit";
 import { buildReport } from "../src/report/build";
 import { ESTATE_SCHEMA } from "../src/report/estate";
 import { CHANGES_SCHEMA, HISTORY_SCHEMA } from "../src/report/history";
@@ -348,7 +349,7 @@ describe("terragucci.dora/v1", () => {
 
 describe("terragucci.audit/v1", () => {
   const D = `sha256:${"a".repeat(64)}`;
-  const line = (o: Json, commit: string, added = true): LedgerChange => ({ line: JSON.stringify(o), added, commit, author: "x", date: o.timestamp });
+  const line = (o: Json, commit: string, added = true): GateLedgerLine => ({ text: JSON.stringify(o), commit, [added ? "added" : "removed"]: { at: o.timestamp as string, by: "x" } });
   const pending = { version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: at(10), expiresAt: "2026-10-09T10:00:00.000Z", planDigest: D, members: [{ member: "envs/dev/orders", planDigest: "sha256:1" }] };
   const bob = { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "bob", timestamp: at(10, 5), planDigest: D };
   const carol = { ...bob, resolvedBy: "carol", timestamp: at(10, 10), seal: { signer: "carol", key: "k", signature: "s" } };
