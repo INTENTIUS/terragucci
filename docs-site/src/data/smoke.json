@@ -60,7 +60,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "report/tofu",
@@ -102,7 +102,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "33d0387f"
     },
     {
       "claim": "waves/tofu",
@@ -128,7 +129,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "approval/sealed",
@@ -136,7 +137,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "drift/tofu",
@@ -336,7 +337,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "check/terragrunt",
@@ -452,11 +453,12 @@
     },
     {
       "claim": "policy/tofu",
-      "says": "an opt-in policy denies a plan, fails the root in tf-plan, and names the violation",
+      "says": "a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "forge": "gitlab",
+      "commit": "8022dedb"
     },
     {
       "claim": "policy/tofu",
@@ -521,7 +523,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ff7d397e"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "comment/atlantis",
@@ -529,15 +531,16 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/wait-span",
-      "says": "a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace",
+      "says": "with binary: terraform a tf-apply wave whose plan meets a state lock another Terraform plan holds waits for it under the default -lock-timeout terragucci adds, the root's plan time in the report covering the wait, and applies once the lock is released",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "terraform",
+      "commit": "1813d451"
     },
     {
       "claim": "lock/wait-span",
@@ -618,7 +621,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "33d0387f"
     },
     {
       "claim": "policy/wave",
@@ -652,7 +656,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "drift/attribute",
@@ -692,7 +696,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "agent/comment",
@@ -716,7 +720,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "report/wave",
@@ -732,7 +736,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "report/oidc",
@@ -753,11 +757,12 @@
     },
     {
       "claim": "pr-apply/tofu",
-      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "says": "with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "forge": "gitlab",
+      "commit": "abe26e67"
     },
     {
       "claim": "pr-apply/tofu",
@@ -779,11 +784,12 @@
     },
     {
       "claim": "lock/apply",
-      "says": "a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
+      "says": "with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "forge": "gitlab",
+      "commit": "4b61c25b"
     },
     {
       "claim": "lock/apply",
@@ -800,7 +806,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "telemetry/provider-calls",
@@ -832,7 +838,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "waves/atmos",
@@ -840,7 +846,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0c494d98"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "apply/atmos-workspace",
@@ -888,7 +894,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "3559bac3"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "affected/terramate",
@@ -928,7 +934,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1813d451"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "init/atmos-refuse",
@@ -944,7 +950,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "reconcile/parallelism",
@@ -968,7 +974,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/comment",
@@ -976,7 +982,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "report/front-door",
@@ -992,7 +998,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "approval/at-base",
@@ -1000,7 +1006,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "approval/sealed-migrate",
@@ -1008,7 +1014,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "estate/tofu",
@@ -1048,23 +1054,24 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "approval/pr-review",
-      "says": "with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review",
+      "says": "with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "forge": "gitlab",
+      "commit": "abe26e67"
     },
     {
       "claim": "refuse/pr-review",
-      "says": "with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest",
+      "says": "with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "approval/pr-review-status",
@@ -1072,7 +1079,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "choudoufu/iam",
@@ -1080,7 +1087,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fd59fd2a"
+      "commit": "8ab80a59"
     },
     {
       "claim": "apply/per-root",
@@ -1104,7 +1111,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fd59fd2a"
+      "commit": "8ab80a59"
     },
     {
       "claim": "choudoufu/rows-wait",
@@ -1112,7 +1119,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fd59fd2a"
+      "commit": "8ab80a59"
     },
     {
       "claim": "drift/choudoufu",
@@ -1128,7 +1135,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fd59fd2a"
+      "commit": "8ab80a59"
     },
     {
       "claim": "approval/resume",
@@ -1136,7 +1143,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "approval/resume-schedule",
@@ -1144,7 +1151,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "refuse/approve-plan",
@@ -1152,7 +1159,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "33d0387f"
     },
     {
       "claim": "refuse/approve-plan",
@@ -1174,11 +1182,11 @@
     },
     {
       "claim": "note/approve-command",
-      "says": "the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied",
+      "says": "the plan note of a pull request gives the terragucci approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/terragrunt",
@@ -1186,7 +1194,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/plan",
@@ -1194,7 +1202,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bf5dd40e"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/plan-release",
@@ -1202,7 +1210,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/plan-fmt",
@@ -1210,7 +1218,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fbfefd6f"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "policy/override",
@@ -1243,7 +1251,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "note/split",
@@ -1251,7 +1259,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "note/report-link",
@@ -1259,7 +1267,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "init/config-ts",
@@ -1363,7 +1371,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "pr-apply/confirm",
@@ -1371,7 +1379,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "pr-apply/guard",
@@ -1379,15 +1387,16 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "lock/close-release",
-      "says": "with apply.when: pull-request closing a pull request releases the roots it locked",
+      "says": "with apply.when pull-request, closing a merge request releases the roots it locked: /terragucci lock on a second merge request then takes them",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "forge": "gitlab",
+      "commit": "4b61c25b"
     },
     {
       "claim": "lock/close-release",
@@ -1404,7 +1413,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "security/token-scrub",
@@ -1444,7 +1453,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "rollout/pins",
+      "says": "rollout moves a provider alone in the lock file and its exact constraint, an oci:// tag and a registry version pin, each in the shape it had",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "policy/opa",
@@ -1452,7 +1469,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "policy/hcp",
@@ -1460,7 +1477,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "policy/hcl",
@@ -1468,7 +1485,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "oidc/terragrunt",
@@ -1560,11 +1577,12 @@
     },
     {
       "claim": "note/footer",
-      "says": "the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG",
+      "says": "the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bf5dd40e"
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
     },
     {
       "claim": "note/footer",
@@ -1581,7 +1599,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bf5dd40e"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "choudoufu/shared-bucket",
@@ -1589,7 +1607,39 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fd59fd2a"
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/concurrency",
+      "says": "with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both in under 90 seconds; two that change different resources reach their record writes together and both apply, with no lock wait and no lock object; and two that change one resource at once settle on one record: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/killed",
+      "says": "with binary: choudoufu while an approved tf-apply wave applies, its run view and progress.json show the resource whose apply returned done and the slow one after it in flight; killed then, the wave leaves a record for the first and none for the second, and the wave run again applies only the second under the same approval, with no new one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/record-versions",
+      "says": "with binary: choudoufu a record changed by three tf-apply waves shows three versions, newest first, on the estate page and in its history, listed by choudoufu live-history",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/migrate",
+      "says": "with binary: choudoufu two migrations in one change apply in one wave, each proved and approved by its digest: one moves a resource between two estates by rewriting its ownership tags and records the move on chant/lifecycle, the other adopts a root on s3 state into an estate, stamps its resources and leaves the old state as the version it was; the next plan of every root shows no change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
     },
     {
       "claim": "init/cdktn-synth",
@@ -1613,7 +1663,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
     },
     {
       "claim": "audit/tofu",
@@ -1639,7 +1690,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "audit/refused",
@@ -1647,7 +1698,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "audit/control",
@@ -1655,7 +1706,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "estate/inventory",
@@ -1805,7 +1856,47 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "9d9e7a0b"
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/resume",
+      "says": "with gate: never and apply.resume set, init still writes the resume workflow, terragucci approve with no argument approves a migration that waits in wave 1 of a Forgejo run, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/backends",
+      "says": "one migration moves the states of six roots to new backends, from s3, a TFE workspace, pg, kubernetes, consul and http: each source read by version, through discovery or with state pull, proved with no change, approved by digest, written under the lock of its backend, each source left as it was, and the versions read and written recorded where the backend keeps them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/split",
+      "says": "a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after; terragucci migrate revert then writes the migration that puts each state back to the version the split recorded, refused when a state moved past the version the split left",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/cdktn",
+      "says": "a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: wave 1 proves it with no change on those roots, waits for its digest, and once approved writes both states under their lock files",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/terragrunt-split",
+      "says": "a migration file moves a resource from the state of one Terragrunt unit to that of another: wave 1 proves it on the units Terragrunt prepares, waits for its digest, and once approved writes both states under their locks at their remote_state keys, recording each version before and after",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
     },
     {
       "claim": "oidc/cloud-roles",
@@ -1837,7 +1928,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "notify/webhook",
@@ -1845,7 +1936,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "33d0387f"
     },
     {
       "claim": "notify/webhook",
@@ -1871,7 +1963,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "cost/gate",
@@ -1879,7 +1971,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "33d0387f"
     },
     {
       "claim": "cost/gate",
@@ -1905,7 +1998,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "refuse/approval-used",
@@ -1913,7 +2006,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "affected/cdktn",
@@ -1937,7 +2030,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "2bdb05f3"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "tips/cdktn",
@@ -1981,11 +2074,12 @@
     },
     {
       "claim": "waves/jobs",
-      "says": "with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once",
+      "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "forge": "gitlab",
+      "commit": "abe26e67"
     },
     {
       "claim": "steps/before-plan",
@@ -1993,7 +2087,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "steps/stop",
@@ -2001,7 +2095,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "steps/gate",
@@ -2009,7 +2103,8 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "binary": "choudoufu",
+      "commit": "33d0387f"
     },
     {
       "claim": "steps/gate",
@@ -2107,7 +2202,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "check/terragrunt-stack",
@@ -2187,7 +2282,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "33f6c5e8"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "linked/states",
@@ -2203,7 +2298,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "note/sensitive",
@@ -2211,7 +2306,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "dbcf1dbb"
     },
     {
       "claim": "state/unlock",
@@ -2467,6 +2562,14 @@
       "commit": "abe26e67"
     },
     {
+      "claim": "approval/signer-trust",
+      "says": "init --signer writes the signers line from git config user.signingkey, and an approval sealed with that key lets the wave apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
       "claim": "waves/jobs",
       "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
       "needs": null,
@@ -2546,6 +2649,14 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "8022dedb"
+    },
+    {
+      "claim": "review/description",
+      "says": "with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json; decide.backend laya, von, decider and jev each answer the check through the same client, each pinned to its model, jev with its bearer token from token_env",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
     }
   ]
 }
