@@ -17,8 +17,9 @@
  * `terragucci override <root> --rule <id>... --reason <text>` does the same
  * for a root the policy denied in a `tf-apply` wave (./override.ts): it finds
  * the denial the wave recorded, checks the rules named are exactly the rules
- * that denied the plan, and runs `chant approve policy-override <root> --plan
- * <digest> --note <reason>`, with `--sign` under `approval: sealed`.
+ * that denied the plan, and runs chant's override gate command, `chant
+ * approve policy-override <root> --rule <id>... --reason <reason>`, with
+ * `--sign` under `approval: sealed`.
  *
  * `terragucci approve <migration>` approves a state migration that wave 1
  * waits on (./migrate.ts): `chant approve tf-migrate <name> --plan <digest>`,
@@ -308,7 +309,9 @@ export function chantCommand(repo: string, o: { chant?: string } = {}): string {
 function runChant(repo: string, args: string[], command: string, o: { chant?: string; env?: NodeJS.ProcessEnv }, log: (line: string) => void): number {
   log(`running: ${command}`);
   const env = o.env ?? process.env;
-  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+  // terragucci reads who may override from policy.override at base, so chant does not look for .chant/overriders (chant#3824).
+  const overriders = args[1] === OVERRIDE_OP ? { CHANT_OVERRIDERS_FROM: "policy.override in terragucci.yml" } : {};
+  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, ...overriders, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
   if (r.error) throw new ConfigError(`could not record the approval (${r.error.message}): the @intentius/chant package that @intentius/terragucci installs with itself is missing; install terragucci again with npm i -D @intentius/terragucci`);
   return r.status ?? 1;
 }
@@ -343,12 +346,12 @@ export async function overrideDenial(repo: string, o: OverrideOptions): Promise<
   }
   const configPath = findConfig(repo);
   const mode: Approval = checkoutApproval(repo, configPath ? await loadConfig(configPath) : {})?.mode ?? "ledger";
-  const plan = denial.members?.[0]?.planDigest;
+  const plan = denial.plan || denial.members?.[0]?.planDigest;
   log(`${o.root}: its plan${plan ? ` ${plan}` : ""} was denied by ${denied.join(", ")}, since ${denial.timestamp}`);
   log(`  the override binds the root, that plan and those rules: ${denial.planDigest}`);
   if (at(denial.expiresAt) < Date.now()) log(`  the denial's pending fact expired at ${denial.expiresAt}; the override still counts if the next run plans the same digest`);
   const sign = o.sign ?? (mode === "sealed" ? true : undefined);
-  const args = ["approve", OVERRIDE_OP, o.root, "--plan", denial.planDigest!, "--note", o.reason.trim(), ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
+  const args = ["approve", OVERRIDE_OP, o.root, ...rules.flatMap((r) => ["--rule", r]), "--reason", o.reason.trim(), ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
   const command = `chant ${args.map(quote).join(" ")}`;
   if (o.dryRun) {
     log(`would run: ${command}`);

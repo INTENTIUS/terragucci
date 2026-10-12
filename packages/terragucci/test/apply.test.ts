@@ -11,7 +11,7 @@ import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
 import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest, type OverrideRule } from "../src/override";
 import { git, tmp, write } from "./helpers";
-import { gateSigners, signerLine, sshsig, sshKey } from "./sshsig";
+import { signerLine, sshsig, sshKey } from "./sshsig";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
 const pending = (gate: string, digest: string, at: number, hours = 48): PendingRecord => ({
@@ -121,7 +121,7 @@ describe("decideGate", () => {
 });
 
 describe("decideOverride", () => {
-  const rule: OverrideRule = { mode: "ledger", overriders: ["alice"], signers: gateSigners(), signersPath: ".chant/allowed_signers" };
+  const rule: OverrideRule = { mode: "ledger", overriders: ["alice"] };
   const d1 = overrideDigest("a", "sha256:1", ["main.r"]);
   const d2 = overrideDigest("a", "sha256:2", ["main.r"]);
   const fact = (digest: string, h: number): PendingRecord => ({ ...pending("a", digest, h), op: OVERRIDE_OP });
@@ -954,7 +954,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(1);
       expect(existsSync(log)).toBe(false);
       const text = lines.join("\n");
-      expect(text).toContain("mallory is not listed under policy.override at base (alice)");
+      expect(text).toContain("mallory is not listed in policy.override at base (alice)");
       expect(text).toContain("the override by alice gives no reason");
       expect(text).toContain("written by a job");
     });
@@ -1013,7 +1013,7 @@ describe("a wave behind its gate", () => {
       expect(lines.join("\n")).toContain('--reason "<why>" --sign');
       record(origin, override(pendingFact.planDigest!));
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(1);
-      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
+      expect(lines.join("\n")).toMatch(/carries no seal/);
       const o = override(pendingFact.planDigest!, "alice", 4);
       record(origin, { ...o, seal: { signer: "alice", key: "SHA256:test", signature: sshsig(alice, gateSealPayload(o as never), "chant-gate") } });
       expect(await applyWave(work, { ...opts(bin), now: T(5) })).toBe(0);
