@@ -15,8 +15,8 @@
  *                  by glob resolved for the root). A root whose resolved
  *                  settings differ between the base and the head plans.
  *
- * `policy`, `approval`, `gate` and `steps` are read from the config at the
- * base whatever the head says, so a change to them plans nothing.
+ * `policy`, `approval`, `gate`, `steps` and `sources` are read from the config
+ * at the base whatever the head says, so a change to them plans nothing.
  */
 import { readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";

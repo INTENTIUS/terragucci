@@ -56,7 +56,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
@@ -168,6 +168,7 @@ dashboards: true
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `atmos` | detected | Atmos settings: `version`, the Atmos release every job installs (default: the one this terragucci release pins). Set only in a repo with `atmos.yaml` at its root, and never beside `terragrunt`; see [Use Atmos](/terragucci/guides/use-atmos/) |
 | `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`), [`override`](/terragucci/reference/policy/#overriding-a-denial) (who may let one denied plan through, read at base; unset, nobody); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
+| `sources` | none (off) | `modules` and `providers`, each a list of globs (`*` within a part, `**` across parts): `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a module source or provider address it uses matches none. Read at base; a list left out checks nothing of its kind. See [Allow only listed sources](/terragucci/guides/write-a-policy/#allow-only-listed-sources) |
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `modules.attest` | none (off) | `true`, or `key` (default `cosign.pub`): sign each release, attest its provenance and SBOM, and record it in the release ledger; see [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
