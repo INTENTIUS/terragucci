@@ -1655,8 +1655,11 @@ describe("a GitLab wave in the runner's own shell", () => {
 
   it("names the job's own pipeline on a status of the job's commit, and no pipeline on another commit", async () => {
     const api = await stubApi(() => ({}));
+    // tg status runs `terragucci post`, which the job image carries on the path.
+    const bin = tmp("tg-status-bin-");
+    await terragucciBin(bin);
     try {
-      const post = (sha: string) => runStep(`${forgeApi("gitlab")}\ntg status terragucci/apply pending applying`, { TG_TOKEN: "t", TG_SHA: sha, CI_COMMIT_SHA: "s", CI_PIPELINE_ID: "102", CI_API_V4_URL: api.url, CI_PROJECT_ID: "9", CI_PIPELINE_URL: "http://gitlab/p/102" });
+      const post = (sha: string) => runStep(`${forgeApi("gitlab")}\ntg status terragucci/apply pending applying`, { PATH: `${bin}:${process.env.PATH}`, TG_TOKEN: "t", TG_SHA: sha, CI_COMMIT_SHA: "s", CI_PIPELINE_ID: "102", CI_API_V4_URL: api.url, CI_PROJECT_ID: "9", CI_PIPELINE_URL: "http://gitlab/p/102" });
       await post("s");
       await post("other");
       const sent = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => h.body.pipeline_id);
