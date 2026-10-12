@@ -332,6 +332,7 @@ lock/terragrunt-fanout|in a Terragrunt repo a change to root.hcl locks every uni
 security/token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
 security/plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
 security/replan-apply-role|a /terragucci plan re-plan trades its OIDC token for the plan role before any pull request code runs, and that code finds no token the apply role trusts and no way to ask for one|
+security/replan-cache|a /terragucci plan re-plan restores the Terragrunt cache and saves none, so what the code of a pull request leaves in .terragrunt-cache never reaches an apply job|
 security/fork|a pull request from a fork runs check and no plan job|
 report/sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
 approval/signer-trust|init --signer writes the signers line from git config user.signingkey, and an approval sealed with that key lets the wave apply|
@@ -14724,6 +14725,94 @@ JS
   return $rc
 }
 
+claim_security/replan_cache() {
+  # A Terragrunt scratch repo (the gated-waves fixture, gate: never) whose
+  # module carries an external data source, the change's own code: in an
+  # issue_comment run it writes a marker into the workspace's
+  # .terragrunt-cache, and in every run it records in floci whether the
+  # marker is there. A pull request changes live/canary/one/terragrunt.hcl,
+  # so its cache key is one no run on main has saved (Forgejo keeps what the
+  # pull request's own run saves to that pull request). /terragucci plan
+  # re-plans it from the default branch's workflow, and the probe writes the
+  # marker; then the pull request merges. The push of the merge commit
+  # restores the cache under that key in its apply waves: the probe must run
+  # there and find no marker, so the re-plan saved no cache the apply jobs
+  # restore.
+  # BREAK: init runs a bundle whose re-plan caches as the plan job does,
+  # saving .terragrunt-cache when the job ends.
+  log() { echo "[smoke replan-cache] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/replan-cache" head pr merge marks=shop-terraform-state/replan-cache-marks keys k got wrote=0 ran=0 seen=0 rc=0 TERRAGUCCI="$TERRAGUCCI"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      render.ts '      ...toolSteps(true, true, go, true),' '      ...toolSteps(true, true, go),' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  gated_repo replan-cache tg-gated-waves || { drop_work "$work"; return 1; }
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  for k in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=replan-cache-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$k" || true
+  done
+  # The change's own code, in every unit's module: it plants in a re-plan, and looks in every run.
+  cat > "$work/tree/modules/rev/probe.mjs" <<JS
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+const e = process.env;
+const dir = e.TG_DOWNLOAD_DIR ? e.TG_DOWNLOAD_DIR.replace(/\/sources\/?\$/, "") : (e.GITHUB_WORKSPACE || ".") + "/.terragrunt-cache";
+const marker = dir + "/replan-planted";
+let wrote = false;
+if (e.GITHUB_EVENT_NAME === "issue_comment") { try { mkdirSync(dir, { recursive: true }); writeFileSync(marker, e.GITHUB_SHA || "planted"); wrote = true; } catch {} }
+const mark = { event: e.GITHUB_EVENT_NAME, job: e.GITHUB_JOB, sha: e.GITHUB_SHA, dir, wrote, seen: existsSync(marker) && !wrote };
+try { await fetch(e.AWS_ENDPOINT_URL + "/$marks/" + e.GITHUB_EVENT_NAME + "-" + e.GITHUB_SHA + "-" + e.GITHUB_JOB + "-" + process.pid + ".json", { method: "PUT", body: JSON.stringify(mark) }); } catch {}
+console.error("replan-cache probe: " + JSON.stringify(mark));
+console.log("{}");
+JS
+  # shellcheck disable=SC2016 # HCL interpolation
+  printf '\ndata "external" "probe" {\n  program = ["node", "${path.module}/probe.mjs"]\n}\n' >> "$work/tree/modules/rev/main.tf"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -q 'actions/cache/restore@' "$work/tree/.forgejo/workflows/terragucci.yml" && { break_setup_failed "the BREAK pipeline's re-plan still restores the cache read-only"; drop_work "$work"; return 1; }
+  else
+    grep -q 'actions/cache/restore@' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "the pipeline's re-plan does not restore the cache read-only"; drop_work "$work"; return 1; }
+  fi
+  MAIN_SHA="$(push_tree "$work/tree" "$repo" main "replan-cache: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$MAIN_SHA" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { log "the push to main ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" | tail -40 >&2; drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q -B plant
+  printf '\n# a change to the cache key\n' >> "$work/tree/live/canary/one/terragrunt.hcl"
+  echo 2 > "$work/tree/live/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" plant "replan-cache: a new cache key")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" plant "replan-cache: plant")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$head" pull_request || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci plan"}' "$URL/api/v1/repos/$repo/issues/$pr/comments" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$MAIN_SHA" issue_comment || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { log "the re-plan's run ended '$RUN_STATUS'"; rc=1; }
+  log "the re-plan's cache: $(run_logs "$repo" "$RUN_ID" | grep -iE 'cache (restored|saved|not found)|replan-cache probe' | tail -6 | tr '\n' ' ')"
+  keys="$(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=replan-cache-marks/issue_comment-" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g')"
+  for k in $keys; do curl -fsS "$FLOCI/shop-terraform-state/$k" | jq -e .wrote >/dev/null 2>&1 && wrote=$((wrote + 1)); done
+  [ "$wrote" -gt 0 ] || { log "the probe planted nothing in the re-plan: the change's code did not run there"; rc=1; }
+  if [ $rc = 0 ]; then
+    merge_pr "$repo" "$pr" || { drop_work "$work"; return 1; }
+    merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+    [ -n "$merge" ] || { log "pull request $pr has no merge commit"; drop_work "$work"; return 1; }
+    wait_run "$repo" "$merge" push || { drop_work "$work"; return 1; }
+    log "the merge's run: $RUN_STATUS; its cache: $(run_logs "$repo" "$RUN_ID" | grep -iE 'cache (restored|saved|not found)|replan-cache probe' | tail -8 | tr '\n' ' ')"
+    keys="$(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=replan-cache-marks/push-$merge-" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g')"
+    for k in $keys; do
+      got="$(curl -fsS "$FLOCI/shop-terraform-state/$k" 2>/dev/null || true)"
+      ran=$((ran + 1))
+      jq -e .seen <<<"$got" >/dev/null 2>&1 && { seen=$((seen + 1)); log "the planted marker reached $(jq -r .job <<<"$got") on main: $got"; }
+    done
+    [ "$ran" -gt 0 ] || { log "the probe ran in no job of the merge's run, so no job there restored the cache under the new key"; rc=1; }
+    [ "$seen" = 0 ] || { log "the re-plan saved a cache that $seen probe run(s) of the merge's run restored with its marker"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the re-plan planted a marker in .terragrunt-cache and saved no cache: the merge's apply jobs ($ran probe runs) restored none of it"
+  return $rc
+}
+
 # Forgejo has no API to approve the held run of a fork pull request; a
 # maintainer does it on the pull request page, which posts trust=once to
 # /<repo>/pulls/<n>/action-user-trust. This signs in as the admin, with the
@@ -21716,6 +21805,7 @@ lock/terragrunt-fanout       runner self! lock-tg! weight=200
 security/token-scrub          weight=60
 security/plan-token-free      runner self! weight=250
 security/replan-apply-role    runner self! weight=250
+security/replan-cache         runner self! weight=300
 security/fork         runner self! weight=250
 report/sensitive  weight=90
 approval/signer-trust         runner self! weight=250

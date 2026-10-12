@@ -131,3 +131,12 @@ export function forgeCache(forge: ForgeName): Record<string, unknown> {
     ? { cache: [{ key: "terragucci-terragrunt", paths: [`${TG_CACHE_DIR}/`] }] }
     : { uses: "actions/cache@v4", with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
 }
+
+/**
+ * The same cache, restored and never saved, for a job that runs a pull request's code from the default branch's
+ * workflow (the re-plan): what it leaves in `.terragrunt-cache` never reaches the cache the apply jobs restore.
+ * Forgejo resolves actions/cache/restore as GitHub does.
+ */
+export function forgeCacheRestore(): Record<string, unknown> {
+  return { uses: "actions/cache/restore@v4", with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
+}

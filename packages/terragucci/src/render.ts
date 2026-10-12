@@ -190,6 +190,7 @@ import {
   cacheExports,
   credentialsScript,
   forgeCache,
+  forgeCacheRestore,
   terragruntCheckScript,
   terragruntJobEnv,
   type TerragruntPipelineInput,
@@ -2450,11 +2451,19 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A job that runs the change's code checks it out with no credentials left in the git config.
   const bareCheckout = (history: boolean, ref?: string, cond?: string): InstanceType<typeof Step> =>
     new Step({ ...(cond ? { if: cond } : {}), uses: "actions/checkout@v4", with: { ...(ref ? { ref } : {}), ...(history ? { "fetch-depth": 0 } : {}), "persist-credentials": false } });
-  // The steps between the checkout and the main step of a job that runs the change's code.
-  const toolSteps = (cached: boolean, estimator: boolean, cond?: string): InstanceType<typeof Step>[] => [
+  // The steps between the checkout and the main step of a job that runs the change's code. A job that runs a pull
+  // request's code from the default branch's workflow (the re-plan) restores the cache and never saves it: it saves
+  // into the default branch's scope, which the apply jobs restore from (GHSA-75r4-jwvp-8pg3).
+  const toolSteps = (cached: boolean, estimator: boolean, cond?: string, restoreOnly = false): InstanceType<typeof Step>[] => [
     ...(installStep ? [new Step({ ...(cond ? { if: cond } : {}), name: installName, run: installStep })] : []),
     ...(estimator && costInstall ? [new Step({ ...(cond ? { if: cond } : {}), name: `Install Infracost ${INFRACOST_VERSION}`, run: costInstall })] : []),
-    ...(cached && tg ? [new Step({ ...(cond ? { if: cond } : {}), name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
+    ...(cached && tg
+      ? [
+          restoreOnly
+            ? new Step({ ...(cond ? { if: cond } : {}), name: "Restore the Terragrunt sources and providers cache", ...forgeCacheRestore() } as never)
+            : new Step({ ...(cond ? { if: cond } : {}), name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never),
+        ]
+      : []),
   ];
   // Check runs for a push, and for a fork's pull request, which has no push here. It runs the branch's code
   // (synth, validate's providers, the policy engine) and holds no forge token: the checkout keeps no credentials,
@@ -2565,7 +2574,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       new Step({ id: "decide", name: "Read the comment and decide whether it re-plans", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: replanDecideScript(layers, forge, input.agentComment !== undefined) }),
       // The head comes from the pull request, by number; the base branch comes with the history, for the range.
       bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go),
-      ...toolSteps(true, true, go),
+      ...toolSteps(true, true, go, true),
       // The job's OIDC token carries the default branch's subject, which the apply identities trust. terragucci trades it
       // here, before any of the head's code runs, for the plan identities' credentials, and deletes it; the plan step
       // starts without the variables that ask for one. With oidc.azure, whose provider and backend take only the token,

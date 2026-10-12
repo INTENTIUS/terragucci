@@ -342,3 +342,78 @@ describe("what reads the traded credentials", () => {
     expect(out).toEqual({ awsCredentials: { ACCESS_KEY_ID: "AK-unit", SECRET_ACCESS_KEY: "SK-unit", SESSION_TOKEN: "ST-unit" } });
   });
 });
+
+// A re-plan runs from the default branch's workflow, so a cache it saves lands in the default branch's scope, the one
+// the apply jobs restore. What the change's code leaves in .terragrunt-cache (a module source with a matching
+// .terragrunt-source-version) would then run in an apply wave. The re-plan restores the cache and never saves it.
+describe("the re-plan's Terragrunt cache", () => {
+  const TG = { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }] };
+  const tgInput = (extra: Partial<PipelineInput> = {}): Partial<PipelineInput> => ({ layers: [["live/dev/app"], ["live/prod/app"]], terragrunt: TG, oidc: OIDC, ...extra } as never);
+  const SAVE = "actions/cache@v4";
+  const RESTORE = "actions/cache/restore@v4";
+  // Forgejo's workflow names an action by its full URL on code.forgejo.org.
+  const action = (uses: string | undefined): string => (uses ?? "").replace(/^https:\/\/code\.forgejo\.org\//, "");
+  const cacheSteps = (s: Step[]): (Step & { with?: Record<string, string> })[] => s.filter((x) => action(x.uses).startsWith("actions/cache"));
+  /** The replan job's block of the rendered workflow, as written. */
+  const replanBlock = (text: string): string => {
+    const lines = text.split("\n");
+    const start = lines.indexOf("  replan:");
+    const end = lines.findIndex((l, i) => i > start && /^ {2}\S/.test(l));
+    return `${lines.slice(start, end < 0 ? undefined : end).join("\n")}\n`;
+  };
+  /** Compare to test/golden/<name>; UPDATE_GOLDEN=1 rewrites it. */
+  const golden = (name: string, text: string): void => {
+    const path = join(__dirname, "golden", name);
+    if (process.env.UPDATE_GOLDEN || !existsSync(path)) writeFileSync(path, text);
+    expect(text).toBe(readFileSync(path, "utf-8"));
+  };
+
+  it.each(["github", "forgejo"] as const)("%s: the re-plan restores the cache, with the save's key, and saves none", (forge) => {
+    const doc = render(forge, tgInput());
+    const s = steps(doc, "replan");
+    const caches = cacheSteps(s);
+    expect(caches.map((x) => action(x.uses))).toEqual([RESTORE]);
+    // The same path, key and fallback the saving jobs use, so a re-plan starts as warm as before.
+    const saved = cacheSteps(steps(doc, "plan"))[0]!;
+    expect(action(saved.uses)).toBe(SAVE);
+    expect(caches[0]!.with).toEqual(saved.with);
+    expect(caches[0]!.with).toEqual({ path: ".terragrunt-cache", key: "terragucci-tg-${{ hashFiles('**/*.hcl') }}", "restore-keys": "terragucci-tg-" });
+    expect(caches[0]!.if).toBe("steps.decide.outputs.go == '1'");
+    // Restored after the head's checkout and before the trade and the plan, as the cache was.
+    const names = s.map((x) => action(x.uses) || x.name);
+    expect(names.lastIndexOf("actions/checkout@v4")).toBeLessThan(s.indexOf(caches[0]!));
+    expect(s.indexOf(caches[0]!)).toBeLessThan(s.indexOf(tradeStep(s)!));
+    expect(s.indexOf(caches[0]!)).toBeLessThan(s.indexOf(planStep(s)));
+    // Nothing else in the job writes to a cache.
+    expect(JSON.stringify(s)).not.toMatch(/actions\/cache@|actions\/cache\/save/);
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: without oidc the re-plan restores the cache read-only too", (forge) => {
+    const caches = cacheSteps(steps(render(forge, tgInput({ oidc: undefined })), "replan"));
+    expect(caches.map((x) => action(x.uses))).toEqual([RESTORE]);
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: every other job that cached keeps saving as before", (forge) => {
+    const doc = render(forge, tgInput({ drift: "0 6 * * *" }));
+    const saving = Object.entries(doc.jobs as Record<string, { steps?: Step[] }>)
+      .filter(([name]) => name !== "replan")
+      .flatMap(([name, job]) => cacheSteps(job.steps ?? []).map((c) => [name, c] as const));
+    expect(saving.map(([name]) => name)).toEqual(["plan", "apply-comment", "apply-wave-1", "apply-wave-2", "drift"]);
+    for (const [name, c] of saving) {
+      expect(action(c.uses), name).toBe(SAVE);
+      expect(c.with, name).toEqual({ path: ".terragrunt-cache", key: "terragucci-tg-${{ hashFiles('**/*.hcl') }}", "restore-keys": "terragucci-tg-" });
+    }
+  });
+
+  it("gitlab has no re-plan job, and its jobs keep their cache", () => {
+    const out = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", env: {}, ...tgInput() } as PipelineInput).content;
+    expect(out).not.toMatch(/^replan:/m);
+    expect(out).not.toContain("actions/cache");
+    expect(out).toContain("key: terragucci-terragrunt");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the re-plan job (golden)", (forge) => {
+    const out = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", env: {}, ...tgInput() } as PipelineInput).content;
+    golden(`replan-${forge}.yml`, replanBlock(out));
+  });
+});
