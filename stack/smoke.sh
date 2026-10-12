@@ -421,6 +421,7 @@ linked/states|after a pull request changes an output of wave 1, wave 2 plans aga
 lock/plan-none|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
 note/sensitive|a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket|
 apply/provider-cache|a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy|
+apply/provider-cache-no-lock|with binary: terraform, a wave of eight roots with no .terraform.lock.hcl and one whose lock names the OpenTofu registry plans at once on one shared provider cache: every root plans, the job log names one download, and no init fails with text file busy|
 state/unlock|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
 tips/moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
 estate/mcp|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
@@ -14608,6 +14609,62 @@ claim_apply/provider_cache() {
   return $rc
 }
 
+claim_apply/provider_cache_no_lock() {
+  # With binary: terraform, a wave of nine roots, r1 to r9, each a
+  # null_resource of hashicorp/null 3.2.4, planned by tf-plan in one job whose
+  # TF_PLUGIN_CACHE_DIR is an empty volume of its own. r1 to r8 have no
+  # .terraform.lock.hcl; r9 has the OpenTofu lock of stack/fixtures/
+  # provider-cache, which names registry.opentofu.org, so Terraform has no
+  # entry for its provider either. Every root plans, the stage log counts all
+  # nine as taking their providers from the shared cache with no lock entry,
+  # the job log names one download, and no init fails with "text file busy".
+  # BREAK: rootCacheEnv returns the env unchanged (break_bundle), so no root
+  # sets TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE and each init downloads
+  # the provider again. The verdict rests on the download count, which is
+  # deterministic; whether a download lands on a running plan is timing.
+  log() { echo "[smoke provider-cache-no-lock] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" vol="terragucci-smoke-provider-cache-no-lock-$STAMP${BREAK:+-break}" layer="" i rc=0 got
+  image="$(image_tag terraform)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" \
+      report/stage.ts 'if (!env.TF_PLUGIN_CACHE_DIR || lockCovers(dir, binaryName)) return env;' 'return env;' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  for i in 1 2 3 4 5 6 7 8 9; do
+    mkdir -p "$work/repo/r$i"
+    printf 'terraform {\n  required_providers {\n    null = {\n      source  = "hashicorp/null"\n      version = "3.2.4"\n    }\n  }\n}\n\nresource "null_resource" "n" {\n  triggers = {\n    root = "r%s"\n  }\n}\n' "$i" > "$work/repo/r$i/main.tf"
+    layer="${layer:+$layer,}r$i"
+  done
+  cp "$HERE/fixtures/provider-cache/.terraform.lock.hcl" "$work/repo/r9/"
+  printf 'binary: terraform\n' > "$work/repo/terragucci.yml"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke provider-cache-no-lock"
+  docker volume create "$vol" >/dev/null || { log "could not make the volume $vol"; drop_work "$work"; return 1; }
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$vol:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers "$layer" >"$work/job.log" 2>&1 || { log "the plan run exited non-zero"; rc=1; }
+  sed 's/^/[job] /' "$work/job.log" >&2
+  clean_mounted "$work/repo"
+  got="$(grep -c ': downloaded hashicorp/null v3.2.4' "$work/job.log" || true)"
+  [ "$got" = 1 ] || { log "the job log names $got downloads of hashicorp/null v3.2.4"; rc=1; }
+  if grep -qi 'text file busy' "$work/job.log"; then log "an init failed with text file busy"; rc=1; fi
+  if [ $rc = 0 ]; then
+    got="$(jq '[.roots[] | select(.status == "planned")] | length' "$work/repo/terragucci-report/report.json" 2>/dev/null || echo 0)"
+    [ "$got" = 9 ] || { log "the wave planned $got of its nine roots"; rc=1; }
+    grep -q '9 roots take their providers from the shared cache with no lock entry' "$work/job.log" \
+      || { log "the stage did not count all nine roots, r9 with its OpenTofu lock among them, as having no lock entry for Terraform"; rc=1; }
+  fi
+  docker volume rm -f "$vol" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "nine roots on Terraform, eight with no lock file and one with an OpenTofu lock, planned with one download of hashicorp/null v3.2.4 and no text file busy"
+  return $rc
+}
+
 # ── approval upkeep ───────────────────────────────────────────────────────
 
 claim_approval/signer_trust() {
@@ -21142,6 +21199,7 @@ chat/replan          self! weight=90
 lock/plan-none         weight=120
 note/sensitive   weight=90
 apply/provider-cache  weight=90
+apply/provider-cache-no-lock  weight=90
 state/unlock         runner self! weight=300
 tips/moved            self! weight=150
 estate/mcp       weight=120
