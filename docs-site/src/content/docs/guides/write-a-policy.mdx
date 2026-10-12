@@ -105,7 +105,7 @@ The wave records the denial and prints a `terragucci override` command for the r
 
 ## Allow only listed sources
 
-A policy reads the plan once the root's modules and providers have run. `sources` acts earlier: a root that uses a module source or provider address no entry matches is refused before `init` downloads anything for it.
+A policy reads the plan once the root's modules and providers have run. `sources` acts earlier: a root that uses a module source or provider address no entry matches is refused before `init` downloads anything for it. What `init` then fetched is checked again before `plan`.
 
 ```yaml
 sources:
@@ -119,11 +119,13 @@ sources:
     - "registry.example.com/acme/*"
 ```
 
-| What is read | Where |
-|---|---|
-| each `module` block's `source` | the root's files, and each local module it calls, down the tree |
-| each `required_providers` entry | the same files; a provider used with no entry is read as `hashicorp/<name>` |
-| `terraform { source }` | a Terragrunt unit's `terragrunt.hcl` |
+| What is read | Where | When |
+|---|---|---|
+| each `module` block's `source` | the root's files, and each local module it calls, down the tree | before `init` |
+| each `required_providers` entry | the same files; a provider used with no entry is read as `hashicorp/<name>` | before `init` |
+| `terraform { source }` | a Terragrunt unit's `terragrunt.hcl` | before `init` |
+| each module call inside a module `init` fetched | `.terraform/modules/modules.json`, matched as written in the module that makes the call | after `init`, before `plan` |
+| each provider `init` installed | `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
 
 | Matching | |
 |---|---|
@@ -131,13 +133,17 @@ sources:
 | `**` | across parts |
 | a module source | as written, without its `?` query (`?ref=`, `?version=`) |
 | an address with no host (`hashicorp/aws`, `acme/vpc/aws`) | also as `registry.terraform.io/...` and `registry.opentofu.org/...` |
+| an address at `registry.terraform.io` or `registry.opentofu.org` | also without the host, so `hashicorp/*` matches what the lock file names |
 | a provider address | in lower case |
 
-A list you leave out checks nothing of its kind. A refused root fails the stage that reads it (`tf-plan`, `tf-drift` or a `tf-apply` wave) without running `init`. The error in the report names the source and the entries it was checked against:
+A list you leave out checks nothing of its kind. A refused root fails the stage that reads it (`tf-plan`, `tf-drift` or a `tf-apply` wave) without running `init`, or without running `plan` when the source came in through `init`. The error in the report names the module path, the source and the entries it was checked against:
 
 ```text
 refused: envs/dev/app: module.vpc (envs/dev/app/main.tf) uses module source git::https://git.unlisted.example/acme/vpc.git?ref=v1, which no entry of sources.modules matches (sources.modules: ./**, ../modules/**, ...)
+refused: envs/dev/app: module.net > module.subnets (envs/dev/app/.terraform/modules/net/main.tf) uses module source git::https://git.unlisted.example/acme/subnets.git, which no entry of sources.modules matches (sources.modules: ./**, ../modules/**, ...)
 ```
+
+Run `terragucci init` after you add the key. The check job it writes then runs `terragucci check-sources` on each root, and refuses the root before its `init`.
 
 The list is read at base, as `policy` is. A pull request that adds an entry, or deletes the key, is checked against the base's list; the entry counts for the changes after it merges. A base with no `sources` key leaves the pull request's own in force. The [threat model](/terragucci/reference/threat-model/#module-and-provider-sources) lists what the check reads and what it does not.
 

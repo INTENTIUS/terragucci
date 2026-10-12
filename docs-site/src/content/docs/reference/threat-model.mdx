@@ -245,19 +245,29 @@ This does not stop a step from running whatever its command runs at the time: a 
 
 ## Module and provider sources
 
-Policy reads the plan, so a change's modules and providers have run by the time a rule can deny it. With [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) set, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a source it uses matches no entry. The list is read at base, as `steps` are.
+Policy reads the plan, so a change's modules and providers have run by the time a rule can deny it. With [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) set, `tf-check`, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a source it uses matches no entry. The stages that plan check again after `init`, before `plan`. The list is read at base, as `steps` are.
 
-| Checked before `init` | Not checked |
+| Checked | When |
 |---|---|
-| each `module` block's `source` in the root's own files, and in each local (`./`, `../`) module it calls, down the tree | the module calls inside a module `init` downloads (a listed git or registry module calling an unlisted one) |
-| each `required_providers` entry, and `hashicorp/<name>` for a provider a module uses with no entry | a provider a downloaded module requires |
-| a Terragrunt unit's `terraform { source }`, and a local source's module | a source Terragrunt builds from an expression, which is matched as written |
+| each `module` block's `source` in the root's own files, and in each local (`./`, `../`) module it calls, down the tree | before `init` |
+| each `required_providers` entry, and `hashicorp/<name>` for a provider a module uses with no entry | before `init` |
+| a Terragrunt unit's `terraform { source }`, and a local source's module | before `init` |
+| each module call inside a module `init` downloaded (`.terraform/modules/modules.json`), as written in the module that makes it | after `init`, before `plan` |
+| each provider in `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
+
+| Not checked | |
+|---|---|
+| a source Terragrunt builds from an expression | matched as written |
+| in a Terragrunt repo, what Terragrunt fetches inside a unit | `run --all` inits and plans in one command, so there is no step between them |
+| in a Terragrunt repo, the check job | it runs no sources check |
+| a pipeline written before the key was set | its check job runs `check-sources` once `terragucci init` writes it again |
 
 | Code | Runs |
 |---|---|
-| `steps` with `before: init` | before the check |
-| the binary's `init`: downloads only, no module or provider code | after the check, for a root that passes |
-| providers, modules and external data sources | in `plan`, after the check |
+| `steps` with `before: init` | before the check before `init` |
+| the binary's `init`: downloads only, no module or provider code | after the check before `init`, for a root that passes |
+| `steps` with `after: init` | after the check after `init` |
+| providers, modules and external data sources | in `plan`, after both checks |
 
 With no `sources` key, nothing is checked and nothing is read for it.
 
