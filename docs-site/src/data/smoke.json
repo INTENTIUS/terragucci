@@ -1270,44 +1270,12 @@
     },
     {
       "claim": "policy/override",
-      "says": "a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "policy/override",
       "says": "a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "forge": "gitlab",
       "commit": "e8d2cfb"
-    },
-    {
-      "claim": "policy/override-moved",
-      "says": "an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "policy/override-unlisted",
-      "says": "an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "policy/override-applied",
-      "says": "once a wave applied a root under its override, the next plan of that root the policy denies is recorded as a new denial and waits for its own override, and only an override no wave applied refuses",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
     },
     {
       "claim": "report/azure",
