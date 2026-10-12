@@ -254,12 +254,14 @@ Policy reads the plan, so a change's modules and providers have run by the time 
 | a Terragrunt unit's `terraform { source }`, and a local source's module | before `init` |
 | each module call inside a module `init` downloaded (`.terraform/modules/modules.json`), as written in the module that makes it | after `init`, before `plan` |
 | each provider in `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
+| in a Terragrunt repo, the same two files in each unit's working directory, the unit's source and what it calls | after Terragrunt inits the unit, before it plans it |
+
+In a Terragrunt repo, a wave inits and plans its units in one `run --all`. With `sources` set, terragucci points the run's `TG_TF_PATH` at a wrapper. When Terragrunt asks the binary to plan a unit, the wrapper first has the stage check that unit's working directory, and a refused unit exits before its `plan` runs. The check job runs `terragucci check-sources --units` before `hcl validate` fetches any unit's source.
 
 | Not checked | |
 |---|---|
 | a source Terragrunt builds from an expression | matched as written |
-| in a Terragrunt repo, what Terragrunt fetches inside a unit | `run --all` inits and plans in one command, so there is no step between them |
-| in a Terragrunt repo, the check job | it runs no sources check |
+| the unit templates `terragrunt stack generate` fetches for an explicit stack | it runs before either check |
 | a pipeline written before the key was set | its check job runs `check-sources` once `terragucci init` writes it again |
 
 | Code | Runs |

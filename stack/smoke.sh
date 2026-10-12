@@ -341,8 +341,8 @@ rollout/pins|rollout moves a provider alone in the lock file and its exact const
 policy/opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
 policy/hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
 policy/hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
-policy/sources-module|with sources.modules set, tf-plan and the check job fail a root that calls a module from an unlisted host before its init, and tf-plan fails one whose listed remote module calls an unlisted one after its init and before its plan, naming the module path|
-policy/sources-provider|with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and one whose remote module brings in an unlisted provider after its init and before its plan, naming the module|
+policy/sources-module|with sources.modules set, tf-plan and the check job fail a root that calls a module from an unlisted host before its init, and tf-plan fails one whose listed remote module calls an unlisted one after its init and before its plan, naming the module path; in a Terragrunt repo tf-plan fails such a unit after Terragrunt inits it and before its plan, naming the unit and the module path, and the check job fails a unit whose source is on an unlisted host before its validate|
+policy/sources-provider|with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and one whose remote module brings in an unlisted provider after its init and before its plan, naming the module; in a Terragrunt repo tf-plan fails a unit whose source brings in an unlisted provider after Terragrunt inits it and before its plan, naming the unit and the provider|
 policy/sources-at-base|a pull request that adds an unlisted host to its own sources list is still refused, checked against the list of the base branch|
 oidc/terragrunt|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
 affected/terragrunt-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
@@ -3790,19 +3790,22 @@ tg_image() { image_tag terragrunt; }
 # way the plan job runs it: the base is the example as committed, the head is
 # the base plus the named patches. REPORT_CONFIG is appended to terragucci.yml;
 # TG_EDIT is a shell command run in the copy before the head commit.
+# TG_BASE_CONFIG is appended to terragucci.yml before the base commit, so the
+# base holds it. TG_BUNDLE runs another terragucci bundle (a BREAK's).
 # TG_STAGE names another stage (tf-drift); TG_RUN_EXTRA holds more `docker run`
 # arguments and TG_STAGE_ARGS more stage arguments.
 TG_RUN_EXTRA=()
 TG_STAGE_ARGS=()
 tg_report_run() { # work, patches...
   local work="$1"; shift
-  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p base rc=0
+  local image bundle="${TG_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}" p base rc=0
   image="$(tg_image)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example-terragrunt up' first" >&2; return 1; }
   build_cli || return 1
   cp -R "$TG_EXAMPLE/." "$work/"
   rm -rf "$work/.git"
   [ -z "${SMOKE_AWS:-}" ] || smoke_aws_overlay_tg "$work" || return 1
+  [ -n "${TG_BASE_CONFIG:-}" ] && printf '%s\n' "$TG_BASE_CONFIG" >> "$work/terragucci.yml"
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm base
   base="$(git -C "$work" rev-parse HEAD)"
@@ -7856,8 +7859,17 @@ awk '/^policy:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv te
 #               the module that uses it.
 #     at-base   as module, and the change adds that host to its own copy of the
 #               list: the refusal names the base's entries
+# module and provider then run a Terragrunt step on a copy of the Terragrunt
+# example with the list at base: a unit whose source is the same Forgejo
+# module (sources-outer, or sources-locked) is inited by Terragrunt inside its
+# run --all and failed before its plan, named by the unit and the module path
+# from its source (module.inner, provider.null). For module, the Terragrunt
+# check job init renders with the key also runs on a clean checkout of that
+# change, and must refuse live/dev/sources-probe, whose source is on the
+# unlisted host, before its validate fetches it.
 # One BREAK cut covers each kind's steps: sources.ts matches every source,
-# before init and after it, on the one line the cut takes out.
+# before init and after it, for roots and units, on the one line the cut
+# takes out.
 sources_claim() {
   local kind="$1"
   log() { echo "[smoke policy-sources-$kind] $*" >&2; }
@@ -7996,7 +8008,70 @@ printf 'sources:\n  modules: [\"./**\", \"../**\", \"$host/**\"]\n' >> terragucc
     grep -qF "FAILED $root: refused by sources, so it was not initialised" "$work/check.log" || { log "the check job does not say $root was not initialised"; rc=1; }
   fi
   drop_work "$work"; drop_work "$tree"
-  [ $rc = 0 ] && log "$root failed tf-plan before its init, refused by the list at base: $want${after:+; $after failed after its init and before its plan: $after_block}${after:+$after_what}"
+  # Terragrunt: a copy of the Terragrunt example, its list at base, and a unit
+  # whose source is the Forgejo module above. Terragrunt inits the unit in its
+  # working directory inside run --all; the unit is refused before its plan,
+  # named with the module path from its source.
+  local tgw tr tg_run=0 tg_unit="" tg_src tg_block tg_list tg_edit probe=live/dev/sources-probe
+  tg_hcl() { # source -> a unit that includes root.hcl and takes its module from source
+    printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "%s"\n}' "$1"
+  }
+  case "$kind" in
+    module)
+      tg_unit=live/dev/sources-nested tg_src="$forgejo/sources-outer$sfx.git?ref=v1" tg_block="module.inner ("
+      tg_list="sources:
+  modules: [\"./**\", \"../**\", \"$forgejo/sources-outer$sfx.git\"]"
+      ;;
+    provider)
+      tg_unit=live/dev/sources-locked tg_src="$forgejo/sources-locked$sfx.git?ref=v1" tg_block="provider.null ("
+      tg_list='sources:
+  providers: ["hashicorp/aws"]'
+      ;;
+  esac
+  if [ -n "$tg_unit" ]; then
+    tgw="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tgw"
+    tg_edit="mkdir -p $tg_unit
+cat > $tg_unit/terragrunt.hcl <<'HCL'
+$(tg_hcl "$tg_src")
+HCL"
+    # The check job's probe: a unit whose terraform source is on the unlisted host.
+    [ "$kind" = module ] && tg_edit="$tg_edit
+mkdir -p $probe
+cat > $probe/terragrunt.hcl <<'HCL'
+$(tg_hcl "$host/probe.git?ref=v1.0.0")
+HCL"
+    TG_BUNDLE="$bundle" TG_BASE_CONFIG="$tg_list" TG_EDIT="$tg_edit" tg_report_run "$tgw" || tg_run=$?
+    tr="$tgw/terragucci-report/report.json"
+    if [ ! -f "$tr" ]; then
+      log "no Terragrunt report"; rc=1
+    else
+      [ "$tg_run" = 1 ] || { log "the Terragrunt plan exited $tg_run, not 1"; rc=1; }
+      jq -e --arg n "$tg_unit" '.roots[] | select(.path == $n and .status == "failed")' "$tr" >/dev/null || { log "$tg_unit is not failed in the Terragrunt report: it planned"; rc=1; }
+      jq -e --arg n "$tg_unit" --arg b "refused: $tg_unit: $tg_block" --arg w "$after_what" '.roots[] | select(.path == $n) | .error | contains($b) and contains($w)' "$tr" >/dev/null \
+        || { log "the Terragrunt report does not refuse $tg_unit with: $tg_block ... $after_what"; log "its error: $(jq -r --arg n "$tg_unit" '.roots[] | select(.path == $n) | .error' "$tr" | head -3)"; rc=1; }
+    fi
+    # The Terragrunt check job init renders with the key, run on a clean checkout of the change, refuses the probe unit before its validate.
+    if [ "$kind" = module ]; then
+      local chk tbase tcode=0 twant="refused: $probe: terraform ($probe/terragrunt.hcl) uses module source $host/probe.git?ref=v1.0.0, which no entry of sources.modules matches"
+      chk="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$chk"
+      git clone -q "$tgw" "$chk/repo" || { log "could not check out the Terragrunt change"; rc=1; }
+      tbase="$(git -C "$chk/repo" rev-parse HEAD~1)"
+      (cd "$chk/repo" && "$TERRAGUCCI" init >/dev/null 2>&1) || { log "init did not render the Terragrunt pipeline with sources set"; rc=1; }
+      awk '/- name: Format check and validate, every unit/ { f = 1 } f && /run: \|/ { r = 1; next } r { if ($0 == "" || $0 ~ /^          /) { sub(/^          /, ""); print } else exit }' "$chk/repo/.forgejo/workflows/terragucci.yml" > "$chk/repo/.tg-check.sh"
+      grep -qF 'terragucci check-sources --units' "$chk/repo/.tg-check.sh" || { log "the rendered Terragrunt check job runs no check-sources --units"; rc=1; }
+      run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$chk/repo:/repo" -w /repo -v "${bundle:-$HERE/../packages/terragucci/dist/terragucci.mjs}:/usr/local/bin/terragucci:ro" \
+        -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true -e "TG_BASE=$tbase" \
+        -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+        "$(tg_image)" sh -e /repo/.tg-check.sh > "$chk/check.log" 2>&1 || tcode=$?
+      clean_mounted "$chk/repo" "$(tg_image)"
+      [ "$tcode" != 0 ] || { log "the Terragrunt check job passed"; rc=1; }
+      grep -qF "$twant" "$chk/check.log" || { log "the Terragrunt check job does not refuse $probe with: $twant"; tail -20 "$chk/check.log" >&2; rc=1; }
+      grep -qF "FAILED $probe: refused by sources, so it was not initialised" "$chk/check.log" || { log "the Terragrunt check job does not say $probe was not initialised"; rc=1; }
+      drop_work "$chk"
+    fi
+    drop_work "$tgw"
+  fi
+  [ $rc = 0 ] && log "$root failed tf-plan before its init, refused by the list at base: $want${after:+; $after failed after its init and before its plan: $after_block}${after:+$after_what}${tg_unit:+; Terragrunt unit $tg_unit failed after its init and before its plan: $tg_block}"
   return $rc
 }
 
@@ -8004,17 +8079,23 @@ claim_policy/sources_module() {
   # A root calling a module from a git host sources.modules does not list is
   # refused before init, by tf-plan and by the check job; a root whose listed
   # remote module calls an unlisted one is refused after init, before plan.
+  # In the Terragrunt example the same module as a unit's source is refused
+  # after Terragrunt's init and before its plan, and the Terragrunt check job
+  # refuses a unit on the unlisted host before its validate.
   # BREAK: the bundle checks no module source, so the first root reaches init
-  # and fails there in both jobs, and the nested root plans.
+  # and fails there in both jobs, the nested root and the nested unit plan,
+  # and the Terragrunt check job reaches its validate.
   sources_claim module
 }
 
 claim_policy/sources_provider() {
   # A root whose required_providers names a provider sources.providers does
   # not list is refused before init; a root whose remote module brings in an
-  # unlisted provider is refused after init, before plan, named by the module.
+  # unlisted provider is refused after init, before plan, named by the module;
+  # in the Terragrunt example, a unit whose source brings it in is refused
+  # after Terragrunt's init and before its plan.
   # BREAK: the bundle checks no provider, so the first root reaches init and
-  # fails there, and the second plans.
+  # fails there, and the second root and the unit plan.
   sources_claim provider
 }
 

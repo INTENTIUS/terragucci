@@ -278,6 +278,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       exclude: settings.terragrunt?.exclude ?? [],
       ...(shape.terragrunt && shape.terragrunt.stacks.length > 0 ? { stacks: true } : {}),
       ...(settings.generate ? { generate: true } : {}),
+      // sources: the check job checks each unit's sources before its validate fetches them.
+      ...(settings.sources ? { sources: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
       installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
     };

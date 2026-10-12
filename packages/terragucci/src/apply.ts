@@ -138,6 +138,7 @@ import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
+import { UNIT_REFUSED, unitSourcesExec } from "./sources-terragrunt";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
@@ -2450,8 +2451,10 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     return EXIT.failed;
   }
   // sources: each unit's terraform source and the module and provider sources under it, against the list at base, before the wave's run --all (./sources.ts).
+  // What each unit's init fetched and locked is checked again before its plan (./sources-terragrunt.ts).
+  let unitSources: SourceChecker | undefined;
   try {
-    const sourcesOf = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`), afterInit: false });
+    const sourcesOf = (unitSources = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`) }));
     const refused: string[] = [];
     for (const u of sourcesOf ? roots : []) {
       const lines = await sourcesOf!.before(u);
@@ -2472,7 +2475,9 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   // shape: Terragrunt's backend bootstrap. generate's disable_init: false asks Terragrunt to init the backend; only the apply job may create or change the bucket.
   const bootstrap = backendBootstrap(repo, settings) && env.TG_BACKEND_BOOTSTRAP === undefined;
   if (bootstrap) console.log(`wave ${wave}: generate gives a unit disable_init: false, so Terragrunt bootstraps its backend (TG_BACKEND_BOOTSTRAP)`);
-  const exec = unitLockTimeoutExec(bootstrapExec(options.terragruntExec ?? terragruntExec, bootstrap), env);
+  const timedExec = unitLockTimeoutExec(bootstrapExec(options.terragruntExec ?? terragruntExec, bootstrap), env);
+  const sourcesRefused = new Map<string, string[]>();
+  const exec = unitSources ? unitSourcesExec(timedExec, unitSources, binary, env, sourcesRefused) : timedExec;
   const run = { dir: repo, binary, terragrunt, exec };
   w.started = new Date().toISOString();
   w.roots = roots;
@@ -2559,6 +2564,11 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
       }
     }
     const bin = tools.get(path)?.report;
+    const refusedLines = sourcesRefused.get(path);
+    if (refusedLines) {
+      planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: `${UNIT_REFUSED}\n${refusedLines.join("\n")}`, ...(bin ? { bin } : {}) });
+      continue;
+    }
     if (plan === undefined) {
       planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it", ...(bin ? { bin } : {}) });
       continue;
