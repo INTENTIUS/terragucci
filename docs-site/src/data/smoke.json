@@ -907,14 +907,6 @@
       "commit": "3559bac3"
     },
     {
-      "claim": "lock/terramate",
-      "says": "with apply.when: pull-request in a Terramate repo, a pull request applied on a comment locks the stack it changes, and a second pull request that changes that stack is refused with the stack and the holder named, its state left as the first applied it",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "1813d451"
-    },
-    {
       "claim": "linked/terramate",
       "says": "a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied",
       "needs": null,
