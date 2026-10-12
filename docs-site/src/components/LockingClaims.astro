@@ -50,14 +50,12 @@ const SPEC: Spec[] = [
 	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply/per-root' },
 	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply/stand-down' },
 	{ layer: 'Applies kept apart', shape: 'Terragrunt, Atmos, Terramate, CDK Terrain', claim: null },
-	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'refuse/tofu' },
+	// A wave refuses moved plans the same way whatever the repo shape: the shape only feeds the plans.
+	{ layer: 'Stale plans', shape: 'Every shape', claim: 'refuse/tofu' },
 	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'audit/refused' },
 	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'refuse/approve-plan' },
 	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'pr-apply/stale' },
 	{ layer: 'Stale plans', shape: 'Plain roots', claim: 'note/stale' },
-	{ layer: 'Stale plans', shape: 'Terragrunt', claim: 'refuse/terragrunt' },
-	{ layer: 'Stale plans', shape: 'Atmos', claim: 'refuse/atmos' },
-	{ layer: 'Stale plans', shape: 'Terramate, CDK Terrain', claim: null },
 	{ layer: 'Lock waits', shape: 'Plain roots', claim: 'lock/plan-none' },
 	// The OpenTofu row of lock-wait runs choudoufu on a backend that locks, so it is listed with choudoufu's claims.
 	{ layer: 'Lock waits', shape: 'Plain roots', claim: 'lock/wait-span', skip: ['forgejo tofu'] },

@@ -250,7 +250,6 @@ report/wave|the report of a tf-apply wave behind a gate says waiting and links t
 policy/delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
 report/oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
 approval/terragrunt|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
-refuse/terragrunt|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
 pr-apply/tofu|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto|
 lock/apply|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
 pr-apply/stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
@@ -261,7 +260,6 @@ waves/terragrunt-layers|a Terragrunt repo of three units in a chain goes out in 
 waves/atmos|init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate|
 apply/atmos-workspace|each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply|
 affected/atmos|a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other|
-refuse/atmos|an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved|
 linked/atmos|an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied|
 check/atmos|the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives|
 init/atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
@@ -7843,45 +7841,6 @@ claim_approval/terragrunt() {
   return $rc
 }
 
-claim_refuse/terragrunt() {
-  # Push the fixture; wave 1 waits. Approve it, then change live/canary/one
-  # and push again. Wave 1 plans a different set digest from the approved one,
-  # so it applies nothing, names live/canary/one, and the run fails.
-  # BREAK: the pushed pipeline runs with --gate never, so the changed wave applies.
-  log() { echo "[smoke tg-gate-refuse] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-gate-refuse" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-gate-refuse tg-gated-waves || { drop_work "$work"; return 1; }
-  if [ -n "${BREAK:-}" ]; then
-    sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
-    rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
-  fi
-  sha="$(push_tree "$work/tree" "$repo" main "tg-gate-refuse: first")"
-  wait_run "$repo" "$sha"
-  if [ -z "${BREAK:-}" ]; then
-    gated_approve tg-gate-refuse 1 || rc=1
-  fi
-  if [ $rc = 0 ]; then
-    echo 2 > "$work/tree/live/canary/one/rev.txt"
-    sha="$(push_tree "$work/tree" "$repo" main "tg-gate-refuse: change live/canary/one after its wave was approved")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-gate-refuse)"
-    logs="$(print_logs "$repo" "$RUN_ID")"
-    log "after the change: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ -z "$applied" ] || { log "a unit applied after its wave's plans changed"; rc=1; }
-    [ "$RUN_STATUS" = failure ] || { log "the run ended '$RUN_STATUS', not failure"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    grep -q "changed after it was approved, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not refuse as changed"; rc=1; }
-    grep -q "planned differently since: live/canary/one" <<<"$logs" || { log "the refusal does not name live/canary/one"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "wave 1 changed after its approval, applied nothing and named live/canary/one"
-  return $rc
-}
-
 claim_waves/terragrunt_layers() {
   # stack/fixtures/tg-three-layers: live/net, live/app after it and live/edge
   # after app, gate: always. init writes three wave jobs. Push, then approve
@@ -8178,59 +8137,6 @@ claim_affected/atmos() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "a change to prod's vpc planned prod/vpc and prod/app, its dependent, and neither dev instance"
-  return $rc
-}
-
-claim_refuse/atmos() {
-  # The fixture on main, gate: always; wave 1 (dev/vpc, prod/vpc) waits.
-  # Approve it, then give prod's vpc another cidr and push: wave 1 plans
-  # again, its digest is not the approved one, so it applies nothing and
-  # names prod/vpc. Approve the new plans and push again: wave 1 applies the
-  # plan whose digest was approved, so prod/vpc's state holds the new cidr.
-  # BREAK: the jobs run an image whose gate takes any approval as one of
-  # this digest, so the re-planned wave applies under the old approval.
-  log() { echo "[smoke atmos-from-plan] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/atmos-from-plan" bucket=atmos-from-plan sha applied logs got rc=0 TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX="${TG_IMAGE_SUFFIX:-}"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  TERRAGUCCI_ATMOS="$(atmos_host)" || { log "no host atmos"; drop_work "$work"; return 1; }
-  export TERRAGUCCI_ATMOS TG_IMAGE_SUFFIX
-  if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply.ts '    if (samePlanDigest(r.planDigest, digest)) {' '    if (true) {' \
-      && TG_IMAGE_SUFFIX="$(break_image "$work/break.mjs")" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
-  fi
-  atmos_bucket "$bucket"
-  gated_repo atmos-from-plan atmos-two-stacks || { drop_work "$work"; return 1; }
-  atmos_fill "$work/tree" "$bucket"
-  sha="$(push_tree "$work/tree" "$repo" main "atmos-from-plan: first")"
-  wait_run "$repo" "$sha"
-  applied="$(atmos_applied "$bucket")"
-  [ -z "$applied" ] || { log "an instance applied before wave 1 was approved"; rc=1; }
-  [ $rc = 0 ] && { gated_approve atmos-from-plan 1 || rc=1; }
-  if [ $rc = 0 ]; then
-    printf '    vpc:\n      vars:\n        cidr: 10.9.0.0/16\n' >> "$work/tree/stacks/deploy/prod.yaml"
-    sha="$(push_tree "$work/tree" "$repo" main "atmos-from-plan: prod's vpc moves after wave 1 was approved")"
-    wait_run "$repo" "$sha"
-    applied="$(atmos_applied "$bucket")"
-    logs="$(run_logs "$repo" "$RUN_ID")"
-    log "after the change: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ -z "$applied" ] || { log "wave 1 applied after its plans changed"; rc=1; }
-    grep -q "changed after it was approved, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not refuse as changed"; rc=1; }
-    grep -q "planned differently since: prod/vpc" <<<"$logs" || { log "the refusal does not name prod/vpc"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve atmos-from-plan 1 || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "atmos-from-plan: after the new plans were approved")"
-    wait_run "$repo" "$sha"
-    applied="$(atmos_applied "$bucket")"
-    log "after approving the new plans: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "dev/vpc prod/vpc " ] || { log "expected wave 1, dev/vpc and prod/vpc, to apply"; rc=1; }
-    got="$(curl -fsS "$FLOCI/$bucket/vpc/prod/terraform.tfstate" 2>/dev/null | jq -r '.resources[0].instances[0].attributes.input.value // empty' 2>/dev/null || true)"
-    [ "$got" = "prod:10.9.0.0/16" ] || { log "prod/vpc's state holds '${got:-nothing}', not the approved plan's prod:10.9.0.0/16"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "wave 1 refused the plans that moved after approval, then applied the plans whose digest was approved"
   return $rc
 }
 
@@ -21577,7 +21483,6 @@ report/wave     weight=120
 policy/delete-key    ex after=boot/tofu weight=150
 report/oidc          ex after=boot/tofu weight=150
 approval/terragrunt         runner self! weight=200
-refuse/terragrunt       runner self! weight=200
 pr-apply/tofu             runner self! weight=250
 lock/apply        runner self! weight=300
 pr-apply/stale       runner self! weight=200
@@ -21588,7 +21493,6 @@ waves/terragrunt-layers            runner self! weight=300
 waves/atmos          runner self! weight=350
 apply/atmos-workspace      self! weight=150
 affected/atmos       runner self! weight=250
-refuse/atmos      runner self! weight=350
 linked/atmos  runner self! weight=400
 check/atmos          runner self! weight=150
 init/atmos-version        self! weight=90

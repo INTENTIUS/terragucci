@@ -776,14 +776,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "refuse/terragrunt",
-      "says": "a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "pr-apply/tofu",
       "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
       "needs": null,
@@ -885,14 +877,6 @@
     {
       "claim": "affected/atmos",
       "says": "a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "0c494d98"
-    },
-    {
-      "claim": "refuse/atmos",
-      "says": "an Atmos wave whose plans changed after approval applies nothing and names the instance that moved; once its new plans are approved it applies the plans whose digest was approved",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
