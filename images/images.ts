@@ -93,9 +93,12 @@ const finalStage = (name: string, description: string) => ({
     // starts, which drops GIT_CONFIG_* from its environment. Debian's git 2.39
     // matches no path prefix, so it is every directory.
     "git config --system --add safe.directory '*'",
-    // The HCL parser the tips and rollouts read with. /usr/local/node_modules is on the
-    // bundle's module path, so `terragucci` finds it with no further setup.
-    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} && npm cache clean --force`,
+    // The HCL parser the tips and rollouts read with, and chant, whose bin a wave job
+    // runs (`chant run wave`) and approve and the relay record through. Both go to
+    // /usr/local/node_modules, which is on the bundle's module path and where
+    // installedChant looks from /usr/local/bin, so `terragucci` finds them with no
+    // further setup. chant is the version the package pins.
+    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} @intentius/chant@${pkg.dependencies["@intentius/chant"]} && npm cache clean --force`,
   ],
   copy: [
     "--from=fetch /out/ /usr/local/bin/",

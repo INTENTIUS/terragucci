@@ -8,6 +8,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import pkg from "../packages/terragucci/package.json" with { type: "json" };
 import { REGISTRY, TOOL_VERSIONS, decideImage, imageTag } from "../packages/terragucci/src/images";
 
 const root = join(import.meta.dirname, "..");
@@ -34,6 +35,16 @@ const PROBES: Record<Name, Array<[string[], string]>> = {
   ],
   choudoufu: [[["choudoufu", "version"], TOOL_VERSIONS.choudoufu]],
 };
+
+/**
+ * The chant bin a wave job runs, found as the bundle finds it (installedChant):
+ * node_modules/@intentius/chant above /usr/local/bin, through its package.json's
+ * bin, run as the bundle runs it: directly, since it is a script. Prints the version it runs, which must be the one the package pins.
+ */
+const CHANT_BIN = [
+  "cd /usr/local/node_modules/@intentius/chant",
+  `"./$(node -p "const b = require('./package.json').bin; typeof b === 'string' ? b : b.chant")" --version`,
+].join(" && ");
 
 /**
  * git in a checkout another user owns, both ways round: root in one uid 1001
@@ -90,13 +101,13 @@ if (cmd === "tags") {
   let failed = false;
   for (const n of NAMES) {
     const plat = platform ? ["--platform", platform] : [];
-    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"], [["sh", "-c", `mkdir -p /tmp/w && cd /tmp/w && ${UNNAMED_UID[n]} && echo 'init: ok'`], "init: ok"]] as Array<[string[], string]>) {
+    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", CHANT_BIN], pkg.dependencies["@intentius/chant"]], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"], [["sh", "-c", `mkdir -p /tmp/w && cd /tmp/w && ${UNNAMED_UID[n]} && echo 'init: ok'`], "init: ok"]] as Array<[string[], string]>) {
       const unnamed = argv[2]?.includes("init: ok");
       const out = spawnSync("docker", ["run", "--rm", ...plat, ...(unnamed ? ["--user", "4242:4242", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318"] : []), ref(n), ...argv], { encoding: "utf-8" });
       const text = `${out.stdout}${out.stderr}`;
       const ok = out.status === 0 && text.includes(want);
       if (!ok) failed = true;
-      console.log(`${ok ? "ok  " : "FAIL"} ${n}: ${argv[0] === "sh" ? (unnamed ? "a tool as a uid with no passwd entry and OTLP set" : "git in a checkout another user owns") : argv.join(" ")}${ok ? "" : `\n${text}`}`);
+      console.log(`${ok ? "ok  " : "FAIL"} ${n}: ${argv[0] === "sh" ? (unnamed ? "a tool as a uid with no passwd entry and OTLP set" : argv[2] === CHANT_BIN ? "the chant bin a wave job runs" : "git in a checkout another user owns") : argv.join(" ")}${ok ? "" : `\n${text}`}`);
     }
     const bytes = Number(execFileSync("docker", ["image", "inspect", "--format", "{{.Size}}", ref(n)], { encoding: "utf-8" }).trim());
     const mb = (b: number) => (b / 1e6).toFixed(0);
