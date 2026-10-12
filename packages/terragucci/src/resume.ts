@@ -34,10 +34,18 @@
  * in `_gates/tf-migrate.jsonl`. An approved migration resumes as wave 1 does:
  * wave 1 runs the migration before it plans.
  *
+ * A wave whose gate asks a decision point (`apply.point`, ./point-gate.ts)
+ * waits on a question, and its gate's resolution is written only when the
+ * wave runs again. So the resume job also resumes a wave whose newest pending
+ * fact cites a question that now has an answer the gate passes on, as
+ * chant's `pointGateResumable` decides, with the questions `chant workspace
+ * points` lists (./point-gate.ts, pointQuestions).
+ *
  * Neither approves anything: the wave's own gate decides again when it runs.
  */
 import { spawnSync } from "node:child_process";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { pointGateResumable, type PendingGateRecord, type PointQuestionState } from "@intentius/chant/point-decision";
 import { decideGate, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { forgeLiveness, type Liveness } from "./apply-rows";
 import { finishOf } from "./remainder";
@@ -67,8 +75,8 @@ const at = (iso: string): number => new Date(iso).getTime();
  * Each wave whose newest pending digest an approval names, made after that
  * pending fact, and that no apply has used yet. Lowest wave first.
  */
-export function resumable(ledger: GateLedger, now: string, migrations?: GateLedger): Resumable[] {
-  const out: Resumable[] = approvedGates(ledger, now, (gate) => /^wave-\d+$/.test(gate)).map(({ gate, ...r }) => ({ wave: Number(gate.slice(5)), ...r }));
+export function resumable(ledger: GateLedger, now: string, migrations?: GateLedger, questions?: ReadonlyMap<string, PointQuestionState>): Resumable[] {
+  const out: Resumable[] = approvedGates(ledger, now, (gate) => /^wave-\d+$/.test(gate), questions).map(({ gate, ...r }) => ({ wave: Number(gate.slice(5)), ...r }));
   // A migration waits inside wave 1, so an approved one resumes wave 1, which runs it before it plans.
   if (migrations) out.push(...approvedGates(migrations, now, () => true).map(({ gate, ...r }) => ({ wave: 1, migration: gate, ...r })));
   for (const s of stoppedGates(ledger)) if (!out.some((w) => w.wave === s.wave && !w.migration)) out.push(s);
@@ -76,7 +84,7 @@ export function resumable(ledger: GateLedger, now: string, migrations?: GateLedg
 }
 
 /** Each gate (that `take` keeps) whose newest pending digest an approval names, made after it, that no apply has used. */
-function approvedGates(ledger: GateLedger, now: string, take: (gate: string) => boolean): (Omit<Resumable, "wave" | "migration"> & { gate: string })[] {
+function approvedGates(ledger: GateLedger, now: string, take: (gate: string) => boolean, questions?: ReadonlyMap<string, PointQuestionState>): (Omit<Resumable, "wave" | "migration"> & { gate: string })[] {
   const newest = new Map<string, PendingRecord>();
   for (const p of ledger.pending) {
     const before = newest.get(p.gate);
@@ -85,7 +93,12 @@ function approvedGates(ledger: GateLedger, now: string, take: (gate: string) => 
   const out: (Omit<Resumable, "wave" | "migration"> & { gate: string })[] = [];
   for (const [gate, p] of newest) {
     const d = decideGate(ledger, gate, p.planDigest!, now);
-    if (d.status !== "approved") continue;
+    if (d.status !== "approved") {
+      // A gate that asks a decision point: its question answered with an answer the gate passes on (chant's rule). The wave writes the resolution when it runs.
+      const point = p.answer && questions ? pointGateResumable(p as unknown as PendingGateRecord, questions.get(p.answer.id)) : undefined;
+      if (point?.resumable) out.push({ gate, digest: p.planDigest!, by: point.answeredBy, ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+      continue;
+    }
     // An approval an apply already used: that apply ran, so there is nothing to resume.
     const used = (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, p.planDigest) && at(a.approvedAt) >= at(d.at));
     if (used) continue;
@@ -126,11 +139,11 @@ export type ResumeStep =
   | { kind: "retried"; job: string; pipeline: number; url?: string; waves: Resumable[] };
 
 /** The resume job's decision, from the ledger and, on GitLab, the default branch's newest push pipeline. Never throws for a forge it cannot read: it says why. */
-export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedger; forge: ForgeKind; sha: string; env: NodeJS.ProcessEnv; now?: string; fetch?: Fetch; liveness?: Liveness }): Promise<ResumeStep> {
+export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedger; forge: ForgeKind; sha: string; env: NodeJS.ProcessEnv; now?: string; fetch?: Fetch; liveness?: Liveness; questions?: ReadonlyMap<string, PointQuestionState> }): Promise<ResumeStep> {
   const alive = o.liveness ?? forgeLiveness(o.env);
   const waves: Resumable[] = [];
   // A stopped apply whose run still runs is applying: it is resumed once that run is gone.
-  for (const w of resumable(o.ledger, o.now ?? new Date().toISOString(), o.migrations)) {
+  for (const w of resumable(o.ledger, o.now ?? new Date().toISOString(), o.migrations, o.questions)) {
     if (!w.stopped || (w.stopped.holder && (await alive({ run: w.stopped.holder, at: w.stopped.at })) === "dead")) waves.push(w);
   }
   if (waves.length === 0) return { kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" };

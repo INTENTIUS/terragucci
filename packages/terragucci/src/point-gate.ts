@@ -24,17 +24,20 @@
  * refuses a gate whose pending fact names a question, and prints the
  * `points answer` line instead.
  */
+import { spawnSync } from "node:child_process";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
 import {
   chantGatePointAsker,
+  chantPointQuestions,
   evaluatePointGate,
   type GatePointAsker,
   type GateResolutionRecord,
   type PendingGateRecord,
   type PointGateLedgerPort,
+  type PointQuestionState,
 } from "@intentius/chant/point-decision";
 import type { WaveMember } from "@intentius/chant/gated-waves";
-import { APPLY_OP, appendPending, appendResolution, approvedPath, EXIT, readLedger, type GateDecision, type PendingRecord, type ResolutionRecord, type WaveRun } from "./apply";
+import { APPLY_OP, appendPending, appendResolution, approvedPath, EXIT, readLedger, type GateDecision, type GateLedger, type PendingRecord, type ResolutionRecord, type WaveRun } from "./apply";
 import { chantCommand } from "./chant-bin";
 import { ConfigError, type Approval } from "./config";
 import { buildReport } from "./report/build";
@@ -154,4 +157,22 @@ export async function pointGate(repo: string, i: PointGateInput): Promise<Extrac
   i.w.command = answerLine(check.waiting.id);
   i.outcome(`wave ${i.wave} waits: ${i.w.command}`);
   return EXIT.waiting;
+}
+
+/**
+ * The questions the resume job reads (./resume.ts): every question `chant
+ * workspace points` lists, by id, when a wave's newest pending fact cites
+ * one; undefined when none does, so a repo whose gates ask no point never
+ * runs chant here.
+ */
+export async function pointQuestions(repo: string, ledger: GateLedger, o: { command?: string[] } = {}): Promise<Map<string, PointQuestionState> | undefined> {
+  const newest = new Map<string, PendingRecord>();
+  for (const p of ledger.pending) {
+    const before = newest.get(p.gate);
+    if (/^wave-\d+$/.test(p.gate) && (!before || new Date(p.timestamp).getTime() >= new Date(before.timestamp).getTime())) newest.set(p.gate, p);
+  }
+  if (![...newest.values()].some((p) => p.answer)) return undefined;
+  // chant reads the questions from the local chant/lifecycle: bring it to origin's tip, as chant's own reads do. A local branch ahead of origin is left as it is.
+  spawnSync("git", ["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], { cwd: repo, encoding: "utf-8" });
+  return chantPointQuestions({ command: o.command ?? [chantCommand(repo)], cwd: repo });
 }
