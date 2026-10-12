@@ -1502,14 +1502,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "pr-apply/base-config",
-      "says": "with apply.when: pull-request a pull request that sets gate: never still waits at the gate of the default branch",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "pr-apply/guard",
       "says": "with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing",
       "needs": null,

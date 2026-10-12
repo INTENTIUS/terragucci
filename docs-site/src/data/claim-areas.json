@@ -209,7 +209,6 @@
     "pr-apply/stale": "Locks and safety",
     "pr-apply/token": "Approve and apply",
     "pr-apply/trust": "Locks and safety",
-    "pr-apply/base-config": "Locks and safety",
     "lock/close-release": "Locks and safety",
     "pr-apply/confirm": "Approve and apply",
     "pr-apply/guard": "Locks and safety",

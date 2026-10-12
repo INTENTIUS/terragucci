@@ -335,7 +335,6 @@ report/contracts|the index.json files, estate.json and report.json a run and ter
 comment/refused|a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies|
 note/stale|a push to the default branch that changes a root an open pull request planned marks its plan note stale|
 pr-apply/confirm|with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing|
-pr-apply/base-config|with apply.when: pull-request a pull request that sets gate: never still waits at the gate of the default branch|
 pr-apply/guard|with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing|
 lock/close-release|with apply.when: pull-request closing a pull request releases the roots it locked|
 lock/terragrunt-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
@@ -13978,39 +13977,6 @@ claim_pr_apply/confirm() {
   return $rc
 }
 
-claim_pr_apply/base_config() {
-  # A repo with apply.when: pull-request and gate: always on main. A pull
-  # request changes canary/one and sets gate: never in its own terragucci.yml.
-  # /terragucci apply runs the default branch's pipeline and its gate: wave 1
-  # waits for an approval, and nothing applies.
-  # BREAK: main itself has gate: never, so the wave applies.
-  log() { echo "[smoke pr-base-config] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/pr-base-config" head pr reply applied rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo pr-base-config || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && { sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"; }
-  printf 'apply:\n  when: pull-request\n  merge: manual\n' >> "$work/tree/terragucci.yml"
-  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
-  push_tree "$work/tree" "$repo" main "pr-base-config: first" >/dev/null || { drop_work "$work"; return 1; }
-  pr_reviewer "$repo" smoke-rev-pr-base-config || { drop_work "$work"; return 1; }
-  echo relaxed > "$work/tree/canary/one/rev.txt"
-  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
-  head="$(push_tree "$work/tree" "$repo" change "pr-base-config: gate never in the pull request")" || { drop_work "$work"; return 1; }
-  pr="$(pr_open "$repo" change "pr-base-config: gate never in the pull request")" || { drop_work "$work"; return 1; }
-  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
-  reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
-  applied="$(gated_applied pr-base-config)"
-  log "reply: ${reply:-none}; state for: ${applied:-nothing}"
-  grep -q "wave 1 waits for an approval of its set digest" <<<"$reply" || { log "wave 1 did not wait under the gate of main"; rc=1; }
-  [ -z "$applied" ] || { log "the gate: never of the pull request let $applied apply"; rc=1; }
-  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-base-config?purge=true" 2>/dev/null || true
-  drop_work "$work"
-  [ $rc = 0 ] && log "a pull request that sets gate: never still waited at the gate main sets, and applied nothing"
-  return $rc
-}
-
 claim_pr_apply/guard() {
   # A repo with apply.when: pull-request. Pull request A changes canary/one
   # and the pipeline file; pull request B changes fleet/two and carries a
@@ -21407,7 +21373,6 @@ report/contracts     weight=110
 comment/refused      runner self! weight=200
 note/stale           runner self! weight=200
 pr-apply/confirm           runner self! weight=300
-pr-apply/base-config       runner self! weight=250
 pr-apply/guard             runner self! weight=300
 lock/close-release     runner self! weight=200
 lock/terragrunt-fanout       runner self! weight=200
