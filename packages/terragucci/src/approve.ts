@@ -59,6 +59,7 @@ import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { EPHEMERAL_LEDGER, EPHEMERAL_OP, ephemeralGate } from "./ephemeral";
 import { chantCommand, installedChant } from "./chant-bin";
+import type { GateRunLocator } from "@intentius/chant/op/gate-resume";
 
 export { chantCommand, installedChant };
 
@@ -71,6 +72,8 @@ export interface WaitingWave {
   /** The run or pipeline that waited, and the commit it planned, when the pending fact names them. */
   runId?: string;
   commit?: string;
+  /** Where chant recorded the job that waits, which a resume starts again. */
+  resume?: GateRunLocator;
   /** The decision point question the wave waits on, when its gate asks one (./point-gate.ts): an answer passes it, not an approval. */
   question?: string;
 }
@@ -88,7 +91,7 @@ export function waitingWaves(ledger: GateLedger): WaitingWave[] {
   for (const [gate, p] of newest) {
     const answered = ledger.resolutions.some((r) => r.gate === gate && r.planDigest === p.planDigest && at(r.timestamp) >= at(p.timestamp));
     if (answered) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}) });
+    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.resume ? { resume: p.resume } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}) });
   }
   return out.sort((a, b) => a.wave - b.wave);
 }
@@ -202,7 +205,7 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
     const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
     if (o.resume === false) log("not resumed (--no-resume): run its job again, comment /terragucci apply, or let the resume job apply it");
     else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run its job again, or comment /terragucci apply");
-    else log(await resumeAfterApproval({ origin, wave, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+    else log(await resumeAfterApproval({ origin, wave, repo, op: "tf-apply", gate: waveGate(wave.wave), ...(o.chant ? { chant: o.chant } : {}), ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
   }
   return { code, command, wave };
 }
@@ -216,6 +219,8 @@ export interface WaitingMigration {
   description?: string;
   runId?: string;
   commit?: string;
+  /** Where chant recorded wave 1's job, which waits on the migration. */
+  resume?: GateRunLocator;
 }
 
 /** The migrations waiting: each migration gate's newest pending fact whose digest no approval at or after it names. By name. */
@@ -228,7 +233,7 @@ export function waitingMigrations(ledger: GateLedger): WaitingMigration[] {
   const out: WaitingMigration[] = [];
   for (const [gate, p] of newest) {
     if (ledger.resolutions.some((r) => r.gate === gate && samePlanDigest(r.planDigest, p.planDigest) && at(r.timestamp) >= at(p.timestamp))) continue;
-    out.push({ migration: gate, digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+    out.push({ migration: gate, digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.resume ? { resume: p.resume } : {}) });
   }
   return out.sort((a, b) => (a.migration < b.migration ? -1 : 1));
 }
@@ -272,7 +277,7 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
     const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
     if (o.resume === false) log("not resumed (--no-resume): run wave 1 again, comment /terragucci apply, or let the resume job run it");
     else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run wave 1 again, or comment /terragucci apply");
-    else log(await resumeAfterApproval({ origin, wave: { wave: 1, ...(m.runId ? { runId: m.runId } : {}), ...(m.commit ? { commit: m.commit } : {}) }, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+    else log(await resumeAfterApproval({ origin, wave: { wave: 1, ...(m.runId ? { runId: m.runId } : {}), ...(m.commit ? { commit: m.commit } : {}), ...(m.resume ? { resume: m.resume } : {}) }, repo, op: MIGRATE_OP, gate: m.migration, ...(o.chant ? { chant: o.chant } : {}), ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
   }
   return { code, command, migration: m };
 }

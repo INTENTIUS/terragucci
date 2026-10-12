@@ -7,26 +7,34 @@
  * two things resume a wave instead.
  *
  * `terragucci resume`, run by the pipeline's resume job on a schedule
- * (`apply.resume`): it reads the ledger and finds each wave whose newest
- * pending digest an approval now names, which no apply has used yet. On
- * GitHub and Forgejo it writes the commit to apply (the default branch's,
- * where the job runs) for the job's wave loop, which applies from wave 1 as a
- * comment's apply does: a wave already applied plans no change, and each
- * gated wave counts only an approval of the plans it makes now. On GitLab it
- * retries the first apply job of the default branch's newest push pipeline
- * that did not succeed, when its wave is one of those, and GitLab runs the
- * waves after it.
+ * (`apply.resume`). On GitLab it runs `chant run resume` for the waves'
+ * gates (`tf-apply`) and the migrations' (`tf-migrate`): chant retries each
+ * job that waits at a gate an approval, or a passing answer to its decision
+ * point, now answers, from the run locator chant recorded on its pending
+ * fact, and GitLab runs the waves after it. On GitHub and Forgejo it reads
+ * the ledger and finds each wave whose newest pending digest an approval now
+ * names, which no apply has used yet, and writes the commit to apply (the
+ * default branch's, where the job runs) for the job's wave loop, which
+ * applies from wave 1 as a comment's apply does: a wave already applied plans
+ * no change, and each gated wave counts only an approval of the plans it
+ * makes now. That job runs with a read-only token and applies in itself,
+ * where chant run resume would re-run the waiting run.
  *
  * `terragucci approve`, after `chant approve` pushed the approval, with the
- * approver's own token (`resumeAfterApproval`): on GitHub it re-runs the
- * failed jobs of the run that waited, on GitLab it retries that pipeline's
- * job of the wave, and on Forgejo, whose API has no re-run, it comments
+ * approver's own token (`resumeAfterApproval`): on GitHub and GitLab it runs
+ * `chant run resume --op <op>`, which starts the job that waited again from
+ * the run locator chant recorded on its pending fact: GitHub re-runs the
+ * failed jobs of that run, GitLab retries the job, and a run still going,
+ * that succeeded or that was resumed already is left alone. chant names no
+ * single gate to resume (chant#3854), so it starts any other job of the op
+ * whose approval arrived too, which approves nothing. On Forgejo, whose API has no re-run, it comments
  * `/terragucci apply` on the pull request that made the commit. Without a
  * token it says so, and the resume job, or a re-run by hand, picks it up.
  *
  * The resume job also resumes a wave whose apply under an approval was
  * killed before it finished, once the run that applied is gone: the wave
  * plans again and applies the rest under that approval (./remainder.ts).
+ * That apply left no pending fact, so this is terragucci's on every forge.
  * Only a wave of roots that apply per resource (choudoufu) records what it
  * needs for that; a failed apply is left to a re-run.
  *
@@ -39,11 +47,16 @@
  * wave runs again. So the resume job also resumes a wave whose newest pending
  * fact cites a question that now has an answer the gate passes on, as
  * chant's `pointGateResumable` decides, with the questions `chant workspace
- * points` lists (./point-gate.ts, pointQuestions).
+ * points` lists (./point-gate.ts, pointQuestions); `chant run resume` makes
+ * the same check on GitLab.
  *
  * Neither approves anything: the wave's own gate decides again when it runs.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { delimiter, join } from "node:path";
+import type { GateRunLocator } from "@intentius/chant/op/gate-resume";
+import { chantCommand } from "./chant-bin";
+import { MIGRATE_OP } from "./migrate";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { pointGateResumable, type PendingGateRecord, type PointQuestionState } from "@intentius/chant/point-decision";
 import { decideGate, runOf, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
@@ -146,7 +159,13 @@ export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedge
   for (const w of resumable(o.ledger, o.now ?? new Date().toISOString(), o.migrations, o.questions)) {
     if (!w.stopped || (w.stopped.holder && (await alive({ run: w.stopped.holder, at: w.stopped.at })) === "dead")) waves.push(w);
   }
-  if (waves.length === 0) return { kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" };
+  if (o.forge === "gitlab") {
+    // chant run resume starts the jobs that wait at a gate (resumeWithChant); a stopped apply left no pending fact, so it is terragucci's.
+    const stopped = waves.filter((w) => w.stopped);
+    waves.length = 0;
+    waves.push(...stopped);
+  }
+  if (waves.length === 0) return { kind: "none", why: o.forge === "gitlab" ? "no approved apply stopped before it finished" : "no wave waits with an approval that stands, and no approved apply stopped before it finished" };
   if (o.forge !== "gitlab") {
     let pr: number | undefined;
     try {
@@ -169,7 +188,7 @@ export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedge
       .sort((a, b) => a.n - b.n)
       .find((w) => w.j.status !== "success");
     if (!next) return { kind: "none", why: `every wave of pipeline ${pipeline.id} applied` };
-    if (!waves.some((w) => w.wave === next.n)) return { kind: "none", why: `apply-wave-${next.n} of pipeline ${pipeline.id} has no approval that stands` };
+    if (!waves.some((w) => w.wave === next.n)) return { kind: "none", why: `apply-wave-${next.n} of pipeline ${pipeline.id} has no stopped apply to finish` };
     if (next.j.status !== "failed" && next.j.status !== "canceled") return { kind: "none", why: `apply-wave-${next.n} of pipeline ${pipeline.id} is ${String(next.j.status)}, and GitLab retries only a failed or canceled job` };
     const retried = await f.post(`${f.repo}/jobs/${next.j.id}/retry`, {});
     return { kind: "retried", job: `apply-wave-${next.n}`, pipeline: Number(pipeline.id), ...(typeof retried?.web_url === "string" ? { url: retried.web_url } : {}), waves };
@@ -215,7 +234,7 @@ const TOKEN_ENV: Record<ForgeKind, string> = { github: "GH_TOKEN (or gh auth log
  * token. Returns the line to print; never throws, since the approval stands
  * either way.
  */
-export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: number; runId?: string; commit?: string }; env?: NodeJS.ProcessEnv; fetch?: Fetch }): Promise<string> {
+export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: number; runId?: string; commit?: string; resume?: GateRunLocator }; env?: NodeJS.ProcessEnv; fetch?: Fetch; repo?: string; op?: string; gate?: string; chant?: string }): Promise<string> {
   const env = o.env ?? process.env;
   const doFetch: Fetch = o.fetch ?? fetch;
   const { forge, host, web, path } = o.origin;
@@ -229,22 +248,24 @@ export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: num
     return r.json().catch(() => null);
   };
   try {
-    if (forge === "github") {
-      if (!o.wave.runId) return `not resumed from here: the pending fact names no run; ${later}`;
-      const api = env.GITHUB_API_URL || (host === "github.com" ? "https://api.github.com" : `https://${host}/api/v3`);
-      await call("POST", `${api}/repos/${path}/actions/runs/${o.wave.runId}/rerun-failed-jobs`, { authorization: `Bearer ${token}` });
-      return `resumed: re-ran the failed jobs of run ${o.wave.runId}, so wave ${o.wave.wave} runs again and its gate decides`;
-    }
-    if (forge === "gitlab") {
-      if (!o.wave.runId) return `not resumed from here: the pending fact names no pipeline; ${later}`;
-      const api = `${env.CI_API_V4_URL || `${web}/api/v4`}/projects/${encodeURIComponent(path)}`;
-      const auth = { "private-token": token };
-      const jobs = await call("GET", `${api}/pipelines/${o.wave.runId}/jobs?per_page=100`, auth);
-      const job = (Array.isArray(jobs) ? jobs : []).find((j: any) => j?.name === `apply-wave-${o.wave.wave}`);
-      if (!job) return `not resumed from here: pipeline ${o.wave.runId} has no apply-wave-${o.wave.wave}; ${later}`;
-      if (job.status !== "failed" && job.status !== "canceled") return `not resumed from here: apply-wave-${o.wave.wave} of pipeline ${o.wave.runId} is ${String(job.status)}; ${later}`;
-      await call("POST", `${api}/jobs/${job.id}/retry`, auth);
-      return `resumed: retried apply-wave-${o.wave.wave} of pipeline ${o.wave.runId}, and the waves after it follow`;
+    if (forge === "github" || forge === "gitlab") {
+      // chant starts the job that waited again, from the run locator it recorded on the pending fact, and leaves alone a run still going, that succeeded or that was resumed already.
+      if (!o.wave.resume) return `not resumed from here: the pending fact names no CI job; ${later}`;
+      const op = o.op ?? "tf-apply";
+      const gate = o.gate ?? `wave-${o.wave.wave}`;
+      const repo = o.repo ?? process.cwd();
+      const r = await runChant(repo, ["run", "resume", "--op", op, "--json"], { ...env, CHANT_FORGE_TOKEN: token }, o.chant, "pipe");
+      if (r.error) return `not resumed from here: chant run resume did not start (${r.error.message}); ${later}`;
+      let reports: { gate: string; status: string; message: string }[] = [];
+      try {
+        reports = (JSON.parse(r.stdout) as { reports?: typeof reports }).reports ?? [];
+      } catch {
+        return `not resumed from here: chant run resume exited ${r.status}: ${(r.stderr || r.stdout).trim().split("\n").pop() ?? ""}; ${later}`;
+      }
+      const mine = reports.find((x) => x.gate === gate);
+      if (!mine) return `not resumed from here: chant found no job waiting at ${op} / ${gate}; ${later}`;
+      if (mine.status !== "resumed") return `not resumed from here: ${mine.message}; ${later}`;
+      return `resumed: ${mine.message}, so wave ${o.wave.wave} runs again and its gate decides`;
     }
     // Forgejo's API has no re-run: the merged pull request's /terragucci apply, as the approver, runs the waves again.
     if (!o.wave.commit) return `not resumed from here: the pending fact names no commit; ${later}`;
@@ -257,4 +278,43 @@ export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: num
   } catch (e) {
     return `not resumed from here (${(e as Error).message}); ${later}`;
   }
+}
+
+/** The ops whose waiting jobs `chant run resume` starts again: the waves' gates, and the migrations' that wave 1 waits on. */
+export const RESUMED_OPS = ["tf-apply", MIGRATE_OP] as const;
+
+/**
+ * The GitLab resume job's part that is chant's: `chant run resume --op <op>`
+ * for the waves' gates and the migrations', with the project token the job
+ * carries (`TG_TOKEN`) as chant's `CHANT_FORGE_TOKEN`. chant retries each job
+ * waiting at a gate that an approval, or a passing answer to its decision
+ * point, now answers, and leaves one still running or already retried alone.
+ * Returns chant's exit code: 1 when a forge call failed or no token was set.
+ */
+export async function resumeWithChant(repo: string, env: NodeJS.ProcessEnv, o: { chant?: string; log?: (line: string) => void } = {}): Promise<number> {
+  const log = o.log ?? ((l: string) => console.log(l));
+  const token = env.CHANT_FORGE_TOKEN || env.TG_TOKEN || env.GITLAB_TOKEN;
+  let code = 0;
+  for (const op of RESUMED_OPS) {
+    log(`terragucci resume: chant run resume --op ${op}`);
+    const r = await runChant(repo, ["run", "resume", "--op", op], { ...env, ...(token ? { CHANT_FORGE_TOKEN: token } : {}) }, o.chant, "inherit");
+    if (r.error) {
+      log(`terragucci resume: chant run resume did not start (${r.error.message}); install terragucci again, which installs chant with it`);
+      code = 1;
+    } else if (r.status !== 0) code = r.status ?? 1;
+  }
+  return code;
+}
+
+/** Run the chant bin terragucci installs, without blocking: its output piped back, or inherited by the job's log. */
+function runChant(repo: string, args: string[], env: NodeJS.ProcessEnv, chant: string | undefined, stdio: "pipe" | "inherit"): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+  return new Promise((done) => {
+    const child = spawn(chantCommand(repo, chant ? { chant } : {}), args, { cwd: repo, stdio: ["ignore", stdio, stdio], env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (d) => (stdout += d));
+    child.stderr?.on("data", (d) => (stderr += d));
+    child.on("error", (error) => done({ status: null, stdout, stderr, error }));
+    child.on("close", (status) => done({ status, stdout, stderr }));
+  });
 }

@@ -90,6 +90,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OpWaveDecision } from "@intentius/chant/op";
+import type { GateRunLocator } from "@intentius/chant/op/gate-resume";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
@@ -241,8 +242,8 @@ export interface PendingRecord {
   description?: string;
   runId?: string;
   url?: string;
-  /** Where chant's op waves recorded the job that waits, in CI: the forge's run (`run`), and on GitLab the job. */
-  resume?: { forge?: string; run?: string; job?: string; url?: string };
+  /** Where chant recorded the job that waits, in CI (a wave's, a migration's, a decision point's): what `chant run resume` starts again. */
+  resume?: GateRunLocator;
   /** terragucci's addition: the commit the wave planned, so an approval can find the run or pull request to resume. */
   commit?: string;
   /** terragucci's addition: each root's plan digest, so a later refusal can name the roots that moved. */
