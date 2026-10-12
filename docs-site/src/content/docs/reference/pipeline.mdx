@@ -33,7 +33,7 @@ An approval is a commit on `chant/lifecycle`, and a push there starts nothing: t
 
 | What | When | How |
 |---|---|---|
-| [`terragucci approve`](/terragucci/reference/cli/#approve) | right after it records the approval, with your token | GitHub: re-runs the failed jobs of the run that waited (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`). GitLab: retries the job that waited (`GITLAB_TOKEN`). Both go through `chant run resume`, which leaves a run still going, one that succeeded or one already resumed alone. Forgejo, whose API has no re-run: comments `/terragucci apply` on the merged pull request that made the commit (`FORGEJO_TOKEN`). Without a token it says so and the approval still stands. |
+| [`terragucci approve`](/terragucci/reference/cli/#approve) | right after it records the approval, with your token | GitHub: re-runs the failed jobs of the run that waited (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`). GitLab: retries the job that waited (`GITLAB_TOKEN`). Either way chant starts only that wave's job, and leaves a run still going, one that succeeded or one already resumed alone. Forgejo, whose API has no re-run: comments `/terragucci apply` on the merged pull request that made the commit (`FORGEJO_TOKEN`). Without a token it says so and the approval still stands. |
 | the resume job, with `apply.resume: <minutes>`, whatever `gate` says | within that many minutes | `terragucci resume` reads the ledger. When a waiting wave's digest, or that of a [state migration](/terragucci/reference/migration-files/) wave 1 waits on, has an approval no apply has used, or the wave's gate [asks a decision point](/terragucci/guides/approve-from-chat/#a-gate-that-asks-a-decision-point) whose question now has an answer that passes it, GitHub's and Forgejo's job runs the waves from wave 1 at the default branch's commit, as a comment's apply does. GitLab's runs `chant run resume`, which retries each job that waited, with the project token. With nothing to resume it stops before any credential. |
 
 Neither approves anything; the wave's gate decides again against the plans it makes now.
@@ -50,7 +50,7 @@ GitHub and Forgejo schedule it as the cron `*/<apply.resume>`: `60` runs hourly,
 
 A gated wave whose approved apply was killed or failed plans again when it next runs. Under [choudoufu](/terragucci/concepts/glossary/#choudoufu), every resource whose apply returned already has its record, so the plan holds only the rest. The wave applies it under the same approval when each change is one the approval covered, unchanged, and every other approved change is done in the records. Otherwise it waits for an approval of the plans it makes. choudoufu's apply still re-reads each resource before it writes.
 
-The resume job applies the rest of a killed apply once the run that applied is gone: on GitLab it retries the newest push pipeline's first apply job that did not succeed. A failed apply resumes when its job runs again. With stock OpenTofu or Terraform, a plan that differs from the approved one needs its own approval.
+The resume job applies the rest of a killed apply once the run that applied is gone: on GitLab `chant run resume` retries the job that applied. A failed apply resumes when its job runs again. With stock OpenTofu or Terraform, a plan that differs from the approved one needs its own approval.
 
 ## Apply from a comment
 

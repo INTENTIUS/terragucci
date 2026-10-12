@@ -4,7 +4,7 @@
  * (./src/relay.ts), against the chant bin terragucci installs: the question
  * is held on chant/lifecycle, a chat approval answers it, the answer shows in
  * `chant workspace records`, and the wave passes on it. An agent's approval
- * does not meet a human quorum.
+ * does not meet a human quorum, and an answer over MCP or ACP is refused.
  */
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -15,6 +15,8 @@ import { chantCommand } from "../src/chant-bin";
 import { pointQuestions } from "../src/point-gate";
 import { resumable } from "../src/resume";
 import { decideClick, workspace, workspaceDeps, type Click } from "../src/relay";
+import { createWorkspaceTools } from "@intentius/chant/cli/mcp/workspace-tools";
+import { resetGateOrigin, setGateOrigin } from "@intentius/chant/lifecycle/gate-origin";
 import { git, tmp, write } from "./helpers";
 
 /** A fake tofu: plans one resource to create in the root, and logs each apply to $LOG. */
@@ -119,13 +121,25 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
     expect(ledger.pending).toHaveLength(1);
     const pending = ledger.pending[0]!;
     const D = pending.planDigest!;
-    // chant's point gate does not yet carry the plans file's members and commit, nor neverOverMcp, onto the fact (chant#3863).
-    expect(pending).toMatchObject({ op: "tf-apply", gate: "wave-1", answer: { point: "prod-apply" } });
+    expect(pending).toMatchObject({ op: "tf-apply", gate: "wave-1", neverOverMcp: true, commit: git(job, "rev-parse", "HEAD").trim(), members: [{ member: "envs/prod", planDigest: expect.any(String) }], answer: { point: "prod-apply" } });
     const id = pending.answer!.id;
     expect(JSON.parse(readFileSync(outcome, "utf-8"))).toMatchObject({ status: "waiting", exit: 3, approve_command: `chant workspace points answer ${id} --answer true --by <name>` });
     expect(existsSync(log)).toBe(false);
     // The question is on chant/lifecycle, not in the job's tree.
     expect(git(dir, "--git-dir", origin, "ls-tree", "-r", "--name-only", "chant/lifecycle")).toContain(`${id}.md`);
+
+    // An answer over MCP or ACP is refused: the wave's pending fact says neverOverMcp.
+    git(job, "fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle");
+    const answerTool = createWorkspaceTools({ cwd: job }).find((t) => t.definition.name === "points-answer")!;
+    for (const channel of ["mcp", "acp"] as const) {
+      setGateOrigin(channel);
+      try {
+        const r = (await answerTool.handler({ id, answer: true, by: ["alice@acme.com"] }, {} as never)) as { error?: { code: string } };
+        expect(r.error?.code).toBe("answer-never-over-mcp");
+      } finally {
+        resetGateOrigin();
+      }
+    }
 
     // The relay, in its own workspace: an agent's click does not answer the question.
     const relay = workspace(origin);
