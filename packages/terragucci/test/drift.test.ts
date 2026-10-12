@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { findIssue, type Fetch } from "../src/forge";
+import { prForgeOf, type Fetch } from "../src/forge";
 import { driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
 import { buildReport } from "../src/report/build";
 import { renderHtml } from "../src/report/html";
@@ -184,9 +184,9 @@ describe("terragucci stage tf-drift", () => {
       const method = init?.method ?? "GET";
       requests.push(`${method} ${new URL(url).pathname}`);
       const body = init?.body ? JSON.parse(init.body) : undefined;
-      const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v, text: async () => "" });
-      if (method === "GET") return json(stored ? [{ html_url: "http://f/i/1", number: 1, body: stored.body }] : []);
-      if (method === "POST" && url.endsWith("/issues")) { stored = { body: body.body, number: 1 }; return json({ html_url: "http://f/i/1", number: 1 }); }
+      const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) });
+      if (method === "GET") return json(stored ? [{ html_url: "http://f/i/1", number: 1, title: "terragucci: drift found", body: stored.body, created_at: "2026-10-01T00:00:00Z" }] : []);
+      if (method === "POST" && url.endsWith("/issues")) { stored = { body: body.body, number: 1 }; return json({ html_url: "http://f/i/1", number: 1, created_at: "2026-10-01T00:00:00Z" }); }
       if (method === "PATCH" && body.state === "closed") { stored = undefined; return json({}); }
       if (method === "PATCH") { stored = { body: body.body, number: 1 }; return json({}); }
       return json({});
@@ -217,31 +217,33 @@ describe("terragucci stage tf-drift", () => {
     const calls: string[] = [];
     const forgeFetch: Fetch = async (url, init) => {
       calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
-      return { ok: true, status: 200, json: async () => ((init?.method ?? "GET") === "GET" ? open : {}), text: async () => "" };
+      const v = (init?.method ?? "GET") === "GET" ? open : {};
+      return { ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) };
     };
     const report = buildReport({
       run: { ...RUN, stage: "tf-drift" },
       roots: [{ path: "a", plan: driftPlan(clean) }, { path: "b", error: "init failed" }],
     });
     const target = targetFromEnv("forgejo", { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "http://f" }, "t")!;
-    expect(await trackDrift(forgeFetch, target, report)).toMatchObject({ action: "left-open" });
+    expect(await trackDrift(prForgeOf(target, forgeFetch), report)).toMatchObject({ action: "left-open", issue: { number: 1 } });
     expect(calls).toEqual(["GET /api/v1/repos/me/infra/issues"]);
     expect(renderDriftIssue(report)).toContain("could not be planned");
   });
 });
 
-describe("findIssue", () => {
-  it("asks Forgejo for issues alone, and github.com with no type, which it refuses", async () => {
-    const asked: string[] = [];
-    const forgeFetch: Fetch = async (url) => {
-      asked.push(new URL(url).search);
-      return { ok: true, status: 200, json: async () => [{ html_url: "http://f/pull/2", number: 2, body: "<!-- m -->", pull_request: {} }, { html_url: "http://f/i/1", number: 1, body: "<!-- m -->" }], text: async () => "" };
+describe("the drift issue through chant", () => {
+  it("reads the open issue with no token: no credential is sent, and a pull request is never taken for it", async () => {
+    const asked: { url: string; headers: Record<string, string> }[] = [];
+    const forgeFetch: Fetch = async (url, init) => {
+      asked.push({ url, headers: init?.headers ?? {} });
+      const v = [{ html_url: "http://f/pull/2", number: 2, body: "<!-- terragucci:drift -->", pull_request: {} }, { html_url: "http://f/i/1", number: 1, body: "<!-- terragucci:drift -->\nold", created_at: "2026-09-30T00:00:00Z" }];
+      return { ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) };
     };
     for (const forge of ["github", "forgejo"] as const) {
-      const target = targetFromEnv(forge, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "https://github.com" }, "t")!;
-      expect(await findIssue(forgeFetch, target, "<!-- m -->")).toMatchObject({ number: 1 });
+      const reader = targetFromEnv(forge, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "https://github.com" }, undefined, true)!;
+      expect(await prForgeOf(reader, forgeFetch).findIssue("<!-- terragucci:drift -->", { match: "anywhere" })).toMatchObject({ number: 1, created: "2026-09-30T00:00:00Z" });
     }
-    expect(asked).toEqual(["?state=open&per_page=100", "?state=open&type=issues&per_page=100"]);
+    expect(asked.every((a) => !Object.keys(a.headers).some((h) => h.toLowerCase() === "authorization"))).toBe(true);
   });
 });
 

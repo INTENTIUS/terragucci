@@ -6,7 +6,8 @@
  * `resource_changes` when the report is built, so the report is the same
  * JSON and HTML as a plan's, and code waiting on main never shows in it.
  */
-import { closeIssue, findIssue, openIssue, updateIssue, type Fetch, type ForgeTarget, type Issue } from "../forge";
+import type { IssueResult, PrForge } from "@intentius/chant/pr-forge";
+import type { ForgeTarget } from "../forge";
 import type { ForgeName } from "../config";
 import type { Attributed } from "../respond/attribute";
 import type { Report, ReportChange } from "./schema";
@@ -164,31 +165,42 @@ export function renderDriftIssue(report: Report, options: IssueOptions = {}): st
   return lines.join("\n");
 }
 
+/** The drift issue a run kept: its number, its page, and when it was opened. */
+export interface DriftIssue {
+  number: number;
+  url: string;
+  /** When it was opened (ISO 8601), when the forge said. */
+  created?: string;
+}
+
 export type DriftIssueResult =
-  | { action: "opened" | "updated" | "closed" | "left-open"; issue: Issue }
+  | { action: "opened" | "updated" | "closed" | "left-open"; issue: DriftIssue }
   | { action: "none" };
 
 /**
- * Keep one issue for the project's drift: open it when a run finds drift,
- * update the open one, close it when a run finds none. A run in which a root
- * could not be planned and the rest are clean proves nothing, so it leaves
- * an open issue as it is.
+ * Keep one issue for the project's drift through chant's tracking issue:
+ * open it when a run finds drift, update the open one, close it when a run
+ * finds none. A run in which a root could not be planned and the rest are
+ * clean proves nothing, so it leaves an open issue as it is.
  */
-export async function trackDrift(fetch: Fetch, target: ForgeTarget, report: Report, options: IssueOptions = {}): Promise<DriftIssueResult> {
+export async function trackDrift(forge: PrForge, report: Report, options: IssueOptions = {}): Promise<DriftIssueResult> {
   const d = drifted(report);
-  const open = await findIssue(fetch, target, DRIFT_MARKER);
-  if (d.roots > 0 || (d.failed > 0 && open)) {
-    if (d.roots === 0 && open) return { action: "left-open", issue: open };
-    const body = renderDriftIssue(report, options);
-    if (open) {
-      await updateIssue(fetch, target, open.number, { title: DRIFT_TITLE, body });
-      return { action: "updated", issue: open };
-    }
-    return { action: "opened", issue: await openIssue(fetch, target, { title: DRIFT_TITLE, body }) };
+  const kept = (r: IssueResult): DriftIssue => ({ number: r.number ?? 0, url: r.url ?? "", ...(r.created ? { created: r.created } : {}) });
+  const match = { match: "anywhere" as const };
+  if (d.roots > 0) {
+    const r = await forge.trackIssue(DRIFT_MARKER, { title: DRIFT_TITLE, body: renderDriftIssue(report, options) }, match);
+    return { action: r.action === "opened" ? "opened" : "updated", issue: kept(r) };
   }
-  if (!open) return { action: "none" };
-  await closeIssue(fetch, target, open.number, `No drift at ${code(report.run.commit.slice(0, 12))}: all ${report.roots.length} roots match what Terraform last applied. Closing.`);
-  return { action: "closed", issue: open };
+  if (d.failed > 0) {
+    const r = await forge.trackIssue(DRIFT_MARKER, null, match);
+    return r.action === "left" ? { action: "left-open", issue: kept(r) } : { action: "none" };
+  }
+  const r = await forge.trackIssue(DRIFT_MARKER, null, {
+    ...match,
+    closeOnClear: true,
+    clearComment: `No drift at ${code(report.run.commit.slice(0, 12))}: all ${report.roots.length} roots match what Terraform last applied. Closing.`,
+  });
+  return r.action === "closed" ? { action: "closed", issue: kept(r) } : { action: "none" };
 }
 
 /** The forge a run is on, from the CI environment. */
