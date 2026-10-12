@@ -201,6 +201,7 @@
     "refuse/pr-review": "Approve and apply",
     "approval/pr-review-status": "Approve and apply",
     "apply/provider-cache": "Setup and runtime",
+    "apply/provider-cache-no-lock": "Setup and runtime",
     "telemetry/provider-calls": "Reports and visibility",
     "reconcile/provider": "Setup and runtime",
     "modules/publish": "Modules",
@@ -318,6 +319,7 @@
     "telemetry/provider-calls": "choudoufu",
     "telemetry/summed-timings": "choudoufu",
     "binary/terraform": "terraform",
+    "apply/provider-cache-no-lock": "terraform",
     "drift/tfquery": "terraform",
     "binary/terragrunt-choudoufu": "choudoufu",
     "binary/terragrunt-terraform": "terraform"
