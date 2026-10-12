@@ -21874,7 +21874,8 @@ SMOKE_BREAK_VALUE=1
 QUEUE=""
 
 # A run's precomputed locks and claims to wait for live in RL_<key> and RA_<key>.
-runvar_key() { local k="${1//-/_}"; RUNVAR_KEY="${k//:/__}"; }
+# A claim is <area>/<part>, so the slash becomes _S_ as the hyphen becomes _ and the colon __.
+runvar_key() { local k="${1//-/_}"; k="${k//\//_S_}"; RUNVAR_KEY="${k//:/__}"; }
 
 smoke_line() { if [ "$SMOKE_LINES_TO" = stderr ]; then echo "$1" >&2; else echo "$1"; fi; }
 
