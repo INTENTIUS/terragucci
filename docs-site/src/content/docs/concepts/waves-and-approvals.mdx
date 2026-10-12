@@ -172,7 +172,7 @@ waves:
 | Job | What it does |
 |---|---|
 | `apply-wave-<n>` | plans every root, runs the policy, decides the gate on the set digest and records the approval it uses, then hands each plan digest to the shares and changes nothing |
-| `apply-wave-<n>-share-<s>` | plans its part again and applies it if each digest matches what `apply-wave-<n>` decided; otherwise exits 4 and changes nothing |
+| `apply-wave-<n>-share-<s>` | plans its part again and applies each root whose digest matches what `apply-wave-<n>` decided; a root whose plan moved is named and not applied, and the job exits 4 |
 
 Shares run side by side as far as runners are free, and the next wave starts after the last of them. Each wave still has one gate with one ledger record and one approve command. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
 

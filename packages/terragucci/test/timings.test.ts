@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
 import { runStage } from "../src/report/stage";
 import { decodeTracesJson, decodeTracesProto, duration, rootTimings, SpanReceiver, type CollectedSpan } from "../src/report/spans";
-import { tmp, write } from "./helpers";
+import { git, tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
 
 // ── OTLP, by hand ────────────────────────────────────────────────────────────
@@ -353,6 +353,9 @@ describe("terragucci stage tf-apply names where each root's time went", () => {
       "a/main.tf": "", "a/plan.json": one, "a/spans.json": JSON.stringify(otlpJson(LOCKED)), "a/apply-spans.json": JSON.stringify(otlpJson(APPLIED)),
       "b/main.tf": "", "b/plan.json": one,
     });
+    // chant reads the wave's rules at a commit.
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
     try {

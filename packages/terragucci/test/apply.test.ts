@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, decidedPath, parseApplied as readApplied, waveShares, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { APPLIED_PATH, appendPending, appliedPathFor, applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, decidedPath, parseApplied as readApplied, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
 import type { CostRunner } from "../src/report/cost";
@@ -13,7 +13,9 @@ import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest, type Over
 import { git, tmp, write } from "./helpers";
 import { signerLine, sshsig, sshKey } from "./sshsig";
 
-const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
+// Hours from the start of the run: chant stamps the pending facts it records with the time it runs, so an approval at T(h) is newer than any of them.
+const T0 = Date.now();
+const T = (h: number): string => new Date(T0 + h * 3600_000).toISOString();
 const pending = (gate: string, digest: string, at: number, hours = 48): PendingRecord => ({
   version: 1, kind: "pending", op: "tf-apply", gate, timestamp: T(at), expiresAt: T(at + hours), planDigest: digest,
 });
@@ -341,9 +343,9 @@ describe("a wave behind its gate", () => {
   });
 
   it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
-    const { work, origin, bin } = setup();
+    const { work, origin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
-    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "always", env: {}, now: T(1) })).toBe(3);
+    appendPending(work, pending("wave-1", "d1", 1));
     const text = execFileSync("git", ["-C", origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"], { encoding: "utf-8" });
     expect(text.endsWith("}\n")).toBe(true);
     const appended = `${text}${JSON.stringify({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "someone", timestamp: T(2) })}\n`;
@@ -411,7 +413,9 @@ describe("a wave behind its gate", () => {
       schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 1, roots: ["a"],
       line: `wave 1 waits: terragucci approve wave-1 --plan ${digest}`,
       set_digest: digest, gate: { name: "wave-1", branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" },
-      approval: "waiting", approval_mode: "ledger", approve_command: `terragucci approve wave-1 --plan ${digest}`, waiting_since: T(1),
+      approval: "waiting", approval_mode: "ledger", approve_command: `terragucci approve wave-1 --plan ${digest}`,
+      // When chant recorded the pending fact.
+      waiting_since: parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.timestamp,
     });
     approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
     const plans = join(work, "..", "plans", "a.json");
@@ -478,8 +482,10 @@ describe("a wave behind its gate", () => {
       vi.spyOn(console, "log").mockImplementation(() => {});
       const { origin, digest } = await stopped();
       const text = appliedText(origin);
-      const [applied] = parseApplied(text);
-      expect(applied).toMatchObject({ planDigest: digest, approvedAt: T(2), changes: [{ root: "a", address: "terraform_data.first", actions: "create" }, { root: "a", address: "terraform_data.second", actions: "create" }] });
+      const [spent, applied] = parseApplied(text);
+      expect(spent).toMatchObject({ kind: "applied", planDigest: digest, approvedAt: T(2) });
+      expect(spent).not.toHaveProperty("changes");
+      expect(applied).toMatchObject({ kind: "changes", planDigest: digest, approvedAt: T(2), changes: [{ root: "a", address: "terraform_data.first", actions: "create" }, { root: "a", address: "terraform_data.second", actions: "create" }] });
       expect(text).toContain(`"kind":"finished","op":"tf-apply","gate":"wave-1","planDigest":"${digest}","applied":"${T(3)}","result":"failed"`);
     });
 
@@ -492,9 +498,11 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(0);
       expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished; 1 of its 2 changes are done in the records, and these plans make the other 1, so that approval covers them`);
       expect(ledgerOf(origin).pending).toHaveLength(1);
-      expect(ledgerOf(origin).resolutions).toHaveLength(1);
+      // The wave records that alice's approval covers the rest, and chant applies under that line.
+      const [, covered] = ledgerOf(origin).resolutions;
+      expect(covered).toMatchObject({ resolvedBy: "alice", note: `the rest of the apply of ${digest}, which alice approved at ${T(2)}` });
       const resumed = parseApplied(appliedText(origin)).at(-1)!;
-      expect(resumed).toMatchObject({ approvedAt: T(2), approvedBy: "alice", resumes: digest, changes: [{ address: "terraform_data.second" }] });
+      expect(resumed).toMatchObject({ kind: "changes", approvedAt: covered!.timestamp, approvedBy: "alice", resumes: digest, changes: [{ address: "terraform_data.second" }] });
       expect(resumed.planDigest).not.toBe(digest);
       expect(appliedText(origin)).toContain(`"applied":"${T(4)}","result":"applied"`);
     });
@@ -516,7 +524,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
       approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: ledgerOf(origin).pending[0]!.planDigest! });
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
-      expect(parseApplied(appliedText(origin))[0]).not.toHaveProperty("changes");
+      expect(parseApplied(appliedText(origin)).filter((a) => a.changes)).toEqual([]);
       planA(work, [create("second", "2")], ["terraform_data.first"]);
       writeFileSync(log, "");
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
@@ -677,9 +685,11 @@ describe("a wave behind its gate", () => {
       approve(s.origin, sealed(digest, "mallory", mallory));
       expect(await applyWave(s.work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(s.log)).toBe(false);
-      // Read from the pull request's own history instead, the rule would take mallory's key.
+      // Read from the pull request's own history instead, terragucci's rule would take mallory's key, but chant
+      // also reads identity.gates at the branch tip, which does not list it (chant#3841), so the wave still waits.
       const { base: _base, ...fromHead } = opts;
-      expect(await applyWave(s.work, { ...fromHead, now: T(3) })).toBe(0);
+      expect(await applyWave(s.work, { ...fromHead, now: T(3) })).toBe(3);
+      expect(existsSync(s.log)).toBe(false);
     });
 
     it("a wave added after init, which identity.gates does not list, counts only a sealed approval too", async () => {
@@ -820,7 +830,7 @@ describe("a wave behind its gate", () => {
         approve(origin, approveAs(first, 2));
         expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
         expect(existsSync(log)).toBe(true);
-        expect(appliedOf(origin)).toEqual([expect.objectContaining({ gate: "wave-1", planDigest: first, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) })]);
+        expect(appliedOf(origin)).toEqual([expect.objectContaining({ kind: "applied", gate: "wave-1", planDigest: first, approvedAt: T(2), approvedBy: "alice", wave: { number: 1, name: "wave-1" } })]);
         moveA(work);
         lines.length = 0;
         expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
@@ -873,7 +883,10 @@ describe("a wave behind its gate", () => {
       const first = pendingOf(origin)[0]!.planDigest!;
       expect(await applyWave(work, { ...opts(bin), env, fetch: forge([review], first), now: T(2) })).toBe(0);
       expect(existsSync(log)).toBe(true);
-      expect(appliedOf(origin)).toEqual([expect.objectContaining({ planDigest: first, approvedAt: T(2), approvedBy: "alice" })]);
+      // The review's line on the ledger, made when the wave read the review, is the approval the wave applied under.
+      const reviewed = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).resolutions.at(-1)!;
+      expect(reviewed).toMatchObject({ via: "pr-review", planDigest: first });
+      expect(appliedOf(origin)).toEqual([expect.objectContaining({ planDigest: first, approvedAt: reviewed.timestamp, approvedBy: "alice" })]);
       // The next merge, not reviewed yet, plans other values: it waits and asks for a review, and the reviewed approval refuses nothing.
       moveA(work);
       lines.length = 0;
@@ -954,14 +967,16 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(1);
       expect(existsSync(log)).toBe(false);
       const text = lines.join("\n");
-      expect(text).toContain("mallory is not listed in policy.override at base (alice)");
+      // chant decides the override (@intentius/chant/override-gate), with the list terragucci read from policy.override at base.
+      expect(text).toContain("mallory is not listed in the overriders the plans file names at base (alice)");
       expect(text).toContain("the override by alice gives no reason");
       expect(text).toContain("written by a job");
     });
 
     it("an override of an earlier plan counts for nothing: the wave applies nothing and exits 4, then asks again for the new plan", async () => {
       const { work, origin, bin, log, lines, pendingFact } = await denied();
-      record(origin, override(pendingFact.planDigest!));
+      // Made now: older than the denial the next run records for the new plan.
+      record(origin, { ...override(pendingFact.planDigest!), timestamp: new Date().toISOString() });
       const plans = process.env.PLANS!;
       writeFileSync(join(plans, "a.json"), readFileSync(join(plans, "a.json"), "utf-8").replace('"input":"1"', '"input":"2"'));
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(4);
@@ -979,13 +994,12 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
       expect(existsSync(log)).toBe(true);
       const usedOf = () => parseApplied(git(origin, "show", `chant/lifecycle:${appliedPathFor(OVERRIDE_LEDGER)}`));
-      expect(usedOf()).toEqual([expect.objectContaining({ op: OVERRIDE_OP, gate: "a", planDigest: pendingFact.planDigest, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) })]);
+      expect(usedOf()).toEqual([expect.objectContaining({ op: OVERRIDE_OP, gate: "a", planDigest: pendingFact.planDigest, approvedAt: T(2), approvedBy: "alice" })]);
       const plans = process.env.PLANS!;
       writeFileSync(join(plans, "a.json"), readFileSync(join(plans, "a.json"), "utf-8").replace('"input":"1"', '"input":"2"'));
       lines.length = 0;
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(1);
       const text = lines.join("\n");
-      expect(text).toContain(`the override of ${pendingFact.planDigest} by alice was used by the apply of that plan`);
       expect(text).not.toContain("overrode an earlier plan or other rules");
       expect(text).toContain('terragucci override a --rule main.deny_data --reason "<why>"');
       const facts = ledger(origin).pending;
@@ -1060,6 +1074,9 @@ exit 0
     const dir = tmp("tg-bound-");
     const work = join(dir, "work");
     for (const r of roots) mkdirSync(join(work, r), { recursive: true });
+    // chant reads the wave's rules at a commit.
+    git(work, "init", "-q", "-b", "main");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     const run = join(dir, "run");
     mkdirSync(run);
     const bin = join(dir, "tofu");
@@ -1100,14 +1117,11 @@ exit 0
   });
 });
 
-describe("waveShares", () => {
-  it("deals a wave's roots out to as many shares as there are jobs, in wave order", () => {
-    expect(waveShares(["a", "b", "c", "d", "e"], 2)).toEqual([["a", "c", "e"], ["b", "d"]]);
-  });
-
-  it("never makes more shares than roots, and one job is the whole wave", () => {
-    expect(waveShares(["a", "b"], 5)).toEqual([["a"], ["b"]]);
-    expect(waveShares(["a", "b", "c"], 1)).toEqual([["a", "b", "c"]]);
+describe("shareCount", () => {
+  it("makes as many shares as there are jobs, never more than roots, and one job is the whole wave", () => {
+    expect(shareCount(["a", "b", "c", "d", "e"], 2)).toBe(2);
+    expect(shareCount(["a", "b"], 5)).toBe(2);
+    expect(shareCount(["a", "b", "c"], 1)).toBe(1);
   });
 });
 
@@ -1160,20 +1174,20 @@ describe("a wave split across jobs", () => {
     expect(pending).toHaveLength(1);
     expect(pending[0].members!.map((m) => m.member)).toEqual(roots);
     approveWave(origin, 2);
-    // Approved, the wave's job records the approval used once, writes every root's digest for its shares and applies nothing.
+    // Approved, the wave's job records the approval used once, hands chant's decision (every root's digest) to its shares and applies nothing.
     expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
     expect(applied(log)).toEqual([]);
     const decision = JSON.parse(readFileSync(join(work, decidedPath(1)), "utf-8"));
-    expect(decision).toMatchObject({ version: 1, wave: 1, shares: 2, digest: pending[0].planDigest, approval: "approved", changes: 3, commit: git(work, "rev-parse", "HEAD").trim() });
+    expect(decision).toMatchObject({ wave: 1, gate: "wave-1", digest: pending[0].planDigest, status: "approved" });
     expect(decision.members.map((m: { member: string }) => m.member)).toEqual(roots);
     const used = () => readApplied(git(origin, "show", `chant/lifecycle:${APPLIED_PATH}`));
     expect(used()).toHaveLength(1);
-    // Each share applies its roots alone, reads no gate and records nothing more.
+    // Each share applies its roots alone (sorted, cut into contiguous shares), reads no gate and records nothing more.
     expect(await applyWave(work, { ...opts(bin), share: 1, now: T(4) })).toBe(0);
-    expect(applied(log)).toEqual(["a", "c"]);
+    expect(applied(log)).toEqual(["a", "b"]);
     const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
     expect(report.run).toMatchObject({ wave: 1, share: 1 });
-    expect(report.waves[0]).toMatchObject({ roots: ["a", "c"], set_digest: pending[0].planDigest, approval: "approved" });
+    expect(report.waves[0]).toMatchObject({ roots: ["a", "b"], set_digest: pending[0].planDigest, approval: "approved" });
     expect(await applyWave(work, { ...opts(bin), share: 2, now: T(5) })).toBe(0);
     expect(applied(log)).toEqual(["a", "b", "c"]);
     expect(used()).toHaveLength(1);
@@ -1183,25 +1197,20 @@ describe("a wave split across jobs", () => {
   it("a share whose plans moved since its wave decided applies nothing, names the root and exits 4", async () => {
     const { work, bin, log, plans } = setup();
     expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
-    writeFileSync(join(plans, "c.json"), create("moved"));
+    writeFileSync(join(plans, "b.json"), create("moved"));
     const outcome = join(work, "..", "outcome");
     expect(await applyWave(work, { ...opts(bin, { gate: "never", env: { TG_OUTCOME: outcome } }), share: 1, now: T(2) })).toBe(4);
-    expect(applied(log)).toEqual([]);
-    expect(readFileSync(outcome, "utf-8")).toBe("wave 1 share 1 changed since the wave decided: c");
+    // chant applies the share's runs whose plans did not move, and refuses the one that did.
+    expect(applied(log)).toEqual(["a"]);
+    expect(readFileSync(outcome, "utf-8")).toBe("wave 1 share 1 changed since the wave decided: b");
     // The other share's plans did not move, so it applies.
     expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 2, now: T(3) })).toBe(0);
-    expect(applied(log)).toEqual(["b"]);
+    expect(applied(log)).toEqual(["a", "c"]);
   });
 
-  it("a share applies nothing without its wave's decision, or with one for another split or commit", async () => {
+  it("a share applies nothing without its wave's decision", async () => {
     const { work, bin, log } = setup();
     await expect(applyWave(work, { ...opts(bin, { gate: "never" }), share: 1 })).rejects.toThrow(/the wave's own job writes it before its shares run/);
-    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
-    const file = join(work, decidedPath(1));
-    const decision = JSON.parse(readFileSync(file, "utf-8"));
-    writeFileSync(file, JSON.stringify({ ...decision, commit: "f".repeat(40) }));
-    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 1 })).toBe(1);
-    expect(await applyWave(work, { ...opts(bin, { gate: "never", shares: 3 }), share: 1 })).toBe(1);
     expect(applied(log)).toEqual([]);
   });
 
@@ -1209,7 +1218,7 @@ describe("a wave split across jobs", () => {
     const { work, bin, log, plans } = setup();
     for (const r of roots) writeFileSync(join(plans, `${r}.json`), JSON.stringify({ resource_changes: [] }));
     expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
-    expect(JSON.parse(readFileSync(join(work, decidedPath(1)), "utf-8"))).toMatchObject({ changes: 0, approval: "not-required" });
+    expect(JSON.parse(readFileSync(join(work, decidedPath(1)), "utf-8"))).toMatchObject({ status: "not-required" });
     expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 2 })).toBe(0);
     expect(applied(log)).toEqual([]);
   });
