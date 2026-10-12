@@ -1,15 +1,15 @@
 # Estate carving (design)
 
-Status: design for review. Nothing here is built, and no code starts until the user has reviewed this file. The site says nothing about carving.
+Status: approved 2026-10-07; revised 2026-10-12 to move resources with the shipped state migration (migration files and the `tf-migrate` gate) in place of `import` and `removed` blocks applied in two waves. Nothing here is built yet. The site says nothing about carving.
 
-Carving splits one large root (or Terragrunt unit) into several smaller ones without destroying or recreating anything in the cloud. Every stage runs as a job in the customer's CI or on a laptop, reads and writes only the customer's git and bucket, and needs no service of ours. Applying the split is the customer's own pipeline: a pull request, its plans, its gates and its approvals, the same as any other change.
+Carving splits one large root (or Terragrunt unit) into several smaller ones without destroying or recreating anything in the cloud. Every stage runs as a job in the customer's CI or on a laptop, reads and writes only the customer's git and bucket, and needs no service of ours. Applying the split is the customer's own pipeline: a pull request, its plans, the migration's gate and its approval, the same as any other state migration.
 
 | Stage | Command | Reads | Writes | Applies anything |
 |---|---|---|---|---|
 | 1. Survey | `terragucci carve survey` | each root's HCL, its state (read only), the reports in the bucket | `carve/survey.json` and a page in the bucket | no |
-| 2. Propose | `terragucci carve propose carve.yml` | a carve map, the source root, its state | a branch and a pull request | no |
-| 3. Verify | `stage tf-plan` with the carve check | the pull request's plans | the plan note and the report | no |
-| 4. Migrate | the pull request's own waves, behind gates | the approved plans | state, through the roots' own backends | yes, once a person approves each wave |
+| 2. Propose | `terragucci carve propose carve.yml` | a carve map and the source root's HCL | a branch and a pull request holding the new roots, the wiring and a migration file | no |
+| 3. Verify | `stage tf-plan`: the migration's proof plus the carve check | the pull request's plans and the migration's proof | the plan note and the report | no |
+| 4. Migrate | wave 1 of `stage tf-apply`, held on the `tf-migrate` gate | the approved migration digest | each root's state, under its lock, in one step | yes, once a person approves the digest |
 
 ## Stage 1: survey
 
@@ -19,17 +19,20 @@ The survey answers "which root is worth splitting, and along which line". It run
 |---|---|
 | resources and data sources | `show -json` of the state; with choudoufu, the `live-check -json` roster |
 | plan time, median of the last N plans | the `terragucci.report/v1` documents already in the bucket (`plan_seconds`, provider start-up, lock waits) |
-| blast radius | how many other roots read this one: `terraform_remote_state` data sources and Terragrunt `dependency` blocks that point at it |
+| blast radius inside the root | chant's Terraform graph (`TfGraph`, which `chant carve advise` builds from the HCL): how far a change to each block reaches, from the reverse index and transitive reachability of INTENTIUS/chant#2325 and the per-block radius of INTENTIUS/chant#2326 |
+| blast radius across roots | how many other roots read this one: `terraform_remote_state` data sources and Terragrunt `dependency` blocks that point at it |
 | providers and resource types | the state and the HCL |
-| candidate slices | connected components of the reference graph inside the root, with top-level module calls kept whole |
+| candidate slices | reference-closed sets over chant's graph, with each named cut and its direction (INTENTIUS/chant#3909); a module call is one node, so it stays whole |
 
-A slice is a set of top-level blocks (resources, data sources, module calls) whose references stay inside the set, apart from a few named cuts. The survey ranks candidate slices by plan time saved and by cuts needed, and writes a suggested `carve.yml` that a person edits.
+A slice is a set of top-level blocks (resources and module calls) whose references stay inside the set, apart from a few named cuts that all run one way. Data sources are not nodes in chant's graph; a slice copies each data source its blocks read. The survey ranks candidate slices by plan time saved and by cuts needed, and writes a suggested `carve.yml` that a person edits.
+
+The split of work follows chant's boundary. chant computes over the graph: components, reachability, cuts and closures, with folds contracted. terragucci owns the carve product: the plan times, the ranking, `carve.yml`, the wiring, the migration file and the pull request. INTENTIUS/chant#2325 is no longer blocked (its fixture, INTENTIUS/chant#2323, is closed); #2326 and #3909 build on it.
 
 The same measures feed a new rollout tip, `terragucci-big-root`, next to `terragucci-many-roots` in `packages/terragucci/src/tips/index.ts`: a root over a resource count or a median plan time gets the tip in its report, with a pointer to the survey. Like every tip it is advisory and outside every digest.
 
 ## Stage 2: propose
 
-`carve propose` reads a carve map and opens one pull request through the forge code `respond` already uses. It never applies, never touches state and never runs `chant approve`.
+`carve propose` reads a carve map and opens one pull request through chant's pr-forge, as `respond` does. It never applies, never touches state and never approves anything.
 
 ```yaml
 # carve.yml
@@ -41,41 +44,45 @@ into:
 
 | The pull request holds | Detail |
 |---|---|
-| a new root (or unit) per destination | the moved blocks, copied as written; the source's `terraform` block, backend with a new key, providers and the variables the blocks read |
-| `import` blocks in each destination | one per moved instance, with the ID read from the source's state; `for_each` instances get one block per key |
-| `removed` blocks in the source | `lifecycle { destroy = false }` for every moved block, so the source forgets and destroys nothing |
-| wiring for each cut reference | the side that keeps the referenced block gains an `output`; the other side reads it with `terraform_remote_state`, as the example's service roots read `platform`, or with a `dependency` block in a Terragrunt repo |
-| the apply order | `layers` in `terragucci.yml` (or the `dependency` blocks) so the side that is read applies first |
-| `MIGRATION.md` | the slices, every cut, the wave order, the window between waves and how to back out |
+| a new root (or unit) per destination | the moved blocks, cut from the source and copied as written; the source's `terraform` block with a new backend key, the providers and the variables the blocks read |
+| a migration file, `migrations/carve-<name>.yml` | one `moves` entry per destination, naming each moved block's address; the shipped migration moves every instance of each address, `for_each` and `count` keys included |
+| wiring for each cut reference | the side that is read gains an `output`, and the other side reads it with `terraform_remote_state`, as the example's service roots read `platform`, or with a `dependency` block in a Terragrunt repo |
+| the apply order | `layers` in `terragucci.yml` (or the `dependency` blocks) so the side that is read applies first in later changes |
+| a carve record, `carve/<name>.json` | the slices, every cut and its direction, and the migration's name, which verify reads |
+| the pull request's description | the slices, every cut, the moved sensitive attributes and how to back out |
 
-The carve unit is a top-level block. Moving part of a module call's resources is refused: the module is split first, as its own change. Propose also refuses a map whose cuts point both ways between two roots, since that makes a cycle no apply order can satisfy.
+The migration moves resources, not outputs, and its proof plans each root against its new state, so a cut read through an output needs that output in the read side's state before the carve's plan runs. When the read side is the source, propose opens the new outputs as a first pull request that applies like any change, and the carve pull request follows it. When the read side is a new root, which has no state until the migration writes one, propose wires the cut with a data source lookup of the moved resource instead, and refuses a type that has no data source.
+
+The carve unit is a top-level block. Moving part of a module call's resources is refused: the module is split first, as its own change. Propose also refuses a map whose cuts point both ways between two roots, since that makes a cycle no apply order can satisfy, and a root whose backend the migration does not write (a `cloud` block, or an `s3` backend without `use_lockfile`). Every destination is in the source's repo; carving into another repo waits on cross-estate work (#753).
 
 ## Stage 3: verify
 
-Verify is a check inside the plan stage, switched on when the pull request carries a `carve/` record from propose. It reads the plan JSON the job already saves and the report's named actions (`forget` and `import` are already in `NamedAction`).
+Most of verify ships today. The plan job proves each migration in the change: it builds each affected root's new state in the job, plans every root against it, requires no resource change and prints the digest. A moved block left out of the migration file shows up there as a destroy in the source or a create in a destination, and a moved block whose code changed shows up as an update; either fails the job, naming the address.
 
-| Root | Allowed in its plan | Anything else |
-|---|---|---|
-| source | `forget` for exactly the moved addresses; new outputs | fails `tf-plan`, naming the address and its action |
-| each destination | `import` for exactly the moved addresses, each with no attribute change; reads | fails `tf-plan` |
-| every root that reads a cut | no change | fails `tf-plan` |
+The carve check adds what the proof cannot see, switched on when the pull request carries a carve record:
 
-The check also compares the two lists: every address the source forgets is imported by exactly one destination, and nothing is imported that the source does not forget. A carve that passes verify is a pure move: the cloud sees no call that changes a resource.
+| Check | Anything else |
+|---|---|
+| the migration's addresses equal the blocks the carve record moves, each in exactly one destination | fails `tf-plan`, naming the address |
+| every root that reads a cut, other than the source and destinations, plans no change | fails `tf-plan`, naming the root and its change |
+| the plan note marks the source's destroys and the destinations' creates, which the roots' own plans show before the move is written, as the migration's move | a destroy or create of an address the migration does not move fails `tf-plan` |
+
+A carve that passes verify is a pure move: the cloud sees no call that changes a resource.
 
 ## Stage 4: person-run migration
 
-The migration is the pull request's own apply, in two gated waves, with the gates of the repo's approval mode (`ledger`, `pr-review` or `sealed`). Each approval binds its wave's plan digest, so a plan that moved after approval applies nothing.
+The migration is terragucci's shipped state migration. Nothing in this stage is new code.
 
 | Step | What runs | Who |
 |---|---|---|
-| 1 | a state backup of the source and each destination (`state pull`), written to the bucket under the run's key | the wave's job, before it applies |
-| 2 | wave 1: the side that is read (the source when moved blocks read what stays, the destination when the reverse) | applies once a person approves its digest |
-| 3 | wave 2: the other side | applies once a person approves its digest |
-| 4 | a plan of every root the carve touched, which must show no changes | the job after wave 2 |
+| 1 | after the merge, wave 1 of `stage tf-apply` runs through `chant run wave`, proves the migration again, and holds on its own gate, `tf-migrate <name>`, through chant's `CHANT_HOLD`; every later wave waits on wave 1 | the apply job |
+| 2 | `terragucci approve <name> --plan <digest>` approves that digest and nothing else, with `--sign` under `approval: sealed`; a pull request review does not approve a migration under any approval mode | a person |
+| 3 | wave 1 again, started by `terragucci approve` or the resume job: it takes each state's lock, refuses with exit 4 if a state moved since the plan, writes the new states (each destination first), plans every root again and requires no change | the apply job |
+| 4 | the record: each root's version before and after in `_gates/tf-migrate/done.jsonl` on `chant/lifecycle`, in the report and in the audit trail | the apply job |
 
-Between the waves the resources are either in no state (source first: orphaned, nothing destroys them) or in two (destination first: double-owned). `MIGRATION.md` names which. The roots on both sides stay locked from the first plan until wave 2 has applied, so no other pull request plans or applies them in the window. That lock is `locks: plan` (#399); until it exists the migration needs `apply.when: pull-request` and its apply-time locks, which Terragrunt repos get with #400.
+A carve into several destinations is one migration file with a move per destination. A change that carries two migrations applies both in one job (#909). Because the write is one step under every state's lock, there is no window in which a resource is in no state, and no lock to hold across waves. A write that stops half way leaves a resource in both states, never in neither.
 
-Backing out: before wave 2, revert the pull request and re-plan; the backup restores a state that a failed wave left half written. After wave 2, carving the slice back is another carve.
+Backing out: before the merge, close the pull request. After the migration applied, `terragucci migrate revert carve-<name>` writes a revert migration from the record, which goes through the same proof and approval with the reverted code; it needs backends that keep versions. Carving the slice back later is another carve.
 
 ## choudoufu slicing as an input
 
@@ -83,59 +90,58 @@ choudoufu already does the hardest part for its own estates and gives stock user
 
 | choudoufu piece | How carving uses it |
 |---|---|
-| `live-mv -from-estate` | carving a choudoufu estate needs no `import` and no `removed`: propose moves the blocks and the migration wave runs `live-mv -from-estate` per resource in the destination, a tag write with choudoufu's own refusals (third-party owner, a move that already ran). choudoufu's `carve-by-retag` claim proves the move; terragucci calls `live-mv` nowhere today. |
+| `live-mv -from-estate` | carving between two choudoufu estates writes the same migration file; the shipped migration proves the move with `live-mv -dry-run` and, once approved, runs `live-mv -from-estate` per resource in the destination, with choudoufu's own refusals (third-party owner, a move that already ran). A move from a root with a state into an estate is refused: the state is adopted first. |
 | `live-check -json` | the survey's roster with no cloud access: every instance's address, type and rung, and every cross-estate reference a data source's marker filters make visible |
 | `live-import` without `-approve` | an optional preflight for a stock root: lists what is in the cloud and not in the state, so a carve does not start from a state that already misses resources |
 
 ## Claims that would prove each stage
 
-Each claim runs on the Forgejo stack against `example/`, with a scenario patch that carves `aws_sqs_queue.jobs` and `aws_sqs_queue.dead_letter` out of a service root.
+Each claim runs on the Forgejo stack against `example/`, with a scenario patch that carves `aws_sqs_queue.jobs` and `aws_sqs_queue.dead_letter` out of a service root. A person grants them with `just grant carve` (or `just grant carve/<part>`), and the granted names then run with `just claims carve/<part>...`.
 
 | Claim | Says | BREAK |
 |---|---|---|
-| `carve-survey` | the survey lists every root with its resources, median plan time and readers, and suggests a slice whose references stay inside it | the slice suggestion ignores references, and the claim sees a slice that cuts an unnamed reference |
-| `big-root-tip` | a root over the resource threshold gets the `terragucci-big-root` tip in its report, and a small root does not | the threshold check is removed and the small root gets the tip |
-| `carve-propose` | the pull request holds the new root, an import per moved instance, a removed block per moved block, the output and remote state for the cut, and `MIGRATION.md`, and nothing is applied | propose drops one import block, and the claim names the instance with no import |
-| `carve-verify` | the source plans only forgets and the destination only imports, and `tf-plan` passes | the patch changes one attribute of a moved queue, and `tf-plan` fails naming its address |
-| `carve-migrate` | wave 1 waits for its approval, then wave 2 waits for its own, a backup of each state is in the bucket, and every touched root then plans no changes | wave 2 is approved without wave 1, and the claim sees it refused |
-| `carve-lock` | a second pull request that plans a carved root during the window is answered as locked, naming the carve | the lock is skipped and the second plan runs |
-| `tg-carve` | the same carve in `example-terragrunt/`, wired with a `dependency` block | the `dependency` block is left out, and verify fails on the unresolved reference |
-| `cdf-carve` | with `binary: choudoufu` the survey reads the roster from `live-check -json`, and the migration runs `live-mv -from-estate`, after which both estates plan clean | the retag is skipped, and both plans show the resource owned twice |
+| `carve/survey` | the survey lists every root with its resources, median plan time and readers, and suggests a slice whose references stay inside it apart from cuts it names | the slice suggestion ignores references, and the claim sees a slice that cuts an unnamed reference |
+| `carve/big-root-tip` | a root over the resource threshold gets the `terragucci-big-root` tip in its report, and a small root does not | the threshold check is removed and the small root gets the tip |
+| `carve/propose` | the pull request holds the new root, a migration file naming every moved block, the output and remote state for the cut, and the carve record, and nothing is applied | propose leaves one moved block out of the migration file, and the claim names the block with no move |
+| `carve/verify` | the migration's proof passes, the carve check finds the migration's addresses equal to the moved blocks, and no reader of a cut plans a change | the patch changes one attribute of a moved queue, and `tf-plan` fails naming its address |
+| `carve/migrate` | wave 1 holds on `tf-migrate carve-<name>` until its digest is approved, then every root the carve touched plans no changes and `done.jsonl` records each root's version before and after | the source's state is written after the approval, and wave 1 refuses with exit 4 naming the root |
+| `carve/terragrunt` | the same carve in `example-terragrunt/`, wired with a `dependency` block | the `dependency` block is left out, and verify fails on the unresolved reference |
+| `carve/choudoufu` | with `binary: choudoufu` the survey reads the roster from `live-check -json`, and the migration runs `live-mv -from-estate`, after which both estates plan clean | an AWS resource sets `tags` without `ignore_tags`, and the claim sees choudoufu's stamped tags stripped |
 
 ## Sizes
 
 | Piece | Size | Mostly |
 |---|---|---|
-| survey and `terragucci-big-root` | M, about 600 lines and 3 days | reference graph over parsed HCL, reading reports from the bucket |
-| propose | L, about 1,500 lines and 8 days | writing HCL by block ranges, import IDs per resource type, cut wiring, Terragrunt units |
-| verify | S, about 300 lines and 2 days | a check over the plan JSON and named actions the report already builds |
-| migration | M, about 500 lines and 4 days | state backup step, wave order from the carve record, the lock across waves |
-| choudoufu path | M, about 400 lines and 3 days | the roster reader and a `live-mv` step |
-| claims | M, 8 claims with BREAKs, about 5 days | scenario patches for both examples |
+| survey and `terragucci-big-root` | S, about 400 lines and 2 days | reading chant's graph, its cuts and radius, and the reports in the bucket; the graph work itself is chant's (#2325, #2326, #3909) |
+| propose | M, about 900 lines and 5 days | writing HCL by block ranges, the migration file, cut wiring and its ordering, Terragrunt units |
+| verify | S, about 150 lines and 1 day | the address comparison and the readers' plans; the no-change proof ships today |
+| migration | none | the shipped state migration; propose writes its file |
+| choudoufu path | S, about 150 lines and 1 day | the roster reader; `live-mv` already runs through migration files |
+| claims | M, 7 claims with BREAKs, about 4 days | scenario patches for both examples |
 
-Total about 25 days. Survey and verify are useful alone and could ship first; propose is the risky piece.
+Total about 13 days, down from 25. Survey and verify are useful alone and could ship first; propose is the risky piece.
 
 ## Risks
 
 | Risk | Where it bites | Answer in this design |
 |---|---|---|
-| orphaned resource | source forgot it, destination never imported it | verify compares the two lists; wave 2 re-runs from the backup |
-| double-owned resource | both states hold it after wave 1 | the lock across waves; wave 2 forgets it; verify refuses a second importer |
-| a resource type with no import ID | `import` cannot name it | propose refuses that block by type and names it |
-| `for_each` and `count` keys | an import per key, and keys that come from a variable the source sets | propose writes one import per instance from state and refuses keys it cannot resolve statically |
-| secrets moving with state | the destination's state now holds the moved resources' sensitive values | `MIGRATION.md` lists the moved sensitive attributes; the destination's backend key needs the same access policy |
-| cut references | an output the source never had, a remote state read that couples roots | outputs and `terraform_remote_state` follow the example's own pattern; a two-way cut is refused |
-| locking both sides | another change lands on either root mid-migration | `locks: plan` from the first plan to wave 2 |
-| binary versions | `removed` blocks and `import` blocks with `for_each` need Terraform 1.7 or OpenTofu 1.7 | propose reads the root's `required_version` and refuses below 1.7 |
+| a write that stops half way | the job stops between one state's write and the next | each destination is written first, so a resource is in both states and never in neither; the record names each version before, and `migrate revert` puts them back where versions are kept |
+| a state written after the approval | another apply lands on the source or a destination before wave 1 writes | the digest binds each state's version; wave 1 refuses with exit 4, naming the root, and every later wave waits on wave 1 |
+| backends that keep no versions | `pg`, `kubernetes`, `consul` and most `http` backends | the digest binds each state's contents; the migration cannot be reverted, and the pull request's description says so |
+| secrets moving with state | the destination's state now holds the moved resources' sensitive values | the pull request's description lists the moved sensitive attributes; the destination's backend key needs the same access policy |
+| cut references | an output the source never had, a remote state read that couples roots, an output the migration does not move | outputs and `terraform_remote_state` follow the example's own pattern, in a first pull request when the source is read; a data source lookup when a new root is read; a two-way cut is refused |
 | provider aliases and `moved` history | blocks that use an aliased provider, or old `moved` blocks in the source | propose copies the provider blocks the moved blocks use and keeps the source's `moved` blocks where they are |
-| choudoufu stamped tags (untested) | an AWS resource whose `tags` argument is set may strip the ownership tags choudoufu stamps, unless the provider has `ignore_tags` | a `cdf-carve` BREAK that sets `tags` without `ignore_tags` before any choudoufu carve is advertised |
+| chant's graph misses a reference | a reference the HCL parser cannot see | the migration's proof fails the plan on any change the move would cause, whatever the survey suggested |
+| choudoufu stamped tags (untested) | an AWS resource whose `tags` argument is set may strip the ownership tags choudoufu stamps, unless the provider has `ignore_tags` | the `carve/choudoufu` BREAK, before any choudoufu carve is advertised |
 
 ## Questions for the review
+
+Answered in the 2026-10-07 review; the wave order and wiring answers changed with the 2026-10-12 revision.
 
 | Question | This design's answer |
 |---|---|
 | Is the carve unit a top-level block? | yes; module internals are split first, as their own change |
-| Does propose write the new roots, or only the plan of them? | it writes them, in a pull request a person edits before merging |
-| Cut wiring for plain Terraform | `terraform_remote_state`, as the example does; data source lookups are the alternative |
-| Wave order | the side that is read applies first |
-| Ship order | survey and tip, then verify, then propose and migration |
+| Does propose write the new roots, or only the plan of them? | it writes them, with the migration file, in a pull request a person edits before merging |
+| Cut wiring for plain Terraform | `terraform_remote_state`, as the example does, with the read side's outputs applied first; a data source lookup when the read side is a new root |
+| Wave order | the migration writes every root in wave 1, under each state's lock, in one step; later waves apply in `layers` order |
+| Ship order | survey and tip, then verify, then propose |
