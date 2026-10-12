@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addressWarnings, applyLayers, remoteStateReads, stateOf, unaddressedStates } from "../src/detect";
+import { addressWarnings, applyLayers, backendConfigArgs, remoteStateReads, stateOf, terragruntRemoteState, unaddressedStates, unitStates } from "../src/detect";
 import { pgDatabase, stateAddress } from "../src/state-address";
 import { tmp, write } from "./helpers";
 
@@ -113,5 +113,109 @@ describe("a state the code does not address", () => {
   it("a root whose own state is unaddressed is named only when some root reads state", () => {
     const repo = write(tmp(), { "a/main.tf": owner("s3", ""), "b/main.tf": owner("s3", "") });
     expect(addressWarnings(repo, ["a", "b"])).toEqual([]);
+  });
+});
+
+describe("an address from the files that supply it", () => {
+  const yml = (args: string): string => `env:\n  TF_CLI_ARGS_init: "${args}"\n`;
+  const s3Reader = reader("s3", '    bucket = "b"\n    key    = "net.tfstate"');
+
+  it("a -backend-config file terragucci.yml's env passes to init gives the backend its key, and the reader follows it", () => {
+    const repo = write(tmp(), {
+      "terragucci.yml": yml("-backend-config=backend.hcl"),
+      "net/main.tf": owner("s3", ""),
+      "net/backend.hcl": '# where net keeps its state\nbucket = "b"\nkey    = "net.tfstate"\n',
+      "app/main.tf": s3Reader,
+      "app/backend.hcl": 'path = "../state/app.tfstate"\n',
+    });
+    expect(stateOf(repo, "net").own).toEqual({ bucket: "b", key: "net.tfstate" });
+    expect(applyLayers(repo, ["net", "app"])).toEqual([["net"], ["app"]]);
+    expect(remoteStateReads(repo, ["net", "app"]).get("app")).toEqual([{ name: "up", upstream: "net", repeated: false }]);
+    expect(unaddressedStates(repo, ["net", "app"])).toEqual([]);
+  });
+
+  it("a key=value -backend-config, and a later setting over an earlier one and over the block", () => {
+    const repo = write(tmp(), {
+      "terragucci.yml": `env:\n  TF_CLI_ARGS: "-backend-config=bucket=old"\n  TF_CLI_ARGS_init: "-no-color -backend-config=bucket=b -backend-config key=net.tfstate"\n`,
+      "net/main.tf": owner("s3", '    key = "elsewhere.tfstate"'),
+      "app/main.tf": s3Reader,
+    });
+    expect(stateOf(repo, "net").own).toEqual({ bucket: "b", key: "net.tfstate" });
+    expect(applyLayers(repo, ["net", "app"])).toEqual([["net"], ["app"]]);
+  });
+
+  it("a local backend's path from the file, resolved against the root", () => {
+    const repo = write(tmp(), {
+      "terragucci.json": JSON.stringify({ env: { TF_CLI_ARGS_init: "-backend-config=backend.hcl" } }),
+      "net/main.tf": owner("local", ""),
+      "net/backend.hcl": 'path = "../state/net.tfstate"\n',
+      "app/main.tf": reader("local", '    path = "../state/net.tfstate"'),
+      "app/backend.hcl": 'path = "../state/app.tfstate"\n',
+    });
+    expect(stateOf(repo, "net").own).toEqual({ key: "local:state/net.tfstate" });
+    expect(stateOf(repo, "app").own).toEqual({ key: "local:state/app.tfstate" });
+    expect(applyLayers(repo, ["net", "app"])).toEqual([["net"], ["app"]]);
+  });
+
+  it("without a -backend-config in terragucci.yml, a file beside the root is named, not read", () => {
+    const repo = write(tmp(), { "net/main.tf": owner("s3", ""), "net/backend.hcl": 'bucket = "b"\nkey = "net.tfstate"\n', "net/prod.tfbackend": 'key = "net.tfstate"\n', "app/main.tf": s3Reader });
+    expect(stateOf(repo, "net").own).toBeUndefined();
+    expect(stateOf(repo, "net").ownUnresolved).toBe(
+      "its s3 backend names no key in the code (a -backend-config file supplies it); net/backend.hcl, net/prod.tfbackend are beside it, but no -backend-config in terragucci.yml's env names them",
+    );
+    expect(applyLayers(repo, ["net", "app"])).toEqual([["net", "app"]]);
+  });
+
+  it("a -backend-config file that does not supply the key, or is not there, is named", () => {
+    const repo = write(tmp(), { "terragucci.yml": yml("-backend-config=backend.hcl -backend-config=../shared.hcl"), "net/main.tf": owner("s3", ""), "net/backend.hcl": 'bucket = "b"\n', "app/main.tf": s3Reader });
+    expect(stateOf(repo, "net").ownUnresolved).toBe(
+      "its s3 backend names no key in the code (a -backend-config file supplies it); the -backend-config file net/backend.hcl from terragucci.yml's env does not supply it either; terragucci.yml's env names -backend-config shared.hcl, which is not in the repo",
+    );
+  });
+
+  it("a repo with none of these resolves as before", () => {
+    const repo = write(tmp(), { "terragucci.yml": "env:\n  FOO: bar\n", "net/main.tf": owner("s3", ""), "app/main.tf": s3Reader });
+    expect(stateOf(repo, "net").ownUnresolved).toBe("its s3 backend names no key in the code (a -backend-config file supplies it)");
+  });
+
+  it("reads -backend-config values from a command line", () => {
+    expect(backendConfigArgs(`-input=false -backend-config=a.hcl --backend-config "key=x y" -backend-config='bucket=b' -backend-config`)).toEqual(["a.hcl", "key=x y", "bucket=b"]);
+  });
+});
+
+describe("a Terragrunt unit's state from its remote_state block", () => {
+  const root = (key: string): string => `remote_state {\n  backend = "s3"\n  generate = {\n    path      = "backend.tf"\n    if_exists = "overwrite_terragrunt"\n  }\n  config = {\n    bucket = "tg-state"\n    key    = "${key}"\n    region = "us-east-1"\n  }\n}\n`;
+  const unit = (include = 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n'): string => `${include}\nterraform {\n  source = "../../modules/thing"\n}\n`;
+
+  it("an included remote_state, with path_relative_to_include() the unit's path from the included file", () => {
+    const repo = write(tmp(), { "root.hcl": root("${path_relative_to_include()}/terraform.tfstate"), "live/vpc/terragrunt.hcl": unit(), "live/vpc/main.tf": owner("s3", "") });
+    expect(terragruntRemoteState(repo, "live/vpc")).toEqual({ ref: { bucket: "tg-state", key: "live/vpc/terraform.tfstate" } });
+    expect(stateOf(repo, "live/vpc").own).toEqual({ bucket: "tg-state", key: "live/vpc/terraform.tfstate" });
+    expect(unitStates(repo, ["live/vpc"]).get("live/vpc")).toEqual({ state: { bucket: "tg-state", key: "live/vpc/terraform.tfstate" }, external: [] });
+  });
+
+  it("a named include, a root file below the repo's top, and remote_state in the unit itself", () => {
+    const repo = write(tmp(), {
+      "live/root.hcl": root('envs/${path_relative_to_include("root")}.tfstate'),
+      "live/prod/app/terragrunt.hcl": unit(),
+      "live/dev/app/terragrunt.hcl": `include "root" {\n  path = "\${find_in_parent_folders("root.hcl")}"\n}\n\n${root('own/${path_relative_to_include("root")}')}`,
+    });
+    expect(terragruntRemoteState(repo, "live/prod/app")?.ref).toEqual({ bucket: "tg-state", key: "envs/prod/app.tfstate" });
+    expect(terragruntRemoteState(repo, "live/dev/app")?.ref).toEqual({ bucket: "tg-state", key: "own/dev/app" });
+  });
+
+  it("a remote_state that is not plain strings says why; a unit without one, and a plain root, hold what they held", () => {
+    const repo = write(tmp(), {
+      "root.hcl": root("${local.env}/${path_relative_to_include()}"),
+      "a/terragrunt.hcl": unit(),
+      "b/terragrunt.hcl": unit('include {\n  path = "../other.hcl"\n}\n'),
+      "other.hcl": "locals {}\n",
+      "c/main.tf": owner("s3", '    bucket = "b"\n    key = "c"'),
+    });
+    expect(terragruntRemoteState(repo, "a")).toEqual({ why: "the Terragrunt remote_state block in root.hcl: its s3 key is an expression, not a plain string" });
+    expect(stateOf(repo, "a").ownUnresolved).toBe("the Terragrunt remote_state block in root.hcl: its s3 key is an expression, not a plain string");
+    expect(terragruntRemoteState(repo, "b")).toBeUndefined();
+    expect(terragruntRemoteState(repo, "c")).toBeUndefined();
+    expect(unitStates(repo, ["a", "b"])).toEqual(new Map([["a", { external: [] }], ["b", { external: [] }]]));
   });
 });

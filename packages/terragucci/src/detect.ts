@@ -4,9 +4,10 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
-import { ConfigError, forgeFromHost, type Binary, type ForgeName } from "./config";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
+import { ConfigError, findConfig, forgeFromHost, type Binary, type ForgeName } from "./config";
 import { atmosStateReads } from "./atmos";
 import { literal, stateAddress, type Attr } from "./state-address";
 
@@ -261,25 +262,184 @@ function attr(body: string, name: string): string | undefined {
   return body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
 }
 
-/** An HCL block's attribute: its string, `null` when it is written as anything but a plain string, undefined when it is not written. */
+/**
+ * An HCL block's attribute: its string, `null` when it is written as anything
+ * but a plain string, undefined when it is not written. With `subst`, a
+ * template's interpolations are read whole (quotes inside them included) and
+ * `subst` rewrites the string before it is judged plain.
+ */
 const hclAttr =
-  (body: string): Attr =>
+  (body: string, subst?: (s: string) => string): Attr =>
   (name) => {
     const m = body.match(new RegExp(`(?<![\\w.-])${name}\\s*=(?!=)\\s*(.)`));
     if (!m) return undefined;
     if (m[1] !== '"') return null;
     const start = m.index! + m[0].length;
     let out = "";
+    let depth = 0;
     for (let i = start; i < body.length; i++) {
       if (body[i] === "\\") {
         out += body[++i] ?? "";
         continue;
       }
-      if (body[i] === '"') return literal(out) ?? null;
+      if (subst && body[i] === "$" && body[i + 1] === "{") depth++;
+      else if (subst && depth > 0 && body[i] === "}") depth--;
+      if (body[i] === '"' && depth === 0) return literal(subst ? subst(out) : out) ?? null;
       out += body[i];
     }
     return null;
   };
+
+// ── addresses from the files that supply them ───────────────────────────────
+
+/** Later layers over earlier ones, over `base`: the last layer that writes the attribute, else `base`. */
+const overlaid =
+  (base: Attr, layers: Attr[]): Attr =>
+  (name) => {
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const v = layers[i]!(name);
+      if (v !== undefined) return v;
+    }
+    return base(name);
+  };
+
+/** Each `-backend-config` value in a command line: `-backend-config=<v>`, `--backend-config=<v>`, or the flag and then its value. */
+export function backendConfigArgs(args: string): string[] {
+  const words = [...args.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)].map((m) => m[1]?.replace(/\\(.)/g, "$1") ?? m[2] ?? m[3]!);
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const m = /^--?backend-config(?:=(.*))?$/.exec(words[i]!);
+    if (!m) continue;
+    const v = m[1] ?? words[++i];
+    if (v !== undefined) out.push(v.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1"));
+  }
+  return out;
+}
+
+/**
+ * The `-backend-config` arguments every root's init takes: those in
+ * `TF_CLI_ARGS` and then `TF_CLI_ARGS_init` of terragucci.yml's `env`, which
+ * every job runs with. A config that cannot be read, or one in TypeScript,
+ * names none.
+ */
+export function initBackendConfigs(repo: string): string[] {
+  let env: unknown;
+  try {
+    const path = findConfig(repo);
+    if (!path || path.endsWith(".ts")) return [];
+    const text = readFileSync(path, "utf-8");
+    const raw = path.endsWith(".json") ? JSON.parse(text) : text.trim() === "" ? {} : parseYAMLDocument(text);
+    env = objectOf(raw)?.env;
+  } catch {
+    return [];
+  }
+  const e = objectOf(env) ?? {};
+  return [e.TF_CLI_ARGS, e.TF_CLI_ARGS_init].flatMap((v) => (typeof v === "string" ? backendConfigArgs(v) : []));
+}
+
+/** The files beside a root that hold backend settings by convention: `backend.hcl`, `backend.tfvars` and `*.tfbackend`. */
+function conventionFiles(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+      .filter((n) => n === "backend.hcl" || n === "backend.tfvars" || n.endsWith(".tfbackend"))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The backend settings a root's init takes besides its backend block, from
+ * its `-backend-config` arguments: each `key=value`, and each file, read as
+ * HCL key/value pairs and resolved against the root's directory, where init
+ * runs. `files` names each file read, relative to the repo; `missing`, each
+ * that is not there.
+ */
+function backendConfigLayers(repo: string, root: string, args: string[]): { layers: Attr[]; files: string[]; missing: string[] } {
+  const out: { layers: Attr[]; files: string[]; missing: string[] } = { layers: [], files: [], missing: [] };
+  const dir = join(repo, root);
+  for (const a of args) {
+    const eq = a.indexOf("=");
+    if (eq >= 0) {
+      // Terraform reads a value with `=` in it as one setting, not a file.
+      const key = a.slice(0, eq).trim();
+      const value = a.slice(eq + 1);
+      out.layers.push((name) => (name === key ? (literal(value) ?? null) : undefined));
+      continue;
+    }
+    const abs = isAbsolute(a) ? a : resolve(dir, a);
+    const rel = posix(relative(repo, abs)) || ".";
+    if (!existsSync(abs) || !statSync(abs).isFile()) {
+      out.missing.push(rel);
+      continue;
+    }
+    out.files.push(rel);
+    out.layers.push(hclAttr(stripComments(readFileSync(abs, "utf-8"))));
+  }
+  return out;
+}
+
+/** Terragrunt's unit file. */
+const UNIT_FILE = "terragrunt.hcl";
+
+/** The file an include's `path` names, from the unit's directory: `find_in_parent_folders`, `get_repo_root()` and a path, or a plain path. */
+function includedFile(repo: string, unitDir: string, path: string): string | undefined {
+  const find = /^"?\$?\{?\s*find_in_parent_folders\(\s*(?:"([^"]+)")?\s*\)\s*\}?"?$/.exec(path);
+  if (find) {
+    const name = find[1] ?? UNIT_FILE;
+    const top = resolve(repo);
+    for (let d = dirname(resolve(unitDir)); ; d = dirname(d)) {
+      if (existsSync(join(d, name))) return join(d, name);
+      if (d === top || dirname(d) === d) return undefined;
+    }
+  }
+  const fromRoot = /^"\$\{\s*get_repo_root\(\s*\)\s*\}\/([^"$]+)"$/.exec(path);
+  if (fromRoot) return join(repo, fromRoot[1]!);
+  const plain = /^"([^"$]+)"$/.exec(path);
+  return plain ? resolve(unitDir, plain[1]!) : undefined;
+}
+
+/**
+ * A Terragrunt unit's state, from the `remote_state` block that configures
+ * its backend: the unit's own `terragrunt.hcl`, else the first file it
+ * includes that declares one. `path_relative_to_include()` in its config is
+ * the unit's path from the included file's directory. Undefined when the
+ * directory has no `terragrunt.hcl`, or no file it reads declares
+ * `remote_state`.
+ */
+export function terragruntRemoteState(repo: string, unit: string): { ref?: StateRef; why?: string } | undefined {
+  const dir = join(repo, unit);
+  const own = join(dir, UNIT_FILE);
+  if (!existsSync(own)) return undefined;
+  const text = stripComments(readFileSync(own, "utf-8"));
+  const includes: { name: string; file: string }[] = [];
+  for (const m of text.matchAll(/^\s*include(?:\s+"([^"]*)")?\s*\{/gm)) {
+    const path = /(?:^|[{\s])path\s*=\s*(.+?)\s*$/m.exec(blockBody(text, m.index!).replace(/^[^{]*\{/, "").replace(/\}$/, ""))?.[1];
+    const file = path ? includedFile(repo, dir, path) : undefined;
+    if (file && existsSync(file)) includes.push({ name: m[1] ?? "", file });
+  }
+  const sources = [{ file: own, text, include: includes[0] }, ...includes.map((i) => ({ file: i.file, text: stripComments(readFileSync(i.file, "utf-8")), include: i }))];
+  for (const src of sources) {
+    const m = /^\s*remote_state\s*=?\s*\{/m.exec(src.text);
+    if (!m) continue;
+    const where = posix(relative(repo, src.file));
+    const body = blockBody(src.text, m.index!);
+    // The unit's path from the directory of the include named, or of the include in play when none is named.
+    const relTo = (name: string | undefined): string | undefined => {
+      const inc = name === undefined ? src.include : includes.find((i) => i.name === name);
+      if (!inc) return name === undefined ? "." : undefined;
+      return posix(relative(dirname(inc.file), dir)) || ".";
+    };
+    const subst = (s: string): string => s.replace(/\$\{\s*path_relative_to_include\(\s*(?:"([^"]*)")?\s*\)\s*\}/g, (all, name: string | undefined) => relTo(name) ?? all);
+    const type = hclAttr(body)("backend");
+    if (type === null || type === undefined) return { why: `the Terragrunt remote_state block in ${where} names its backend with an expression, not a plain string` };
+    const config = /\bconfig\s*=\s*\{/.exec(body);
+    if (!config) return { why: `the Terragrunt remote_state block in ${where} takes its config from an expression, not an object` };
+    const a = addressed(type, hclAttr(blockBody(body, config.index!).replace(/^[^{]*\{/, ""), subst), unit);
+    return a.ref ? { ref: a.ref } : { why: `the Terragrunt remote_state block in ${where}: ${a.why}` };
+  }
+  return undefined;
+}
 
 const objectOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 /** A block in Terraform's JSON syntax: an object, or a list of objects whose first is taken. */
@@ -305,7 +465,11 @@ function addressed(type: string | null | undefined, get: Attr, root: string): { 
  * `terraform.cloud`) and `data.terraform_remote_state.<name>.config`, each a
  * block or a list of them.
  */
-function jsonState(raw: string, root: string): RootStateCode & { declared: boolean } {
+function jsonState(
+  raw: string,
+  root: string,
+  backend: (type: string, get: Attr) => { ref?: StateRef; why?: string } = (type, get) => addressed(type, get, root),
+): RootStateCode & { declared: boolean } {
   let doc: unknown;
   const out: RootStateCode & { declared: boolean } = { reads: [], unresolved: [], declared: false };
   try {
@@ -318,7 +482,8 @@ function jsonState(raw: string, root: string): RootStateCode & { declared: boole
     const backends: [string, unknown][] = Object.entries(objectOf(objectOf(t)?.backend) ?? {});
     if (objectOf(t)?.cloud !== undefined) backends.push(["cloud", objectOf(t)!.cloud]);
     for (const [type, v] of backends) {
-      const own = addressed(type, jsonAttr(firstOf(v)), root);
+      // A cloud block takes no -backend-config.
+      const own = type === "cloud" ? addressed(type, jsonAttr(firstOf(v)), root) : backend(type, jsonAttr(firstOf(v)));
       out.declared = true;
       if (own.ref) {
         out.own = own.ref;
@@ -345,7 +510,7 @@ function jsonState(raw: string, root: string): RootStateCode & { declared: boole
  * Terraform's JSON syntax), each through ./state-address.ts. A root that
  * declares no backend keeps its state in `terraform.tfstate` beside its code.
  */
-export function stateOf(repo: string, root: string): RootStateCode {
+export function stateOf(repo: string, root: string, initArgs: string[] = initBackendConfigs(repo)): RootStateCode {
   const out: RootStateCode = { reads: [], unresolved: [] };
   let declared = false;
   const own = (o: { ref?: StateRef; why?: string }): void => {
@@ -355,16 +520,35 @@ export function stateOf(repo: string, root: string): RootStateCode {
       delete out.ownUnresolved;
     } else out.ownUnresolved = o.why;
   };
+  // A backend block's settings, with the -backend-config the root's init takes over them, as init merges them.
+  const supplied = initArgs.length ? backendConfigLayers(repo, root, initArgs) : undefined;
+  const backend = (type: string, get: Attr): { ref?: StateRef; why?: string } => {
+    const a = addressed(type, supplied ? overlaid(get, supplied.layers) : get, root);
+    if (a.ref) return a;
+    // Name the files tried, and the ones beside the root that init is not given.
+    const one = (list: string[], singular: string, plural: string): string => (list.length === 1 ? singular : plural);
+    const read = supplied?.files ?? [];
+    const missing = supplied?.missing ?? [];
+    const beside = conventionFiles(join(repo, root))
+      .map((n) => posix(root === "." ? n : `${root}/${n}`))
+      .filter((b) => !read.includes(b));
+    const notes = [
+      ...(read.length ? [`the -backend-config ${one(read, "file", "files")} ${read.join(", ")} from terragucci.yml's env ${one(read, "does", "do")} not supply it either`] : []),
+      ...(missing.length ? [`terragucci.yml's env names -backend-config ${missing.join(", ")}, which ${one(missing, "is", "are")} not in the repo`] : []),
+      ...(beside.length ? [`${beside.join(", ")} ${one(beside, "is", "are")} beside it, but no -backend-config in terragucci.yml's env names ${one(beside, "it", "them")}`] : []),
+    ];
+    return notes.length ? { why: `${a.why}; ${notes.join("; ")}` } : a;
+  };
   for (const f of tfFiles(join(repo, root))) {
     if (isJson(f)) {
-      const j = jsonState(readFileSync(f, "utf-8"), root);
+      const j = jsonState(readFileSync(f, "utf-8"), root, backend);
       if (j.declared) own(j.own ? { ref: j.own } : { why: j.ownUnresolved });
       out.reads.push(...j.reads);
       out.unresolved.push(...j.unresolved);
       continue;
     }
     const text = stripComments(readFileSync(f, "utf-8"));
-    for (const m of text.matchAll(/\bbackend\s+"([^"]+)"\s*\{/g)) own(addressed(m[1], hclAttr(blockBody(text, m.index!)), root));
+    for (const m of text.matchAll(/\bbackend\s+"([^"]+)"\s*\{/g)) own(backend(m[1], hclAttr(blockBody(text, m.index!))));
     for (const m of text.matchAll(/^\s*cloud\s*\{/gm)) own(addressed("cloud", hclAttr(blockBody(text, m.index!)), root));
     for (const m of text.matchAll(/\bdata\s+"terraform_remote_state"\s+"([^"]+)"\s*\{/g)) {
       const body = blockBody(text, m.index!);
@@ -375,6 +559,13 @@ export function stateOf(repo: string, root: string): RootStateCode {
     }
   }
   if (!declared) own(addressed("local", () => undefined, root));
+  // A Terragrunt unit's remote_state configures the backend init runs with, over its blocks: it writes the backend file, or passes its config as -backend-config.
+  const tg = terragruntRemoteState(repo, root);
+  if (tg?.ref) own(tg);
+  else if (tg?.why) {
+    delete out.own;
+    out.ownUnresolved = tg.why;
+  }
   return out;
 }
 
@@ -384,7 +575,8 @@ export function stateOf(repo: string, root: string): RootStateCode {
  * or for_each), which a linked plan leaves on the applied state.
  */
 export function remoteStateReads(repo: string, roots: string[]): Map<string, { name: string; upstream: string; repeated: boolean }[]> {
-  const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
+  const args = initBackendConfigs(repo);
+  const states = new Map(roots.map((r) => [r, stateOf(repo, r, args)]));
   const out = new Map<string, { name: string; upstream: string; repeated: boolean }[]>(roots.map((r) => [r, []]));
   for (const [root, { reads }] of states) {
     for (const read of reads) {
@@ -404,7 +596,8 @@ export function remoteStateReads(repo: string, roots: string[]): Map<string, { n
  * line either up with the root at the other end.
  */
 export function unaddressedStates(repo: string, roots: string[]): { root: string; own?: string; reads: { name: string; why: string }[] }[] {
-  const states = roots.map((r) => [r, stateOf(repo, r)] as const);
+  const args = initBackendConfigs(repo);
+  const states = roots.map((r) => [r, stateOf(repo, r, args)] as const);
   const anyReads = states.some(([, s]) => s.reads.length > 0 || s.unresolved.length > 0);
   return states
     .map(([root, s]) => ({ root, ...(anyReads && s.ownUnresolved ? { own: s.ownUnresolved } : {}), reads: s.unresolved }))
@@ -459,16 +652,34 @@ function withEstate(repo: string, root: string, s: { own?: StateRef; reads: Remo
  * across projects.
  */
 export function rootStates(repo: string, roots: string[]): Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }> {
-  const states = new Map(roots.map((r) => [r, withEstate(repo, r, stateOf(repo, r))]));
+  const args = initBackendConfigs(repo);
+  const states = new Map(roots.map((r) => [r, withEstate(repo, r, stateOf(repo, r, args))]));
   const held = [...states.values()].flatMap((s) => (s.own ? [s.own] : []));
   const out = new Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }>();
   for (const [root, { own, reads }] of states) {
     const external = reads
       .filter((r) => !held.some((o) => o !== own && sameState(o, r)))
       .map((r) => ({ data: r.name, ...(r.bucket !== undefined ? { bucket: r.bucket } : {}), key: r.key }));
-    out.set(root, { ...(own ? { state: { ...(own.bucket !== undefined ? { bucket: own.bucket } : {}), key: own.key } } : {}), external });
+    out.set(root, { ...(own ? { state: addressOf(own) } : {}), external });
   }
   return out;
+}
+
+const addressOf = (s: StateRef): StateAddress => ({ ...(s.bucket !== undefined ? { bucket: s.bucket } : {}), key: s.key });
+
+/**
+ * Each Terragrunt unit's own state, from the `remote_state` block it reads
+ * (terragruntRemoteState), for the estate page to match a read from another
+ * project. A unit whose remote_state is not all plain strings, or that has
+ * none, holds no state here.
+ */
+export function unitStates(repo: string, units: string[]): Map<string, { state?: StateAddress; external: (StateAddress & { data: string })[] }> {
+  return new Map(
+    units.map((u) => {
+      const ref = terragruntRemoteState(repo, u)?.ref;
+      return [u, { ...(ref ? { state: addressOf(ref) } : {}), external: [] }];
+    }),
+  );
 }
 
 /**
