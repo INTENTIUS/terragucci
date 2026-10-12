@@ -1,9 +1,9 @@
 /**
- * The one check a pull request runs: scripts/diff-guard.sh, in seconds.
+ * A pull request's check that the squash undoes nothing: scripts/diff-guard.sh,
+ * in seconds.
  *
  * `just ci` renders this into .github/workflows/diff-guard.yml. The test suite
- * and the validation stack run on main's pushes (ci/pipeline.ts), so a pull
- * request waits for nothing heavy. What a merge can break without a test
+ * runs beside it (ci/pipeline.ts). What a merge can break without a test
  * noticing is a squash that undoes a commit main already has, as a rebase
  * that keeps a stale copy of a file does; this check refuses that. The label
  * "revert" lets a pull request that reverts on purpose through.

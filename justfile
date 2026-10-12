@@ -11,20 +11,32 @@ typecheck:
 
 [doc("Lint the declarations with chant.")]
 lint:
-    npx chant lint ci
-    npx chant lint pages
-    npx chant lint image-ci
-    npx chant lint publish
-    npx chant lint images
-    npx chant lint ci-red
-    npx chant lint diff-guard
-    npx chant lint observability
-    npx chant lint scale
-    bash -n stack/smoke.sh
+    #!/usr/bin/env bash
+    # chant lint takes one path, so each directory gets its own run. They run
+    # side by side; each one's output is printed whole, in order.
+    set -uo pipefail
+    logs="$(mktemp -d -t terragucci-lint-XXXX)"
+    trap 'rm -rf "$logs"' EXIT
+    dirs=(ci pages image-ci publish images ci-red diff-guard observability scale)
+    for d in "${dirs[@]}"; do
+      ( npx chant lint "$d" >"$logs/$d.log" 2>&1; echo $? >"$logs/$d.rc" ) &
+    done
+    wait
+    rc=0
+    for d in "${dirs[@]}"; do
+      cat "$logs/$d.log"
+      if [ "$(cat "$logs/$d.rc")" != 0 ]; then echo "  chant lint $d failed"; rc=1; fi
+    done
+    bash -n stack/smoke.sh || rc=1
+    exit $rc
 
-[doc("Run the unit tests.")]
-test:
-    npx vitest run --passWithNoTests
+[doc("Run the unit tests, after building the bundle the bundle's own tests run. Arguments go to vitest.")]
+test *args: build-cli
+    npx vitest run --passWithNoTests {{args}}
+
+[doc("Run one of TOTAL slices of the unit tests, as each of CI's test jobs does.")]
+test-shard index total="3":
+    just test --shard={{index}}/{{total}}
 
 [doc("Score the docs with the sentences prose linter.")]
 lint-docs strictness="2" limit="8":
@@ -44,8 +56,11 @@ bundle-check: build-cli
 provider-test:
     cd terraform-provider-terragucci && test -z "$(gofmt -l .)" && go vet ./... && go test ./...
 
-[doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle and the provider. What CI runs.")]
-check: typecheck lint bundle-check test provider-test lint-docs tutorial-check
+[doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial and the rendered workflows. CI's static job.")]
+check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check
+
+[doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle, the provider and the rendered workflows. What CI runs: its static job and its test jobs.")]
+check: check-static test
 
 # ── this repo's workflows ──────────────────────────────────────────────────
 
@@ -89,58 +104,67 @@ ci-check:
     #!/usr/bin/env bash
     # GitHub reads the YAML, so the rendered file is committed. This gate keeps
     # the TypeScript the source of truth: a hand edit to the YAML fails here.
-    set -euo pipefail
-    out="$(mktemp -t terragucci-ci-XXXX.yml)"
-    trap 'rm -f "$out"' EXIT
-    rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml"; do
-      src="${pair%%:*}"; committed="${pair#*:}"
-      npx chant build "$src" -o "$out" --format yaml >/dev/null
-      if diff -u "$committed" "$out"; then
-        echo "  ✓ $committed matches $src/pipeline.ts"
+    # Every render writes into its own place under one temp dir and they run
+    # side by side; the comparisons then run in order.
+    set -uo pipefail
+    out="$(mktemp -d -t terragucci-ci-XXXX)"
+    trap 'rm -rf "$out"' EXIT
+    # render NAME COMMAND...: run COMMAND in the background, its output in $out/NAME.log.
+    render() { local name="$1"; shift; ( "$@" >"$out/$name.log" 2>&1; echo $? >"$out/$name.rc" ) & }
+    # rendered NAME: whether NAME's render succeeded; prints its output when it did not.
+    rendered() {
+      [ "$(cat "$out/$1.rc")" = 0 ] && return 0
+      cat "$out/$1.log"; echo "  rendering $1 failed"; return 1
+    }
+    # same COMMITTED RENDERED SOURCE: compare one committed file with its render.
+    same() {
+      if diff -u "$1" "$2"; then
+        echo "  ✓ $1 matches $3"
       else
-        echo "  $committed is not what $src/pipeline.ts renders. Run 'just ci' and commit the result."
-        rc=1
+        echo "  $1 is not what $3 renders. Run 'just ci' and commit the result."
+        return 1
       fi
+    }
+    workflows=("ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml")
+    for pair in "${workflows[@]}"; do
+      src="${pair%%:*}"
+      render "$src" npx chant build "$src" -o "$out/$src.yml" --format yaml
     done
     # The Dockerfiles: the docker lexicon writes them beside its (empty) compose output.
-    dir="$(mktemp -d -t terragucci-images-XXXX)"
-    npx chant build images -o "$dir/compose.yml" --format yaml >/dev/null
-    for f in "$dir"/Dockerfile.*; do
-      name="$(basename "$f")"
-      if diff -u "images/$name" "$f"; then
-        echo "  ✓ images/$name matches images/images.ts"
-      else
-        echo "  images/$name is not what images/images.ts renders. Run 'just ci' and commit the result."
-        rc=1
-      fi
-    done
-    rm -rf "$dir"
+    mkdir "$out/images"
+    render images npx chant build images -o "$out/images/compose.yml" --format yaml
     # The stack's collector and Prometheus configs, from observability/.
-    pout="$out.prometheus"
-    npx chant build observability --lexicon-output "otel=$out" --lexicon-output "prometheus=$pout" --format yaml >/dev/null
-    if diff -u stack/observability/collector.yaml "$out"; then
-      echo "  ✓ stack/observability/collector.yaml matches observability/collector.ts"
-    else
-      echo "  stack/observability/collector.yaml is not what observability/collector.ts renders. Run 'just ci' and commit the result."
-      rc=1
-    fi
-    if diff -u stack/observability/prometheus.yml "$pout"; then
-      echo "  ✓ stack/observability/prometheus.yml matches observability/prometheus.ts"
-    else
-      echo "  stack/observability/prometheus.yml is not what observability/prometheus.ts renders. Run 'just ci' and commit the result."
-      rc=1
-    fi
+    render observability npx chant build observability --lexicon-output "otel=$out/collector.yaml" --lexicon-output "prometheus=$out/prometheus.yml" --format yaml
     # The reports front door's template, which the site offers for download.
-    npx chant build front-door -o "$out" --format json >/dev/null
-    if diff -u docs-site/public/reports-front-door.json "$out"; then
-      echo "  ✓ docs-site/public/reports-front-door.json matches front-door/stack.ts"
+    render front-door npx chant build front-door -o "$out/front-door.json" --format json
+    # The dashboards, rules and Grafana datasources the stack's Grafana and Prometheus read.
+    render dashboards npx tsx scripts/render-dashboards.ts --check
+    wait
+    rc=0
+    for pair in "${workflows[@]}"; do
+      src="${pair%%:*}"; committed="${pair#*:}"
+      if rendered "$src"; then same "$committed" "$out/$src.yml" "$src/pipeline.ts" || rc=1; else rc=1; fi
+    done
+    if rendered images; then
+      for f in "$out/images"/Dockerfile.*; do
+        same "images/$(basename "$f")" "$f" images/images.ts || rc=1
+      done
     else
-      echo "  docs-site/public/reports-front-door.json is not what front-door/stack.ts renders. Run 'just ci' and commit the result."
       rc=1
     fi
-    # The dashboards, rules and Grafana datasources the stack's Grafana and Prometheus read.
-    npx tsx scripts/render-dashboards.ts --check || rc=1
+    if rendered observability; then
+      same stack/observability/collector.yaml "$out/collector.yaml" observability/collector.ts || rc=1
+      same stack/observability/prometheus.yml "$out/prometheus.yml" observability/prometheus.ts || rc=1
+    else
+      rc=1
+    fi
+    if rendered front-door; then
+      same docs-site/public/reports-front-door.json "$out/front-door.json" front-door/stack.ts || rc=1
+    else
+      rc=1
+    fi
+    cat "$out/dashboards.log"
+    [ "$(cat "$out/dashboards.rc")" = 0 ] || rc=1
     exit $rc
 
 # ── the published site ─────────────────────────────────────────────────────
