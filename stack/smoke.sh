@@ -19585,13 +19585,17 @@ claim_notify/webhook() {
   # chant.notify/v1 body from terragucci naming the project, forgejo, the
   # commit pushed, wave 1, canary/one, the digest and an id, whose detail (the
   # outcome) says waiting with the digest the job's terragucci approve command
-  # names, the gate, mode ledger and that command.
-  # BREAK: HOOK_KEY holds another key than the receiver's, so the signature
-  # does not verify.
+  # names, the gate, mode ledger and that command. chant's notify signs and
+  # posts the event; this part holds what terragucci adds: the config keys,
+  # the pipeline mapping their secrets into the job, when it sends, the
+  # X-Terragucci headers and the outcome it carries.
+  # BREAK: the pushed pipeline maps no TERRAGUCCI_WEBHOOK_KEY into the jobs,
+  # so the job has no key, and chant's notify, which never posts an event
+  # unsigned, posts nothing.
   log() { echo "[smoke notify-webhook] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/notify-webhook" name="tgs-hook-$STAMP" key="smoke-hook-$STAMP" sent wf sha reqs hook digest rc=0
+  local work repo="$USER/notify-webhook" name="tgs-hook-$STAMP" key="smoke-hook-$STAMP" wf sha reqs hook digest rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo notify-webhook || { drop_work "$work"; return 1; }
   printf 'notify:\n  webhook: HOOK_URL\n  webhook_key: HOOK_KEY\n' >> "$work/tree/terragucci.yml"
@@ -19599,9 +19603,11 @@ claim_notify/webhook() {
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
   # shellcheck disable=SC2016 # the expression the forge expands
   grep -qF 'TERRAGUCCI_WEBHOOK_KEY: '"'"'${{ secrets.HOOK_KEY }}'"'" "$wf" || { log "the apply jobs do not map HOOK_KEY"; drop_work "$work"; return 1; }
-  sent="$key"
-  [ -z "${BREAK:-}" ] || sent="another-$key"
-  for s in HOOK_URL:"http://$name:8790/hook" HOOK_KEY:"$sent"; do
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak '/TERRAGUCCI_WEBHOOK_KEY:/d' "$wf" && rm -f "$wf.bak"
+    ! grep -q 'TERRAGUCCI_WEBHOOK_KEY:' "$wf" || { log "the BREAK did not cut the key's mapping"; drop_work "$work"; return 1; }
+  fi
+  for s in HOOK_URL:"http://$name:8790/hook" HOOK_KEY:"$key"; do
     api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "${s#*:}" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/${s%%:*}" \
       || { log "could not set the ${s%%:*} secret"; drop_work "$work"; return 1; }
   done
