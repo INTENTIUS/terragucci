@@ -1,16 +1,27 @@
 ---
-title: Changes in 0.4.7
-description: "terragucci 0.4.7, released 2026-10-10."
+title: Changes in 0.4.8
+description: "terragucci 0.4.8, released 2026-10-12."
 ---
 
-Release `0.4.7` is on npm as `@intentius/terragucci@0.4.7`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.7) lists every change.
+Release `0.4.8` is on npm as `@intentius/terragucci@0.4.8`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.8) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.7 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.8 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
-## Since 0.4.7
+## In 0.4.8
+
+0.4.8 fixes a security issue: in 0.4.7 and earlier, the code of a pull request re-planned with `/terragucci plan` could get a token the apply role trusts, or leave files in the Terragrunt cache that the apply jobs restore. Upgrade every repo that has a re-plan job.
+
+| What | Where |
+|---|---|
+| A re-plan trades its OIDC token for the plan identities before the pull request's code runs, so that code holds no token the apply role trusts. With `oidc.azure` it plans as before and warns in its log | [Re-plan](/terragucci/reference/threat-model/#re-plan) |
+| A re-plan restores the Terragrunt cache and saves none, so what a pull request's code leaves in `.terragrunt-cache` never reaches an apply job | [Re-plan](/terragucci/reference/threat-model/#re-plan) |
+| `sources` refuses module and provider sources outside an allow list before `init`, and checks what `init` fetched and locked before the plan | [Allow only listed sources](/terragucci/guides/write-a-policy/#allow-only-listed-sources) |
+| A change outside every root plans the roots it reaches: var files, symlinks, `terragucci.yml` settings and the synth command | [Changes outside every root](/terragucci/reference/report/#changes-outside-every-root) |
+| State reads resolve when the address comes from a `-backend-config` file or a Terragrunt `remote_state` block | [Addresses outside the backend block](/terragucci/guides/track-cross-state-edges/#addresses-outside-the-backend-block) |
+| Parallel Terraform plans on roots with no lock file share one provider cache with one download | [Pipeline](/terragucci/reference/pipeline/) |
 
 - Changed for webhook receivers: the event `notify.webhook` gets is chant's [`chant.notify/v1`](/terragucci/reference/notify-event/), with the stage's outcome in `detail`, and its signature covers `<timestamp>.<body>`, where `X-Terragucci-Timestamp` carries the timestamp. A receiver that checks the old signature over the body alone refuses every event until it is updated ([Headers](/terragucci/reference/notify-event/#headers)).
 
