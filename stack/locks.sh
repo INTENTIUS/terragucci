@@ -43,6 +43,9 @@ unlock_mutex() { rm -rf "$SMOKE_LOCKS/.mutex"; }
 try_lock() {
   # A holder names a run, and a claim is <area>/<part>: the slash would be a
   # directory under the resource, so it becomes a dot, as in the logs' names.
+  # A resource can name a claim too (claim-<area>/<part>), and its slash becomes
+  # a dot the same way, so every hold sits one level down, where the sweep of
+  # dead holders, unlock_holder and release_mine look.
   local holder="${1//\//.}" l res mode f p busy=""
   shift
   lock_mutex
@@ -52,7 +55,7 @@ try_lock() {
     if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then rm -f "$f"; fi
   done
   for l in "$@"; do
-    res="${l%!}"; mode=s; [ "$res" = "$l" ] || mode=x
+    res="${l%!}"; mode=s; [ "$res" = "$l" ] || mode=x; res="${res//\//.}"
     for f in "$SMOKE_LOCKS/$res"/*.s "$SMOKE_LOCKS/$res"/*.x; do
       [ -f "$f" ] || continue
       case "$f" in "$SMOKE_LOCKS/$res/$holder".[sx]) continue ;; esac
@@ -71,7 +74,7 @@ try_lock() {
   done
   if [ -z "$busy" ]; then
     for l in "$@"; do
-      res="${l%!}"; mode=s; [ "$res" = "$l" ] || mode=x
+      res="${l%!}"; mode=s; [ "$res" = "$l" ] || mode=x; res="${res//\//.}"
       mkdir -p "$SMOKE_LOCKS/$res"
       echo "$$" >"$SMOKE_LOCKS/$res/$holder.$mode"
     done
@@ -116,7 +119,7 @@ mark_waiting() { # holder, lock... : leave a .w marker for each lock wanted alon
   shift
   lock_mutex
   for l in "$@"; do
-    case "$l" in *!) mkdir -p "$SMOKE_LOCKS/${l%!}"; echo "$$" >"$SMOKE_LOCKS/${l%!}/$holder.w" ;; esac
+    case "$l" in *!) l="${l%!}"; l="${l//\//.}"; mkdir -p "$SMOKE_LOCKS/$l"; echo "$$" >"$SMOKE_LOCKS/$l/$holder.w" ;; esac
   done
   unlock_mutex
 }
