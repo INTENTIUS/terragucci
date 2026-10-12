@@ -1624,9 +1624,10 @@ claim_waves/jobs() {
     log "after wave 2's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; rc=1; }
     [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected every root to have state"; rc=1; }
-    # Wave 2's roots in wave order, dealt out in turn: share 1 gets five and three, share 2 four and two.
+    # Wave 2's roots sorted and cut into contiguous shares, as chant cuts them
+    # (#906): share 1 gets five and four, share 2 three and two.
     for s in 1 2; do
-      want="$([ $s = 1 ] && echo "fleet/five fleet/three" || echo "fleet/four fleet/two")"
+      want="$([ $s = 1 ] && echo "fleet/five fleet/four" || echo "fleet/three fleet/two")"
       got="$(job_log "$RUN_ID" "apply-wave-2-share-$s" | sed -n 's#.*applied \(fleet/[a-z]*\): .*#\1#p' | sort | tr '\n' ' ' | sed 's/ $//')"
       log "apply-wave-2-share-$s applied: ${got:-nothing}"
       [ "$got" = "$want" ] || { log "apply-wave-2-share-$s should have applied $want alone"; rc=1; }
@@ -1700,8 +1701,9 @@ claim_approval/sealed() {
     [ -z "$applied" ] || { log "a root applied on an approval no listed key sealed"; rc=1; }
   fi
   if [ $rc = 0 ]; then
-    grep -q "an approval does not count: the approval by smoke-approver is not signed" <<<"$logs" || { log "the run did not say the unsealed approval does not count"; rc=1; }
-    grep -q "an approval does not count: the seal by smoke-approver does not verify" <<<"$logs" || { log "the run did not say the agent's seal does not verify"; rc=1; }
+    # The refusals read as chant's gate-decision words them since #894.
+    grep -q "an approval does not count: the approval of gate wave-1 by smoke-approver carries no seal" <<<"$logs" || { log "the run did not say the unsealed approval does not count"; rc=1; }
+    grep -q "an approval does not count: the seal does not verify for smoke-approver against .chant/allowed_signers at base" <<<"$logs" || { log "the run did not say the agent's seal does not verify"; rc=1; }
     grep -q -- "--sign" <<<"$logs" || { log "the approval command the run printed has no --sign"; rc=1; }
   fi
   if [ $rc = 0 ]; then
@@ -2455,6 +2457,19 @@ claim_affected/tofu() {
   return $rc
 }
 
+# The example's services read their environment's platform state, so a pull
+# request on it plans them only while floci holds that state. floci keeps
+# nothing across a restart, but the example repo on Forgejo outlives one:
+# without this a restarted floci reads as a note with no groups.
+example_applied() {
+  local env
+  [ -z "${SMOKE_AWS:-}" ] || return 0
+  for env in dev prod staging; do
+    curl -fsS -o /dev/null "$FLOCI/shop-terraform-state/envs/$env/platform.tfstate" 2>/dev/null \
+      || { log "floci holds no state for envs/$env/platform (floci restarted since the example was applied?); run 'just example up --fresh' first"; return 1; }
+  done
+}
+
 claim_note/grouped() {
   # A pull request on the example with module-bump, which reaches the twelve
   # service roots. Its plan job must post one plan note whose first line names
@@ -2465,6 +2480,7 @@ claim_note/grouped() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local repo="$USER/example" branch=smoke/grouped work sha pr rc=0 deadline state notes body roots want root groups
+  example_applied || return 1
   want="$(for e in dev prod staging; do for s in email orders payments search; do echo "envs/$e/$s"; done; done | sort | paste -sd, -)"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
@@ -3213,6 +3229,10 @@ claim_rollout/tofu() {
   [ -n "${BREAK:-}" ] && printf 'respond:\n  rollout: "off"\n' >> "$tree/terragucci.yml"
   out="$(cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu 2>&1)" || { echo "$out" >&2; stop; return; }
   if [ -f "$tree/$wf" ]; then log "init wrote $wf"; else log "init wrote no $wf"; fi
+  # The tag goes up with main, so this push is git's own, not push_tree's: the
+  # pipeline is pointed at this tree's images here, or the release's image
+  # runs a pipeline this tree wrote.
+  local_images "$tree" || { stop; return; }
   ( cd "$tree" && git init -q -b main && git remote add origin "$remote" && git add -A \
     && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat: three roots on modules/network 0.1.0" \
     && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m "modules/network 0.1.0" \
@@ -9269,7 +9289,7 @@ claim_approval/at_base() {
   fi
   if [ $rc = 0 ]; then
     grep -q "approval sealed (approval: sealed in the config at base)" <<<"$logs" || { log "the switch was not judged sealed at base"; rc=1; }
-    grep -q "an approval does not count: the approval by smoke-approver is not signed" <<<"$logs" || { log "the run did not say the unsigned approval does not count"; rc=1; }
+    grep -q "an approval does not count: the approval of gate wave-1 by smoke-approver carries no seal" <<<"$logs" || { log "the run did not say the unsigned approval does not count"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "approval-at-base: the next merge")"
@@ -11489,7 +11509,7 @@ claim_choudoufu/rows_takeover() {
   log() { echo "[smoke cdf-rows-takeover] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local name=cdf-rows-takeover repo="$USER/cdf-rows-takeover" work estate queue sha1 sha2 run1 run2 i s1 s2 ev seq log2 got rc=0 suffix="${TG_IMAGE_SUFFIX:-}"
+  local name=cdf-rows-takeover repo="$USER/cdf-rows-takeover" work estate queue sha1 sha2 run1 run2 i s1 s2 ev seq killed log2 got rc=0 suffix="${TG_IMAGE_SUFFIX:-}"
   docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
@@ -11539,13 +11559,20 @@ claim_choudoufu/rows_takeover() {
   got="$(rows_visibility "$queue")"
   [ "$got" = 411 ] || { log "the first run's call did not land: the queue is at '$got'"; cleanup "$run1" "$run2"; return 1; }
   rows_kill_run "$repo" "$run1"
+  # What is held once the first run's container is gone is all the first
+  # run's: the second takes over only after the forge says the first ended.
+  killed="$(curl -fsS "$CDF_CTL/held" | jq -r '[.[] | select(.sent | not) | .seq | tostring] | join(" ")')"
   for i in $(seq 1 60); do ends "$run1" && break; sleep 2; done
   log "run $run1, killed after 411 landed while it held the queue: $(rows_run_status "$repo" "$run1")"
   ends "$run1" || { log "run $run1 did not end after its job was killed"; cleanup "$run1" "$run2"; return 1; }
-  # What the killed run left held is never let through.
-  for seq in $(curl -fsS "$CDF_CTL/held" | jq -r '.[] | select(.sent | not) | .seq'); do curl -fsS -o /dev/null -X POST "$CDF_CTL/drop?seq=$seq" || true; done
+  # Hold only SetQueueAttributes again. What the killed run left held is
+  # never let through. What the second run sent once it took over, under the
+  # wide hold, goes on: dropped, its record store reads the 503 as an outage.
   curl -fsS -o /dev/null -X POST -G "$CDF_CTL/hold" --data-urlencode 're=^/$' --data-urlencode methods=POST \
     --data-urlencode 'target=SetQueueAttributes' --data-urlencode 'markers="411","422"' || true
+  for seq in $killed; do curl -fsS -o /dev/null -X POST "$CDF_CTL/drop?seq=$seq" || true; done
+  seq="$(curl -fsS "$CDF_CTL/held" | jq -r '[.[] | select(.sent | not) | .seq | tostring] | join(",")')"
+  [ -z "$seq" ] || curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=$seq" || true
   # 4. The second run takes the row over, and its apply's re-read refuses.
   for i in $(seq 1 60); do ends "$run2" && break; sleep 3; done
   if ! ends "$run2"; then
@@ -12746,6 +12773,7 @@ claim_note/diff() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local repo="$USER/example" branch=smoke/note-diff work wf sha pr rc=0 deadline state notes body groups line before
+  example_applied || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example up' first"; drop_work "$work"; return 1; }
