@@ -179,6 +179,7 @@ trap 'cleanup_works; exit 143' TERM
 CLAIMS='boot/tofu|the example boots and deploys locally|
 check/tofu|tf-check fails an unformatted root and names the file|
 affected/tofu|only the roots a change touches are planned|
+affected/outside-roots|a change outside every root plans the roots that read it: a shared var file TF_CLI_ARGS names plans the roots that read it, a file a symlink points at plans the root that links it, a version for envs/prod/** in terragucci.yml plans those roots only, a new synth command plans every root, and a policy, approval mode or step added at head plans nothing, since they are read at the base|
 note/grouped|one note groups many plans|
 report/tofu|the report is JSON and HTML, and links every root to its full plan|
 report/highlight|destroys and outliers are open, identical groups are folded|
@@ -2520,6 +2521,134 @@ claim_affected/tofu() {
   [ "$got" = "$want" ] || { log "planned $got, not $want"; rc=1; }
   drop_work "$work"
   [ $rc = 0 ] && log "envs/dev/platform changed: it and the four dev services that read its state planned, nothing else"
+  return $rc
+}
+
+# The cases of affected/outside-roots, in the order it runs them. Each is a
+# change outside every root's directory, made on a tree of
+# fixtures/affected-outside-roots against the commit before it, and the roots
+# tf-plan must plan for it.
+OUTSIDE_CASES="var-files symlink config-keys policy-at-base synth-command"
+
+# One case: its tree, its change, tf-plan in the tofu CI image with the
+# bundle given, and the roots it planned against the roots it must plan.
+# Returns 0 when they match, 1 when they do not, 2 when the case could not
+# be set up. Reads $work and log from the claim.
+outside_case() { # case, bundle, image
+  local name="$1" bundle="$2" image="$3" tree base want got r code=0 version
+  tree="$work/$name/tree"
+  mkdir -p "$tree"
+  if [ "$name" = synth-command ]; then
+    cp -R "$HERE/fixtures/affected-outside-roots/synth/." "$tree/"
+  else
+    cp -R "$HERE/fixtures/affected-outside-roots/plain/." "$tree/"
+    ln -s ../../../shared/common.tf "$tree/envs/prod/db/common.tf" || return 2
+  fi
+  git -C "$tree" init -q -b main
+  git -C "$tree" add -A && git -C "$tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "outside-roots: base" || return 2
+  base="$(git -C "$tree" rev-parse HEAD)"
+  case "$name" in
+    var-files)
+      # Every prod root reads envs/prod/shared.tfvars through TF_CLI_ARGS_plan in env.
+      echo 'size = 2' > "$tree/envs/prod/shared.tfvars"
+      want="envs/prod/app,envs/prod/db" ;;
+    symlink)
+      # Only envs/prod/db links shared/common.tf.
+      perl -pi -e 's/"ops"/"platform"/' "$tree/shared/common.tf"
+      want="envs/prod/db" ;;
+    config-keys)
+      # A version for envs/prod/** alone: the release the image carries, so nothing installs.
+      version="$(docker run --rm "$image" tofu version -json 2>/dev/null | jq -r .terraform_version)"
+      [ -n "$version" ] && [ "$version" != null ] || { log "$name: could not read the image's tofu version"; return 2; }
+      printf 'version:\n  "envs/prod/**": %s\n' "$version" >> "$tree/terragucci.yml"
+      want="envs/prod/app,envs/prod/db" ;;
+    policy-at-base)
+      # A policy that would deny every root, an approval mode and a step: all read at the base.
+      printf 'policy:\n  path: policy\napproval: pr-review\nsteps:\n  - run: "exit 1"\n    before: plan\n' >> "$tree/terragucci.yml"
+      want="" ;;
+    synth-command)
+      # The command writes other roots now; the base wrote its own with sh gen.sh one.
+      perl -pi -e 's/^synth: .*/synth: sh gen.sh two/' "$tree/terragucci.yml"
+      want="out/a,out/b" ;;
+  esac
+  git -C "$tree" add -A && git -C "$tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "outside-roots: $name" || return 2
+  [ "$name" != synth-command ] || (cd "$tree" && sh gen.sh two) || return 2
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TG_BASE=$base" \
+    -e "TF_CLI_ARGS_plan=-var-file=../shared.tfvars" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan >&2 || code=$?
+  clean_mounted "$tree" "$image"
+  r="$tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "$name: tf-plan exited $code and wrote no report"; return 1; }
+  # Every root the report holds was selected, planned or failed (a policy denial fails one).
+  got="$(jq -r '[.roots[].path] | sort | join(",")' "$r")"
+  [ "$got" = "$want" ] || { log "$name: planned ${got:-nothing}, not ${want:-nothing}"; return 1; }
+  log "$name: planned ${got:-nothing}, as it must"
+}
+
+claim_affected/outside_roots() {
+  # Changes outside every root's directory, each on its own tree against the
+  # commit before it (OUTSIDE_CASES):
+  #   var-files       envs/prod/shared.tfvars, which TF_CLI_ARGS_plan in env
+  #                   names as ../shared.tfvars: envs/prod/app and db plan.
+  #   symlink         shared/common.tf, which envs/prod/db/common.tf links:
+  #                   envs/prod/db plans.
+  #   config-keys     a version for envs/prod/** in terragucci.yml: the two
+  #                   prod roots plan, envs/dev/app does not.
+  #   policy-at-base  a policy denying every root, an approval mode and a step added in
+  #                   terragucci.yml: nothing plans, since they are read at
+  #                   the base.
+  #   synth-command   the synth command changes (sh gen.sh one to two): every
+  #                   synthesized root plans.
+  # BREAK=1 runs every case with its own cut, and BREAK=<case>[,<case>] the
+  # ones named; it is caught only when every case it cut plans the wrong roots.
+  # The cuts: no -var-file is read from TF_CLI_ARGS; no symlink is followed;
+  # no terragucci.yml key selects a root; policy is compared as a plan key;
+  # the synth command is not compared, so the base runs the head's command.
+  log() { echo "[smoke outside-roots] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image plain="$HERE/../packages/terragucci/dist/terragucci.mjs" bundle name cut="${BREAK:-}" rc=0 caught=0 cuts=0 one
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  [ "$cut" = 1 ] && cut="${OUTSIDE_CASES// /,}"
+  for name in $OUTSIDE_CASES; do
+    bundle="$plain"
+    if [ -n "$cut" ]; then
+      case ",$cut," in *",$name,"*) ;; *) continue ;; esac
+      bundle="$work/$name.mjs"
+      case "$name" in
+        var-files) break_bundle "$bundle" affected.ts '      const m = /^--?var-file(?:=(.*))?$/.exec(words[i]);' '      const m = /^--?var-file-cut(?:=(.*))?$/.exec(words[i]);' ;;
+        symlink) break_bundle "$bundle" affected.ts '      if (e.isSymbolicLink()) {' '      if (e.isSymbolicLink() && false) {' ;;
+        config-keys) break_bundle "$bundle" affected.ts '    const keys = PLAN_KEYS.filter((k) => stable(a[k]) !== stable(b[k]));' '    const keys = PLAN_KEYS.filter((k) => false && stable(a[k]) !== stable(b[k]));' ;;
+        policy-at-base) break_bundle "$bundle" affected.ts \
+          'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc"] as const;' 'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "policy"] as const;' \
+          affected.ts '  return { version: versionPin(s.version, root)?.version,' '  return { policy: (s as Record<string, unknown>).policy, version: versionPin(s.version, root)?.version,' ;;
+        synth-command) break_bundle "$bundle" report/stage.ts '    if (shape.kind === "synth" && outside.synth) {' '    if (shape.kind === "synth" && outside.synth && false) {' ;;
+      esac || { drop_work "$work" "$image"; return 1; }
+      cuts=$((cuts + 1))
+    fi
+    one=0
+    outside_case "$name" "$bundle" "$image" || one=$?
+    if [ $one = 2 ]; then log "$name: the case could not be set up"; drop_work "$work" "$image"; [ -z "$cut" ] || break_setup_failed "$name: the case could not be set up"; return 1; fi
+    if [ -n "$cut" ]; then
+      if [ $one = 1 ]; then caught=$((caught + 1)); else log "$name: its cut broke nothing"; fi
+    else
+      [ $one = 0 ] || rc=1
+    fi
+  done
+  drop_work "$work" "$image"
+  if [ -n "$cut" ]; then
+    [ $cuts -gt 0 ] || { log "BREAK=$cut names no case of: $OUTSIDE_CASES"; break_setup_failed "BREAK names no case"; return 1; }
+    # Caught (non-zero) only when every cut plans the wrong roots.
+    log "$caught of $cuts cuts caught"
+    [ $caught = $cuts ] && return 1
+    return 0
+  fi
+  [ $rc = 0 ] && log "a shared var file, a symlink target and a version glob planned the roots that read them, a policy at head planned nothing, and a new synth command planned every root"
   return $rc
 }
 
@@ -21125,6 +21254,7 @@ oidc/forgejo    runner self! weight=200
 note/grouped         ex runner self! after=boot/tofu weight=200
 check/tofu           ex runner self! after=boot/tofu weight=200
 affected/tofu        ex after=boot/tofu weight=150
+affected/outside-roots  weight=150
 respond/tips    runner self! weight=150
 apply/serial    runner self! break:runner! weight=100
 respond/drift   self! weight=80

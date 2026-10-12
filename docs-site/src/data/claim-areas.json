@@ -14,6 +14,7 @@
   ],
   "claims": {
     "affected/tofu": "Plan and review",
+    "affected/outside-roots": "Plan and review",
     "telemetry/alerts": "Reports and visibility",
     "apply/tofu": "Approve and apply",
     "apply/branches": "Approve and apply",
