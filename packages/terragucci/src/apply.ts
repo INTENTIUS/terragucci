@@ -1,47 +1,49 @@
 /**
  * `terragucci stage tf-apply --wave <k>`: one wave of a repo's apply, run by
- * the pipeline's wave-k job (chant#3049's gated waves, for Terraform and
- * OpenTofu roots, and with `--terragrunt` for a Terragrunt repo's units).
+ * the pipeline's wave-k job, for Terraform and OpenTofu roots, and with
+ * `--terragrunt` for a Terragrunt repo's units. The wave runs on chant's op
+ * waves: the job runs `chant run wave` (./chant-waves.ts), and chant calls
+ * back into the job to plan the wave, to apply it and around its gate.
  *
- * The wave plans its roots now, after the waves before it applied, and takes
- * the wave's set digest: chant's `waveSetDigest` over the plan digest of each
- * root whose plan changes something, the digest a pull request's plan note
- * shows for the wave when nothing moved since. The gate policy
- * then decides whether the wave waits:
+ * The wave plans its roots now, after the waves before it applied (planRoots,
+ * planUnits), and hands chant each root's plan digest, whether the plan
+ * changes something and whether it destroys. chant takes the wave's set
+ * digest over the plans that change something, the digest a pull request's
+ * plan note shows for the wave when nothing moved since, and with
+ * `cost.approve_above` at base the wave's cost is one more member of it. The
+ * gate policy then decides whether the wave waits:
  *
- *   always      every wave with a change waits for an approval of its digest
+ *   always          every wave with a change waits for an approval of its digest
  *   on-destructive  a wave waits when one of its plans destroys or replaces
- *   never       no wave waits
+ *   never           no wave waits
  *
- * A waiting wave reads the gate ledger (`_gates/tf-apply.jsonl` on the
- * repo's `chant/lifecycle` branch, the file `chant approve` writes). An
+ * A step with `on_failure: approve` that failed, or a change over
+ * `cost.approve_above`, holds the wave whatever the policy says.
+ *
+ * The gate is `wave-<k>` under op `tf-apply` on the repo's `chant/lifecycle`
+ * branch, the gate `chant approve` and `terragucci approve` write. An
  * approval of this digest lets the wave apply the plans it just made, and
- * nothing else. An approval of another digest means the wave's plans moved
- * after someone approved them: the wave applies nothing and names the roots
- * that moved. With no approval the wave records a pending fact for its digest,
- * so `chant approve tf-apply wave-<k>` has the plan to approve, and stops.
+ * nothing else. chant spends it: before the wave applies, one line in
+ * `_gates/tf-apply/applied.jsonl` names the approval, and it never applies
+ * another wave. An approval of other plans that no wave applied means the
+ * plans moved after someone approved them: the wave applies nothing, names
+ * the roots that moved and exits 4. With no approval chant records a pending
+ * fact for the digest, carrying the commit and each root's plan digest, and
+ * the wave keeps the report of its plans beside it and stops.
  *
- * Before a wave applies under an approval it records that the approval was
- * used: one line in `_gates/tf-apply/applied.jsonl` naming the gate, the
- * digest and the approval's time. An approval of another digest that a wave
- * has applied is spent: it does not refuse the next plans of that wave, which
- * wait for their own approval. Only an approval of plans no wave applied
- * refuses (decideGate).
- *
- * Which approvals count is the `approval:` mode at base (./approval.ts):
- * under `ledger`, the default, any approval of the digest; under `sealed`,
- * only one made with `chant approve --sign` whose seal verifies against the
- * signers file at base (./seal.ts). Base is the commit before the one being
- * applied.
- *
- * Nothing here records an approval, except that under `approval: pr-review`
- * the wave records the review it counted. A person approves with `chant
- * approve`.
+ * Which approvals count is the `approval:` mode at base (./approval.ts),
+ * which the spec chant reads at base carries: under `ledger`, the default,
+ * any approval of the digest; under `sealed`, only one made with `chant
+ * approve --sign` whose seal verifies against the signers file at base.
+ * Under `pr-review` the wave records the merged pull request's approving
+ * review of these plans before chant decides, and under `apply.point` the
+ * decision point's answer (./point-gate.ts). Base is the commit before the
+ * one being applied, or `--base`.
  *
  * A root the policy denies applies only under a recorded override of exactly
- * its plan and rules, by someone `policy.override` at base lists
- * (./override.ts); the wave records the denial an override answers, never the
- * override itself.
+ * its plan and rules, by someone `policy.override` at base lists: chant
+ * decides it through `@intentius/chant/override-gate`, records the denial an
+ * override answers and spends the override before the apply.
  *
  * Once its roots planned, the wave writes its report to `terragucci-report/`
  * (and copies it to the config's `reports` bucket when one is named): the
@@ -53,24 +55,19 @@
  *
  * A Terragrunt wave (`--terragrunt`) is one dependency layer of the repo's
  * units: the pipeline's wave, split again by the edges `terragrunt find`
- * gives at run time. It plans its units with one
- * `run --all`, saving each plan, and applies the saved plans with one
- * `run --all` once the gate lets it (runTerragruntWave). With `--rest` the job
- * runs its wave and then every wave after it, one by one, each behind its own
- * gate: the pipeline's last job, so a repo that grew a layer since init wrote
- * the pipeline still applies it. The gate, the ledger and the seals are the
- * ones above.
+ * gives at run time. It plans its units with one `run --all`, saving each
+ * plan, and applies the saved plans with one `run --all` once the gate lets
+ * it (planUnits). With `--rest` the job runs its wave and then every wave
+ * after it, one by one, each behind its own gate: the pipeline's last job,
+ * so a repo that grew a layer since init wrote the pipeline still applies it.
  *
- * A wave can spread across jobs (`waves.jobs`); a Terragrunt wave's shares
- * plan and apply their units with `run --all --filter` (runTerragruntWave). With
- * `--shares <n>` the wave's job plans every root, runs the policy, decides the
- * gate and records the approval it uses, all as above, but applies nothing:
- * it writes the plan digest of each root to `terragucci-wave/wave-<k>.json`
+ * A wave can spread across jobs (`waves.jobs`). With `--shares <n>` the
+ * wave's job plans every root, runs the policy and decides the gate, but
+ * applies nothing: chant's decision goes to `terragucci-wave/wave-<k>.json`
  * and the pipeline's share jobs apply. With `--share <s>` a job plans only
- * its share of the wave's roots (waveShares), and applies them only when each
- * plan has the digest the wave's job decided on. A share whose plans moved
- * since applies nothing and exits 4. The gate, its ledger record and the
- * applied record stay one per wave.
+ * its share of the wave's roots, and applies them only when each plan has the
+ * digest the wave's job decided on. A share whose plans moved since applies
+ * nothing and exits 4. The gate and its records stay one per wave.
  *
  * Applies are kept apart per root, by the backend's state lock, except with
  * choudoufu, whose waves hold the resources their plans change (./apply-rows.ts)
@@ -78,19 +75,21 @@
  * run's apply holds makes a push's wave wait, then plan again once that run
  * let go; with `--on-held refuse` (the apply a comment starts) the wave exits
  * 5 naming that run. With `--stand-down` (a push's wave) a wave that finds a
- * newer push on its branch, once it holds its resources, applies nothing and
- * exits 6: the newer push applies the whole tree.
+ * newer push on its branch, once it may apply, applies nothing and exits 6:
+ * the newer push applies the whole tree.
  *
  * Exit codes: 0 applied (or nothing to apply; for a wave split across jobs,
- * decided and its shares may apply); 1 a root failed; 3 the wave waits for an
- * approval; 4 the wave's plans changed after approval, or a share's after its
- * wave decided; 5 another run's apply holds a resource it changes; 6 a newer
- * push superseded it.
+ * decided and its shares may apply); 1 a root failed, or the policy denied
+ * one; 3 the wave waits for an approval; 4 the wave's plans changed after an
+ * approval or a policy override no run applied, or a share's after its wave
+ * decided; 5 another run's apply holds a resource it changes; 6 a newer push
+ * superseded it.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import type { OpWaveDecision } from "@intentius/chant/op";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
@@ -121,7 +120,7 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
-import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, overrideDigest, overridePending, overrideRule } from "./override";
+import { overrideCommand } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
@@ -136,9 +135,9 @@ import { backendBootstrap } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
-import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
+import { MIGRATIONS_DIR, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
-import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange } from "./remainder";
+import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
 import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
@@ -148,6 +147,7 @@ import { recordVersions, versionsLine } from "./cdf-history";
 import { planAppliedChanges } from "./report/history";
 import { pointGate } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
+import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -216,52 +216,17 @@ export function branchLayers(layers: string[][], branches: Record<string, string
 }
 
 /**
- * A wave's roots split across `jobs` jobs: as many shares as there are jobs,
- * never more than there are roots, the roots dealt out in wave order. One
- * share is the whole wave.
+ * How many share jobs a wave's roots spread across with `jobs` jobs: as many
+ * as there are jobs, never more than there are roots. chant cuts the roots,
+ * sorted, into that many contiguous shares.
  */
-export function waveShares(roots: readonly string[], jobs: number): string[][] {
-  const n = Math.max(1, Math.min(Math.floor(jobs), roots.length));
-  const shares: string[][] = Array.from({ length: n }, () => []);
-  roots.forEach((r, i) => shares[i % n].push(r));
-  return shares;
+export function shareCount(roots: readonly string[], jobs: number): number {
+  return Math.max(1, Math.min(Math.floor(jobs), roots.length));
 }
 
-/** Where a split wave's job leaves its decision for the share jobs: the run's artifact of that name. */
+/** Where a split wave's job leaves its decision for the share jobs: the run's artifact of that name, chant's decision record. */
 export const DECIDED_DIR = "terragucci-wave";
 export const decidedPath = (wave: number): string => `${DECIDED_DIR}/wave-${wave}.json`;
-
-/**
- * What the job of a wave split across jobs decided, for its shares: the set
- * digest, how the gate let it through, and every root's plan digest. A share
- * applies only plans with these digests. Digests only, never a plan.
- */
-export interface WaveDecision {
-  version: 1;
-  wave: number;
-  /** How many shares the wave is split into. */
-  shares: number;
-  digest: string;
-  approval: "approved" | "not-required";
-  /** The changes the wave's plans make; with none a share has nothing to apply. */
-  changes: number;
-  commit?: string;
-  members: WaveMember[];
-}
-
-/** Read a decision file. Throws a ConfigError naming what is wrong with it. */
-export function readDecision(file: string): WaveDecision {
-  let d: Partial<WaveDecision>;
-  try {
-    d = JSON.parse(readFileSync(file, "utf-8"));
-  } catch (e) {
-    throw new ConfigError(`the wave's decision ${file} cannot be read (${(e as Error).message.split("\n")[0]}); the wave's own job writes it before its shares run`);
-  }
-  if (d.version !== 1 || typeof d.wave !== "number" || typeof d.shares !== "number" || typeof d.digest !== "string" || !Array.isArray(d.members) || typeof d.changes !== "number") {
-    throw new ConfigError(`the wave's decision ${file} is not one terragucci wrote`);
-  }
-  return d as WaveDecision;
-}
 
 // ── the gate ledger ──────────────────────────────────────────────────────
 
@@ -276,6 +241,8 @@ export interface PendingRecord {
   description?: string;
   runId?: string;
   url?: string;
+  /** Where chant's op waves recorded the job that waits, in CI: the forge's run (`run`), and on GitLab the job. */
+  resume?: { forge?: string; run?: string; job?: string; url?: string };
   /** terragucci's addition: the commit the wave planned, so an approval can find the run or pull request to resume. */
   commit?: string;
   /** terragucci's addition: each root's plan digest, so a later refusal can name the roots that moved. */
@@ -289,6 +256,9 @@ export interface PendingRecord {
   /** The decision point question the wave waits on, when the gate asks one (./point-gate.ts). */
   answer?: GateAnswerRef;
 }
+
+/** The run a pending fact names: its `runId`, or, for one chant's op waves recorded, the run of its `resume` locator. */
+export const runOf = (p: Pick<PendingRecord, "runId" | "resume">): string | undefined => p.runId ?? p.resume?.run;
 
 export interface ResolutionRecord {
   version: 1;
@@ -317,12 +287,16 @@ export interface ResolutionRecord {
 /**
  * What a wave writes before it applies under an approval, in
  * `_gates/<op>/applied.jsonl` beside the ledger: the approval of
- * `planDigest`, made at `approvedAt`, was used. chant reads only the
- * `.jsonl` files directly under `_gates/`, so it never sees these lines.
+ * `planDigest`, made at `approvedAt`, was used. chant writes the `applied`
+ * line of a wave's approval (its spend rule); a wave that applies per
+ * resource writes a `changes` line beside it with the changes the approved
+ * plans make, which chant's readers skip and terragucci's read as the same
+ * apply. chant reads only the `.jsonl` files directly under `_gates/` as
+ * ledgers, so `chant approve` never sees these lines.
  */
 export interface AppliedRecord {
   version: 1;
-  kind: "applied";
+  kind: "applied" | "changes";
   op: string;
   gate: string;
   planDigest: string;
@@ -368,7 +342,7 @@ export function parseApplied(text: string): AppliedRecord[] {
   for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
     try {
       const r = JSON.parse(line) as Record<string, unknown>;
-      if (r.version === 1 && r.kind === "applied" && typeof r.gate === "string" && typeof r.planDigest === "string" && typeof r.approvedAt === "string") out.push(r as unknown as AppliedRecord);
+      if (r.version === 1 && (r.kind === "applied" || r.kind === "changes") && typeof r.gate === "string" && typeof r.planDigest === "string" && typeof r.approvedAt === "string") out.push(r as unknown as AppliedRecord);
     } catch {
       continue;
     }
@@ -537,18 +511,20 @@ function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | A
  */
 export function appendLifecycle(repo: string, path: string, lines: string[], files: Record<string, string>, message: string, refs: string[] = []): void {
   const line = lines.join("\n");
+  // No lines: only the files are written.
+  const appending = lines.length > 0;
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
     const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
-    const old = exists ? git(repo, ["show", `${REMOTE_REF}:${path}`]) : undefined;
+    const old = exists && appending ? git(repo, ["show", `${REMOTE_REF}:${path}`]) : undefined;
     // One record per line, each ending in a newline, so a line appended with `>>` stays its own record.
     const text = `${old && old.status === 0 && old.stdout.trim() ? `${old.stdout.replace(/\n$/, "")}\n` : ""}${line}\n`;
-    const blob = git(repo, ["hash-object", "-w", "--stdin"], text).stdout.trim();
+    const blob = appending ? git(repo, ["hash-object", "-w", "--stdin"], text).stdout.trim() : "";
     // A scratch index, so the checkout's own index is left alone.
     const scratch = mkdtempSync(join(tmpdir(), "terragucci-ledger-"));
     const env = { ...process.env, ...GIT_ID, GIT_INDEX_FILE: join(scratch, "index") };
     if (parent) git(repo, ["read-tree", parent], undefined, env);
-    for (const [file, b] of [[path, blob], ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
+    for (const [file, b] of [...(appending ? [[path, blob]] : []), ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
       git(repo, ["update-index", "--add", "--cacheinfo", `100644,${b},${file}`], undefined, env);
     const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
     const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message], undefined, env).stdout.trim();
@@ -896,16 +872,23 @@ export interface ApplyWaveOptions {
   standDown?: boolean;
   /** Whether a run that holds resources is gone. Default: ask the forge (forgeLiveness). */
   liveness?: Liveness;
-  /** Set when the wave plans again after the run it waited for let go: migrations ran the first time. */
-  replanned?: boolean;
+  /** The chant executable that runs the wave. Default: the bin of the @intentius/chant installed with terragucci. */
+  chant?: string;
 }
 
-/** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
+/** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it, on `chant run wave`. Returns the exit code; what happened is printed. */
 export async function applyWave(repo: string, input: Omit<ApplyWaveOptions, "gate"> & { gate: GateName }): Promise<number> {
   // A pipeline rendered before on-destructive passes --gate on-destroy; the rest of the wave sees the policy's one name.
   const gate = normalizeGate(input.gate);
   if (gate === undefined) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
   let options: ApplyWaveOptions = { ...input, gate };
+  if (options.approval !== undefined && !APPROVALS.includes(options.approval)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
+  if (!Number.isInteger(options.wave) || options.wave < 1) throw new ConfigError("--wave must be a wave number from 1");
+  if (options.shares !== undefined && !(Number.isInteger(options.shares) && options.shares >= 1)) throw new ConfigError("--shares must be a whole number of 1 or more");
+  if (options.share !== undefined && (options.shares === undefined || !Number.isInteger(options.share) || options.share < 1 || options.share > options.shares)) {
+    throw new ConfigError("--share must be a share number from 1 to --shares");
+  }
+  if (options.rest && !options.terragrunt) throw new ConfigError("--rest runs the waves of a Terragrunt repo, so it needs --terragrunt");
   if (options.branches && Object.keys(options.branches).length > 0) {
     // A Terragrunt repo's units map to branches by the same globs: the waves are then cut from the units this branch applies.
     const cut = branchLayers(options.layers, options.branches, options.branch || undefined);
@@ -917,42 +900,229 @@ export async function applyWave(repo: string, input: Omit<ApplyWaveOptions, "gat
     const elsewhere = options.layers.flat().filter((r) => !cut.layers.flat().includes(r));
     options = { ...options, layers: cut.layers, branches: undefined, ...(elsewhere.length ? { elsewhere } : {}) };
   }
-  if (!options.rest) return (await applyOneWave(repo, options)).code;
-  if (!options.terragrunt) throw new ConfigError("--rest runs the waves of a Terragrunt repo, so it needs --terragrunt");
-  for (let k = options.wave; ; k++) {
-    const { code, count } = await applyOneWave(repo, { ...options, wave: k, rest: false });
-    if (code !== EXIT.applied || count === undefined || k >= count) return code;
+  return runWaves(repo, options);
+}
+
+/** One wave of this job, as chant's calls back into it fill it in. */
+interface WaveJob {
+  k: number;
+  w: WaveRun;
+  facts: WaveFacts;
+  label: string;
+  /** terragucci's own exit code for the wave, when one of its calls came to one: a non-zero exit of chant's takes it. */
+  code?: number;
+  /** Set once the wave planned: applies the plans it made of `targets`, the runs chant hands it. `outcome` is chant's CHANT_APPLY_OUTCOME. */
+  apply?: (outcome: string | undefined, targets: ReadonlySet<string>) => Promise<number>;
+  /** The hold the `held` hook reports: a step with on_failure: approve, or a change over cost.approve_above. */
+  held?: boolean;
+  /** Each denied root's policy error, for the report of a wave chant refused. */
+  denials?: Map<string, string>;
+  /** Who policy.override at base lists. */
+  overriders?: string[];
+  /** Under pr-review, the merged pull request's review of plans that moved since. */
+  reviewMoved?: Extract<ReviewOutcome, { kind: "moved" }>;
+  /** The digest of the stopped apply whose rest this one applies under its approval. */
+  resumes?: string;
+  /** The changes each applied plan makes, when the wave applies per resource: recorded beside the approval it applies under. */
+  changes?: ApprovedChange[];
+  /** The plans, for the stored report a waiting wave keeps. */
+  stored?: () => string;
+  /** Under apply.point, the decision point's question holds the wave (./point-gate.ts). */
+  pointed?: boolean;
+  /** The approval chant let the wave through under. */
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+/** What chant hands a wave-level call in `{runs}`. */
+interface RunsFile {
+  wave: string;
+  number: number;
+  digest?: string;
+  discover?: true;
+  runs: { target: string; op: string; planDigest?: string }[];
+}
+
+/**
+ * The wave's job: render the op-waves spec and the base commit it is read
+ * at, serve chant's calls, run `chant run wave` and map its exit code onto
+ * terragucci's. Each wave this job ran writes its outcome and report once
+ * chant is done.
+ */
+async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> {
+  let options = given;
+  const env = options.env ?? process.env;
+  const work = mkdtempSync(join(tmpdir(), "terragucci-apply-"));
+  const jobs = new Map<number, WaveJob>();
+  const jobOf = (k: number): WaveJob => {
+    let j = jobs.get(k);
+    if (!j) {
+      const facts: WaveFacts = {};
+      const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env);
+      observer.wave = { number: k, facts };
+      j = { k, w: { observer }, facts, label: `wave ${k}` };
+      jobs.set(k, j);
+    }
+    return j;
+  };
+  let code: number = EXIT.failed;
+  let last = options.wave;
+  try {
+    let specWaves: string[][] | number;
+    if (options.terragrunt) {
+      // Each wave finds its units at plan time. With --rest this job's wave is the last of the spec, and goes on through the waves terragrunt find gives.
+      specWaves = options.rest ? options.wave : Math.max(options.layers.filter((l) => l.length > 0).length, options.wave);
+    } else {
+      const waves = applyWaves(options.layers, options.canary);
+      if (!waves[options.wave - 1]) {
+        jobOf(options.wave).facts.nothing = true;
+        console.log(`wave ${options.wave}: this repo has ${waves.length} waves, so there is nothing to apply`);
+        return (code = EXIT.applied);
+      }
+      specWaves = waves;
+      // A wave of one root, or one job, applies in its own job; a share past the wave's roots has nothing to apply.
+      if (options.shares !== undefined) {
+        const count = shareCount(waves[options.wave - 1]!, options.shares);
+        if (options.share !== undefined && options.share > count) {
+          jobOf(options.wave).facts.nothing = true;
+          console.log(`wave ${options.wave} of ${waves.length}: its ${waves[options.wave - 1]!.length} roots make ${count} share${count === 1 ? "" : "s"}, so share ${options.share} has nothing to apply`);
+          return (code = EXIT.applied);
+        }
+        options = count > 1 ? { ...options, shares: count } : { ...options, shares: undefined, share: undefined };
+      }
+    }
+    const configPath = options.config ?? findConfig(repo);
+    const base = options.base ?? baseCommit(repo);
+    // Which approvals count, as terragucci.yml, chant.workspace.json and the pipeline's --approval say at base.
+    let rule: ApprovalRule | undefined;
+    try {
+      rule = await approvalRule(repo, { ...(options.base ? { at: options.base } : {}), ...(configPath ? { config: configPath } : {}), ...(options.approval ? { flag: options.approval } : {}) });
+    } catch (e) {
+      if (options.gate !== "never") throw e;
+    }
+    const ctx: WavesContext = { rule, configPath, work };
+    const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
+    let ran: Awaited<ReturnType<typeof runChantWave>>;
+    try {
+      const spec = wavesSpec({
+        waves: specWaves,
+        ...(options.rest ? { rest: true } : {}),
+        gate: options.gate,
+        approval: rule?.mode ?? "ledger",
+        ...(options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
+        call: waveCallArgv,
+        migrations: existsSync(join(repo, MIGRATIONS_DIR)),
+      });
+      const at = specAtBase(repo, base, writeSpec(repo, spec));
+      // A share job applies the plans its wave's job decided on: chant's record, which the pipeline hands over in the decision file.
+      if (options.share !== undefined) {
+        const file = options.decided ?? join(repo, decidedPath(options.wave));
+        if (!existsSync(file)) throw new ConfigError(`the wave's decision ${file} cannot be read; the wave's own job writes it before its shares run`);
+        mkdirSync(dirname(join(repo, waveRecordPath(options.wave))), { recursive: true });
+        copyFileSync(file, join(repo, waveRecordPath(options.wave)));
+      }
+      ran = await runChantWave(repo, {
+        wave: options.wave,
+        base: at,
+        ...(options.shares !== undefined && options.share === undefined ? { decide: true } : {}),
+        ...(options.share !== undefined ? { share: options.share } : {}),
+        env: { ...process.env, ...env },
+        ...(options.chant ? { chant: options.chant } : {}),
+      });
+    } finally {
+      await server.close();
+    }
+    const rest = ran.result?.rest;
+    if (rest?.length) last = rest[rest.length - 1]!.wave;
+    const j = jobOf(last);
+    code = waveExit(ran.code, j.code);
+    if (options.share !== undefined && ran.result?.decision) {
+      // A share reports the gate its wave's job decided.
+      j.w.digest = ran.result.decision.digest;
+      if (ran.result.decision.status === "approved" || ran.result.decision.status === "not-required") j.w.approval = ran.result.decision.status;
+    }
+    if (options.share !== undefined && ran.code === EXIT.refused && ran.result?.moved.length) {
+      const moved = [...ran.result.moved].sort();
+      if (ran.result.decision?.status === "approved") j.w.refused = { reason: "approval", approved: ran.result.decision.digest, roots: moved };
+      writeOutcome(options.env, `wave ${last} share ${options.share} changed since the wave decided: ${moved.join(", ")}`, j.w);
+    }
+    if (options.shares !== undefined && options.share === undefined && code === EXIT.applied) {
+      // The share jobs apply: chant's decision goes to the decision file the pipeline hands them.
+      const file = options.decided ?? join(repo, decidedPath(options.wave));
+      mkdirSync(dirname(file), { recursive: true });
+      copyFileSync(join(repo, waveRecordPath(options.wave)), file);
+      j.w.decided = true;
+      j.w.shareCount = options.shares;
+      console.log(`${j.label}: ${ran.result?.decision?.status === "approved" ? "approved" : "no approval needed"}; its ${options.shares} share job${options.shares === 1 ? "" : "s"} apply these plans`);
+    }
+    return code;
+  } finally {
+    for (const k of [...jobs.keys()].sort((a, b) => a - b)) {
+      const { w } = jobs.get(k)!;
+      const c = k === last ? code : EXIT.applied;
+      w.observer.wave!.code = c;
+      writeOutcomeJson(env, k, c, w);
+      w.state = waveState(c, w);
+      w.ended = new Date().toISOString();
+      // The report is written once the wave's roots planned, whatever came of the gate and the apply.
+      if (w.planned) await writeWaveReport(repo, options, w as Required<WaveRun>, env).catch((e) => console.log(`wave ${k}: the report was not written: ${(e as Error).message}`));
+    }
+    rmSync(work, { recursive: true, force: true });
   }
 }
 
-async function applyOneWave(repo: string, options: ApplyWaveOptions): Promise<{ code: number; count?: number }> {
-  const work = mkdtempSync(join(tmpdir(), "terragucci-apply-"));
-  const env = options.env ?? process.env;
-  const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env);
-  // How the wave ended, for its stage span and the waves dashboard's gauges.
-  const facts: WaveFacts = {};
-  observer.wave = { number: options.wave, facts };
-  let wave: WaveRun = { observer };
-  let code: number | undefined;
-  try {
-    code = await runWave(repo, options, work, wave, facts);
-    // The run this wave waited for let go: what it applied may be what these plans were made against, so the wave plans again.
-    while (code === REPLAN) {
-      console.log(`wave ${options.wave}: the run it waited for let go; planning again`);
-      wave = { observer };
-      for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k];
-      code = await runWave(repo, { ...options, replanned: true }, work, wave, facts);
+/** What every call of a wave's job reads. */
+interface WavesContext {
+  /** The approval rule at base; unset only under gate: never when it could not be read. */
+  rule?: ApprovalRule;
+  configPath?: string;
+  work: string;
+}
+
+/** One call chant makes back into the wave's job. Returns the call's exit code. */
+async function waveCall(repo: string, options: ApplyWaveOptions, ctx: WavesContext, r: WaveRequest, jobOf: (k: number) => WaveJob): Promise<number> {
+  const [what, runsPath, plansPath] = r.args as [WaveCall, string | undefined, string | undefined];
+  const runs = readCallFile<RunsFile>(r.cwd, runsPath);
+  const j = jobOf(runs?.number ?? options.wave);
+  switch (what) {
+    case "plan": {
+      if (!runs || !plansPath) throw new Error("chant called the plan with no runs file");
+      if (j.apply || j.w.planned) {
+        // The run this wave waited for let go: what it applied may be what these plans were made against, so the wave plans again.
+        console.log(`wave ${j.k}: the run it waited for let go; planning again`);
+        const observer = j.w.observer;
+        j.w = { observer };
+        for (const key of Object.keys(j.facts)) delete (j.facts as Record<string, unknown>)[key];
+        for (const key of ["code", "apply", "held", "denials", "overriders", "reviewMoved", "resumes", "changes", "stored"] as const) delete j[key];
+      }
+      const plans = join(r.cwd, plansPath);
+      const c = options.terragrunt ? await planUnits(repo, options, ctx, j, runs, plans) : await planRoots(repo, options, ctx, j, runs, plans);
+      if (c !== 0) j.code = c;
+      return c;
     }
-    observer.wave.code = code;
-    return { code, ...(wave.count !== undefined ? { count: wave.count } : {}) };
-  } finally {
-    if (code !== undefined) writeOutcomeJson(env, options.wave, code, wave);
-    if (code !== undefined) wave.state = waveState(code, wave);
-    wave.ended = new Date().toISOString();
-    // The report is written once the wave's roots planned, whatever came of the gate and the apply.
-    if (wave.planned) await writeWaveReport(repo, options, wave as Required<WaveRun>, env).catch((e) => console.log(`wave ${options.wave}: the report was not written: ${(e as Error).message}`));
-    rmSync(work, { recursive: true, force: true });
+    case "apply":
+      if (!j.apply) {
+        console.log(`${j.label}: chant asked to apply a wave this job did not plan`);
+        return EXIT.failed;
+      }
+      // chant applies the runs it hands over: a share job leaves out the ones whose plans moved since its wave decided.
+      return j.apply(r.env.CHANT_APPLY_OUTCOME ? join(r.cwd, r.env.CHANT_APPLY_OUTCOME) : undefined, new Set((runs?.runs ?? []).map((x) => x.target)));
+    case "hold":
+      return j.held ? 1 : 0;
+    case "migrate-check":
+    case "migrate":
+      return migrationCall(repo, options, j, what === "migrate" ? r.env : undefined, r.cwd);
+    case "gate":
+      return gateCall(repo, options, ctx, j, r.env, r.cwd);
+    default:
+      console.log(`terragucci: chant made a call this wave does not know: ${what}`);
+      return EXIT.failed;
   }
+}
+
+/** Tell chant how an apply that applied nothing came out, when it was not a failure. */
+function applyOutcome(path: string | undefined, o: { outcome: "stood-down" | "held" | "replan"; reason?: string; holder?: { run: string; url?: string } }): void {
+  if (path) writeFileSync(path, JSON.stringify(o) + "\n");
 }
 
 /** What a wave run leaves for its report. */
@@ -1241,58 +1411,74 @@ async function waveSteps(repo: string, options: ApplyWaveOptions, configPath: st
   }
 }
 
-async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts = {}): Promise<number> {
-  const { wave, binary, gate } = options;
-  if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
-  if (options.approval !== undefined && !APPROVALS.includes(options.approval)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
-  if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("--wave must be a wave number from 1");
-  if (options.shares !== undefined && !(Number.isInteger(options.shares) && options.shares >= 1)) throw new ConfigError("--shares must be a whole number of 1 or more");
-  if (options.share !== undefined && (options.shares === undefined || !Number.isInteger(options.share) || options.share < 1 || options.share > options.shares)) {
-    throw new ConfigError("--share must be a share number from 1 to --shares");
-  }
-  // A state migration in the change runs before the first wave plans, behind its own gate (./migrate.ts); a share of a split wave leaves that to the wave's job.
-  if (wave === 1 && options.share === undefined && !options.replanned) {
-    const held = await migrationsFirst(repo, options, w);
-    if (held !== undefined) return held;
-  }
-  if (options.terragrunt) return runTerragruntWave(repo, options, work, w, facts);
+/** What `planWave` writes to `{plans}`, as chant reads it. */
+interface PlansFile {
+  runs: { target: string; planDigest: string; empty?: boolean; destructive?: boolean; denied?: { rules: string[]; reason?: string } }[];
+  /** Digest members that are no root: the wave's cost under cost.approve_above. */
+  members?: WaveMember[];
+  /** A Terragrunt repo: how many waves `terragrunt find` gave. */
+  waves?: number;
+  pending?: Record<string, unknown>;
+  overriders?: string[];
+}
+
+function writePlans(path: string, plans: PlansFile): void {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, JSON.stringify(plans, null, 2) + "\n");
+}
+
+/** A plans file entry for a root's plan, with the policy's denial when chant decides whether an override lets it through. */
+const planEntry = (root: string, planDigest: string, empty: boolean, destroys: number, denied?: { rules: string[]; reason?: string }): PlansFile["runs"][number] => ({
+  target: root,
+  planDigest,
+  ...(empty ? { empty: true } : {}),
+  ...(destroys > 0 ? { destructive: true } : {}),
+  ...(denied ? { denied } : {}),
+});
+
+/**
+ * Plan a plain wave's roots for chant (`planWave`): the roots of its runs
+ * file, or of a share job's slice. The wave's job also prices them, runs the
+ * policy and works out what holds the wave; a share job plans its slice
+ * alone, and chant applies only the plans its wave's job decided on.
+ * Returns 0 once `{plans}` is written; the exit code when the wave stops.
+ */
+async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, runs: RunsFile, plansPath: string): Promise<number> {
+  const { binary, gate } = options;
+  const { w, facts, k: wave } = j;
   const waves = applyWaves(options.layers, options.canary);
-  const whole = waves[wave - 1];
-  if (!whole) {
+  const roots = runs.runs.map((r) => r.target);
+  const share = options.share;
+  const label = (j.label = share !== undefined ? `wave ${wave} of ${waves.length}, share ${share} of ${options.shares}` : `wave ${wave} of ${waves.length}`);
+  if (share !== undefined) w.share = share;
+  if (roots.length === 0) {
     facts.nothing = true;
-    console.log(`wave ${wave}: this repo has ${waves.length} waves, so there is nothing to apply`);
+    console.log(`${label}: the wave's roots make fewer shares than ${options.shares}, so this one has nothing to apply`);
+    writePlans(plansPath, { runs: [] });
+    j.apply = async () => EXIT.applied;
     return EXIT.applied;
   }
-  const shares = options.shares !== undefined ? waveShares(whole, options.shares) : [whole];
-  if (options.share !== undefined) return runShare(repo, options, work, w, facts, { whole, shares, count: waves.length });
-  const roots = whole;
   facts.roots = roots;
-  const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
   const linked = waveReads(repo, waves, roots, wave);
   w.reads = linked.reads;
   w.waveReads = linked.waves;
   logReads(label, linked.reads, waves);
-  const configPath = options.config ?? findConfig(repo);
+  const { configPath, work } = ctx;
   const read = await waveSettings(repo, options, configPath);
   if ("error" in read) {
     console.log(`${label}: ${read.error}, so nothing in it was applied`);
     return EXIT.failed;
   }
   const settings = (w.settings = read.settings);
-  if (!options.terragrunt) w.waveReads = afterWaves(repo, settings, options, roots, w.waveReads ?? [], wave);
+  w.waveReads = afterWaves(repo, settings, options, roots, w.waveReads ?? [], wave);
   const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
   if ("error" in stepsRead) {
     console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
     return EXIT.failed;
   }
   const ws = stepsRead.ws;
-  let limit: { value: number; reason: string };
-  if (options.parallelism !== undefined) {
-    limit = { value: options.parallelism, reason: "--parallelism" };
-  } else {
-    limit = rootsParallelism(repo, roots, settings, options.env ?? process.env);
-  }
+  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, options.env ?? process.env);
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   const planned: PlannedRoot[] = new Array(roots.length);
   w.started = new Date().toISOString();
@@ -1312,85 +1498,154 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
     return EXIT.failed;
   }
-  const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, planned, w);
-  if (unpriced !== undefined) return unpriced;
-  const refusedByPolicy = await policyGate(repo, options, { label, settings, configPath }, planned, w);
-  if (refusedByPolicy !== undefined) return refusedByPolicy;
+  const deciding = share === undefined;
+  const denied = new Map<string, { rules: string[]; reason?: string }>();
+  if (deciding) {
+    const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, planned, w);
+    if (unpriced !== undefined) return unpriced;
+    const checked = await policyCheck(repo, options, ctx, { label, settings }, planned, j);
+    if (typeof checked === "number") return checked;
+    for (const [root, d] of checked) denied.set(root, d);
+  }
   // The set digest covers the roots whose plan changes something, as a Terragrunt wave's and the plan note's do, so the digest a
-  // pull request's note shows is the one this wave asks approval for when nothing moved.
+  // pull request's note shows is the one this wave asks approval for when nothing moved. chant takes it over the plans that are not empty.
   const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
   w.changedRoots = [...changing].sort();
   // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
-  const priced = costMember(w.waveCost);
+  const priced = deciding ? costMember(w.waveCost) : undefined;
   const members = [...all.filter((m) => changing.has(m.member)), ...(priced && changing.size > 0 ? [priced] : [])];
-  const digest = waveSetDigest(members.length > 0 ? members : [...all, ...(priced ? [priced] : [])]);
+  const digest = waveSetDigest([...(changing.size > 0 ? all.filter((m) => changing.has(m.member)) : all), ...(priced ? [priced] : [])]);
   const changes = planned.reduce((n, p) => n + p.changes, 0);
   const destroys = planned.reduce((n, p) => n + p.destroys, 0);
   console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
-
   if (changes === 0) facts.nothing = true;
   const heldBySteps = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
   for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: step ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
-  const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys, heldBySteps, resume: shares.length === 1 }, facts, w);
-  if (held !== undefined) return held;
-  recordOverridesUsed(repo, options, planned);
-  if (changes === 0 && shares.length === 1 && (gate !== "never" || w.waveCost)) closeStopped(repo, label, wave, options.now);
+  // A step that asks for an approval, or a change over cost.approve_above at base, holds the wave whatever the gate policy says.
+  const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0;
+  const byCost = w.waveCost?.over === true;
+  if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);
+  j.held = changes > 0 && (heldBySteps.length > 0 || byCost);
+  const plans = planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary }));
+  w.digest = digest;
+  if (deciding) {
+    const gated = changes > 0 && (byGate || byCost);
+    if (gated) {
+      const stop = await beforeGate(repo, options, ctx, j, { label, digest, planned, plans, resume: options.shares === undefined, members, roots });
+      if (stop !== undefined) return stop;
+    }
+    if (changes === 0 && options.shares === undefined && (gate !== "never" || w.waveCost)) closeStopped(repo, label, wave, options.now);
+    j.changes = options.shares === undefined ? approvedChanges(plans) : undefined;
+    j.stored = () => storedWaveReport(repo, options, wave, digest, roots, planned);
+  }
+  const env = options.env ?? process.env;
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  writePlans(plansPath, {
+    runs: planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))),
+    ...(priced ? { members: [priced] } : {}),
+    pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members },
+    ...(j.overriders ? { overriders: j.overriders } : {}),
+  });
 
-  if (shares.length > 1) {
-    // The share jobs apply: this job hands them the digest of every plan it decided on, and applies nothing itself.
-    const env = options.env ?? process.env;
-    const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-    const decision: WaveDecision = {
-      version: 1,
-      wave,
-      shares: shares.length,
-      digest,
-      approval: w.approval === "approved" ? "approved" : "not-required",
-      changes,
-      ...(commit ? { commit } : {}),
-      members: all,
-    };
-    const file = options.decided ?? join(repo, decidedPath(wave));
-    mkdirSync(join(file, ".."), { recursive: true });
-    writeFileSync(file, JSON.stringify(decision, null, 2) + "\n");
-    w.decided = true;
-    w.shareCount = shares.length;
-    for (const [i, share] of shares.entries()) console.log(`${label}: share ${i + 1} of ${shares.length} applies ${share.join(", ")}`);
-    console.log(`${label}: ${changes === 0 ? "nothing to apply" : w.approval === "approved" ? "approved" : "no approval needed"}; its ${shares.length} share jobs apply these plans`);
+  j.apply = async (outcome, targets) => {
+    if (!deciding && changes === 0) {
+      console.log(`${label}: its plans change nothing, so there is nothing to apply`);
+      return EXIT.applied;
+    }
+    const applying = planned.filter((p) => targets.has(p.root));
+    const hold = await holdRows(repo, options, label, plans.filter((p) => targets.has(p.root)), w);
+    if (hold.code !== undefined) return heldOutcome(j, hold.code, outcome);
+    w.applyStarted = new Date().toISOString();
+    if (changes > 0) await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), digest });
+    recordChanges(repo, label, j, options.now);
+    // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
+    // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
+    const ok: boolean[] = new Array(applying.length);
+    const progress = changes > 0 ? await watchProgress(repo, options, w, label, applying) : undefined;
+    try {
+      await eachLimited(applying, limit.value, async (p, i) => {
+        await progress?.phase(p.root, "applying");
+        ok[i] = await applyRoot(repo, p, w.observer, ws);
+        await progress?.phase(p.root, ok[i] ? "applied" : "failed");
+      });
+    } finally {
+      await progress?.stop();
+      await hold.release();
+    }
+    finishApplied(repo, label, w, ok.includes(false) ? "failed" : "applied", options.now);
+    w.applied = new Set(applying.filter((_, i) => ok[i]).map((p) => p.root));
+    w.states = await recordStateVersions(repo, applying.filter((_, i) => ok[i]), limit.value);
+    w.recordVersions = await listRecordVersions(repo, applying.filter((_, i) => ok[i]), limit.value);
+    if (ok.includes(false)) {
+      w.failed = applying.filter((_, i) => !ok[i]).map((p) => p.root);
+      console.log(`${label}: an apply failed`);
+      return (j.code = EXIT.failed);
+    }
+    console.log(`${label} applied`);
+    return EXIT.applied;
+  };
+  return EXIT.applied;
+}
+
+/**
+ * An apply that held its resources came back without applying (holdRows):
+ * tell chant why, so it plans again, or ends the wave as stood down (6) or
+ * held by another run (5) rather than failed.
+ */
+function heldOutcome(j: WaveJob, code: number, outcome: string | undefined): number {
+  if (code === REPLAN) {
+    applyOutcome(outcome, { outcome: "replan", reason: "the run it waited for let go" });
     return EXIT.applied;
   }
+  if (code === EXIT.superseded) applyOutcome(outcome, { outcome: "stood-down", reason: "a newer push applies everything" });
+  if (code === EXIT.held && j.w.refused?.holder) applyOutcome(outcome, { outcome: "held", holder: j.w.refused.holder });
+  return (j.code = code);
+}
 
-  const hold = await holdRows(repo, options, label, planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary })), w);
-  if (hold.code !== undefined) return hold.code;
-  w.applyStarted = new Date().toISOString();
-  if (changes > 0) await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), digest });
-  // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
-  // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
-  const ok: boolean[] = new Array(planned.length);
-  const progress = changes > 0 ? await watchProgress(repo, options, w, label, planned) : undefined;
-  try {
-    await eachLimited(planned, limit.value, async (p, i) => {
-      await progress?.phase(p.root, "applying");
-      ok[i] = await applyRoot(repo, p, w.observer, ws);
-      await progress?.phase(p.root, ok[i] ? "applied" : "failed");
-    });
-  } finally {
-    await progress?.stop();
-    await hold.release();
-  }
-  finishApplied(repo, label, w, ok.includes(false) ? "failed" : "applied", options.now);
-  w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
-  w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
-  w.recordVersions = await listRecordVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
-  if (ok.includes(false)) {
-    w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
-    console.log(`${label}: an apply failed`);
-    return EXIT.failed;
-  }
-  console.log(`${label} applied`);
-  return EXIT.applied;
+/**
+ * Under an approval, before the apply: record each change the approved plans
+ * make, when every root that changes something applies per resource, so a
+ * stopped apply resumes from them (./remainder.ts). chant records the
+ * approval as used (`_gates/tf-apply/applied.jsonl`); this line beside it
+ * carries the changes. A record that cannot be pushed stops the wave.
+ */
+function recordChanges(repo: string, label: string, j: WaveJob, now?: string): void {
+  const { w } = j;
+  if (w.approval !== "approved" || !j.changes || !w.digest || !j.approvedBy || !j.approvedAt) return;
+  const env = process.env;
+  const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const record: AppliedRecord = {
+    version: 1,
+    kind: "changes",
+    op: APPLY_OP,
+    gate: waveGate(j.k),
+    planDigest: w.digest,
+    approvedAt: j.approvedAt,
+    approvedBy: j.approvedBy,
+    timestamp: now ?? new Date().toISOString(),
+    ...(runId ? { runId } : {}),
+    ...(commit ? { commit } : {}),
+    holder: rowHolder(env).run,
+    changes: j.changes,
+    ...(j.resumes ? { resumes: j.resumes } : {}),
+  };
+  appendRecord(repo, record, {}, `Changes approved: ${APPLY_OP} ${record.gate}`, APPLIED_PATH);
+  w.appliedUnder = record;
+  console.log(`${label}: ${j.changes.length} change${j.changes.length === 1 ? "" : "s"} recorded beside the approval, so a stopped apply resumes from them`);
+}
+
+/** The report of a wave's plans, as a waiting wave keeps it beside its pending fact and respond wave-refused reads it. */
+function storedWaveReport(repo: string, options: ApplyWaveOptions, wave: number, digest: string, roots: string[], planned: WavePlan[]): string {
+  const env = options.env ?? process.env;
+  const now = new Date().toISOString();
+  return JSON.stringify(buildReport({
+    run: { ...runFacts(repo, env), stage: "tf-apply", wave, binary: options.binary, runtime: "forge", started: now, finished: now },
+    roots: planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(options.binary) })),
+    waves: [{ number: wave, roots, setDigest: digest }],
+  }));
 }
 
 /**
@@ -1494,37 +1749,6 @@ async function listRecordVersions(repo: string, applied: PlannedRoot[], limit: n
   return out;
 }
 
-/**
- * Run the repo's state migrations that have not run (./migrate.ts), before
- * wave 1 plans: every later wave waits on wave 1, so no root applies against
- * a state a migration is about to rewrite. Returns the exit code when a
- * migration waits, is refused or fails; undefined to go on. Each record goes
- * to `terragucci-report/migrations/` and, with `reports.bucket`, to
- * `<prefix>/<project>/migrations/<name>.json`.
- */
-async function migrationsFirst(repo: string, options: ApplyWaveOptions, w: WaveRun): Promise<number | undefined> {
-  if (!existsSync(join(repo, MIGRATIONS_DIR))) return undefined;
-  const env = options.env ?? process.env;
-  const run = await runMigrations(repo, {
-    binary: options.binary,
-    env,
-    // A Terragrunt unit is prepared by Terragrunt, and its binary then runs where Terragrunt runs it.
-    ...(options.terragrunt ? { terragrunt: { ...(options.terragruntPath ? { path: options.terragruntPath } : {}), ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) } } : {}),
-    ...(options.now ? { now: options.now } : {}),
-    ...(options.approval ? { approval: options.approval } : {}),
-    ...(options.base ? { base: options.base } : {}),
-    ...(options.config ? { config: options.config } : {}),
-  });
-  if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env);
-  if (run.code === EXIT.applied) return undefined;
-  const last = run.records[run.records.length - 1];
-  if (run.command) w.command = run.command;
-  const what = last ? `migration ${last.name}` : "a migration";
-  writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, w);
-  console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
-  return run.code;
-}
-
 /** Copy each migration record to the reports bucket, when the config names one. A copy that fails is logged. */
 async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, records: MigrationRecord[], env: NodeJS.ProcessEnv): Promise<void> {
   const configPath = options.config ?? findConfig(repo);
@@ -1542,132 +1766,6 @@ async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, r
       console.log(`migration ${r.name}: the record was not copied to ${reports.bucket}: ${(e as Error).message}`);
     }
   }
-}
-
-/**
- * One share of a wave split across jobs. The wave's job already planned every
- * root, ran the policy, decided the gate and recorded the approval it used;
- * this job plans its own share again and applies those plans only when each
- * has the digest the wave's job decided on. A share whose plans moved since
- * applies nothing (exit 4), as a wave whose plans moved after an approval.
- */
-async function runShare(
-  repo: string,
-  options: ApplyWaveOptions,
-  work: string,
-  w: WaveRun,
-  facts: WaveFacts,
-  ctx: { whole: string[]; shares: string[][]; count: number },
-): Promise<number> {
-  const { wave, binary } = options;
-  const share = options.share!;
-  const roots = ctx.shares[share - 1];
-  const label = `wave ${wave} of ${ctx.count}, share ${share} of ${ctx.shares.length}`;
-  if (!roots) {
-    facts.nothing = true;
-    console.log(`wave ${wave} of ${ctx.count}: its ${ctx.whole.length} roots make ${ctx.shares.length} shares, so share ${share} has nothing to apply`);
-    return EXIT.applied;
-  }
-  facts.roots = roots;
-  w.share = share;
-  const env = options.env ?? process.env;
-  const decision = readDecision(options.decided ?? join(repo, decidedPath(wave)));
-  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-  if (decision.wave !== wave || decision.shares !== ctx.shares.length || (decision.commit && commit && decision.commit !== commit)) {
-    console.log(`${label}: the decision it was handed is for wave ${decision.wave} in ${decision.shares} shares${decision.commit ? ` at ${decision.commit.slice(0, 8)}` : ""}, not this one, so nothing in it was applied`);
-    return EXIT.failed;
-  }
-  const decided = new Map(decision.members.map((m) => [m.member, m.planDigest]));
-  const missing = roots.filter((r) => !decided.has(r));
-  if (missing.length > 0) {
-    console.log(`${label}: the wave's job decided on no plan of ${missing.join(", ")}, so nothing in it was applied`);
-    return EXIT.failed;
-  }
-  w.digest = decision.digest;
-  w.approval = decision.approval;
-  if (decision.changes === 0) {
-    facts.nothing = true;
-    console.log(`${label}: the wave's plans change nothing, so there is nothing to apply`);
-    return EXIT.applied;
-  }
-  console.log(`${label}: planning ${roots.join(", ")}`);
-  const allWaves = applyWaves(options.layers, options.canary);
-  const linked = waveReads(repo, allWaves, roots, wave);
-  w.reads = linked.reads;
-  w.waveReads = linked.waves;
-  logReads(label, linked.reads, allWaves);
-  const configPath = options.config ?? findConfig(repo);
-  const read = await waveSettings(repo, options, configPath);
-  if ("error" in read) {
-    console.log(`${label}: ${read.error}, so nothing in it was applied`);
-    return EXIT.failed;
-  }
-  const settings = (w.settings = read.settings);
-  if (!options.terragrunt) w.waveReads = afterWaves(repo, settings, options, roots, w.waveReads ?? [], wave);
-  const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
-  if ("error" in stepsRead) {
-    console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
-    return EXIT.failed;
-  }
-  const ws = stepsRead.ws;
-  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
-  if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
-  const planned: PlannedRoot[] = new Array(roots.length);
-  w.started = new Date().toISOString();
-  await w.observer.collectSpans((l) => console.log(l));
-  const cache = waveCache(work, process.env);
-  const binaries = new RootBinaries(repo, binary, settings.version, options.env ?? process.env, options.installer);
-  await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws);
-  });
-  w.plannedAt = new Date().toISOString();
-  w.planned = planned;
-  w.roots = roots;
-  w.changedRoots = planned.filter((p) => !p.error && changesSomething(p.plan)).map((p) => p.root).sort();
-  for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
-  const failed = planned.filter((p) => p.error);
-  if (failed.length > 0) {
-    for (const p of failed) console.log(indent(p.error!));
-    console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
-    return EXIT.failed;
-  }
-  // A step that asks for an approval holds the share unless the wave's job decided under one.
-  const holding = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
-  if (holding.length > 0 && decision.approval !== "approved") {
-    w.heldBySteps = holding;
-    console.log(`${label}: a step of ${holding.join(", ")} asks for an approval, and wave ${wave} decided without one, so nothing in this share was applied; run the pipeline again so the wave's job holds it at its gate`);
-    writeOutcome(options.env, `wave ${wave} share ${share} held by a step of ${holding.join(", ")}`, w);
-    return EXIT.refused;
-  }
-  const moved = planned.filter((p) => !samePlanDigest(decided.get(p.root), p.member!.planDigest)).map((p) => p.root).sort();
-  if (moved.length > 0) {
-    console.log(`${label}: these roots planned differently since wave ${wave} decided on ${decision.digest}: ${moved.join(", ")}`);
-    console.log(`${label}: nothing in this share was applied; run the pipeline again to plan and decide the wave anew`);
-    if (decision.approval === "approved") w.refused = { reason: "approval", approved: decision.digest, roots: moved };
-    writeOutcome(options.env, `wave ${wave} share ${share} changed since the wave decided: ${moved.join(", ")}`, w);
-    return EXIT.refused;
-  }
-  const hold = await holdRows(repo, options, label, planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary })), w);
-  if (hold.code !== undefined) return hold.code;
-  w.applyStarted = new Date().toISOString();
-  const ok: boolean[] = new Array(planned.length);
-  try {
-    await eachLimited(planned, limit.value, async (p, i) => {
-      ok[i] = await applyRoot(repo, p, w.observer, ws);
-    });
-  } finally {
-    await hold.release();
-  }
-  w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
-  w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
-  w.recordVersions = await listRecordVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
-  if (ok.includes(false)) {
-    w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
-    console.log(`${label}: an apply failed`);
-    return EXIT.failed;
-  }
-  console.log(`${label} applied`);
-  return EXIT.applied;
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
@@ -1783,356 +1881,357 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
 }
 
 /**
- * Run the policy over a wave's plans, when `policy` is on. Returns the exit
- * code when the policy refused a root or could not check it, so nothing in
- * the wave applies and no approval is waited for; undefined to go on.
+ * Run the policy over a wave's plans, when `policy` is on. A root the policy
+ * denies with rule ids goes to chant as a denial (`denied` in `{plans}`), and
+ * chant lets it through only under an override on `_gates/policy-override.jsonl`
+ * by someone `policy.override` at base lists, refusing the wave otherwise. A
+ * root the policy could not check, or denied with no rule to override, stops
+ * the wave here: returns the exit code. Otherwise the denials, by root.
  */
-async function policyGate(
+async function policyCheck(
   repo: string,
   options: ApplyWaveOptions,
-  ctx: { label: string; settings: ReturnType<typeof resolveRepo>; configPath: string | undefined },
+  ctx: WavesContext,
+  at: { label: string; settings: ResolvedSettings },
   planned: WavePlan[],
-  w: WaveRun,
-): Promise<number | undefined> {
-  const { wave } = options;
-  const { label, settings, configPath } = ctx;
-  // Policy is opt-in. A wave whose plans the policy denies, or that it cannot check, applies nothing and records no approval to wait for.
-  // With a base, the base's policy key decides whether it runs, as in tf-plan.
+  j: WaveJob,
+): Promise<Map<string, { rules: string[]; reason?: string }> | number> {
+  const { k: wave, w } = j;
+  const { label, settings } = at;
+  const out = new Map<string, { rules: string[]; reason?: string }>();
+  // Policy is opt-in. With a base, the base's policy key decides whether it runs, as in tf-plan.
   const policyEnv = options.env ?? process.env;
   const policyBaseRef = options.base ?? (policyEnv.TG_BASE || undefined);
-  const governing = await governingPolicy(repo, settings.policy, policyBaseRef, configPath ? { config: configPath } : {});
+  const governing = await governingPolicy(repo, settings.policy, policyBaseRef, ctx.configPath ? { config: ctx.configPath } : {});
   if (governing.note) console.log(governing.note);
-  if (governing.policy) {
-    const runAt = runFacts(repo, policyEnv, settings.forge);
-    // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
-    const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
-    // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
-    const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label, settings.forge) : undefined;
-    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, ...(review ? { review } : {}) });
-    const denied = found.failed;
-    w.policy = found.policy;
+  if (!governing.policy) return out;
+  const runAt = runFacts(repo, policyEnv, settings.forge);
+  // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
+  const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
+  // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
+  const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label, settings.forge) : undefined;
+  const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, ...(review ? { review } : {}) });
+  w.policy = found.policy;
+  for (const p of planned) {
+    const verdict = found.roots.get(p.root);
+    if (verdict) p.policy = verdict;
+  }
+  if (found.failed.size === 0) return out;
+  // Who may override is policy.override in the config at base, when the policy key in force names any; with nobody listed, no denial is recorded for an override.
+  const overriders = governing.policy.override?.length ? (ctx.rule?.overriders ?? []) : [];
+  // A denial with its rules and plan can be overridden; one the policy could not check never is.
+  const overridable = (p: WavePlan): boolean => overriders.length > 0 && found.failed.has(p.root) && p.policy?.result === "denied" && (p.policy.rules?.length ?? 0) > 0 && !!p.member?.planDigest;
+  const hard = planned.filter((p) => found.failed.has(p.root) && !overridable(p));
+  j.denials = new Map(found.failed);
+  if (hard.length > 0) {
     for (const p of planned) {
-      const verdict = found.roots.get(p.root);
-      if (verdict) p.policy = verdict;
+      const error = found.failed.get(p.root);
+      if (error === undefined) continue;
+      p.error = error;
+      console.log(`FAILED ${p.root}: ${error.split("\n")[0]}`);
+      console.log(indent(error));
     }
-    // An override is looked up only when the policy key in force names who may write one; the list that counts is the one at base.
-    const moved = denied.size > 0 && !!governing.policy.override?.length && (await overrideDenials(repo, options, label, planned, denied, w));
-    if (denied.size > 0) {
-      for (const p of planned) {
-        const error = denied.get(p.root);
-        if (error === undefined) continue;
-        p.error = error;
-        console.log(`FAILED ${p.root}: ${error.split("\n")[0]}`);
-        console.log(indent(error));
-      }
-      console.log(`${label}: policy refused ${denied.size} root${denied.size === 1 ? "" : "s"}, so nothing in it was applied`);
-      const roots = [...denied.keys()].sort();
-      w.refused = { reason: moved ? "override" : "policy", roots };
-      if (moved) {
-        writeOutcome(options.env, `wave ${wave} changed after its policy override: ${[...denied.keys()].join(", ")}`, w);
-        return EXIT.refused;
-      }
-      writeOutcome(options.env, `wave ${wave} refused by policy: ${[...denied.keys()].join(", ")}`, w);
-      return EXIT.failed;
-    }
+    console.log(`${label}: policy refused ${found.failed.size} root${found.failed.size === 1 ? "" : "s"}, so nothing in it was applied`);
+    w.refused = { reason: "policy", roots: [...found.failed.keys()].sort() };
+    writeOutcome(options.env, `wave ${wave} refused by policy: ${[...found.failed.keys()].join(", ")}`, w);
+    return EXIT.failed;
   }
-  return undefined;
+  j.overriders = overriders;
+  if (w.policy) w.policy.overriders = overriders;
+  for (const p of planned) {
+    if (!found.failed.has(p.root)) continue;
+    out.set(p.root, { rules: p.policy!.rules!, reason: found.failed.get(p.root)!.split("\n")[0]! });
+  }
+  return out;
 }
 
 /**
- * Look up an override for each root the policy denied, when `policy.override`
- * in the config at base names who may write one (./override.ts). An
- * overridden root leaves `denied` and carries its override; a denied root
- * with none gets a pending fact for its plan and rules, and the command that
- * overrides it. A root the policy could not check is never overridden.
- * Returns true when, for a root still denied, an override stands for an
- * earlier plan or other rules that no wave applied: the changed-wave refusal.
- * An override a wave applied under refuses nothing.
+ * What a gated wave settles before chant decides its gate, each recorded on
+ * the ledger as the approval chant then counts: under `apply.point` at base,
+ * the decision point's answer for this digest (./point-gate.ts); the rest of
+ * a stopped apply, which its approval covers (./remainder.ts); and under
+ * `approval: pr-review`, the merged pull request's approving review of these
+ * plans. Nothing is recorded when an approval of the digest already stands.
  */
-async function overrideDenials(repo: string, options: ApplyWaveOptions, label: string, planned: WavePlan[], denied: Map<string, string>, w: WaveRun): Promise<boolean> {
-  const overridable = planned.filter((p) => denied.has(p.root) && p.policy?.result === "denied" && p.member?.planDigest);
-  if (overridable.length === 0) return false;
-  const configPath = options.config ?? findConfig(repo);
-  let rule: ApprovalRule;
-  let ledger: GateLedger;
-  try {
-    rule = await approvalRule(repo, { ...(options.base ? { at: options.base } : {}), ...(configPath ? { config: configPath } : {}), ...(options.approval ? { flag: options.approval } : {}) });
-    if (rule.overriders.length === 0) return false;
-    ledger = readLedger(repo, OVERRIDE_LEDGER);
-  } catch (e) {
-    console.log(`${label}: policy override: ${(e as Error).message}, so no override counts`);
-    return false;
-  }
-  if (w.policy) w.policy.overriders = rule.overriders;
-  const now = options.now ?? new Date().toISOString();
-  const env = options.env ?? process.env;
-  let moved = false;
-  const overridden: string[] = [];
-  for (const p of overridable) {
-    const rules = p.policy!.rules ?? [];
-    const planDigest = p.member!.planDigest;
-    const decision = decideOverride(ledger, overrideRule(repo, rule), p.root, planDigest, rules, now);
-    if (decision.status === "overridden") {
-      const o = decision.override;
-      p.policy = { ...p.policy!, override: o };
-      denied.delete(p.root);
-      overridden.push(p.root);
-      console.log(`${p.root}: the policy denial (${o.rules.join(", ")}) is overridden by ${o.by} at ${o.at}${o.sealed ? ", sealed" : ""}: ${o.reason}`);
-      continue;
-    }
-    for (const why of decision.refusals) console.log(`${p.root}: an override does not count: ${why}`);
-    if (decision.status === "none" && decision.spent) {
-      console.log(`${p.root}: the override of ${decision.spent.digest} by ${decision.spent.by} was used by the apply of that plan, so this plan needs an override of its own`);
-    }
-    const digest = overrideDigest(p.root, planDigest, rules);
-    if (decision.status === "moved") {
-      moved = true;
-      console.log(`${p.root}: ${decision.by} overrode an earlier plan or other rules (${decision.was ?? "no digest"}); this plan and its rules give ${digest}, so that override counts for nothing`);
-    }
-    if (!decision.standing) {
-      const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
-      const pending = overridePending(
-        { subject: p.root, planDigest, rules, timestamp: now, expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(), description: `${p.root}: plan ${planDigest} denied by ${rules.join(", ")}`, ...(runId ? { runId } : {}) },
-        { members: [p.member!], neverOverMcp: true },
-      );
-      try {
-        appendPending(repo, pending, {}, OVERRIDE_LEDGER);
-      } catch (e) {
-        console.log(`${p.root}: the denial was not recorded for an override: ${(e as Error).message}`);
-      }
-    }
-    console.log(`${p.root}: policy.override at base lists ${rule.overriders.join(", ")}; one of them can let this plan through with:`);
-    console.log(`  ${overrideCommand(p.root, rules, rule.mode === "sealed")}`);
-  }
-  if (overridden.length > 0 && w.policy) w.policy.overridden = overridden.sort();
-  return moved;
-}
-
-/**
- * Record each override the wave is about to apply under, in
- * `_gates/policy-override/applied.jsonl`, so the root's next denial is not
- * refused for it (decideOverride). Written before anything applies, as the
- * approvals are; a record that cannot be pushed stops the wave.
- */
-function recordOverridesUsed(repo: string, options: ApplyWaveOptions, applying: WavePlan[]): void {
-  const used = applying.filter((p) => p.policy?.override);
-  if (used.length === 0) return;
-  const env = options.env ?? process.env;
-  const now = options.now ?? new Date().toISOString();
-  const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
-  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-  const records: AppliedRecord[] = used.map((p) => {
-    const o = p.policy!.override!;
-    return {
-      version: 1,
-      kind: "applied",
-      op: OVERRIDE_OP,
-      gate: p.root,
-      planDigest: o.digest,
-      approvedAt: o.at,
-      approvedBy: o.by,
-      timestamp: now,
-      ...(runId ? { runId } : {}),
-      ...(commit ? { commit } : {}),
-    };
-  });
-  appendRecord(repo, records, {}, `Applied under override: ${OVERRIDE_OP} ${used.map((p) => p.root).join(", ")}`, appliedPathFor(OVERRIDE_LEDGER));
-}
-
-/**
- * Decide a wave's gate for the plans it just made. Returns the exit code
- * when the wave waits (3) or its plans changed after the approval (4);
- * undefined when it applies.
- */
-async function gateWave(
+async function beforeGate(
   repo: string,
   options: ApplyWaveOptions,
-  ctx: { label: string; roots: string[]; planned: WavePlan[]; members: WaveMember[]; digest: string; changes: number; destroys: number; heldBySteps?: string[]; resume?: boolean },
-  facts: WaveFacts,
-  w: WaveRun,
+  ctx: WavesContext,
+  j: WaveJob,
+  at: { label: string; digest: string; planned: WavePlan[]; plans: RootPlan[]; resume: boolean; members?: WaveMember[]; roots?: string[] },
 ): Promise<number | undefined> {
-  const { wave, binary, gate } = options;
-  const { label, roots, planned, members, digest, changes, destroys } = ctx;
-  let mode: Approval = "ledger";
-  // A wave with nothing to change has nothing to approve. A step that asks for an approval, or a change over cost.approve_above at base, holds it whatever the gate policy says.
-  const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || (ctx.heldBySteps?.length ?? 0) > 0;
-  const byCost = w.waveCost?.over === true;
-  const gated = changes > 0 && (byGate || byCost);
-  if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);
-  w.approval = gated ? "waiting" : "not-required";
-  w.digest = digest;
-  if (gated) {
-    w.gate = { branch: LIFECYCLE, path: LEDGER_PATH };
-    const name = waveGate(wave);
-    const now = options.now ?? new Date().toISOString();
-    const ledger = readLedger(repo);
-    // A pull request applied before it merges names its base (apply.when: pull-request): the rule is the default branch's, never the pull request's own.
-    const configPath = options.config ?? findConfig(repo);
-    const rule = await approvalRule(repo, { ...(options.base ? { at: options.base } : {}), ...(configPath ? { config: configPath } : {}), ...(options.approval ? { flag: options.approval } : {}) });
-    console.log(`${label}: approval ${rule.mode} (${rule.source})`);
-    if (rule.note) console.log(`${label}: note: ${rule.note}`);
-    mode = rule.mode;
-    w.mode = mode;
-    // Under sealed every wave gate needs a seal: a wave added after init is never left open.
-    if (rule.mode === "sealed") {
-      if (rule.gates.size > 0 && !rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
-      ledger.resolutions = ledger.resolutions.filter((r) => {
-        if (r.gate !== name) return true;
-        const why = sealRefusal(rule.signers, r);
-        if (why !== null && samePlanDigest(r.planDigest, digest)) console.log(`${label}: an approval does not count: ${why}`);
-        return why === null;
-      });
+  const { k: wave, w, facts } = j;
+  const { label, digest, planned, plans } = at;
+  const rule = ctx.rule;
+  if (!rule) return undefined;
+  const env = options.env ?? process.env;
+  const name = waveGate(wave);
+  const now = new Date().toISOString();
+  // With apply.point at base the gate asks that decision point, and only its answer passes the wave (./point-gate.ts).
+  if (rule.point) {
+    const roots = at.roots ?? planned.map((p) => p.root);
+    const members = at.members ?? planned.filter((p) => p.member).map((p) => p.member!);
+    const pointed = await pointGate(repo, { point: rule.point, mode: rule.mode, label, wave, digest, members, roots, planned, binary: options.binary, now, env, commit: env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim(), w, facts, outcome: (line) => writeOutcome(options.env, line, w) });
+    if (typeof pointed === "number") {
+      j.code = pointed;
+      j.pointed = true;
+      return pointed === EXIT.waiting ? undefined : pointed;
     }
-    // With apply.point at base the gate asks that decision point, and only its answer passes the wave (./point-gate.ts).
-    const pointed = rule.point ? await pointGate(repo, { point: rule.point, mode, label, wave, digest, members, roots, planned, binary, now, env: options.env ?? process.env, commit: (options.env ?? process.env).TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim(), w, facts, outcome: (line) => writeOutcome(options.env, line, w) }) : undefined;
-    if (typeof pointed === "number") return pointed;
-    let decision: GateDecision = pointed ?? decideGate(ledger, name, digest, now);
-    // A plain wave whose approved apply stopped before it finished: plans that are the rest of the approved ones apply under that approval (./remainder.ts).
-    const plans = planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary }));
-    let resumes: string | undefined;
-    if (ctx.resume && decision.status === "waiting" && decision.spent) {
-      const stopped = stoppedApply(ledger, name, decision.spent.at);
-      if (stopped?.changes) {
-        const c = coverRemainder(stopped.changes, plans);
-        if (c.covered) {
-          console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished; ${c.done.length} of its ${stopped.changes.length} change${stopped.changes.length === 1 ? "" : "s"} are done in the records, and these plans make the other ${c.remaining.length}, so that approval covers them`);
-          resumes = stopped.planDigest;
-          decision = { status: "approved", by: decision.spent.by, at: decision.spent.at };
-        } else {
-          console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished, but ${c.why}, so these plans need an approval of their own`);
-        }
+    return undefined;
+  }
+  const ledger = readLedger(repo);
+  // Under sealed every wave gate needs a seal: a wave added after init is never left open. chant counts only these; the log says why the others do not.
+  if (rule.mode === "sealed") {
+    if (rule.gates.size > 0 && !rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
+    ledger.resolutions = ledger.resolutions.filter((r) => {
+      if (r.gate !== name) return true;
+      const why = sealRefusal(rule.signers, r);
+      if (why !== null && samePlanDigest(r.planDigest, digest)) console.log(`${label}: an approval does not count: ${why}`);
+      return why === null;
+    });
+  }
+  const decision = decideGate(ledger, name, digest, now);
+  if (decision.status !== "waiting") return undefined;
+  // A plain wave whose approved apply stopped before it finished: plans that are the rest of the approved ones apply under that approval.
+  if (at.resume && decision.spent) {
+    const stopped = stoppedApply(ledger, name, decision.spent.at);
+    if (stopped?.changes) {
+      const c = coverRemainder(stopped.changes, plans);
+      if (c.covered) {
+        console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished; ${c.done.length} of its ${stopped.changes.length} change${stopped.changes.length === 1 ? "" : "s"} are done in the records, and these plans make the other ${c.remaining.length}, so that approval covers them`);
+        appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: decision.spent.by, timestamp: now, planDigest: digest, note: `the rest of the apply of ${stopped.planDigest}, which ${decision.spent.by} approved at ${decision.spent.at}` }, {}, `Approved as the rest of a stopped apply: ${APPLY_OP} ${name}`);
+        j.resumes = stopped.planDigest;
+        return undefined;
       }
+      console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished, but ${c.why}, so these plans need an approval of their own`);
     }
-    // Under pr-review the merged pull request's approving review of its head counts, when it reviewed these plans.
-    let moved: Extract<ReviewOutcome, { kind: "moved" }> | undefined;
-    if (decision.status === "waiting" && mode === "pr-review") {
-      const env = options.env ?? process.env;
-      const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
-      const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-      const priced = costMember(w.waveCost);
-      const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
-      const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest });
-      if (r.kind === "approved") {
-        appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
-        console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
-        decision = { status: "approved", by: r.by.join(", "), at: now };
-      } else if (r.kind === "moved") {
-        moved = r;
-      } else {
-        console.log(`${label}: no review approves this wave: ${r.why}`);
-        if (r.review) {
-          w.review = { pull_request: r.review.pr, url: r.review.url };
-          console.log(`${label}: an approving review of pull request ${r.review.pr} on its head approves it: ${r.review.url}`);
-        }
-      }
-    }
-    if (decision.status === "approved") {
-      console.log(`${label}: approved by ${decision.by} for this digest`);
-      w.approval = "approved";
-      // The wait the approval ended: from the newest pending record of the gate made before it.
-      const asked = ledger.pending.filter((p) => p.gate === name && at(p.timestamp) <= at(decision.at)).reduce<string | undefined>((a, p) => (!a || at(p.timestamp) > at(a) ? p.timestamp : a), undefined);
-      if (asked) {
-        w.gateSince = asked;
-        w.approvedAt = decision.at;
-      }
-      // Recorded before anything applies, so no approval is ever used without the ledger saying so; a record that cannot be pushed stops the wave.
-      const env = options.env ?? process.env;
-      const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
-      const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-      const changes = ctx.resume ? approvedChanges(plans) : undefined;
-      const record: AppliedRecord = {
-        version: 1,
-        kind: "applied",
-        op: APPLY_OP,
-        gate: name,
-        planDigest: digest,
-        approvedAt: decision.at,
-        approvedBy: decision.by,
-        timestamp: now,
-        ...(runId ? { runId } : {}),
-        ...(commit ? { commit } : {}),
-        ...(changes ? { holder: rowHolder(env).run, changes } : {}),
-        ...(resumes ? { resumes } : {}),
-      };
-      appendRecord(repo, record, {}, `Applied under approval: ${APPLY_OP} ${name}`, APPLIED_PATH);
-      if (changes) w.appliedUnder = record;
+  }
+  if (decision.spent) console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);
+  // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
+  if (rule.mode === "pr-review") {
+    const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
+    const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+    const priced = costMember(w.waveCost);
+    const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
+    const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest });
+    if (r.kind === "approved") {
+      appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
+      console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
+    } else if (r.kind === "moved") {
+      j.reviewMoved = r;
     } else {
-      if (decision.status === "waiting" && decision.spent) {
-        console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);
+      console.log(`${label}: no review approves this wave: ${r.why}`);
+      if (r.review) {
+        w.review = { pull_request: r.review.pr, url: r.review.url };
+        console.log(`${label}: an approving review of pull request ${r.review.pr} on its head approves it: ${r.review.url}`);
       }
-      const env = options.env ?? process.env;
-      facts.waitingSince = decision.standing?.timestamp ?? now;
-      w.waitingSince = facts.waitingSince;
-      w.gateSince = facts.waitingSince;
-      // The report of this wave's plans, as respond wave-refused reads it.
-      const report = (): string =>
-        JSON.stringify(buildReport({
-          run: { ...runFacts(repo, env), stage: "tf-apply", wave, binary, runtime: "forge", started: now, finished: now },
-          roots: planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(binary) })),
-          waves: [{ number: wave, roots, setDigest: digest }],
-        }));
-      if (!decision.standing) {
-        const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
-        const atCommit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-        appendPending(repo, {
-          version: 1,
-          kind: "pending",
-          op: APPLY_OP,
-          gate: name,
-          timestamp: now,
-          expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(),
-          planDigest: digest,
-          description: `${label}: ${roots.join(", ")}`,
-          ...(runId ? { runId } : {}),
-          ...(atCommit ? { commit: atCommit } : {}),
-          members,
-          neverOverMcp: true,
-        }, { [approvedPath(wave, digest)]: report() });
-      }
-      if (moved) {
-        console.log(`${label}: pull request ${moved.pr} was approved on its head ${moved.head.slice(0, 8)} by ${moved.by.join(", ")}, but the plans changed since that review, so nothing in it was applied`);
-        console.log(`${label}: the review saw digest ${moved.reviewed}; the changes planned now have another. Read the plans above, then approve them with:`);
-        console.log(`  ${approveLine(wave, digest, mode)}`);
-        mkdirSync(join(repo, "terragucci-report", "current"), { recursive: true });
-        writeFileSync(join(repo, "terragucci-report", "current", "report.json"), report());
-        w.refused = { reason: "review", approved: moved.reviewed, by: moved.by.join(", "), roots: members.map((m) => m.member).sort() };
-        w.command = approveLine(wave, digest, mode);
-        writeOutcome(options.env, `wave ${wave} changed since its review in pull request ${moved.pr}`, w);
-        return EXIT.refused;
-      }
-      if (decision.status === "refused") {
-        const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === name && p.members && samePlanDigest(p.planDigest, decision.approved));
-        const moved = approvedFact ? movedMembers(approvedFact.members!, members) : roots.slice().sort();
-        // chant's describeChangedWave words the same refusal with a chant approve hint; the reader runs terragucci approve.
-        console.log(`wave ${wave} changed after it was approved, so nothing in it was applied. approved: ${decision.approved ?? "(none)"}; planned now: ${digest}. Read the new plan, then approve it: ${approveLine(wave, digest, mode)}`);
-        console.log(`${label}: approved by ${decision.by}, but these roots planned differently since: ${moved.join(", ")}`);
-        // What respond wave-refused compares: the plans approved, as the run that waited for them kept them, and the plans made now.
-        const was = approvedFact?.planDigest ?? decision.approved;
-        const approved = was && git(repo, ["show", `${REMOTE_REF}:${approvedPath(wave, was)}`]);
-        for (const [dir, text] of [["current", report()], ["approved", approved && approved.status === 0 ? approved.stdout : ""]]) {
-          if (!text) continue;
-          mkdirSync(join(repo, "terragucci-report", dir), { recursive: true });
-          writeFileSync(join(repo, "terragucci-report", dir, "report.json"), text);
-        }
-        if (!approved || approved.status !== 0) console.log(`${label}: the approved plans were not kept, so only the roots that moved can be named`);
-        w.refused = { reason: "approval", ...(decision.approved ? { approved: decision.approved } : {}), by: decision.by, roots: moved };
-        w.command = approveLine(wave, digest, mode);
-        writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`, w);
-        return EXIT.refused;
-      }
-      console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
-      console.log(`  ${approveLine(wave, digest, mode)}`);
-      // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
-      console.log(mode === "sealed"
-        ? "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>."
-        : "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
-      console.log("Then run this job again.");
-      w.command = approveLine(wave, digest, mode);
-      writeOutcome(options.env, `wave ${wave} waits: ${w.command}`, w);
-      return EXIT.waiting;
     }
   }
   return undefined;
+}
+
+/** chant's decision record, as an `after-gate` hook reads it. */
+type GateRecord = OpWaveDecision;
+
+/**
+ * The `after-gate` hook: chant decided the wave's gate. terragucci says what
+ * that means in its own words and exit codes, keeps the report of the plans
+ * a new pending fact asks approval for, and writes the outcome of a wave that
+ * does not apply. A wave that applies reports from its apply.
+ */
+async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, env: Record<string, string>, cwd: string): Promise<number> {
+  const { k: wave, w, facts, label } = j;
+  const status = env.CHANT_GATE_STATUS as GateRecord["status"] | undefined;
+  const d = readCallFile<GateRecord>(cwd, env.CHANT_DECISION);
+  const mode: Approval = ctx.rule?.mode ?? "ledger";
+  // The overrides chant let denied roots through under, for the report.
+  const overridden: string[] = [];
+  for (const m of d?.members ?? []) {
+    const p = w.planned?.find((x) => x.root === m.member);
+    if (!m.override || !p?.policy) continue;
+    p.policy = { ...p.policy, override: { by: m.override.by, at: m.override.at, rules: m.denied?.rules ?? p.policy.rules ?? [], reason: m.override.reason, plan_digest: m.planDigest, digest: m.override.digest, sealed: mode === "sealed" } };
+    overridden.push(m.member);
+  }
+  if (overridden.length && w.policy) w.policy.overridden = overridden.sort();
+  if (d?.heldOn) {
+    // A state migration holds wave 1 on its own gate (migrationCall printed the proof and its command).
+    j.code = EXIT.waiting;
+    if (d.heldOn.mismatch) {
+      console.log(`wave 1: ${d.heldOn.mismatch.resolvedBy} approved ${d.heldOn.mismatch.approved ?? "another digest"} of ${d.heldOn.gate}, and the states moved since; nothing was written`);
+      j.code = EXIT.refused;
+      writeOutcome(options.env, `migration ${d.heldOn.gate}: the states moved since it was approved`, w);
+    }
+    return EXIT.applied;
+  }
+  w.digest = d?.digest || env.CHANT_GATE_DIGEST || w.digest;
+  const digest = w.digest ?? "";
+  if (status === "not-required") {
+    w.approval = "not-required";
+    return EXIT.applied;
+  }
+  if (status === "refused") {
+    const moved = d?.refused?.reason === "override-moved";
+    const runs = d?.refused?.runs ?? [];
+    for (const root of runs) {
+      const p = w.planned?.find((x) => x.root === root);
+      const error = j.denials?.get(root) ?? "denied by the policy";
+      if (p) p.error = error;
+      console.log(`FAILED ${root}: ${error.split("\n")[0]}`);
+      console.log(indent(error));
+      const rules = d?.members.find((m) => m.member === root)?.denied?.rules ?? [];
+      if (j.overriders?.length) {
+        console.log(`${root}: policy.override at base lists ${j.overriders.join(", ")}; one of them can let this plan through with:`);
+        console.log(`  ${overrideCommand(root, rules, mode === "sealed")}`);
+      }
+    }
+    console.log(`${label}: policy refused ${runs.length} root${runs.length === 1 ? "" : "s"}, so nothing in it was applied`);
+    w.refused = { reason: moved ? "override" : "policy", roots: [...runs].sort() };
+    writeOutcome(options.env, moved ? `wave ${wave} changed after its policy override: ${runs.join(", ")}` : `wave ${wave} refused by policy: ${runs.join(", ")}`, w);
+    j.code = moved ? EXIT.refused : EXIT.failed;
+    return EXIT.applied;
+  }
+  w.gate = { branch: LIFECYCLE, path: LEDGER_PATH };
+  w.mode = mode;
+  if (ctx.rule) console.log(`${label}: approval ${ctx.rule.mode} (${ctx.rule.source})`);
+  if (ctx.rule?.note) console.log(`${label}: note: ${ctx.rule.note}`);
+  if (status === "approved") {
+    w.approval = "approved";
+    j.approvedBy = d?.approvedBy;
+    j.approvedAt = d?.approvedAt;
+    console.log(`${label}: approved by ${d?.approvedBy ?? "an approval"} for this digest`);
+    // The wait the approval ended: from the newest pending record of the gate made before it.
+    if (d?.approvedAt) {
+      try {
+        const asked = readLedger(repo).pending.filter((p) => p.gate === waveGate(wave) && at(p.timestamp) <= at(d.approvedAt!)).reduce<string | undefined>((a, p) => (!a || at(p.timestamp) > at(a) ? p.timestamp : a), undefined);
+        if (asked) {
+          w.gateSince = asked;
+          w.approvedAt = d.approvedAt;
+        }
+      } catch {
+        // The run view's gate span is left out.
+      }
+    }
+    return EXIT.applied;
+  }
+  // Waiting.
+  w.approval = "waiting";
+  const since = env.CHANT_GATE_WAITING_SINCE || d?.waitingSince || new Date().toISOString();
+  facts.waitingSince = since;
+  w.waitingSince = since;
+  w.gateSince = since;
+  // The report of the plans this pending fact asks approval for, kept beside it, as respond wave-refused reads it.
+  if (env.CHANT_GATE_RECORDED === "true" && j.stored && digest) {
+    try {
+      appendLifecycle(repo, "", [], { [approvedPath(wave, digest)]: j.stored() }, `The plans of ${APPLY_OP} ${waveGate(wave)}: ${digest}`);
+    } catch (e) {
+      console.log(`${label}: the report of these plans was not kept beside the pending fact: ${(e as Error).message}`);
+    }
+  }
+  // Under apply.point the decision point's question is what waits (beforeGate printed how to answer it).
+  if (j.pointed) return EXIT.applied;
+  const report = j.stored;
+  if (j.reviewMoved) {
+    const moved = j.reviewMoved;
+    console.log(`${label}: pull request ${moved.pr} was approved on its head ${moved.head.slice(0, 8)} by ${moved.by.join(", ")}, but the plans changed since that review, so nothing in it was applied`);
+    console.log(`${label}: the review saw digest ${moved.reviewed}; the changes planned now have another. Read the plans above, then approve them with:`);
+    console.log(`  ${approveLine(wave, digest, mode)}`);
+    if (report) {
+      mkdirSync(join(repo, "terragucci-report", "current"), { recursive: true });
+      writeFileSync(join(repo, "terragucci-report", "current", "report.json"), report());
+    }
+    w.refused = { reason: "review", approved: moved.reviewed, by: moved.by.join(", "), roots: (w.changedRoots ?? []).slice().sort() };
+    w.command = approveLine(wave, digest, mode);
+    writeOutcome(options.env, `wave ${wave} changed since its review in pull request ${moved.pr}`, w);
+    j.code = EXIT.refused;
+    return EXIT.applied;
+  }
+  if (d?.mismatch) {
+    // An approval of other plans that no wave applied: the plans moved after it, and terragucci refuses (4) where chant waits.
+    const mismatch = d.mismatch;
+    const ledger = readLedger(repo);
+    const members = (d.members ?? []).filter((m) => !m.empty).map((m) => ({ member: m.member, planDigest: m.planDigest }));
+    const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === waveGate(wave) && p.members && samePlanDigest(p.planDigest, mismatch.approved));
+    const moved = approvedFact ? movedMembers(approvedFact.members!, [...members, ...(d.extras ?? [])]) : (w.roots ?? []).slice().sort();
+    // chant's describeChangedWave words the same refusal with a chant approve hint; the reader runs terragucci approve.
+    console.log(`wave ${wave} changed after it was approved, so nothing in it was applied. approved: ${mismatch.approved ?? "(none)"}; planned now: ${digest}. Read the new plan, then approve it: ${approveLine(wave, digest, mode)}`);
+    console.log(`${label}: approved by ${mismatch.resolvedBy}, but these roots planned differently since: ${moved.join(", ")}`);
+    // What respond wave-refused compares: the plans approved, as the run that waited for them kept them, and the plans made now.
+    const was = approvedFact?.planDigest ?? mismatch.approved;
+    const approved = was ? storedReport(repo, wave, was) : undefined;
+    for (const [dir, text] of [["current", report?.() ?? ""], ["approved", approved ?? ""]] as const) {
+      if (!text) continue;
+      mkdirSync(join(repo, "terragucci-report", dir), { recursive: true });
+      writeFileSync(join(repo, "terragucci-report", dir, "report.json"), text);
+    }
+    if (!approved) console.log(`${label}: the approved plans were not kept, so only the roots that moved can be named`);
+    w.refused = { reason: "approval", ...(mismatch.approved ? { approved: mismatch.approved } : {}), by: mismatch.resolvedBy, roots: moved };
+    w.command = approveLine(wave, digest, mode);
+    writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`, w);
+    j.code = EXIT.refused;
+    return EXIT.applied;
+  }
+  console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
+  console.log(`  ${approveLine(wave, digest, mode)}`);
+  // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
+  console.log(mode === "sealed"
+    ? "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>."
+    : "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
+  console.log("Then run this job again.");
+  w.command = approveLine(wave, digest, mode);
+  writeOutcome(options.env, `wave ${wave} waits: ${w.command}`, w);
+  j.code = EXIT.waiting;
+  return EXIT.applied;
+}
+
+/**
+ * The repo's state migrations that have not run (./migrate.ts), before wave
+ * 1 plans: every later wave waits on wave 1, so no root applies against a
+ * state a migration is about to rewrite. Two `before-plan` hooks of wave 1
+ * call this: `migrations` proves the first one, and fails the wave when it
+ * cannot be proved; `migration gate` (onFailure: approve) holds the wave on
+ * that migration's own gate, `tf-migrate <name>`, through chant's CHANT_HOLD,
+ * and once chant found the approval (CHANT_HOLD_APPROVED) writes the states.
+ * Each record goes to `terragucci-report/migrations/` and, with
+ * `reports.bucket`, to `<prefix>/<project>/migrations/<name>.json`. A share
+ * job leaves the migrations to its wave's job.
+ */
+async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob, hold: Record<string, string> | undefined, cwd: string): Promise<number> {
+  delete j.code;
+  if (j.k !== 1 || options.share !== undefined || !existsSync(join(repo, MIGRATIONS_DIR))) return EXIT.applied;
+  const env = options.env ?? process.env;
+  let approved: MigrationHold["approved"];
+  try {
+    approved = hold?.CHANT_HOLD_APPROVED ? (JSON.parse(hold.CHANT_HOLD_APPROVED) as MigrationHold["approved"]) : undefined;
+  } catch {
+    approved = undefined;
+  }
+  const run = await runMigrations(repo, {
+    binary: options.binary,
+    env,
+    // A Terragrunt unit is prepared by Terragrunt, and its binary then runs where Terragrunt runs it.
+    ...(options.terragrunt ? { terragrunt: { ...(options.terragruntPath ? { path: options.terragruntPath } : {}), ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) } } : {}),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.approval ? { approval: options.approval } : {}),
+    ...(options.base ? { base: options.base } : {}),
+    ...(options.config ? { config: options.config } : {}),
+    ...(hold ? { hold: { file: join(cwd, hold.CHANT_HOLD ?? ".chant/op-waves/tf-apply/wave-1/hold.json"), ...(approved ? { approved } : {}) } } : { prove: true }),
+  });
+  if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env);
+  if (run.code === EXIT.applied) return EXIT.applied;
+  const last = run.records[run.records.length - 1];
+  if (run.command) j.w.command = run.command;
+  const what = last ? `migration ${last.name}` : "a migration";
+  writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, j.w);
+  if (run.code !== EXIT.waiting || approved) console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
+  // A hold made after another migration applied in this run cannot wait on chant's gate: the next run of the job holds on it.
+  if (run.code === EXIT.waiting && approved) {
+    console.log(`wave 1: ${what} waits on its own gate; run this job again to record it`);
+    j.code = EXIT.failed;
+    return EXIT.failed;
+  }
+  // A hold waits on chant's decision of the migration's gate (gateCall); anything else is this wave's own code.
+  if (run.code !== EXIT.waiting) j.code = run.code;
+  return run.code;
 }
 
 // ── a Terragrunt wave ────────────────────────────────────────────────────
@@ -2182,23 +2281,26 @@ const tail = (s: string, n = 40): string => s.trim().split("\n").slice(-n).join(
 const waves = (n: number): string => `${n} wave${n === 1 ? "" : "s"}`;
 
 /**
- * One wave of a Terragrunt repo, behind the same gate as a plain wave.
+ * Plan one wave of a Terragrunt repo for chant (`planWave`), behind the same
+ * gate as a plain wave.
  *
- * The waves are the pipeline's `--layers`, each split again by the edges
- * `terragrunt find` gives in the job's checkout (refineWaves). A pipeline
- * whose init saw every edge comes back as it is; one whose init missed an
- * edge (a dependency path built with a function) gets more waves than jobs,
- * and the last job runs them with `--rest`. No unit of a wave reads another
- * unit of it, and a unit that reads one of a later wave fails the job.
+ * Every wave of the spec discovers its runs: the waves are the pipeline's
+ * `--layers`, each split again by the edges `terragrunt find` gives in the
+ * job's checkout (refineWaves), and `{plans}` names wave k's units and how
+ * many waves there are. A pipeline whose init saw every edge comes back as it
+ * is; one whose init missed an edge (a dependency path built with a function)
+ * gets more waves than jobs, and the last job (`--rest`, the spec's `rest`
+ * wave) runs them. No unit of a wave reads another unit of it, and a unit
+ * that reads one of a later wave fails the job.
  *
- * The wave plans its units with one `run --all`, each plan saved, and takes
- * the set digest over the units whose plan changes something. With `cost`
- * set the plans are priced first, and with `cost.approve_above` at base the
- * wave's cost is one more member of the digest, as for plain roots. The gate
- * decides, as it decides a plain wave, and the wave applies exactly those
- * saved plans with one `run --all`, never planning anew. A unit whose plan
- * would read mock_outputs fails the wave: its upstream applies in an earlier
- * wave, so it has no outputs only when it lies outside the units.
+ * The wave plans its units with one `run --all`, each plan saved; chant takes
+ * the set digest over the units whose plan changes a resource or an output.
+ * With `cost` set the plans are priced first, and with `cost.approve_above`
+ * at base the wave's cost is one more member of the digest, as for plain
+ * roots. Once chant lets the wave through, it applies exactly those saved
+ * plans with one `run --all`, never planning anew. A unit whose plan would
+ * read mock_outputs fails the wave: its upstream applies in an earlier wave,
+ * so it has no outputs only when it lies outside the units.
  *
  * `steps:` run around the wave's `run --all`: each moment once for the wave,
  * in the directory of every unit a step's `roots` globs match (runUnitSteps).
@@ -2207,17 +2309,17 @@ const waves = (n: number): string => `${n} wave${n === 1 ? "" : "s"}`;
  * units that change. A step that fails fails the wave, and one with
  * `on_failure: approve` holds it at its gate.
  *
- * With `waves.jobs` (`--shares`) a wave's units split across share jobs as a
- * plain wave's roots do (waveShares): this job plans every unit, prices,
- * runs the policy and decides the gate, then hands the plan digest of each
- * unit to the shares, which plan their units again with `run --all
- * --filter` and apply them only when each plan has the digest decided.
+ * With `waves.jobs` (`--shares`) a wave's units split across share jobs: the
+ * wave's job plans every unit, prices, runs the policy and decides the gate,
+ * and chant hands each share job its units, which it plans again with `run
+ * --all --filter` and applies only when each plan has the digest decided.
  */
-async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts): Promise<number> {
-  const { wave, binary } = options;
+async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, runs: RunsFile, plansPath: string): Promise<number> {
+  const { binary } = options;
+  const { k: wave, w, facts } = j;
   const env = options.env ?? process.env;
   const terragrunt = options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  const configPath = options.config ?? findConfig(repo);
+  const { configPath, work } = ctx;
   const read = await waveSettings(repo, options, configPath);
   if ("error" in read) {
     console.log(`wave ${wave}: ${read.error}, so nothing in it was applied`);
@@ -2241,54 +2343,30 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   }
   w.count = cut.length;
   w.units = { waves: cut, edges: unitEdges(found.units) };
-  if (cut.length !== listed.length) {
+  if (cut.length !== listed.length && wave === options.wave) {
     console.log(`wave ${wave}: Terragrunt's edges cut the pipeline's ${waves(listed.length)} into ${cut.length}; run terragucci init to give each wave its own job`);
   }
   const unlisted = found.units.map((u) => u.path).filter((u) => !listed.some((l) => l.includes(u)) && !options.elsewhere?.includes(u));
-  if (unlisted.length > 0) console.log(`wave ${wave}: the pipeline does not list ${unlisted.join(", ")}, so no wave applies it; run terragucci init to add it`);
+  if (unlisted.length > 0 && wave === options.wave) console.log(`wave ${wave}: the pipeline does not list ${unlisted.join(", ")}, so no wave applies it; run terragucci init to add it`);
   const whole = cut[wave - 1];
-  const deciding = options.shares !== undefined && options.share === undefined;
-  if (!whole) {
+  const deciding = options.share === undefined;
+  if (runs.discover && !whole) {
     facts.nothing = true;
     console.log(`wave ${wave}: this repo has ${waves(cut.length)}, so there is nothing to apply`);
-    // The share jobs read a decision whatever the wave came to.
-    if (deciding) writeDecision(repo, options, { version: 1, wave, shares: 0, digest: "", approval: "not-required", changes: 0, members: [] });
+    writePlans(plansPath, { runs: [], waves: cut.length });
+    j.apply = async () => EXIT.applied;
     return EXIT.applied;
   }
-  const shares = options.shares !== undefined ? waveShares(whole, options.shares) : [whole];
-  let roots = whole;
-  let label = `wave ${wave} of ${cut.length}`;
-  let decision: WaveDecision | undefined;
-  if (options.share !== undefined) {
-    const share = options.share;
-    const mine = shares[share - 1];
-    if (!mine) {
-      facts.nothing = true;
-      console.log(`${label}: its ${whole.length} units make ${shares.length} share${shares.length === 1 ? "" : "s"}, so share ${share} has nothing to apply`);
-      return EXIT.applied;
-    }
-    roots = mine;
-    label = `${label}, share ${share} of ${shares.length}`;
-    w.share = share;
-    decision = readDecision(options.decided ?? join(repo, decidedPath(wave)));
-    const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-    if (decision.wave !== wave || decision.shares !== shares.length || (decision.commit && commit && decision.commit !== commit)) {
-      console.log(`${label}: the decision it was handed is for wave ${decision.wave} in ${decision.shares} shares${decision.commit ? ` at ${decision.commit.slice(0, 8)}` : ""}, not this one, so nothing in it was applied`);
-      return EXIT.failed;
-    }
-    const decided = new Set(decision.members.map((m) => m.member));
-    const missing = roots.filter((r) => !decided.has(r));
-    if (missing.length > 0) {
-      console.log(`${label}: the wave's job decided on no plan of ${missing.join(", ")}, so nothing in it was applied`);
-      return EXIT.failed;
-    }
-    w.digest = decision.digest;
-    w.approval = decision.approval;
-    if (decision.changes === 0) {
-      facts.nothing = true;
-      console.log(`${label}: the wave's plans change nothing, so there is nothing to apply`);
-      return EXIT.applied;
-    }
+  // A share job plans the units chant hands it: its slice of what the wave's job planned.
+  const roots = runs.discover ? whole! : runs.runs.map((r) => r.target);
+  const label = (j.label = options.share !== undefined ? `wave ${wave} of ${cut.length}, share ${options.share} of ${options.shares}` : `wave ${wave} of ${cut.length}`);
+  if (options.share !== undefined) w.share = options.share;
+  if (roots.length === 0) {
+    facts.nothing = true;
+    console.log(`${label}: the wave's units make fewer shares than ${options.shares}, so this one has nothing to apply`);
+    writePlans(plansPath, { runs: [], waves: cut.length });
+    j.apply = async () => EXIT.applied;
+    return EXIT.applied;
   }
   facts.roots = roots;
   console.log(`${label}: planning ${roots.join(", ")}`);
@@ -2309,7 +2387,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const run = { dir: repo, binary, terragrunt, exec };
   w.started = new Date().toISOString();
   w.roots = roots;
-  const planDir = join(work, "plan");
+  const planDir = join(work, `plan-${wave}`);
   // A unit that pins its binary or Terragrunt release runs it, installed here: one run --all per pair of releases, plan and apply alike.
   const unitTools = new UnitBinaries(repo, binary, settings.version, terragrunt, env, options.installer);
   const tools = new Map<string, UnitTools>();
@@ -2430,20 +2508,71 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const heldBySteps = [...holds.keys()].filter((u) => roots.includes(u)).sort();
   // A unit applies when its plan changes a resource or an output: a later wave reads the outputs.
   const changing = units.filter((p) => p.changes > 0 || p.outputs);
+  const changingAll = changing;
   const changes = changing.reduce((n, p) => n + p.changes, 0);
   const destroys = changing.reduce((n, p) => n + p.destroys, 0);
   w.changedRoots = changing.map((p) => p.root).sort();
+  const denied = new Map<string, { rules: string[]; reason?: string }>();
+  if (deciding) {
+    const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, units, w);
+    if (unpriced !== undefined) return unpriced;
+    const checked = await policyCheck(repo, options, ctx, { label, settings }, units, j);
+    if (typeof checked === "number") return checked;
+    for (const [root, d] of checked) denied.set(root, d);
+  }
+  const all = units.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
+  // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
+  const priced = deciding && changing.length > 0 ? costMember(w.waveCost) : undefined;
+  const members = [...changing.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1)), ...(priced ? [priced] : [])];
+  const digest = changing.length > 0 ? waveSetDigest(members) : waveSetDigest(all);
+  w.digest = digest;
+  if (changing.length === 0) {
+    facts.nothing = true;
+  } else {
+    console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
+    for (const u of heldBySteps) console.log(`${label}: ${u}: step ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
+  }
+  if (heldBySteps.length) w.heldBySteps = heldBySteps;
+  const byGate = options.gate === "always" || (options.gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0;
+  const byCost = w.waveCost?.over === true;
+  if (changing.length > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${options.gate}`}`);
+  j.held = changing.length > 0 && (heldBySteps.length > 0 || byCost);
+  if (deciding && changing.length > 0) {
+    w.preview = await comparePreview({ repo, env, wave, binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
+    if (byGate || byCost) {
+      const stop = await beforeGate(repo, options, ctx, j, { label, digest, planned: changing, plans: changing.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary })), resume: false, members, roots: changing.map((p) => p.root) });
+      if (stop !== undefined) return stop;
+    }
+    j.stored = () => storedWaveReport(repo, options, wave, digest, changing.map((p) => p.root), changing);
+  }
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  writePlans(plansPath, {
+    runs: units.map((p) => planEntry(p.root, p.member!.planDigest, !(p.changes > 0 || p.outputs), p.destroys, denied.get(p.root))),
+    ...(priced ? { members: [priced] } : {}),
+    waves: cut.length,
+    pending: { description: `${label}: ${changing.map((p) => p.root).join(", ")}`, ...(commit ? { commit } : {}), members },
+    ...(j.overriders ? { overriders: j.overriders } : {}),
+  });
+
   /** Apply the saved plans of the units that change, with the steps around them. */
-  const applyUnits = async (): Promise<number> => {
+  j.apply = async (outcome, targets) => {
+    const changing = changingAll.filter((p) => targets.has(p.root));
+    if (changing.length === 0) {
+      w.applied = new Set(units.map((p) => p.root));
+      w.states = await recordUnitStateVersions(repo, roots, run, env);
+      console.log(`${label}: no changes`);
+      console.log(`${label} applied`);
+      return EXIT.applied;
+    }
     const beforeApply = await unitSteps("before-apply", changing.map((p) => p.root), savedPlan);
     for (const p of units) p.steps = ran.get(p.root) ?? [];
     if (stepsFailed(beforeApply, "a step before the apply failed, so nothing in it was applied")) {
       w.failed = [...beforeApply.keys()];
-      return EXIT.failed;
+      return (j.code = EXIT.failed);
     }
     // The saved plans, and nothing planned anew.
     const hold = await holdRows(repo, options, label, changing.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary })), w);
-    if (hold.code !== undefined) return hold.code;
+    if (hold.code !== undefined) return heldOutcome(j, hold.code, outcome);
     w.applyStarted = new Date().toISOString();
     await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
     const applied = await applyWaveGroups(groups, changing.map((p) => p.root), { dir: repo, exec }).finally(() => hold.release());
@@ -2457,7 +2586,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
       for (const r of bad) console.log(`FAILED ${r.unit}: ${r.result}${r.error ? `: ${r.error}` : ""}`);
       w.failed = bad.map((r) => r.unit);
       console.log(`${label}: an apply failed`);
-      return EXIT.failed;
+      return (j.code = EXIT.failed);
     }
     for (const p of changing) console.log(`applied ${p.root}`);
     const afterApply = await unitSteps("after-apply", changing.map((p) => p.root));
@@ -2465,90 +2594,12 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     if (stepsFailed(afterApply, "applied, then a step after the apply failed")) {
       w.failed = [...afterApply.keys()];
       for (const [unit, error] of afterApply) planned.get(unit)!.error = error;
-      return EXIT.failed;
+      return (j.code = EXIT.failed);
     }
     console.log(`${label} applied`);
     return EXIT.applied;
   };
-
-  if (decision) {
-    // A share: the wave's job planned, priced, checked and gated every unit; this share applies only the plans it decided on.
-    if (heldBySteps.length > 0 && decision.approval !== "approved") {
-      w.heldBySteps = heldBySteps;
-      console.log(`${label}: a step of ${heldBySteps.join(", ")} asks for an approval, and wave ${wave} decided without one, so nothing in this share was applied; run the pipeline again so the wave's job holds it at its gate`);
-      writeOutcome(options.env, `wave ${wave} share ${options.share} held by a step of ${heldBySteps.join(", ")}`, w);
-      return EXIT.refused;
-    }
-    const decided = new Map(decision.members.map((m) => [m.member, m.planDigest]));
-    const moved = units.filter((p) => !samePlanDigest(decided.get(p.root), p.member!.planDigest)).map((p) => p.root).sort();
-    if (moved.length > 0) {
-      console.log(`${label}: these units planned differently since wave ${wave} decided on ${decision.digest}: ${moved.join(", ")}`);
-      console.log(`${label}: nothing in this share was applied; run the pipeline again to plan and decide the wave anew`);
-      if (decision.approval === "approved") w.refused = { reason: "approval", approved: decision.digest, roots: moved };
-      writeOutcome(options.env, `wave ${wave} share ${options.share} changed since the wave decided: ${moved.join(", ")}`, w);
-      return EXIT.refused;
-    }
-    if (changing.length === 0) {
-      facts.nothing = true;
-      w.applied = new Set(units.map((p) => p.root));
-      w.states = await recordUnitStateVersions(repo, roots, run, env);
-      console.log(`${label}: no changes`);
-      console.log(`${label} applied`);
-      return EXIT.applied;
-    }
-    return applyUnits();
-  }
-
-  const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, units, w);
-  if (unpriced !== undefined) return unpriced;
-  const refusedByPolicy = await policyGate(repo, options, { label, settings, configPath }, units, w);
-  if (refusedByPolicy !== undefined) return refusedByPolicy;
-  const all = units.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
-  const handOff = (digest: string): number => {
-    // The share jobs apply: this job hands them the digest of every unit's plan it decided on, and applies nothing itself.
-    const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-    writeDecision(repo, options, {
-      version: 1,
-      wave,
-      shares: shares.length,
-      digest,
-      approval: w.approval === "approved" ? "approved" : "not-required",
-      // A unit whose plan changes only an output applies too, so it counts as a change.
-      changes: changes + changing.filter((p) => p.changes === 0).length,
-      ...(commit ? { commit } : {}),
-      members: all,
-    });
-    w.decided = true;
-    for (const [i, share] of shares.entries()) console.log(`${label}: share ${i + 1} of ${shares.length} applies ${share.join(", ")}`);
-    console.log(`${label}: ${changing.length === 0 ? "nothing to apply" : w.approval === "approved" ? "approved" : "no approval needed"}; its ${shares.length} share job${shares.length === 1 ? "" : "s"} apply these plans`);
-    return EXIT.applied;
-  };
-  if (changing.length === 0) {
-    facts.nothing = true;
-    if (deciding) {
-      w.digest = waveSetDigest(all);
-      w.approval = "not-required";
-      return handOff(w.digest);
-    }
-    w.applied = new Set(units.map((p) => p.root));
-    w.states = await recordUnitStateVersions(repo, roots, run, env);
-    console.log(`${label}: no changes`);
-    console.log(`${label} applied`);
-    return EXIT.applied;
-  }
-  // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
-  const priced = costMember(w.waveCost);
-  const members = [...changing.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1)), ...(priced ? [priced] : [])];
-  const digest = waveSetDigest(members);
-  console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
-  for (const u of heldBySteps) console.log(`${label}: ${u}: step ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
-  if (heldBySteps.length) w.heldBySteps = heldBySteps;
-  w.preview = await comparePreview({ repo, env: options.env ?? process.env, wave: options.wave, binary: options.binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
-  const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes: changes + changing.filter((p) => p.changes === 0).length, destroys, heldBySteps }, facts, w);
-  if (stop !== undefined) return stop;
-  recordOverridesUsed(repo, options, changing);
-  if (deciding) return handOff(digest);
-  return applyUnits();
+  return EXIT.applied;
 }
 
 /** One line per root or unit: where its state is, and its version or why there is none. */
@@ -2604,13 +2655,6 @@ async function recordUnitStateVersions(
   });
   logStateVersions(units, out);
   return out;
-}
-
-/** Write the decision a wave split across jobs hands its shares. */
-function writeDecision(repo: string, options: ApplyWaveOptions, decision: WaveDecision): void {
-  const file = options.decided ?? join(repo, decidedPath(decision.wave));
-  mkdirSync(join(file, ".."), { recursive: true });
-  writeFileSync(file, JSON.stringify(decision, null, 2) + "\n");
 }
 
 /** The one line the job's status carries, written where the pipeline reads it (`TG_OUTCOME`). */

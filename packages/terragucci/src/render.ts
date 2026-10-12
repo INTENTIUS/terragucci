@@ -183,7 +183,7 @@ import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
-import { applyWaves, branchesArg, DECIDED_DIR, waveShares } from "./apply";
+import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
@@ -1907,7 +1907,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const prApply = input.applyWhen === "pull-request";
   // A Terragrunt repo's layers are its waves already; the stage splits a wave's units across its share jobs as it cuts them.
   const cut = tg ? layers : applyWaves(layers, input.canary);
-  const sharesOf = (i: number): number => (waveJobs && cut[i] ? waveShares(cut[i], waveJobs).length : 1);
+  const sharesOf = (i: number): number => (waveJobs && cut[i] ? shareCount(cut[i], waveJobs) : 1);
   // Once one wave splits, every apply job holds the run's shared lock, so the shares apply side by side and no other run applies meanwhile.
   const split = cut.some((_, i) => sharesOf(i) > 1);
   // shape: how the binary keeps applies apart (./apply-rows.ts). Only a repo-wide scope serializes the repo's apply jobs.

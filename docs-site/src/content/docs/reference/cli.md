@@ -235,7 +235,7 @@ Both `stage tf-plan` and `stage tf-drift` write the report even when a root refu
 | `--approval` | | the mode when the config at base names none and `chant.workspace.json` there lists no gate; a control repo's pipeline passes it |
 | `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, approval mode, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
-| `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
+| `--share` | | with `--shares`: plan this share's roots and apply each one whose plan has the digest in the decision file; exit 4 when one moved, which is not applied |
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
 | `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots (in a Terragrunt repo, the units) of `--branch` when the map names it, and otherwise every root no branch's glob matches |
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
@@ -821,7 +821,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | 1 | one or more projects or roots failed |
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after an approval or a policy override no run applied, or a share's plans changed after its wave decided, so `stage tf-apply` applied nothing |
+| 4 | a wave's plans changed after an approval or a policy override no run applied, so `stage tf-apply` applied nothing; or a share's plans changed after its wave decided, and the roots that moved were not applied |
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|

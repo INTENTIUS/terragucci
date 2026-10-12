@@ -1242,6 +1242,9 @@ describe("the plugin cache", () => {
   async function inits(cache: string | undefined): Promise<string[][]> {
     const { dir, env } = fakeBin(INIT_LOG);
     await terragucciBin(join(dir, "bin"));
+    // A job's checkout: chant reads the wave's rules at a commit.
+    git(dir, "init", "-q", "-b", "main");
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     const log = join(dir, "cache.log");
     const script = join(dir, "apply.sh");
     writeFileSync(script, applyScript("tofu", [["a", "b", "c"]], "github"));

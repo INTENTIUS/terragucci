@@ -46,7 +46,7 @@ import {
   type OverridePendingInput,
   type PendingGateRecord,
 } from "@intentius/chant/override-gate";
-import type { GateLedger, PendingRecord } from "./apply";
+import type { AppliedRecord, GateLedger, PendingRecord } from "./apply";
 import type { Approval } from "./config";
 import type { ReportOverride } from "./report/schema";
 
@@ -104,7 +104,7 @@ const chantLedger = (ledger: GateLedger) => ({
 export function decideOverride(ledger: GateLedger, rule: OverrideRule, root: string, planDigest: string, rules: readonly string[], now: string): OverrideDecision {
   const d = decideChantOverride({
     ledger: chantLedger(ledger),
-    applied: ledger.applied ?? [],
+    applied: (ledger.applied ?? []).filter((a): a is AppliedRecord & { kind: "applied" } => a.kind === "applied"),
     overriders: rule.overriders,
     overridersPath: OVERRIDERS_KEY,
     mode: rule.mode,
