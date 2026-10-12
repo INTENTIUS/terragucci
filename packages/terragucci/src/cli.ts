@@ -109,6 +109,7 @@ import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
 import { applyWave, parseBranches, readLedger } from "./apply";
 import { resumeStep } from "./resume";
+import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
@@ -750,7 +751,15 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("resume's --forge is github, forgejo or gitlab");
         const out = str(flags, "out");
         const sha = process.env.TG_SHA || spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).stdout.trim();
-        const step = await resumeStep({ ledger: readLedger(cwd), migrations: readLedger(cwd, MIGRATE_LEDGER), forge, sha, env: process.env });
+        const ledger = readLedger(cwd);
+        // A wave whose gate asks a decision point resumes once its question has an answer that passes the gate.
+        let questions: Awaited<ReturnType<typeof pointQuestions>>;
+        try {
+          questions = await pointQuestions(cwd, ledger);
+        } catch (e) {
+          console.log(`terragucci resume: the decision point questions could not be read, so no wave waiting on one is resumed: ${(e as Error).message}`);
+        }
+        const step = await resumeStep({ ledger, migrations: readLedger(cwd, MIGRATE_LEDGER), forge, sha, env: process.env, ...(questions ? { questions } : {}) });
         if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
         if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
         else {

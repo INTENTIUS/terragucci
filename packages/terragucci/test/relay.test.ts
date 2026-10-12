@@ -131,7 +131,7 @@ describe("relay: deciding a click", () => {
     const a = await decideClick(approveClick, d);
     expect(d.answered).toEqual([[Q, "alice@acme.com"]]);
     expect(d.recorded).toEqual([]);
-    expect(a).toEqual({ ok: true, text: `wave-1: decision point question ${Q} answered yes by alice@acme.com, relayed by terragucci-relay, for ${D} and no other plans. Run its job again, or comment /terragucci apply on its pull request, to apply it.` });
+    expect(a).toEqual({ ok: true, text: `wave-1: decision point question ${Q} answered yes by alice@acme.com, relayed by terragucci-relay, for ${D} and no other plans. The resume job applies it within 5 minutes.` });
   });
 
   it("says so when chant does not count the answer, such as an agent's toward a human quorum", async () => {

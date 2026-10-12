@@ -38,6 +38,30 @@ describe("resumable", () => {
   });
 });
 
+describe("resumable, a gate that asks a decision point", () => {
+  const Q = "prod-apply-0123456789ab";
+  const asking = (extra: Record<string, unknown> = {}) => pending("wave-1", "jcs1-sha256:aa", 0, { runId: "41", answer: { point: "prod-apply", id: Q, path: `answers/${Q}.md`, ...extra } });
+  const question = (state: "escalated" | "answered", answer: string | boolean | null, by: string[] = []) => new Map([[Q, { id: Q, state, answer, answeredBy: by, answeredOn: state === "answered" ? "2026-10-08" : null }]]);
+
+  it("names a wave whose question has an answer the gate passes on, before the wave records its resolution", () => {
+    const l = ledger({ pending: [asking()] });
+    expect(resumable(l, T(6), undefined, question("answered", true, ["alice@acme.com"]))).toEqual([{ wave: 1, digest: "jcs1-sha256:aa", by: "alice@acme.com", runId: "41" }]);
+  });
+
+  it("leaves a wave whose question is open, answered otherwise, or not read", () => {
+    const l = ledger({ pending: [asking()] });
+    expect(resumable(l, T(6), undefined, question("escalated", null))).toEqual([]);
+    expect(resumable(l, T(6), undefined, question("answered", false, ["alice@acme.com"]))).toEqual([]);
+    expect(resumable(l, T(6))).toEqual([]);
+    expect(resumable(l, T(6), undefined, new Map())).toEqual([]);
+  });
+
+  it("once the wave recorded the resolution and applied under it, resumes nothing", () => {
+    const l = ledger({ pending: [asking()], resolutions: [resolution("wave-1", "jcs1-sha256:aa", 5, "alice@acme.com")], applied: [{ version: 1, kind: "applied", op: "tf-apply", gate: "wave-1", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice@acme.com", timestamp: T(7) }] as never });
+    expect(resumable(l, T(8), undefined, question("answered", true, ["alice@acme.com"]))).toEqual([]);
+  });
+});
+
 describe("resumable, an approved apply that stopped", () => {
   const applied = (m: number, extra: Record<string, unknown> = {}) => ({ version: 1 as const, kind: "applied" as const, op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice", timestamp: T(m), runId: "41", holder: "41", changes: [], ...extra });
   const finished = (m: number, result: "applied" | "failed") => ({ version: 1 as const, kind: "finished" as const, op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", applied: T(m), result, timestamp: T(m + 1) });
