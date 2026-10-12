@@ -10,6 +10,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlText, type ObjectStore, type StoreCondition, type StoreFetch } from "./object-store";
+import { tradedFromEnv, tradedRole } from "../traded";
 
 export type S3Fetch = StoreFetch;
 export { PRESIGN_MAX_SECONDS, StoreConflict as S3Conflict, StoreError as S3Error };
@@ -75,6 +76,12 @@ export function s3FromEnv(reports: { bucket: string; endpoint?: string; role?: s
       endpoint: (env.AWS_ENDPOINT_URL_STS || env.AWS_ENDPOINT_URL || `https://sts.${region}.amazonaws.com`).replace(/\/+$/, ""),
     },
   });
+  // A re-plan holds no OIDC token: its trade step traded it for reports.role's keys (../oidc-trade.ts).
+  const traded = tradedFromEnv(env);
+  if (reports.role && traded && !tokenFile) {
+    const c = tradedRole(traded, reports.role);
+    return { ...where, accessKeyId: c.accessKeyId, secretAccessKey: c.secretAccessKey, ...(c.sessionToken ? { sessionToken: c.sessionToken } : {}) };
+  }
   if (reports.role) {
     if (!tokenFile) throw new StoreError(`reports.role is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not: the job needs an OIDC token to assume ${reports.role}, which a job with oidc gets`);
     return assume(reports.role);

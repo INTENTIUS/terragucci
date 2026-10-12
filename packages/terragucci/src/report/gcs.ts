@@ -26,6 +26,7 @@
 import { createHash, createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type StoreCondition, type StoreFetch } from "./object-store";
+import { tradedFromEnv } from "../traded";
 
 export const GCS_ENDPOINT = "https://storage.googleapis.com";
 /** IAM Credentials, where a token for an impersonated service account comes from. */
@@ -47,11 +48,19 @@ export interface GcsTarget {
   impersonate?: string;
   /** IAM Credentials' address, no trailing slash. Default https://iamcredentials.googleapis.com. */
   iamEndpoint?: string;
+  /** With `accessToken`: the service account the token is, which signs a link through IAM's signBlob. A re-plan's traded token (../oidc-trade.ts). */
+  signAs?: string;
 }
 
 /** The target from `reports` and the job's environment. */
 export function gcsFromEnv(where: { bucket: string; endpoint?: string }, env: NodeJS.ProcessEnv = process.env): GcsTarget {
   const file = env.GOOGLE_APPLICATION_CREDENTIALS;
+  // A re-plan holds no OIDC token: the trade step left the job's service account's token, and the file of every traded one.
+  const traded = !file && env.GOOGLE_OAUTH_ACCESS_TOKEN ? tradedFromEnv(env) : undefined;
+  if (traded && env.GOOGLE_OAUTH_ACCESS_TOKEN) {
+    const signAs = Object.entries(traded.gcp).find(([, t]) => t.token === env.GOOGLE_OAUTH_ACCESS_TOKEN)?.[0];
+    return { bucket: where.bucket, endpoint: (where.endpoint ?? GCS_ENDPOINT).replace(/\/+$/, ""), accessToken: env.GOOGLE_OAUTH_ACCESS_TOKEN, ...(signAs ? { signAs } : {}) };
+  }
   if (!file) throw new StoreError(`reports.bucket is gs://${where.bucket}, but the job has no credentials for it: give the job oidc.gcp (it sets GOOGLE_APPLICATION_CREDENTIALS), or set GOOGLE_APPLICATION_CREDENTIALS to a credentials file`);
   return { bucket: where.bucket, endpoint: (where.endpoint ?? GCS_ENDPOINT).replace(/\/+$/, ""), credentialsFile: file };
 }
@@ -256,6 +265,11 @@ export class GcsClient implements ObjectStore {
     return held.token;
   }
 
+  /** The identity's access token and when it expires, for a re-plan's trade (../oidc-trade.ts). */
+  async identityToken(): Promise<{ token: string; expires: number }> {
+    return this.target.impersonate ? this.impersonating(this.target.impersonate) : this.own();
+  }
+
   async put(key: string, body: string | Uint8Array, contentType: string, when?: StoreCondition): Promise<{ etag?: string }> {
     const t = this.target;
     const gen = !when ? "" : "ifMatch" in when ? when.ifMatch : "0";
@@ -351,10 +365,23 @@ export class GcsClient implements ObjectStore {
   /** A signed URL to `key` for `seconds`, signed by the key or by the impersonated service account through IAM. */
   async presign(key: string, seconds: number, now = new Date()): Promise<{ url: string; expires: Date }> {
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > PRESIGN_MAX_SECONDS) throw new StoreError(`a signed URL lives 1 to ${PRESIGN_MAX_SECONDS} seconds, not ${seconds}`);
-    const c = this.credentials();
     let email: string;
     let sign: (s: string) => Promise<Buffer>;
-    if (c.type === "service_account") {
+    const c = this.target.accessToken && this.target.signAs ? undefined : this.credentials();
+    if (!c) {
+      const sa = this.target.signAs!;
+      email = sa;
+      sign = async (s) => {
+        const r = await this.post(
+          `${(this.target.iamEndpoint ?? IAM_CREDENTIALS).replace(/\/+$/, "")}/v1/projects/-/serviceAccounts/${encodeURIComponent(sa)}:signBlob`,
+          { "content-type": "application/json", authorization: `Bearer ${await this.bearer()}` },
+          JSON.stringify({ payload: Buffer.from(s).toString("base64") }),
+          `signBlob as ${sa}, which needs Service Account Token Creator on itself`,
+        );
+        if (typeof r.signedBlob !== "string") throw new StoreError(`signBlob as ${sa} answered without a signature`);
+        return Buffer.from(r.signedBlob, "base64");
+      };
+    } else if (c.type === "service_account") {
       email = c.client_email;
       sign = async (s) => createSign("RSA-SHA256").update(s).sign(c.private_key);
     } else {

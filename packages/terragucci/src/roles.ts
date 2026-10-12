@@ -25,6 +25,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { globMatch, rootDependencies, stateOf, type StateRef } from "./detect";
 import type { OidcSettings, RolePair } from "./config";
+import { tradedFromEnv, tradedRole } from "./traded";
 
 /** The job's variable that holds one stage's roles by root glob, as JSON `[[glob, role], ...]`. */
 export const ROOT_ROLES_ENV = "TERRAGUCCI_ROOT_ROLES";
@@ -62,17 +63,31 @@ export function roleOf(root: string, roles: [string, string][]): string | undefi
  * with the job's token file; static keys in the job's environment would win
  * over the role in the AWS SDKs, so they are dropped for that root. GCP:
  * GOOGLE_APPLICATION_CREDENTIALS is gcpCredentials' copy of the job's file.
- * Azure: ARM_CLIENT_ID is the client.
+ * Azure: ARM_CLIENT_ID is the client. In a re-plan, which holds no token,
+ * the AWS role is its traded session keys and the service account its
+ * traded access token (GOOGLE_OAUTH_ACCESS_TOKEN).
  */
 export function rootRoleEnv(env: NodeJS.ProcessEnv, root: string): NodeJS.ProcessEnv {
   let out = env;
+  // A re-plan holds no OIDC token: each identity is the keys or the token its trade step left (./oidc-trade.ts).
+  const traded = tradedFromEnv(env);
   const role = roleOf(root, rolesFromEnv(env));
   if (role) {
     const { AWS_ACCESS_KEY_ID: _a, AWS_SECRET_ACCESS_KEY: _s, AWS_SESSION_TOKEN: _t, ...rest } = out;
-    out = { ...rest, AWS_ROLE_ARN: role };
+    if (traded) {
+      const c = tradedRole(traded, role);
+      out = { ...rest, AWS_ACCESS_KEY_ID: c.accessKeyId, AWS_SECRET_ACCESS_KEY: c.secretAccessKey, ...(c.sessionToken ? { AWS_SESSION_TOKEN: c.sessionToken } : {}) };
+    } else {
+      out = { ...rest, AWS_ROLE_ARN: role };
+    }
   }
   const sa = roleOf(root, rolesFromEnv(env, ROOT_GCP_ENV));
-  if (sa) out = { ...out, GOOGLE_APPLICATION_CREDENTIALS: gcpCredentials(env, sa) };
+  if (sa && traded) {
+    const t = traded.gcp[sa];
+    if (!t) throw new Error(`the re-plan traded no token for ${sa}`);
+    const { GOOGLE_APPLICATION_CREDENTIALS: _g, ...rest } = out;
+    out = { ...rest, GOOGLE_OAUTH_ACCESS_TOKEN: t.token };
+  } else if (sa) out = { ...out, GOOGLE_APPLICATION_CREDENTIALS: gcpCredentials(env, sa) };
   const client = roleOf(root, rolesFromEnv(env, ROOT_AZURE_ENV));
   if (client) out = { ...out, ARM_CLIENT_ID: client, ...(env.AZURE_CLIENT_ID ? { AZURE_CLIENT_ID: client } : {}) };
   return out;

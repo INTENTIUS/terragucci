@@ -304,7 +304,7 @@ describe("the comment trigger", () => {
     const plan = job.steps.find((s: any) => typeof s.run === "string" && s.run.includes("terragucci stage tf-plan"));
     expect(plan.env.TG_TOKEN).toBeUndefined();
     expect(plan.run).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
-    expect(plan.run.split("\n")[0]).toBe(dropForgeTokens());
+    expect(plan.run.split("\n")[0]).toBe(dropForgeTokens("bash", true));
     expect(JSON.stringify(job.env ?? {})).not.toContain("TG_TOKEN");
     for (const s of job.steps.filter((s: any) => s.uses === "actions/checkout@v4")) expect(s.with["persist-credentials"]).toBe(false);
   });

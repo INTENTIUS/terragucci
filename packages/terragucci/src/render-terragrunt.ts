@@ -112,12 +112,14 @@ export function credentialsScript(
   credentials: Record<string, RolePair>,
   phase: "plan" | "apply",
   token: string | undefined,
+  traded = false,
 ): string {
   return [
     ...(token ? ['export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', token] : []),
     `export TERRAGUCCI_REPO="$PWD" TERRAGUCCI_PHASE=${phase} ${ROLES_ENV}=${sh(JSON.stringify(rolesFor(credentials, phase)))}`,
     'export TG_AUTH_PROVIDER_CMD="terragucci auth-provider"',
-    'export TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN="$AWS_WEB_IDENTITY_TOKEN_FILE"',
+    // A re-plan's plan step holds no token: the auth provider hands each unit its role's traded keys (../oidc-trade.ts).
+    ...(traded ? [] : ['export TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN="$AWS_WEB_IDENTITY_TOKEN_FILE"']),
   ].join("\n");
 }
 

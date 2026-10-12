@@ -1413,8 +1413,8 @@ export interface PlanReportInput {
   reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string; role?: string };
   /** Globs for the canary wave the report shows. */
   canary?: string[];
-  /** A Terragrunt repo: the stage runs Terragrunt, after this shell (credentials, caches). */
-  terragrunt?: { prelude: string };
+  /** A Terragrunt repo: the stage runs Terragrunt, after this shell (credentials, caches); a re-plan's plan step, which holds traded credentials and no token, after `tradedPrelude`. */
+  terragrunt?: { prelude: string; tradedPrelude?: string };
   /** respond.description is on: before the note is posted, flag a pull request whose description does not match its plan. */
   description?: boolean;
   /** `approval: pr-review`: after the note, post `terragucci/approval` on the head (review.ts). */
@@ -1523,7 +1523,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
  * (`TG_ROOT`) and reads its range from `TG_BASE`; its checkout must be the
  * head the comment's decision read.
  */
-export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean } = {}): string {
+export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean; traded?: boolean } = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1541,17 +1541,21 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
   return [
     READS_EXIT,
     ...(options.tokenCheck ? [options.tokenCheck] : []),
-    // The OIDC token request; no forge token is in the job.
-    ...(forge !== "gitlab" && oidc ? [forgeApi(forge)] : []),
+    // A re-plan: what the change's code leaves running dies with the step.
+    ...(options.replan ? [LEFTOVER_SWEEP] : []),
+    // The OIDC token request; no forge token is in the job. A re-plan's identities were traded before this step.
+    ...(forge !== "gitlab" && oidc && !options.traded ? [forgeApi(forge)] : []),
     ...(options.replan ? ['if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi'] : []),
+    // The plan identities' credentials the trade step left; this step holds no OIDC token and cannot ask for one.
+    ...(options.traded ? [`if [ -f ${TRADED_FILE} ]; then . ${TRADED_FILE}; : >${TRADED_FILE}; fi`] : []),
     ...(report.synth
       ? [
           "# synth in terragucci.yml: write the roots before reading them.",
           `( set -e; ${report.synth} ) || { mkdir -p ${REPORT_DIR} && echo "failure the synth command failed" >${status}; echo "terragucci: the synth command failed" >&2; exit 1; }`,
         ]
       : []),
-    ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
-    ...(report.terragrunt ? [report.terragrunt.prelude] : []),
+    ...(options.traded ? rootIdentityExports(oidc, "plan") : cloudScripts(forge, oidc, "plan", "terragucci-plan")),
+    ...(report.terragrunt ? [options.traded ? report.terragrunt.tradedPrelude ?? report.terragrunt.prelude : report.terragrunt.prelude] : []),
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
     `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
@@ -1582,6 +1586,17 @@ export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oi
 export const STEP_TOKEN_VARS = ["TG_TOKEN", "TG_MERGE_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "ACTIONS_RUNTIME_TOKEN"] as const;
 
 /**
+ * The variables a GitHub or Forgejo step asks for an OIDC token with. A
+ * re-plan's plan step starts again without them too: any token they serve
+ * there carries the default branch's subject, which the apply identities
+ * trust, and the step runs the pull request's code.
+ */
+export const OIDC_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"] as const;
+
+/** Where a re-plan's trade step leaves the plan identities' credentials for its plan step (./oidc-trade.ts). */
+export const TRADED_FILE = '"${RUNNER_TEMP:-/tmp}/terragucci-traded.env"';
+
+/**
  * The first line of a GitHub or Forgejo step that runs the change's code. The
  * step's shell starts again, with `exec`, without any forge token variable:
  * Forgejo's runner gives every step the run's token (as GITHUB_TOKEN,
@@ -1596,11 +1611,74 @@ export const STEP_TOKEN_VARS = ["TG_TOKEN", "TG_MERGE_TOKEN", "GITHUB_TOKEN", "G
  * restart and drops the variables with `unset`, so its children still start
  * without them, and the script runs on.
  */
-export function dropForgeTokens(shell: "bash" | "sh" = "bash"): string {
+export function dropForgeTokens(shell: "bash" | "sh" = "bash", oidcRequest = false): string {
   const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
   const can = `[ -z "\${TG_NO_FORGE_TOKEN:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
-  return `if ${can}; then exec env ${STEP_TOKEN_VARS.map((v) => `-u ${v}`).join(" ")} TG_NO_FORGE_TOKEN=1 ${again}; fi; unset ${STEP_TOKEN_VARS.join(" ")}`;
+  const vars: readonly string[] = oidcRequest ? [...STEP_TOKEN_VARS, ...OIDC_REQUEST_VARS] : STEP_TOKEN_VARS;
+  return `if ${can}; then exec env ${vars.map((v) => `-u ${v}`).join(" ")} TG_NO_FORGE_TOKEN=1 ${again}; fi; unset ${vars.join(" ")}`;
 }
+
+/**
+ * A re-plan's trade step, after the head's checkout and before any of its
+ * code runs: the job's OIDC tokens for the plan identities, traded by
+ * `terragucci oidc-trade` for those identities' own credentials, which it
+ * leaves in TRADED_FILE, and deleted. The plan step starts without the
+ * token-request variables and reads that file instead (planFilesScript with
+ * `traded`), so the pull request's code never holds a token with the default
+ * branch's subject. Azure's provider and backend take only the token itself,
+ * so a re-plan with oidc.azure stops here and says so. A failed trade writes
+ * the plan status, which the replan-note job posts.
+ */
+export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>, reportsRole?: string): string {
+  const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
+  const refuse = (why: string): string => `echo ${sh(`terragucci: ${why}`)} >&2; mkdir -p ${REPORT_DIR} && echo ${sh(`failure ${why}`)} >${status}; exit 1`;
+  if (oidc?.azure) return refuse("a re-plan does not run with oidc.azure: the azurerm provider and backend need the job's OIDC token itself, which the pull request's code would hold. The pull request's push plans it");
+  return [
+    forgeApi(forge),
+    ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
+    ...terragruntCredentials(forge, "plan", oidc, credentials),
+    `terragucci oidc-trade --out ${TRADED_FILE}${reportsRole ? ` --reports-role ${sh(reportsRole)}` : ""} || { ${refuse("the re-plan could not trade the job's OIDC token for the plan identities")}; }`,
+  ].join("\n");
+}
+
+/** The exports of a stage's identities by root glob, without a token: what a re-plan's plan step reads beside the traded credentials. */
+function rootIdentityExports(oidc: OidcSettings | undefined, stage: "plan" | "apply"): string[] {
+  if (!oidc) return [];
+  return [
+    ...(hasRootRoles(oidc) ? [`export ${ROOT_ROLES_ENV}=${sh(JSON.stringify(rootRoles(oidc.roles!, stage)))}`] : []),
+    ...(oidc.gcp ? cloudRoles(ROOT_GCP_ENV, oidc.gcp.roles, stage) : []),
+  ];
+}
+
+/**
+ * Kills, when a re-plan's plan step ends, every process the step started
+ * that is still running: the later steps of the job hold the token-request
+ * variables, which a process the change's code left behind could read from
+ * their environment. Only in a container (/.dockerenv, /run/.containerenv),
+ * where the processes are the job's own; the processes running when the step
+ * began, and the step's shell, stay.
+ */
+export const LEFTOVER_SWEEP = [
+  'tg_was=" $(cd /proc && echo [0-9]*) "',
+  "tg_sweep() {",
+  "  [ -f /.dockerenv ] || [ -f /run/.containerenv ] || return 0",
+  "  local i p k v s left",
+  "  for i in 1 2 3 4 5 6 7 8 9 10; do",
+  '    left=""',
+  "    for p in /proc/[0-9]*; do",
+  '      p="${p#/proc/}"',
+  '      [ "$p" = "$$" ] && continue',
+  '      case "$tg_was" in *" $p "*) continue ;; esac',
+  '      s=""',
+  '      while read -r k v; do [ "$k" = "State:" ] && { s="$v"; break; }; done 2>/dev/null <"/proc/$p/status"',
+  '      case "$s" in Z*|"") continue ;; esac',
+  '      kill -KILL "$p" 2>/dev/null && left=1',
+  "    done",
+  '    [ -n "$left" ] || break',
+  "  done",
+  "}",
+  "trap tg_sweep EXIT",
+].join("\n");
 
 /**
  * The re-plan's first step, before any of the change's code is checked out:
@@ -1857,7 +1935,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const report: PlanReportInput = {
     ...(input.reports ? { reports: input.reports } : {}),
     ...(responds(input.respond, "description") ? { description: true } : {}),
-    ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
+    ...(tg
+      ? {
+          terragrunt: {
+            prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n"),
+            tradedPrelude: [cacheExports(), ...(credentials && Object.keys(credentials).length > 0 ? [credentialsScript(credentials, "plan", undefined, true)] : [])].join("\n"),
+          },
+        }
+      : {}),
     ...(prReview ? { prReview: true } : {}),
     ...(input.synth ? { synth: input.synth } : {}),
     ...(input.cost ? { cost: true } : {}),
@@ -2468,12 +2553,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // The head comes from the pull request, by number; the base branch comes with the history, for the range.
       bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go),
       ...toolSteps(true, true, go),
+      // The job's OIDC token carries the default branch's subject, which the apply identities trust. terragucci trades it
+      // here, before any of the head's code runs, for the plan identities' credentials, and deletes it; the plan step
+      // starts without the variables that ask for one.
+      ...(needsToken ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       new Step({
         if: go,
         name: "Re-plan the pull request on request and write the plan report",
         shell: "bash",
         env: { TG_PR: "${{ steps.decide.outputs.pr }}", TG_SHA: "${{ steps.decide.outputs.sha }}", TG_ROOT: "${{ steps.decide.outputs.root }}", TG_BASE: "origin/${{ steps.decide.outputs.base }}" },
-        run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true })}`,
+        run: `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: needsToken })}`,
       }),
       new Step({
         name: "Keep the plan report",

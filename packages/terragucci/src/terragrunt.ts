@@ -23,6 +23,7 @@ import { checkTerragruntVersion, discoverTerragruntUnits, type TerragruntExec } 
 import { terragruntExec } from "./binary-env";
 import { ConfigError, type RolePair, type TerragruntSettings } from "./config";
 import { generateStacks, STACK_DIR } from "./tg-stacks";
+import { tradedFromEnv, tradedRole } from "./traded";
 
 // An explicit stack's pieces live in ./tg-stacks.ts; these names stay importable from here.
 export { generateStacks, generatingStack, stackFile, stackOfUnit, STACK_DIR, unitStack } from "./tg-stacks";
@@ -309,6 +310,12 @@ export function authProviderOutput(unitDir: string, env: NodeJS.ProcessEnv): Rec
   if (unitSetsRole(repo, unitDir)) return {};
   const hit = roles.find(([glob]) => matchesUnitGlob(unit, glob));
   if (!hit) return {};
+  // A re-plan holds no OIDC token: the unit's role is the keys its trade step left (./oidc-trade.ts).
+  const traded = tradedFromEnv(env);
+  if (traded) {
+    const c = tradedRole(traded, hit[1]);
+    return { awsCredentials: { ACCESS_KEY_ID: c.accessKeyId, SECRET_ACCESS_KEY: c.secretAccessKey, ...(c.sessionToken ? { SESSION_TOKEN: c.sessionToken } : {}) } };
+  }
   const tokenFile = env.AWS_WEB_IDENTITY_TOKEN_FILE;
   if (!tokenFile || !existsSync(tokenFile)) throw new ConfigError(`${unit} needs ${hit[1]}, but the job has no OIDC token file`);
   return {

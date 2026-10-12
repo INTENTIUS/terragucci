@@ -182,6 +182,7 @@
     "lock/plan-release": "Locks and safety",
     "lock/plan-none": "Locks and safety",
     "security/plan-token-free": "Locks and safety",
+    "security/replan-apply-role": "Locks and safety",
     "policy/tofu": "Policy",
     "policy/delete-key": "Policy",
     "policy/sources-module": "Policy",
