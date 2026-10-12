@@ -140,7 +140,7 @@ function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: 
       : method === "GET" && path.startsWith("/repos/acme/infra/pulls") ? (opts.pulls ?? [])
       : method === "POST" && path === "/repos/acme/infra/pulls" ? { html_url: "https://forge.test/acme/infra/pulls/9", number: 9 }
       : {};
-    return { ok: true, status: 200, json: async () => reply, text: async () => "" } as never;
+    return { ok: true, status: 200, json: async () => reply, text: async () => JSON.stringify(reply) } as never;
   };
   const env = {
     ...process.env,

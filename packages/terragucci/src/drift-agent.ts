@@ -26,6 +26,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { firstLine, forbiddenPaths, signersAt } from "./agent-comment";
 import { ConfigError, type ForgeName } from "./config";
+import { ForgeApiError } from "@intentius/chant/pr-forge";
 import { defaultBranch, ForgeError, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
 import { targetFromEnv } from "./report/drift";
 import type { Report } from "./report/schema";
@@ -218,7 +219,7 @@ export async function pushDriftChange(o: DriftPushOptions): Promise<DriftPushRes
     ].join("\n");
     url = (await openPullRequest(doFetch, target, { head: branch, base, title, body })).url;
   } catch (e) {
-    if (!(e instanceof ForgeError) && !(e instanceof TypeError)) throw e;
+    if (!(e instanceof ForgeError) && !(e instanceof ForgeApiError) && !(e instanceof TypeError)) throw e;
     await say(`pushed the drift agent's change to \`${branch}\`, and could not open its pull request (${firstLine(e.message)}).`);
     return { opened: false, fail: true, reason: `could not open the pull request (${e.message})`, commit, paths };
   }

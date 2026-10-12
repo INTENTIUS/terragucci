@@ -1,10 +1,10 @@
 /**
- * The little terragucci asks of a forge's API: find an open pull (or merge)
- * request from a branch, and open one. `fetch` is injectable so the clients
- * are tested against recorded requests.
+ * The little terragucci asks of a forge's API: the default branch, and an
+ * open pull (or merge) request from a branch, found or opened. `fetch` is
+ * injectable so the clients are tested against recorded requests.
  *
- * Notes, statuses, replies and the drift issue go through chant's forge
- * clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
+ * Pull requests, notes, statuses, replies and the drift issue go through
+ * chant's forge clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
  * prForgeOf, for a target built here. What they say stays with terragucci.
  */
 import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge } from "@intentius/chant/pr-forge";
@@ -76,46 +76,21 @@ export async function defaultBranch(fetch: Fetch, t: ForgeTarget): Promise<strin
   return r.default_branch ?? "main";
 }
 
-/** Open a pull request from `head` into `base`, or return the open one already there. */
+/**
+ * Open a pull request from `head` into `base`, or return the open one from
+ * `head` already there, through chant's client: a pull request from a fork
+ * with the same branch name is never taken for it.
+ */
 export async function openPullRequest(
   fetch: Fetch,
   t: ForgeTarget,
   pr: { head: string; base: string; title: string; body: string },
 ): Promise<PullRequest> {
-  if (t.forge === "gitlab") {
-    const id = encodeURIComponent(t.path);
-    const open = (await call(fetch, t, "GET", `/projects/${id}/merge_requests?state=opened&source_branch=${encodeURIComponent(pr.head)}`)) as Array<{ web_url: string; iid: number }>;
-    if (open.length) return { url: open[0].web_url, number: open[0].iid, existing: true };
-    const mr = (await call(fetch, t, "POST", `/projects/${id}/merge_requests`, {
-      source_branch: pr.head,
-      target_branch: pr.base,
-      title: pr.title,
-      description: pr.body,
-    })) as { web_url: string; iid: number };
-    return { url: mr.web_url, number: mr.iid, existing: false };
-  }
-  const owner = t.path.split("/")[0];
-  const query = t.forge === "github" ? `?state=open&head=${encodeURIComponent(`${owner}:${pr.head}`)}` : `?state=open`;
-  type Open = Array<{ html_url: string; number: number; head?: { ref?: string } }>;
-  const list = () => call(fetch, t, "GET", `/repos/${t.path}/pulls${query}`) as Promise<Open>;
-  let open: Open;
-  try {
-    open = await list();
-  } catch (e) {
-    // Forgejo answers 404 for the pull requests of a repo it still counts as empty, which it
-    // does for a moment after the first push: that repo has none. By the time the repo is
-    // read it may have stopped counting as empty, so the list is asked once more.
-    if (!(t.forge === "forgejo" && e instanceof ForgeError && e.status === 404)) throw e;
-    if (((await call(fetch, t, "GET", `/repos/${t.path}`)) as { empty?: boolean }).empty === true) open = [];
-    else open = await list();
-  }
-  const mine = open.find((p) => t.forge === "github" || p.head?.ref === pr.head);
-  if (mine) return { url: mine.html_url, number: mine.number, existing: true };
-  const created = (await call(fetch, t, "POST", `/repos/${t.path}/pulls`, { head: pr.head, base: pr.base, title: pr.title, body: pr.body })) as {
-    html_url: string;
-    number: number;
-  };
-  return { url: created.html_url, number: created.number, existing: false };
+  const forge = prForgeOf(t, fetch);
+  const open = await forge.findPullRequest(pr.head);
+  if (open) return { url: open.url ?? "", number: open.number, existing: true };
+  const made = await forge.openPullRequest(pr);
+  return { url: made.url ?? "", number: made.number, existing: false };
 }
 
 /**

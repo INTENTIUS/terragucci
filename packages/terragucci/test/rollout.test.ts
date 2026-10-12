@@ -492,27 +492,28 @@ describe("the forge", () => {
     expect((await gl.listPullRequests("terragucci/rollout/")).map((p) => [p.url, p.state])).toEqual([["l/1", "open"], ["l/0", "closed"]]);
   });
 
+  // chant's findPullRequest reads Forgejo's 404 on a still-empty repo as no pull request (INTENTIUS/chant#3845).
   it("opens a pull request on a Forgejo repo whose list answers 404 just after its first push, and throws on any other 404", async () => {
     const run = async (repo: { empty: boolean } | null, listAnswers: number[]) => {
       const asked: string[] = [];
       const fetch: Fetch = async (url, init) => {
         const path = url.replace("https://forge.example.com/api/v1", "");
         asked.push(`${init?.method} ${path}`);
-        if (path === "/repos/acme/infra") return { ok: !!repo, status: repo ? 200 : 404, json: async () => repo, text: async () => "" };
+        if (path === "/repos/acme/infra") return { ok: !!repo, status: repo ? 200 : 404, json: async () => repo, text: async () => JSON.stringify(repo) };
         if (init?.method === "GET") {
           const status = listAnswers.shift() ?? 200;
-          return { ok: status === 200, status, json: async () => [], text: async () => "The target couldn't be found." };
+          return { ok: status === 200, status, json: async () => [], text: async () => (status === 200 ? "[]" : "The target couldn't be found.") };
         }
-        return { ok: true, status: 201, json: async () => ({ html_url: "u/1", number: 1 }), text: async () => "" };
+        return { ok: true, status: 201, json: async () => ({ html_url: "u/1", number: 1 }), text: async () => JSON.stringify({ html_url: "u/1", number: 1 }) };
       };
       const f = fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
       const url = await f.createPullRequest({ base: "main", head: "w1", title: "t", body: "b" });
       return { url, asked };
     };
     // Still empty: no pull request is open, so one is made.
-    expect(await run({ empty: true }, [404])).toEqual({ url: "u/1", asked: ["GET /repos/acme/infra/pulls?state=open", "GET /repos/acme/infra", "POST /repos/acme/infra/pulls"] });
+    expect(await run({ empty: true }, [404])).toEqual({ url: "u/1", asked: ["GET /repos/acme/infra/pulls?state=open&limit=50&page=1", "GET /repos/acme/infra", "POST /repos/acme/infra/pulls"] });
     // No longer empty by the time the repo is read: the list is asked again.
-    expect((await run({ empty: false }, [404, 200])).asked).toEqual(["GET /repos/acme/infra/pulls?state=open", "GET /repos/acme/infra", "GET /repos/acme/infra/pulls?state=open", "POST /repos/acme/infra/pulls"]);
+    expect((await run({ empty: false }, [404, 200])).asked).toEqual(["GET /repos/acme/infra/pulls?state=open&limit=50&page=1", "GET /repos/acme/infra", "GET /repos/acme/infra/pulls?state=open&limit=50&page=1", "POST /repos/acme/infra/pulls"]);
     // A list that keeps answering 404 for a repo with commits is a real failure.
     await expect(run({ empty: false }, [404, 404])).rejects.toThrow(/answered 404/);
     await expect(run(null, [404])).rejects.toThrow(/answered 404/);
