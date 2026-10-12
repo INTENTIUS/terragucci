@@ -16,6 +16,7 @@ import {
   AGENT_KEYS,
   AGENT_VIA,
   APPLY_BRANCH,
+  POINT_NAME,
   APPLY_KEYS,
   APPLY_MERGE,
   APPLY_REQUIRES,
@@ -166,6 +167,7 @@ const apply = map(APPLY_KEYS as (keyof ApplySettings)[], {
   requires: { type: "array", uniqueItems: true, items: enumOf(APPLY_REQUIRES) },
   resume: whole(5, 60),
   branches: { type: "object", minProperties: 1, propertyNames: pat(APPLY_BRANCH), additionalProperties: { type: "array", minItems: 1, items: glob } },
+  point: pat(POINT_NAME),
 } satisfies Record<keyof ApplySettings, JsonSchema>);
 
 const step = map(STEP_KEYS as readonly (keyof StepSettings)[], {

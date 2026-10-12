@@ -21,6 +21,14 @@
  *      Plans that moved since the message approve nothing. Under
  *      `approval: sealed` it records nothing: only the approver's own key
  *      can seal an approval, and the relay holds none;
+ *      When the wave's gate asks a decision point (`apply.point` at base,
+ *      ./point-gate.ts), it answers the question the wave waits on instead:
+ *      `chant workspace points answer <id> --answer true --by <principal>
+ *      --relayed-by <relay>`, from a checkout of the default branch's tip.
+ *      The point's quorum decides whether that principal counts: someone
+ *      holding the agent role in the trust policy at base never does, and
+ *      neither does the relay. The answer record is on chant/lifecycle, and
+ *      the wave passes on it when its job runs again;
  *   4. for Decline, records nothing and says in the thread who declined; the
  *      wave keeps waiting and applies only on an approval.
  *
@@ -39,7 +47,7 @@ import { join } from "node:path";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { APPLY_OP, appendResolution, readLedger, waveGate, type GateLedger, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
-import { waitingWaves } from "./approve";
+import { chantCommand, waitingWaves } from "./approve";
 import { ConfigError, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { APPROVE_ACTION, DECLINE_ACTION, REPLAN_ACTION, type ButtonValue } from "./notify";
@@ -216,6 +224,8 @@ export interface RelayDeps {
   rule(): Promise<{ mode: Approval; signers: GateSigners; signersPath: string; resume?: number }>;
   ledger(): GateLedger;
   record(r: ResolutionRecord): void;
+  /** Answer a decision point question yes as `by`, relayed by the relay: the chant bin's `points answer`. Its refusal is `error`. */
+  answer(id: string, by: string): Promise<{ answered: true } | { error: string }>;
   now?: () => Date;
   principal: string;
 }
@@ -248,6 +258,11 @@ export async function decideClick(click: Click, deps: RelayDeps): Promise<Answer
     if (!wave) {
       const now = waiting.length > 0 ? `it waits for ${waiting.map((w) => w.digest).join(", ")}` : "it is not waiting";
       return { ok: false, text: `Not approved: ${gate} does not wait for ${click.plan}; ${now}. The plans moved since this message, or they were approved already. Read the plans waiting, then approve their digest.` };
+    }
+    if (wave.question) {
+      const r = await deps.answer(wave.question, principal);
+      if ("error" in r) return { ok: false, text: `Not approved: ${gate} asks a decision point, and its question ${wave.question} was not answered for ${principal}: ${r.error}` };
+      return { ok: true, text: `${gate}: decision point question ${wave.question} answered yes by ${principal}, relayed by ${deps.principal}, for ${wave.digest} and no other plans. Run its job again, or comment /terragucci apply on its pull request, to apply it.` };
     }
     const timestamp = (deps.now?.() ?? new Date()).toISOString();
     deps.record({ version: 1, kind: "resolution", op: APPLY_OP, gate, resolvedBy: principal, relayedBy: deps.principal, timestamp, planDigest: wave.digest, via: click.app });
@@ -437,7 +452,10 @@ export function workspaceDeps(dir: string, branch: string, principal: string): R
   return {
     principal,
     async rule() {
-      const f = spawnSync("git", ["fetch", "-q", "--depth=1", "origin", `+refs/heads/${branch}:${ref}`], { cwd: dir, encoding: "utf-8" });
+      // One commit is enough for the rule, until a decision point answer needed the whole history (answer below).
+      const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: dir, encoding: "utf-8" }).stdout.trim() === "true";
+      const known = spawnSync("git", ["rev-parse", "--verify", "-q", ref], { cwd: dir, encoding: "utf-8" }).status === 0;
+      const f = spawnSync("git", ["fetch", "-q", ...(shallow || !known ? ["--depth=1"] : []), "origin", `+refs/heads/${branch}:${ref}`], { cwd: dir, encoding: "utf-8" });
       if (f.status !== 0) throw new ConfigError(`cannot fetch ${branch}: ${f.stderr.trim()}`);
       const rule = await approvalRule(dir, { at: ref });
       const config = await configAtBase(dir, ref);
@@ -446,6 +464,23 @@ export function workspaceDeps(dir: string, branch: string, principal: string): R
     },
     ledger: () => readLedger(dir),
     record: (r) => appendResolution(dir, r),
+    async answer(id, by) {
+      // chant reads the points and answer kinds from a checkout, and the trust policy, signers history included, at origin/HEAD.
+      const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: dir, encoding: "utf-8" }).stdout.trim() === "true";
+      for (const args of [["fetch", "-q", ...(shallow ? ["--unshallow"] : []), "origin", `+refs/heads/${branch}:${ref}`], ["checkout", "-q", "-f", "--detach", ref], ["symbolic-ref", "refs/remotes/origin/HEAD", ref]]) {
+        const g = spawnSync("git", args, { cwd: dir, encoding: "utf-8" });
+        if (g.status !== 0) return { error: `git ${args[0]} failed: ${g.stderr.trim()}` };
+      }
+      const r = spawnSync(chantCommand(dir), ["workspace", "points", "answer", id, "--answer", "true", "--by", by, "--relayed-by", principal], { cwd: dir, encoding: "utf-8", env: { ...process.env, NO_COLOR: "1" } });
+      if (r.error) return { error: `chant did not run (${r.error.message})` };
+      try {
+        const doc = JSON.parse(r.stdout) as { error?: { code?: string; message?: string }; question?: { state?: string } };
+        if (doc.error) return { error: `${doc.error.code}: ${doc.error.message}` };
+        return doc.question?.state === "answered" ? { answered: true } : { error: `the question is ${doc.question?.state ?? "in no state chant printed"}` };
+      } catch {
+        return { error: `chant printed no answer (${(r.stderr || r.stdout).trim().split("\n")[0]})` };
+      }
+    },
   };
 }
 

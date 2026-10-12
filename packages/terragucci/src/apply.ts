@@ -146,6 +146,8 @@ import { ApplyProgress, progressInterval, progressLine } from "./apply-progress"
 import { readRecords, recordStoreOf } from "./cdf-records";
 import { recordVersions, versionsLine } from "./cdf-history";
 import { planAppliedChanges } from "./report/history";
+import { pointGate } from "./point-gate";
+import type { GateAnswerRef } from "@intentius/chant/point-decision";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -284,6 +286,8 @@ export interface PendingRecord {
    * refuses the gate whichever channel reached it.
    */
   neverOverMcp?: true;
+  /** The decision point question the wave waits on, when the gate asks one (./point-gate.ts). */
+  answer?: GateAnswerRef;
 }
 
 export interface ResolutionRecord {
@@ -305,6 +309,9 @@ export interface ResolutionRecord {
   pr?: number;
   head?: string;
   reviewers?: string[];
+  /** The answer record the wave passed its gate on, when the gate asks a decision point (./point-gate.ts). */
+  answer?: GateAnswerRef;
+  approver?: { kind: "human" | "agent" };
 }
 
 /**
@@ -949,7 +956,7 @@ async function applyOneWave(repo: string, options: ApplyWaveOptions): Promise<{ 
 }
 
 /** What a wave run leaves for its report. */
-interface WaveRun {
+export interface WaveRun {
   observer: StageObserver;
   /** The settings the wave runs with (waveSettings), for its report. */
   settings?: ResolvedSettings;
@@ -1976,7 +1983,10 @@ async function gateWave(
         return why === null;
       });
     }
-    let decision = decideGate(ledger, name, digest, now);
+    // With apply.point at base the gate asks that decision point, and only its answer passes the wave (./point-gate.ts).
+    const pointed = rule.point ? await pointGate(repo, { point: rule.point, mode, label, wave, digest, members, roots, planned, binary, now, env: options.env ?? process.env, commit: (options.env ?? process.env).TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim(), w, facts, outcome: (line) => writeOutcome(options.env, line, w) }) : undefined;
+    if (typeof pointed === "number") return pointed;
+    let decision: GateDecision = pointed ?? decideGate(ledger, name, digest, now);
     // A plain wave whose approved apply stopped before it finished: plans that are the rest of the approved ones apply under that approval (./remainder.ts).
     const plans = planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary }));
     let resumes: string | undefined;
