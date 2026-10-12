@@ -57,6 +57,8 @@ import {
   REVIEW_KEYS,
   RUNTIMES,
   SECRET_NAME,
+  SOURCE_GLOB,
+  SOURCES_KEYS,
   STEP_FAILURES,
   STEP_KEYS,
   STEP_STAGES,
@@ -70,6 +72,7 @@ import {
   type PolicySettings,
   type ProjectSettings,
   type RegistrySettings,
+  type SourcesSettings,
   type StepSettings,
   type TerragruntSettings,
 } from "./config";
@@ -237,6 +240,9 @@ const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
   override: { type: "array", minItems: 1, items: oneLine },
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
+const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };
+const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
+
 const oidc = map(OIDC_KEYS, {
   plan_role: { type: "string", minLength: 1 },
   apply_role: { type: "string", minLength: 1 },
@@ -385,6 +391,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     terragrunt: { ...terragrunt, description: "Terragrunt settings." },
     atmos: { ...map(ATMOS_KEYS, { version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$" } }), description: "Atmos settings." },
     policy: { ...policy, description: "Policy checks over each plan." },
+    sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init." },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
     respond: {
       ...map(Object.keys(RESPONSES), each(Object.keys(RESPONSES), (event) => enumOf(RESPONSES[event as keyof typeof RESPONSES]))),

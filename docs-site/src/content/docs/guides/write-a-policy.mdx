@@ -1,7 +1,7 @@
 ---
 title: Write a policy
-description: Write a Rego rule, turn on policy checks, see a denial in the plan note, and let one denied plan through with an override.
-claims: [policy/tofu, policy/wave, policy/delete-key, policy/override]
+description: Write a Rego rule, turn on policy checks, see a denial in the plan note, let one denied plan through with an override, and refuse module and provider sources outside a list.
+claims: [policy/tofu, policy/wave, policy/delete-key, policy/override, policy/sources-module, policy/sources-provider, policy/sources-at-base]
 prompt: |
   Read https://intentius.io/terragucci/guides/write-a-policy/.
   Write a Rego rule under the policy directory that denies the case I name, with a test, run `conftest verify --policy policy`,
@@ -102,6 +102,46 @@ policy:
 ```
 
 The wave records the denial and prints a `terragucci override` command for the root. [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) has the steps, and [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) what an override binds. `tf-plan` still fails the root; the override counts only in the apply wave, and only for that plan and those rules.
+
+## Allow only listed sources
+
+A policy reads the plan once the root's modules and providers have run. `sources` acts earlier: a root that uses a module source or provider address no entry matches is refused before `init` downloads anything for it.
+
+```yaml
+sources:
+  modules:
+    - "./**"
+    - "../modules/**"
+    - "git::https://git.example.com/platform/**"
+    - "registry.example.com/acme/*/*"
+  providers:
+    - "hashicorp/*"
+    - "registry.example.com/acme/*"
+```
+
+| What is read | Where |
+|---|---|
+| each `module` block's `source` | the root's files, and each local module it calls, down the tree |
+| each `required_providers` entry | the same files; a provider used with no entry is read as `hashicorp/<name>` |
+| `terraform { source }` | a Terragrunt unit's `terragrunt.hcl` |
+
+| Matching | |
+|---|---|
+| `*` | within one `/`-separated part |
+| `**` | across parts |
+| a module source | as written, without its `?` query (`?ref=`, `?version=`) |
+| an address with no host (`hashicorp/aws`, `acme/vpc/aws`) | also as `registry.terraform.io/...` and `registry.opentofu.org/...` |
+| a provider address | in lower case |
+
+A list you leave out checks nothing of its kind. A refused root fails the stage that reads it (`tf-plan`, `tf-drift` or a `tf-apply` wave) without running `init`. The error in the report names the source and the entries it was checked against:
+
+```text
+refused: envs/dev/app: module.vpc (envs/dev/app/main.tf) uses module source git::https://git.unlisted.example/acme/vpc.git?ref=v1, which no entry of sources.modules matches (sources.modules: ./**, ../modules/**, ...)
+```
+
+The list is read at base, as `policy` is. A pull request that adds an entry, or deletes the key, is checked against the base's list; the entry counts for the changes after it merges. A base with no `sources` key leaves the pull request's own in force. The [threat model](/terragucci/reference/threat-model/#module-and-provider-sources) lists what the check reads and what it does not.
+
+terragucci's CI images carry the HCL parser the check reads with; elsewhere, `npm i -D @cdktn/hcl2json`.
 
 ## Next
 

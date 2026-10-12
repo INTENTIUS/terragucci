@@ -531,6 +531,8 @@ export interface ProjectSettings {
   atmos?: AtmosSettings;
   /** Opt-in policy checks over each plan; see PolicySettings. */
   policy?: PolicySettings;
+  /** The module and provider sources a root may use, checked before init; see SourcesSettings. Off when absent. */
+  sources?: SourcesSettings;
   /**
    * `atlantis plan` and `atlantis apply` comments read as `/terragucci plan`
    * and `/terragucci apply`. Off by default. The alias changes the words
@@ -718,6 +720,7 @@ export const BUILT_IN: ResolvedSettings = {
  */
 export const PROJECT_FILE_KEYS = [
   "policy",
+  "sources",
   "reports",
   "approval",
   "gate",
@@ -771,7 +774,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -966,6 +969,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.atmos !== undefined) checkAtmos(s.atmos, `${where}.atmos`, problems);
   if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
   if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems);
+  if (s.sources !== undefined) checkSources(s.sources, `${where}.sources`, problems);
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
     else {
@@ -1013,6 +1017,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
 export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override"];
+export const SOURCES_KEYS = ["modules", "providers"];
+/** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
+export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
 export const OIDC_KEYS = ["plan_role", "apply_role", "audience", "roles", "gcp", "azure"];
 export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
@@ -1152,6 +1159,19 @@ export interface ModulesSettings {
   test?: boolean;
   /** Write each release as the Terraform module registry protocol, as static files a bucket or a Pages site serves. */
   registry?: RegistrySettings;
+}
+
+/**
+ * `sources`: the module and provider sources a root may use (./sources.ts).
+ * A list that is set refuses every source of its kind that no glob in it
+ * matches, before `init` downloads anything; a list that is not set checks
+ * nothing of its kind. Read at base, as `policy` is.
+ */
+export interface SourcesSettings {
+  /** Globs of module sources, as written and without their `?` query, such as `./**` for local paths. */
+  modules?: string[];
+  /** Globs of provider addresses, such as `hashicorp/*` or `registry.example.com/acme/*`. */
+  providers?: string[];
 }
 
 /** `modules.registry`: the module registry protocol as static files. */
@@ -1360,6 +1380,22 @@ function checkPolicy(p: unknown, where: string, problems: string[]): void {
   }
   if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
     problems.push(`${where}.namespace must be a Rego package name, such as terraform.plan`);
+  }
+}
+
+function checkSources(v: unknown, where: string, problems: string[]): void {
+  if (!isObject(v) || Object.keys(v).length === 0) {
+    problems.push(`${where} must be a map with modules, providers or both, each a list of globs, such as modules: ["./**"]`);
+    return;
+  }
+  for (const k of Object.keys(v)) if (!SOURCES_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${SOURCES_KEYS.join(", ")})`);
+  const glob = new RegExp(SOURCE_GLOB);
+  for (const k of SOURCES_KEYS) {
+    const list = v[k];
+    if (list === undefined) continue;
+    if (!(Array.isArray(list) && list.length > 0 && list.every((g) => typeof g === "string" && glob.test(g)))) {
+      problems.push(`${where}.${k} must be a list of source globs, such as ${k === "modules" ? '["./**", "registry.example.com/acme/*/*"]' : '["hashicorp/*", "registry.example.com/acme/*"]'}`);
+    }
   }
 }
 

@@ -243,6 +243,24 @@ If the base's file cannot be read, the stage fails when the checkout names steps
 
 This does not stop a step from running whatever its command runs at the time: a step that calls a script in the repo runs the change's copy. Keep what a step runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without steps. An `on_failure: approve` step holds a wave at the same gate as the gate policy, so the [approval mode](#approval-modes) decides who can release it.
 
+## Module and provider sources
+
+Policy reads the plan, so a change's modules and providers have run by the time a rule can deny it. With [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) set, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a source it uses matches no entry. The list is read at base, as `steps` are.
+
+| Checked before `init` | Not checked |
+|---|---|
+| each `module` block's `source` in the root's own files, and in each local (`./`, `../`) module it calls, down the tree | the module calls inside a module `init` downloads (a listed git or registry module calling an unlisted one) |
+| each `required_providers` entry, and `hashicorp/<name>` for a provider a module uses with no entry | a provider a downloaded module requires |
+| a Terragrunt unit's `terraform { source }`, and a local source's module | a source Terragrunt builds from an expression, which is matched as written |
+
+| Code | Runs |
+|---|---|
+| `steps` with `before: init` | before the check |
+| the binary's `init`: downloads only, no module or provider code | after the check, for a root that passes |
+| providers, modules and external data sources | in `plan`, after the check |
+
+With no `sources` key, nothing is checked and nothing is read for it.
+
 ## The review
 
 The review command reads text the change's author wrote: the title, the description and the diff. A model can follow an instruction hidden in them.
