@@ -15,9 +15,10 @@
  *          AssumeRoleWithWebIdentity, as session keys
  *   GCP    each plan service account (`oidc.gcp` and its `roles`), through
  *          Google's STS and IAM, as an access token
- *   Azure  refused: the azurerm provider and backend take no access token,
- *          only the OIDC token itself, so a re-plan cannot hold an Azure
- *          identity without the token
+ *   Azure  not traded: the azurerm provider and backend take no access
+ *          token, only the OIDC token itself, so a re-plan with oidc.azure
+ *          has no trade step and plans with the token, and says so in its
+ *          log (render.ts, the re-plan's Azure warning)
  *
  * The plan step then starts without the token-request variables and reads
  * what `writeTraded` wrote: the job's own identity as the variables the
@@ -78,14 +79,14 @@ function tokenFileOf(file: string): string | undefined {
 
 /**
  * Trade the job's tokens for every plan identity the environment names.
- * Throws for Azure, and when a role or service account is named with no
+ * Throws for Azure, which a re-plan does not trade for, and when a role or service account is named with no
  * token to trade.
  */
 export async function trade(env: NodeJS.ProcessEnv, options: { reportsRole?: string; fetchFn?: StoreFetch; written?: string[] } = {}): Promise<Traded> {
   const fetchFn = options.fetchFn ?? (fetch as unknown as StoreFetch);
   if (env.ARM_OIDC_TOKEN_FILE_PATH) {
     throw new StoreError(
-      "a re-plan does not run with oidc.azure: it runs the pull request's code, and the azurerm provider and backend take only the OIDC token, which carries the default branch's subject that the apply client trusts. The plan on the pull request's own push plans it",
+      "oidc-trade does not trade for oidc.azure: the azurerm provider and backend take only the OIDC token itself. A re-plan with oidc.azure plans with the job's token and has no trade step",
     );
   }
   const out: Traded = { aws: {}, gcp: {} };

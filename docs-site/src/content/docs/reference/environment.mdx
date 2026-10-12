@@ -201,7 +201,7 @@ Your role's trust policy must accept the forge's issuer and your repo. Forgejo n
 | GitLab | your GitLab URL |
 | Forgejo | your Forgejo URL followed by `/api/actions` |
 
-The plan role is used on the pull request and on the default branch: re-plan, drift and `confirm` run the default branch's workflow. Trust both subjects for plan, and only the default branch's for apply. A re-plan trades its token for the plan role before the pull request's code runs, so that code never holds a token the apply role trusts ([Re-plan](/terragucci/reference/threat-model/#re-plan)).
+The plan role is used on the pull request and on the default branch: re-plan, drift and `confirm` run the default branch's workflow. Trust both subjects for plan, and only the default branch's for apply. A re-plan trades its token for the plan role before the pull request's code runs, so that code never holds a token the apply role trusts. With `oidc.azure` it does not: the azurerm provider takes only the token ([Re-plan](/terragucci/reference/threat-model/#re-plan)).
 
 | Forge | Plan role trusts | Apply role trusts |
 |---|---|---|
