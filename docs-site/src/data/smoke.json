@@ -2189,7 +2189,7 @@
     },
     {
       "claim": "steps/gate",
-      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, naming the step, with the approve command for its digest",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -2197,7 +2197,7 @@
     },
     {
       "claim": "steps/gate",
-      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, naming the step, with the approve command for its digest",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -2206,7 +2206,7 @@
     },
     {
       "claim": "steps/gate",
-      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, naming the step, with the approve command for its digest",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
