@@ -1888,86 +1888,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "migrate/resume",
-      "says": "with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "migrate/backend",
-      "says": "a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "9d9e7a0b"
-    },
-    {
-      "claim": "migrate/tfe",
-      "says": "a migration moves the state of a workspace from a TFE API, the protocol of the remote backend, to a bucket: read through discovery, proved with no change, approved by digest, written under the workspace lock, the versions of the workspace left as they were, and the version it read recorded",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "9d9e7a0b"
-    },
-    {
-      "claim": "migrate/pg",
-      "says": "a migration moves the state of a root between two pg backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the advisory lock, the old row left as it was",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "2bdb05f3"
-    },
-    {
-      "claim": "migrate/k8s",
-      "says": "a migration moves the state of a root between two kubernetes backends: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its Lease, the old Secret left as it was",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "2bdb05f3"
-    },
-    {
-      "claim": "migrate/consul",
-      "says": "a migration moves the state of a root between two consul paths: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under its session lock, the old key left as it was",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "5ca8858a"
-    },
-    {
-      "claim": "migrate/http",
-      "says": "a migration moves the state of a root between two http backend addresses: read with state pull, proved with no change, approved by the digest of its contents, written by the binary under the lock of the server, the old state left as it was",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "5ca8858a"
-    },
-    {
-      "claim": "migrate/revert",
-      "says": "terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "9d9e7a0b"
-    },
-    {
-      "claim": "migrate/resume-never",
-      "says": "with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "migrate/split",
-      "says": "a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "9d9e7a0b"
-    },
-    {
       "claim": "estate/dora",
       "says": "terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each",
       "needs": null,
@@ -2092,14 +2012,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "migrate/cdktn",
-      "says": "a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "init/cdktn-refuse",
       "says": "with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request",
       "needs": null,
@@ -2208,14 +2120,6 @@
     {
       "claim": "drift/terragrunt-attribute",
       "says": "with respond.drift: attribute in a Terragrunt repo, tf-drift lists who changed each drifted attribute under its unit in the drift issue",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "migrate/terragrunt-split",
-      "says": "a migration file moves a resource from the state of one Terragrunt unit to that of another: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks, recording each version before and after",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
