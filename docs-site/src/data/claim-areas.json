@@ -100,7 +100,6 @@
     "telemetry/dash-runs": "Reports and visibility",
     "telemetry/dash-slos": "Reports and visibility",
     "telemetry/dash-waves": "Reports and visibility",
-    "review/decide": "Agents and pull request environments",
     "review/description": "Agents and pull request environments",
     "estate/dora": "Reports and visibility",
     "drift/tofu": "Drift",

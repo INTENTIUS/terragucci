@@ -320,8 +320,7 @@ note/split|a plan over the comment limit of the forge stays one note within the 
 note/report-link|with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci|
 init/config-ts|init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line|
 init/role-refused|config check and init refuse an oidc block that names one role for plan and apply|
-review/description|with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json|
-review/decide|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
+review/description|with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json; decide.backend laya, von, decider and jev each answer the check through the same client, each pinned to its model, jev with its bearer token from token_env|
 telemetry/headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
 init/pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
 generate/tofu|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
@@ -12958,17 +12957,22 @@ description_check() { # dir, [env K=V...]
 
 claim_review/description() {
   # A repo with respond.description: check and decide: pointing at a stand-in
-  # for the decision service, which answers yes at 0.95. init puts the check
-  # in the plan job. The plan destroys app: terraform_data.gone, and the pull
-  # request says Tags only: the check run as the plan job runs it writes a
-  # flag naming the destroy at the top of note.md and in report.html, and
-  # writes intent.json with the decision.
-  # BREAK: the stand-in answers no (0.05), so nothing is flagged.
+  # for the decision service, which answers yes at 0.95 in the shape every
+  # backend speaks. init puts the check in the plan job. The plan destroys
+  # app: terraform_data.gone, and the pull request says Tags only: the check
+  # run as the plan job runs it writes a flag naming the destroy at the top of
+  # note.md and in report.html, and writes intent.json with the decision. The
+  # same check is then asked through decide.backend von, decider and jev in
+  # turn: config check passes each block; each flags the destroy and names
+  # the pinned model; the request pins that model, and jev alone sends its key
+  # from token_env as a bearer token. One stand-in and one repo serve them all.
+  # BREAK: the stand-in answers yes at 0.55, under the 0.8 threshold, so no
+  # backend flags anything.
   log() { echo "[smoke description-check] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work rc=0 name="tgs-decide-$STAMP" noul=0.95 dir first
-  [ -n "${BREAK:-}" ] && noul=0.05
+  local work rc=0 name="tgs-decide-$STAMP" noul=0.95 dir first backend model block req key="smoke-jev-$STAMP"
+  [ -n "${BREAK:-}" ] && noul=0.55
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   stand_in_up "$work" "$name" 8790 MODE=decide "NOUL=$noul" || { stand_in_down; return 1; }
@@ -12988,30 +12992,7 @@ claim_review/description() {
     grep -q 'id="description-flag"' "$dir/report.html" || { log "report.html has no flag"; rc=1; }
     jq -e '.intent.flagged == true' "$dir/report.json" >/dev/null || { log "report.json does not carry the decision"; rc=1; }
   fi
-  stand_in_down
-  drop_work "$work"
-  [ $rc = 0 ] && log "the note opens with a flag naming app: terraform_data.gone (destroy), and intent.json records the decision"
-  return $rc
-}
-
-claim_review/decide() {
-  # The description check of description_repo asked through decide.backend
-  # von, decider and jev in turn, each at a stand-in that answers yes at 0.95
-  # in the shape all three speak. config check passes each block; each flags
-  # the destroy and names the pinned model; the request pins that model, and
-  # jev alone sends its key from token_env as a bearer token.
-  # BREAK: the stand-in answers yes at 0.55, under the 0.8 threshold, so no
-  # backend flags anything.
-  log() { echo "[smoke decide-backends] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work rc=0 name="tgs-backends-$STAMP" noul=0.95 dir backend model block req key="smoke-jev-$STAMP"
-  [ -n "${BREAK:-}" ] && noul=0.55
-  build_cli || return 1
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  stand_in_up "$work" "$name" 8790 MODE=decide "NOUL=$noul" || { stand_in_down; return 1; }
-  description_repo "$work/repo" "$(printf '  backend: von\n  url: http://%s:8790\n  model: von-1.0.0' "$name")" || rc=1
-  dir="$work/repo/terragucci-report"
+  [ $rc = 0 ] && log "laya: the note opens with a flag naming app: terraform_data.gone (destroy), and intent.json records the decision"
   for backend in von decider jev; do
     [ $rc = 0 ] || break
     model="$backend-1.0.0"
@@ -13033,7 +13014,7 @@ claim_review/decide() {
   done
   stand_in_down
   drop_work "$work"
-  [ $rc = 0 ] && log "von, decider and jev each answered the description check through the same client, each pinned to its model, jev with its bearer token"
+  [ $rc = 0 ] && log "laya, von, decider and jev each answered the description check through the same client, each pinned to its model, jev with its bearer token"
   return $rc
 }
 
@@ -21312,8 +21293,7 @@ note/split           weight=60
 note/report-link     weight=60
 init/config-ts            weight=20
 init/role-refused         weight=20
-review/description    weight=60
-review/decide      weight=80
+review/description    weight=100
 telemetry/headers         weight=60
 init/pinned-install       weight=60
 init/root-pins            weight=60
