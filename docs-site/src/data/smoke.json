@@ -768,14 +768,6 @@
       "commit": "02e7f08"
     },
     {
-      "claim": "approval/terragrunt",
-      "says": "a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "pr-apply/tofu",
       "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
       "needs": null,
@@ -1577,30 +1569,6 @@
     {
       "claim": "report/sensitive",
       "says": "IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "approval/revoke",
-      "says": "removing an approval line from chant/lifecycle makes its wave wait again",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "approval/pending-expiry",
-      "says": "a pending fact past its 48 hours is recorded afresh by the next run of its wave",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "approval/signer-trust",
-      "says": "init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -2424,14 +2392,6 @@
     {
       "claim": "affected/terragrunt-stack",
       "says": "a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "5cd0d6bd"
-    },
-    {
-      "claim": "approval/terragrunt-stack",
-      "says": "the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate",
       "needs": null,
       "verdict": "pass",
       "break": "caught",

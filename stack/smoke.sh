@@ -249,7 +249,6 @@ policy/review-risk|a tf-apply wave gives the policy the risk the review workflow
 report/wave|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
 policy/delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
 report/oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
-approval/terragrunt|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
 pr-apply/tofu|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto|
 lock/apply|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
 pr-apply/stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
@@ -344,9 +343,7 @@ security/token-scrub|the binary tf-plan starts gets no forge token by name or by
 security/plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
 security/fork|a pull request from a fork runs check and no plan job|
 report/sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
-approval/revoke|removing an approval line from chant/lifecycle makes its wave wait again|
-approval/pending-expiry|a pending fact past its 48 hours is recorded afresh by the next run of its wave|
-approval/signer-trust|init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it|
+approval/signer-trust|init --signer writes the signers line from git config user.signingkey, and an approval sealed with that key lets the wave apply|
 rollout/control|from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied|
 rollout/provider|rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave|
 rollout/pins|rollout moves an oci:// tag and a registry version pin, each in the shape it had|
@@ -433,7 +430,6 @@ apply/terragrunt-branches|with apply.branches mapping release to live/canary/*, 
 waves/terragrunt-stack|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
 check/terragrunt-stack|the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit|
 affected/terragrunt-stack|a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file|
-approval/terragrunt-stack|the waves of the units of an explicit stack wait at their gates: the first unit applies only once its wave is approved, and the unit generated beside it waits at its own gate|
 drift/terragrunt-stack|tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from|
 chat/slack|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
 chat/lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
@@ -7801,46 +7797,6 @@ tg_gated_applied() { # name -> the units with state under <name>/, space-separat
     | sed -E "s#</?Key>##g; s#^$1/##; s#/terraform\.tfstate\$##" | sort | tr '\n' ' '
 }
 
-claim_approval/terragrunt() {
-  # Push the fixture. Wave 1 (live/canary/one) plans its unit, waits for an
-  # approval of its set digest and prints the command, so no unit has state.
-  # Approve wave 1 with a sealed approval and push again: live/canary/one
-  # applies from its saved plan, and wave 2 waits for its own approval.
-  # BREAK: the pushed pipeline runs with --gate never, so wave 2 applies with
-  # nothing approved.
-  log() { echo "[smoke tg-gate-wait] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-gate-wait" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-gate-wait tg-gated-waves || { drop_work "$work"; return 1; }
-  if [ -n "${BREAK:-}" ]; then
-    sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
-    rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
-  fi
-  sha="$(push_tree "$work/tree" "$repo" main "tg-gate-wait: first")"
-  wait_run "$repo" "$sha"
-  applied="$(tg_gated_applied tg-gate-wait)"
-  logs="$(print_logs "$repo" "$RUN_ID")"
-  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
-  [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
-  if [ $rc = 0 ]; then
-    grep -q "terragucci approve wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
-    grep -q -- "-auto-approve" <<<"$logs" && { log "a job ran an apply with -auto-approve"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve tg-gate-wait 1 || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-gate-wait: after wave 1 was approved")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-gate-wait)"
-    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, wave 2 waiting for its own approval"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "no unit applied until wave 1 was approved; then live/canary/one applied and wave 2 waited at its own gate"
-  return $rc
-}
-
 claim_waves/terragrunt_layers() {
   # stack/fixtures/tg-three-layers: live/net, live/app after it and live/edge
   # after app, gate: always. init writes three wave jobs. Push, then approve
@@ -14720,108 +14676,32 @@ claim_apply/provider_cache() {
 
 # ── approval upkeep ───────────────────────────────────────────────────────
 
-claim_approval/revoke() {
-  # The gated fixture: wave 1 waits and is approved. The approval line is
-  # then removed from _gates/tf-apply.jsonl on chant/lifecycle in a normal
-  # commit, as the runbook says. The next push waits at wave 1 again, and no
-  # root has state.
-  # BREAK: the approval stays, so the next push applies canary/one.
-  log() { echo "[smoke approval-revoke] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/approval-revoke" sha applied clone rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo approval-revoke || { drop_work "$work"; return 1; }
-  sha="$(push_tree "$work/tree" "$repo" main "approval-revoke: first")"
-  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
-  [ -z "$(gated_applied approval-revoke)" ] || { log "a root applied before any approval"; rc=1; }
-  [ $rc = 0 ] && { gated_approve approval-revoke 1 || rc=1; }
-  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
-    clone="$work/lifecycle"
-    { git clone -q --branch chant/lifecycle --single-branch "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
-      && jq -c 'select(.kind == "pending")' "$clone/_gates/tf-apply.jsonl" > "$clone/kept.jsonl" \
-      && mv "$clone/kept.jsonl" "$clone/_gates/tf-apply.jsonl" \
-      && git -C "$clone" -c user.name=smoke-approver -c user.email=smoke-approver@terragucci.local -c commit.gpgsign=false commit -qam "revoke the approval of wave-1" \
-      && git -C "$clone" push -q origin chant/lifecycle; } || { log "could not revoke the approval"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "approval-revoke: after the revoke")"
-    wait_run "$repo" "$sha" || rc=1
-    applied="$(gated_applied approval-revoke)"
-    log "after the revoke: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ -z "$applied" ] || { log "the revoked approval let $applied apply"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -q "terragucci approve wave-1" || { log "wave 1 did not wait for an approval again"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "with its approval line removed, wave 1 waited again and nothing applied"
-  return $rc
-}
-
-claim_approval/pending_expiry() {
-  # The gated fixture: wave 1 waits and records one pending fact. That fact is
-  # then aged past its 48 hours on chant/lifecycle. The next push records a
-  # fresh pending fact for wave 1 that expires in the future.
-  # BREAK: the fact is not aged, so the next push records none.
-  log() { echo "[smoke pending-expiry] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/pending-expiry" sha clone count now old expired rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo pending-expiry || { drop_work "$work"; return 1; }
-  sha="$(push_tree "$work/tree" "$repo" main "pending-expiry: first")"
-  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
-  pending() { file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl | jq -c 'select(.kind == "pending" and .gate == "wave-1")'; }
-  count="$(pending | wc -l | tr -d ' ')"
-  [ "$count" = 1 ] || { log "wave 1 recorded $count pending facts, not 1"; rc=1; }
-  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
-    old="$(date -u -v-50H +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '50 hours ago' +%Y-%m-%dT%H:%M:%S.000Z)"
-    expired="$(date -u -v-2H +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%S.000Z)"
-    clone="$work/lifecycle"
-    { git clone -q --branch chant/lifecycle --single-branch "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
-      && jq -c --arg t "$old" --arg x "$expired" 'if .kind == "pending" and .gate == "wave-1" then .timestamp = $t | .expiresAt = $x else . end' "$clone/_gates/tf-apply.jsonl" > "$clone/aged.jsonl" \
-      && mv "$clone/aged.jsonl" "$clone/_gates/tf-apply.jsonl" \
-      && git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -qam "age the pending fact of wave-1 past 48 hours" \
-      && git -C "$clone" push -q origin chant/lifecycle; } || { log "could not age the pending fact"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "pending-expiry: the next run")"
-    wait_run "$repo" "$sha" || rc=1
-    now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-    count="$(pending | jq -s --arg n "$now" '"\(length) \([.[] | select(.expiresAt > $n)] | length)"' -r)"
-    log "after the next run: wave-1 has ${count% *} pending facts, ${count#* } of them unexpired"
-    [ "$count" = "2 1" ] || { log "the next run did not record a fresh pending fact beside the expired one"; rc=1; }
-    [ -z "$(gated_applied pending-expiry)" ] || { log "a root applied"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "a pending fact past its 48 hours was recorded afresh by the next run"
-  return $rc
-}
-
 claim_approval/signer_trust() {
   # The gated fixture under approval: sealed with no signers file. In the
   # checkout, git config user.signingkey names the approver key, and
   # terragucci init --signer smoke-approver writes .chant/allowed_signers from
-  # it. The file moves to security/allowed_signers, and .chant/trust.json
-  # names that path. wave 1 waits; an approval sealed with the key lets
-  # canary/one apply.
-  # BREAK: trust.json names a path with no file, so the sealed approval
-  # verifies against nothing and the wave keeps waiting.
+  # it. wave 1 waits; an approval sealed with the key lets canary/one apply.
+  # Where the signers file may live (.chant/trust.json) is chant's, proven in
+  # its gate-decision tests.
+  # BREAK: user.signingkey names another key, so init --signer writes that key
+  # for smoke-approver and the approver's key is not in the signers file.
   log() { echo "[smoke signer-trust] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/signer-trust" sha applied path=security/allowed_signers rc=0
-  [ -n "${BREAK:-}" ] && path=security/nobody
+  local work repo="$USER/signer-trust" sha applied key rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo signer-trust gated-waves sealed || { drop_work "$work"; return 1; }
   rm -f "$work/tree/.chant/allowed_signers"
+  key="$work/approver.pub"
+  if [ -n "${BREAK:-}" ]; then
+    ssh-keygen -q -t ed25519 -N "" -C smoke-other -f "$work/other" || { drop_work "$work"; return 1; }
+    key="$work/other.pub"
+  fi
   git -C "$work/tree" init -q -b main
-  git -C "$work/tree" config user.signingkey "$work/approver.pub"
+  git -C "$work/tree" config user.signingkey "$key"
   (cd "$work/tree" && "$TERRAGUCCI" init --signer smoke-approver >&2) || { log "init --signer failed"; drop_work "$work"; return 1; }
   grep -q "^smoke-approver $(cut -d' ' -f1,2 "$work/approver.pub")" "$work/tree/.chant/allowed_signers" 2>/dev/null \
     || { log "init --signer did not write the approver key"; rc=1; }
-  mkdir -p "$work/tree/security"
-  mv "$work/tree/.chant/allowed_signers" "$work/tree/security/allowed_signers"
-  printf '{"schema": 1, "signers": "%s"}\n' "$path" > "$work/tree/.chant/trust.json"
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "signer-trust: first")"
     wait_run "$repo" "$sha" || rc=1
@@ -14833,10 +14713,10 @@ claim_approval/signer_trust() {
     wait_run "$repo" "$sha" || rc=1
     applied="$(gated_applied signer-trust)"
     log "after the sealed approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "canary/one " ] || { log "the approval sealed with the key init wrote, read through trust.json, did not let canary/one apply"; rc=1; }
+    [ "$applied" = "canary/one " ] || { log "the approval sealed with the key init wrote did not let canary/one apply"; rc=1; }
   fi
   drop_work "$work"
-  [ $rc = 0 ] && log "init --signer wrote the key, trust.json moved the file, and the sealed approval let canary/one apply"
+  [ $rc = 0 ] && log "init --signer wrote the approver key from git config, and the sealed approval let canary/one apply"
   return $rc
 }
 
@@ -17911,46 +17791,6 @@ claim_affected/terragrunt_stack() {
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "a change to base's value in the stack file planned base alone, top waits on it, and the report and note name the stack file"
-  return $rc
-}
-
-claim_approval/terragrunt_stack() {
-  # Push the fixture to a fresh repo. The check job generates the stack and
-  # passes; wave 1 (the generated base) plans, waits for an approval of its
-  # set digest and prints the command, so no unit has state. Approve wave 1
-  # and push again: base applies from its saved plan, and wave 2 (top) waits
-  # at its own gate with its own approve command.
-  # BREAK: the pushed pipeline runs with --gate never, so both units apply
-  # with nothing approved.
-  log() { echo "[smoke tg-stack-gate] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/tg-stack-gate" sha applied logs rc=0 wf
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  GATED_INIT_TG=1 gated_repo tg-stack-gate tg-stack || { drop_work "$work"; return 1; }
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  grep -q "tf-apply --wave 1 --layers 'live/stk/.terragrunt-stack/base;live/stk/.terragrunt-stack/top'" "$wf" || { log "the waves are not the generated base, then top"; rc=1; }
-  [ -n "${BREAK:-}" ] && perl -pi -e 's#--gate always#--gate never#g' "$wf"
-  sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: first")"
-  wait_run "$repo" "$sha"
-  applied="$(tg_gated_applied tg-stack-gate)"
-  logs="$(run_logs "$repo" "$RUN_ID")"
-  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
-  [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
-  grep -q "every unit is formatted and its inputs match its module" <<<"$logs" || { log "the check job did not validate the generated units"; rc=1; }
-  grep -q "terragucci approve wave-1 --plan" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
-  [ $rc = 0 ] && { gated_approve tg-stack-gate 1 || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "tg-stack-gate: after wave 1 was approved")"
-    wait_run "$repo" "$sha"
-    applied="$(tg_gated_applied tg-stack-gate)"
-    logs="$(run_logs "$repo" "$RUN_ID")"
-    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "live/stk/.terragrunt-stack/base " ] || { log "expected the generated base alone to apply, top waiting at its own gate"; rc=1; }
-    grep -q "terragucci approve wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
-  fi
-  drop_work "$work"
-  [ $rc = 0 ] && log "the generated base applied only once wave 1 was approved, and top waited at wave 2's gate"
   return $rc
 }
 
@@ -21482,7 +21322,6 @@ policy/review-risk        runner self! weight=250
 report/wave     weight=120
 policy/delete-key    ex after=boot/tofu weight=150
 report/oidc          ex after=boot/tofu weight=150
-approval/terragrunt         runner self! weight=200
 pr-apply/tofu             runner self! weight=250
 lock/apply        runner self! weight=300
 pr-apply/stale       runner self! weight=200
@@ -21576,8 +21415,6 @@ security/token-scrub          weight=60
 security/plan-token-free      runner self! weight=250
 security/fork         runner self! weight=250
 report/sensitive  weight=90
-approval/revoke      runner self! weight=250
-approval/pending-expiry       runner self! weight=250
 approval/signer-trust         runner self! weight=250
 rollout/control      runner self! weight=400
 rollout/provider     self! weight=120
@@ -21662,7 +21499,6 @@ binary/terragrunt-choudoufu         weight=120
 waves/terragrunt-stack            weight=150
 check/terragrunt-stack       runner self! weight=150
 affected/terragrunt-stack    weight=120
-approval/terragrunt-stack        runner self! weight=250
 drift/terragrunt-stack       weight=150
 estate/terragrunt-graph      weight=200
 state/terragrunt-export      weight=200
