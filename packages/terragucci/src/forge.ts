@@ -94,13 +94,13 @@ export async function openPullRequest(
 }
 
 /**
- * chant's client for the forge a job runs on, holding the job's TG_TOKEN:
- * the repository, the API and the run's URL from the CI environment. A
- * missing variable is a ConfigError naming it.
+ * chant's client for the forge a job runs on, holding the job's TG_TOKEN (or
+ * the variable `tokenEnv` names): the repository, the API and the run's URL
+ * from the CI environment. A missing variable is a ConfigError naming it.
  */
-export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch): PrForge {
+export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, tokenEnv = "TG_TOKEN"): PrForge {
   try {
-    return forgeClient(forgeTargetFromEnv(env, { kind, tokenEnv: "TG_TOKEN" }), fetch);
+    return forgeClient(forgeTargetFromEnv(env, { kind, tokenEnv }), fetch);
   } catch (e) {
     if (e instanceof ForgeEnvironmentError) throw new ConfigError(e.message);
     throw e;

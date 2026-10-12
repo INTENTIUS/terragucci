@@ -36,7 +36,7 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     const method = init?.method ?? "GET";
     const path = url.slice(API.length);
     const body = init?.body ? JSON.parse(init.body) : undefined;
-    calls.push({ method, path, body, token: init?.headers?.["private-token"] });
+    calls.push({ method, path, body, token: init?.headers?.["private-token"] ?? init?.headers?.["PRIVATE-TOKEN"] });
     const ok = (b: unknown, status = 200) => ({ ok: status < 300, status, json: async () => b, text: async () => JSON.stringify(b) });
     let m: RegExpExecArray | null;
     if (path === "/user") return ok({ id: BOT, username: "terragucci-bot" });

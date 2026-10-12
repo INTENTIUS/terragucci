@@ -492,8 +492,8 @@ describe("the forge", () => {
     expect((await gl.listPullRequests("terragucci/rollout/")).map((p) => [p.url, p.state])).toEqual([["l/1", "open"], ["l/0", "closed"]]);
   });
 
-  // chant's findPullRequest reads Forgejo's 404 on a still-empty repo as no pull request (INTENTIUS/chant#3845).
-  it("opens a pull request on a Forgejo repo whose list answers 404 just after its first push, and throws on any other 404", async () => {
+  // chant's findPullRequest reads Forgejo's 404 on the list of a repo that is there as no pull request.
+  it("opens a pull request on a Forgejo repo whose list answers 404 just after its first push, and throws when the repo is not there", async () => {
     const run = async (repo: { empty: boolean } | null, listAnswers: number[]) => {
       const asked: string[] = [];
       const fetch: Fetch = async (url, init) => {
@@ -512,10 +512,7 @@ describe("the forge", () => {
     };
     // Still empty: no pull request is open, so one is made.
     expect(await run({ empty: true }, [404])).toEqual({ url: "u/1", asked: ["GET /repos/acme/infra/pulls?state=open&limit=50&page=1", "GET /repos/acme/infra", "POST /repos/acme/infra/pulls"] });
-    // No longer empty by the time the repo is read: the list is asked again.
-    expect((await run({ empty: false }, [404, 200])).asked).toEqual(["GET /repos/acme/infra/pulls?state=open&limit=50&page=1", "GET /repos/acme/infra", "GET /repos/acme/infra/pulls?state=open&limit=50&page=1", "POST /repos/acme/infra/pulls"]);
-    // A list that keeps answering 404 for a repo with commits is a real failure.
-    await expect(run({ empty: false }, [404, 404])).rejects.toThrow(/answered 404/);
+    // A 404 on the list of a repo that is not there is a real failure.
     await expect(run(null, [404])).rejects.toThrow(/answered 404/);
   });
 
