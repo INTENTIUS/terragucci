@@ -62,7 +62,13 @@ behold has no approve button. Run the line in your shell, which records the appr
    <prefix>/*index.json
    <prefix>/*/report.json
    <prefix>/estate.json
+   <prefix>/audit.jsonl
+   <prefix>/*/runs/*/run.json
    ```
+
+   `audit.jsonl` fills the timeline. Each `run.json` fills a project's apply progress and run view.
+
+   Without `s3:ListBucket` S3 answers 403 for a missing key. A project that never applied has no `run.json`, so that part shows as not readable.
 
    For a GCS or Azure bucket, set `reports.url`, or copy the prefix to a directory with `gcloud storage rsync` or `azcopy`.
 
