@@ -286,12 +286,8 @@ note/drift-overdue|the plan of a pull request says in its note that drift checks
 approval/pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no terragucci approve, recorded on the ledger as via pr-review|
 refuse/pr-review|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest|
 approval/pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
-choudoufu/concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
-choudoufu/concurrency-time|with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both resources in under 90 seconds: the second wave starts while the first is applying and does not wait for it|
-choudoufu/write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
-choudoufu/killed-records|with binary: choudoufu a tf-apply wave killed after the apply of one resource returned, while the next one applies, leaves a record for the first and none for the second, and the next plan creates the second only|
-choudoufu/resume|with binary: choudoufu a gated wave killed after its approved apply of one resource returned is found by terragucci resume, and the wave run again applies only the other resource under the same approval, with no new one|
-choudoufu/live-progress|with binary: choudoufu while a tf-apply wave applies, its run view and its progress.json show the resource whose apply returned done and the slow one after it in flight, read from the record store|
+choudoufu/concurrency|with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both in under 90 seconds; two that change different resources reach their record writes together and both apply, with no lock wait and no lock object; and two that change one resource at once settle on one record: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
+choudoufu/killed|with binary: choudoufu while an approved tf-apply wave applies, its run view and progress.json show the resource whose apply returned done and the slow one after it in flight; killed then, the wave leaves a record for the first and none for the second, and the wave run again applies only the second under the same approval, with no new one|
 choudoufu/record-versions|with binary: choudoufu a record changed by three tf-apply waves shows three versions, newest first, on the estate page and in its history, listed by choudoufu live-history|
 choudoufu/iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 apply/per-root|a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart|
@@ -356,8 +352,7 @@ report/index-writes|two plan runs that write one index at once both land in it, 
 note/footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
 comment/dispatch|a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only|
 choudoufu/shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
-choudoufu/migrate|with binary: choudoufu a migration moves a resource between two estates by rewriting its ownership tags: proved by both plans, approved by digest, after which the next plan of both shows no change and the move is on chant/lifecycle|
-choudoufu/adopt|with binary: choudoufu a migration adopts a root on s3 state into an estate: proved against the live system, approved by digest, its resources stamped with no change, and its old state left as the version it was|
+choudoufu/migrate|with binary: choudoufu two migrations in one change apply in one wave, each proved and approved by its digest: one moves a resource between two estates by rewriting its ownership tags and records the move on chant/lifecycle, the other adopts a root on s3 state into an estate, stamps its resources and leaves the old state as the version it was; the next plan of every root shows no change|
 init/cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
 report/outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
 audit/tofu|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
@@ -457,7 +452,7 @@ choudoufu unlock-state|with binary: choudoufu and a root under live resource mar
 # three. choudoufu under live resource markers takes no state lock at all, so
 # it runs unlock-state alone, which there has nothing to release; apply-serial
 # and lock-wait are about a lock it never takes (its own side is
-# cdf-concurrency, cdf-rows-* and cdf-killed-records, and the plain lock-wait
+# choudoufu/concurrency, choudoufu/rows-* and choudoufu/killed, and the plain lock-wait
 # row is choudoufu on an s3 backend).
 BINARY_LOCK_CLAIMS='terraform apply/serial state/unlock lock/wait-span
 choudoufu state/unlock'
@@ -9974,7 +9969,7 @@ claim_approval/pr_review_status() {
 # A choudoufu estate keeps no state file and takes no lock. Each resource has
 # its own record in the estate's record store, and every record write is one
 # conditional PutObject: If-None-Match: * to create, If-Match: <version> to
-# update. cdf-concurrency and cdf-write-race run two tf-apply waves of
+# update. choudoufu/concurrency's checks run two tf-apply waves of
 # one estate at once, from two checkouts, in the choudoufu CI image, against a
 # record store bucket on floci. Their S3 traffic goes through
 # stack/fixtures/cdf-race/s3-hold.mjs, which holds the record writes until
@@ -10021,7 +10016,7 @@ cdf_proxy_up() { # work
 }
 
 # A checkout of one estate: the root estate/ with one terraform_data per
-# name=value, committed. CDF_BACKEND=tofu puts the same resources in one
+# name=value and the HCL in CDF_EXTRA, committed. CDF_BACKEND=tofu puts the same resources in one
 # state file with use_lockfile instead, the way stock OpenTofu keeps an estate.
 cdf_checkout() { # dir estate name=value...
   local dir="$1" estate="$2" kv
@@ -10060,6 +10055,7 @@ HCL
     for kv in "$@"; do
       printf '\nresource "terraform_data" "%s" {\n  input = "%s"\n}\n' "${kv%%=*}" "${kv#*=}"
     done
+    [ -z "${CDF_EXTRA:-}" ] || printf '%s\n' "$CDF_EXTRA"
   } >"$dir/estate/main.tf"
   printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$dir/.gitignore"
   [ -d "$dir/.git" ] || git -C "$dir" init -q -b main
@@ -10093,7 +10089,7 @@ cdf_run() { # dir log name bin override stage-args...
 }
 
 # The values an estate holds now, as the store keeps them: the tokens
-# (left-N, right-N, seed, from-a, from-b) found in its records, or in its
+# (left-N, right-N, slow-left, slow-right, seed, from-a, from-b) found in its records, or in its
 # state file for CDF_BACKEND=tofu, sorted and joined by spaces.
 cdf_values() { # estate
   local estate="$1" k
@@ -10102,7 +10098,7 @@ cdf_values() { # estate
       curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$k" '$k | split("/") | map(@uri) | join("/")')" || true
     done
     curl -fsS "$FLOCI/$CDF_RECORDS/cdf-concurrency/$estate/terraform.tfstate" 2>/dev/null || true
-  } | grep -oE '(left|right)-[0-9]|seed|from-[ab]' | sort -u | tr '\n' ' ' | sed 's/ $//'
+  } | grep -oE '(left|right)-[0-9]|slow-(left|right)|seed|from-[ab]' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 # When the record of terraform_data.<name> in an estate was last written.
@@ -10156,9 +10152,13 @@ cdf_race_end() { # work
   CDF_PIDS=()
 }
 
-cdf_down() { # work
+cdf_proxy_down() {
   [ -n "${CDF_PROXY:-}" ] && { docker rm -f "$CDF_PROXY" >/dev/null 2>&1 || true; }
   CDF_PROXY=""
+}
+
+cdf_down() { # work
+  cdf_proxy_down
   drop_work "$1"
 }
 
@@ -10170,162 +10170,8 @@ cdf_hold() { # regex markers
 
 flat_log() { tr '\n' ' ' <"$1" | sed 's/│/ /g' | tr -s ' '; }
 
-claim_choudoufu/concurrency() {
-  # Two tf-apply waves of one choudoufu estate run at once from two checkouts
-  # that differ from the estate in one resource each: a changes
-  # terraform_data.left to left-1, b changes terraform_data.right to right-2.
-  # The proxy holds each record write until both waves have reached theirs, so
-  # each wave planned and applied while the other was in flight, then lets them
-  # through in turn. Both waves must apply, the records hold left-1 and
-  # right-2, both writes carry If-Match, neither report lists a lock wait, and
-  # nothing lock-shaped is in the bucket.
-  # BREAK: the same two waves in stock OpenTofu, with the estate in one state
-  # file under use_lockfile. The first wave holds the estate lock while its
-  # state write is held, so the second waits for the lock and never reaches
-  # its write: only one write is in flight.
-  log() { echo "[smoke cdf-concurrency] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work estate bin=choudoufu backend="" re held rc=0 values got side n
-  [ -n "${BREAK:-}" ] && { bin=tofu; backend=tofu; }
-  docker image inspect "$(image_tag "$bin")" >/dev/null 2>&1 || { log "no CI image $(image_tag "$bin"); run 'just images' first"; return 1; }
-  build_cli || return 1
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  estate="smoke-concurrency-$(date +%s)-$$"
-  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  CDF_BACKEND="$backend" cdf_checkout "$work/a" "$estate" left=left-0 right=right-0
-  CDF_BACKEND="$backend" cdf_checkout "$work/b" "$estate" left=left-0 right=right-0
-  if ! cdf_run "$work/a" "$work/seed.log" "$CDF_ALIAS-seed" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never; then
-    log "the first apply of the estate failed"; tail -20 "$work/seed.log" >&2; cdf_down "$work"; return 1
-  fi
-  values="$(cdf_values "$estate")"
-  [ "$values" = "left-0 right-0" ] || { log "after the first apply the estate holds '$values', not left-0 and right-0"; cdf_down "$work"; return 1; }
-  CDF_BACKEND="$backend" cdf_checkout "$work/a" "$estate" left=left-1 right=right-0
-  CDF_BACKEND="$backend" cdf_checkout "$work/b" "$estate" left=left-0 right=right-2
-  if [ "$bin" = tofu ]; then re="^/$CDF_RECORDS/cdf-concurrency/$estate/terraform\\.tfstate\$"; else re="^/$CDF_RECORDS/tofu-records/$estate/terraform_data/"; fi
-  cdf_hold "$re" left-1,right-2 || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
-  cdf_race "$work" "$bin" ""; held="$CDF_HELD"
-  log "writes held while both waves ran: $(curl -fsS "$CDF_CTL/held" | jq -c '[.[] | {seq, marker, record: (.path | split("?")[0] | split("/") | last | @base64d)}]')"
-  if [ "$held" -lt 2 ]; then
-    log "only $held of the two waves reached its write while the other was in flight: one waited for the other"
-    for side in a b; do grep -iE 'lock' "$work/$side.log" | head -3 | sed "s/^/[$side] /" >&2 || true; done
-    rc=1
-    curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
-    for side in a b; do docker rm -f "$CDF_ALIAS-$side" >/dev/null 2>&1 || true; done
-    cdf_race_end "$work"
-    cdf_down "$work"
-    return $rc
-  fi
-  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "the proxy did not release the writes"; rc=1; }
-  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
-  cdf_race_end "$work"
-  curl -fsS "$CDF_CTL/log" | grep "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/" | while read -r m p st c; do echo "[proxy] $m $(basename "$p" | base64 -d 2>/dev/null) $st $c"; done >&2 || true
-  for side in a b; do
-    [ "$(cat "$work/$side.rc")" = 0 ] || { log "the wave in checkout $side did not apply (exit $(cat "$work/$side.rc"))"; tail -20 "$work/$side.log" >&2; rc=1; }
-  done
-  values="$(cdf_values "$estate")"
-  [ "$values" = "left-1 right-2" ] || { log "the estate holds '$values', not left-1 and right-2"; rc=1; }
-  curl -fsS "$CDF_CTL/log" >"$work/proxy.log" || true
-  n="$(grep -cE "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/[^ ]* 200 if-match:" "$work/proxy.log" || true)"
-  [ "$n" -ge 2 ] || { log "$n record update(s) landed with If-Match, not 2"; rc=1; }
-  ! grep -qE "^PUT /$CDF_RECORDS/tofu-records/$estate/[^ ]* [0-9]+ no-precondition" "$work/proxy.log" || { log "a record write carried no condition"; rc=1; }
-  for side in a b; do
-    got="$(jq '[.roots[]?.timings.lock_waits[]?] | length' "$work/$side/terragucci-report/report.json" 2>/dev/null || echo missing)"
-    [ "$got" = 0 ] || { log "the report of checkout $side lists lock waits: $got"; rc=1; }
-  done
-  got="$(cdf_keys "$estate" | grep -iE 'lock' || true)"
-  [ -z "$got" ] || { log "a lock-shaped object is in the bucket: $got"; rc=1; }
-  cdf_down "$work"
-  [ $rc = 0 ] && log "both waves held their record writes at once and both applied: the estate holds $values, each write carried If-Match, and neither wave waited on a lock"
-  return $rc
-}
-
-claim_choudoufu/concurrency_time() {
-  # Two tf-apply waves of one choudoufu estate, from two checkouts, each adding
-  # a terraform_data of its own whose local-exec sleeps 60 seconds: a adds
-  # left_slow, b adds right_slow. Each provisioner writes a mark (epoch ms) to
-  # floci when its sleep starts and when it ends. a starts first; b starts in a
-  # container already up, the moment left_slow's start mark lands, so neither
-  # the host's load nor a container's start counts against the waves. Both
-  # waves must apply, and the last end mark must land under 90 seconds after
-  # the first start mark: the two sleeps overlapped.
-  # BREAK: the same two waves in stock OpenTofu, with the estate in one state
-  # file under use_lockfile. b's plan waits for the state lock a's apply holds,
-  # so right_slow sleeps only after left_slow is done: over 120 seconds.
-  log() { echo "[smoke cdf-concurrency-time] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work estate marks bin=choudoufu backend="" slow=60 limit=90 side k v rc=0 values t0 wall span ls le rs re
-  [ -n "${BREAK:-}" ] && { bin=tofu; backend=tofu; }
-  docker image inspect "$(image_tag "$bin")" >/dev/null 2>&1 || { log "no CI image $(image_tag "$bin"); run 'just images' first"; return 1; }
-  build_cli || return 1
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  estate="smoke-time-$(date +%s)-$$"
-  marks="time-marks/$estate"
-  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  CDF_BACKEND="$backend" cdf_checkout "$work/a" "$estate" left=left-0 right=right-0
-  CDF_BACKEND="$backend" cdf_checkout "$work/b" "$estate" left=left-0 right=right-0
-  if ! cdf_run "$work/a" "$work/seed.log" "$CDF_ALIAS-seed" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never; then
-    log "the first apply of the estate failed"; tail -20 "$work/seed.log" >&2; cdf_down "$work"; return 1
-  fi
-  values="$(cdf_values "$estate")"
-  [ "$values" = "left-0 right-0" ] || { log "after the first apply the estate holds '$values', not left-0 and right-0"; cdf_down "$work"; return 1; }
-  # A checkout's slow resource: its provisioner marks its start, sleeps, and marks its end.
-  time_slow() { # dir resource token mark
-    cat >>"$1/estate/main.tf" <<HCL
-
-resource "terraform_data" "$2" {
-  input = "$3"
-
-  provisioner "local-exec" {
-    command = <<-SH
-      mark() { node -e "fetch(process.env.AWS_ENDPOINT_URL + '/$CDF_RECORDS/$marks/' + process.argv[1], { method: 'PUT', body: String(Date.now()) }).then((r) => process.exit(r.ok ? 0 : 1))" "\$1"; }
-      mark $4-start
-      sleep $slow
-      mark $4-end
-    SH
-  }
-}
-HCL
-    git -C "$1" add -A && git -C "$1" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke: $2"
-  }
-  time_slow "$work/a" left_slow left-1 left || { cdf_down "$work"; return 1; }
-  time_slow "$work/b" right_slow right-2 right || { cdf_down "$work"; return 1; }
-  mark_at() { curl -fsS "$FLOCI/$CDF_RECORDS/$marks/$1" 2>/dev/null | tr -dc '0-9'; }
-  t0="$(date +%s)"
-  CDF_PIDS=()
-  ( cdf_run "$work/a" "$work/a.log" "$CDF_ALIAS-a" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never \
-      && echo 0 >"$work/a.rc" || echo $? >"$work/a.rc" ) >/dev/null 2>&1 &
-  CDF_PIDS+=($!)
-  ( CDF_RUN_AFTER="http://$CDF_ALIAS:4566/$CDF_RECORDS/$marks/left-start" cdf_run "$work/b" "$work/b.log" "$CDF_ALIAS-b" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never \
-      && echo 0 >"$work/b.rc" || echo $? >"$work/b.rc" ) >/dev/null 2>&1 &
-  CDF_PIDS+=($!)
-  cdf_race_end "$work"
-  wall=$(( $(date +%s) - t0 ))
-  for side in a b; do
-    [ "$(cat "$work/$side.rc")" = 0 ] || { log "the wave in checkout $side did not apply (exit $(cat "$work/$side.rc"))"; tail -20 "$work/$side.log" >&2; rc=1; }
-  done
-  ls="$(mark_at left-start)"; le="$(mark_at left-end)"; rs="$(mark_at right-start)"; re="$(mark_at right-end)"
-  if [ -n "$ls" ] && [ -n "$le" ] && [ -n "$rs" ] && [ -n "$re" ]; then
-    span=$(( ( (le > re ? le : re) - ls ) / 1000 ))
-    log "left_slow slept from +0s to +$(( (le - ls) / 1000 ))s, right_slow from +$(( (rs - ls) / 1000 ))s to +$(( (re - ls) / 1000 ))s: both done ${span}s after the first began (${wall}s for the whole race, containers included)"
-    [ "$span" -lt "$limit" ] || { log "the two ${slow}s resources took ${span}s together, not under ${limit}s: the second wave waited for the first"; rc=1; }
-  else
-    log "a mark is missing: left ${ls:-none}-${le:-none}, right ${rs:-none}-${re:-none}"
-    rc=1
-  fi
-  values="$(cdf_values "$estate")"
-  [ "$values" = "left-0 left-1 right-0 right-2" ] || { log "the estate holds '$values', not left-0 left-1 right-0 right-2"; rc=1; }
-  for k in $(curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=$marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do curl -s -o /dev/null -X DELETE "$FLOCI/$CDF_RECORDS/$k" || true; done
-  cdf_down "$work"
-  [ $rc = 0 ] && log "two waves of one estate, each with a ${slow}s resource, finished ${span}s after the first resource began: they applied at the same time"
-  return $rc
-}
-
-# A choudoufu whose record update carries no If-Match, for cdf-write-race's
-# BREAK: the source of CHOUDOUFU_BREAK_REF (default v0.25.0, the release the
+# A choudoufu whose record update carries no If-Match, for the BREAK of
+# choudoufu/concurrency's race check: the source of CHOUDOUFU_BREAK_REF (default v0.25.0, the release the
 # choudoufu image runs) in the checkout at CHOUDOUFU_DIR, with the line of
 # S3Store.PutIfVersion that sets the condition replaced. Built for Linux the
 # way choudoufu_linux builds, and kept under .state/choudoufu.
@@ -10356,90 +10202,6 @@ choudoufu_no_if_match() {
   echo "$out"
 }
 
-claim_choudoufu/write_race() {
-  # Two tf-apply waves of one choudoufu estate change terraform_data.shared at
-  # once, from two checkouts: a to from-a, b to from-b. The proxy holds both
-  # record writes until both are in flight, then lets the first to arrive
-  # through and the second after it. The first must land. The second must fail
-  # its If-Match: its wave fails, naming a record store write conflict for
-  # terraform_data.shared and saying nothing was overwritten. Nothing is half
-  # written: the estate holds one record, with the value that landed, tagged
-  # with the estate and terraform_data.shared. tf-plan in the losing checkout
-  # then shows input changing from the value that landed to its own.
-  # BREAK: both waves run a choudoufu built with no If-Match on a record
-  # update (choudoufu_no_if_match), so both writes land and both waves apply.
-  log() { echo "[smoke cdf-write-race] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work estate over="" first winner loser held rc=0 values keys key tags text side got
-  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
-  build_cli || return 1
-  if [ -n "${BREAK:-}" ]; then over="$(choudoufu_no_if_match)" || { log "no choudoufu built without If-Match"; return 1; }; fi
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  estate="smoke-race-$(date +%s)-$$"
-  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  cdf_checkout "$work/a" "$estate" shared=seed
-  cdf_checkout "$work/b" "$estate" shared=seed
-  if ! cdf_run "$work/a" "$work/seed.log" "$CDF_ALIAS-seed" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate never; then
-    log "the first apply of the estate failed"; tail -20 "$work/seed.log" >&2; cdf_down "$work"; return 1
-  fi
-  values="$(cdf_values "$estate")"
-  [ "$values" = seed ] || { log "after the first apply the estate holds '$values', not seed"; cdf_down "$work"; return 1; }
-  cdf_checkout "$work/a" "$estate" shared=from-a
-  cdf_checkout "$work/b" "$estate" shared=from-b
-  cdf_hold "^/$CDF_RECORDS/tofu-records/$estate/terraform_data/" from-a,from-b || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
-  cdf_race "$work" choudoufu "$over"; held="$CDF_HELD"
-  if [ "$held" -lt 2 ]; then
-    log "only $held of the two writes reached the store while the other was in flight, so there was no race to judge"
-    for side in a b; do tail -5 "$work/$side.log" | sed "s/^/[$side] /" >&2; done
-    curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
-    cdf_race_end "$work"; cdf_down "$work"
-    return 1
-  fi
-  first="$(curl -fsS "$CDF_CTL/held" | jq -r '.[] | select(.seq == 1) | .marker')"
-  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "the proxy did not release the writes"; rc=1; }
-  cdf_race_end "$work"
-  curl -fsS "$CDF_CTL/log" >"$work/proxy.log" || true
-  grep -E "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/" "$work/proxy.log" | tail -2 | sed 's/^/[proxy] /' >&2 || true
-  if [ "$(cat "$work/a.rc")" = 0 ] && [ "$(cat "$work/b.rc")" = 0 ]; then
-    log "both waves applied over one record: the second write replaced the first, and the estate holds '$(cdf_values "$estate")'"
-    cdf_down "$work"; return 1
-  fi
-  if [ "$(cat "$work/a.rc")" != 0 ] && [ "$(cat "$work/b.rc")" != 0 ]; then
-    log "both waves failed; one write should have landed"
-    for side in a b; do tail -10 "$work/$side.log" | sed "s/^/[$side] /" >&2; done
-    cdf_down "$work"; return 1
-  fi
-  if [ "$(cat "$work/a.rc")" = 0 ]; then winner=a; loser=b; else winner=b; loser=a; fi
-  [ "from-$winner" = "$first" ] || { log "the write released first carried $first, but the wave in checkout $winner applied"; rc=1; }
-  text="$(flat_log "$work/$loser.log")"
-  grep -q 'Record store write conflict' <<<"$text" || { log "the wave in checkout $loser failed without naming a record store write conflict"; tail -20 "$work/$loser.log" >&2; rc=1; }
-  grep -q 'persisted record for terraform_data.shared' <<<"$text" || { log "the conflict does not name terraform_data.shared"; rc=1; }
-  grep -q 'Nothing was overwritten' <<<"$text" || { log "the conflict does not say nothing was overwritten"; rc=1; }
-  values="$(cdf_values "$estate")"
-  [ "$values" = "from-$winner" ] || { log "the estate holds '$values', not from-$winner"; rc=1; }
-  keys="$(cdf_keys "$estate" | grep '/terraform_data/' || true)"
-  [ "$(grep -c . <<<"$keys")" = 1 ] || { log "the estate has $(grep -c . <<<"$keys") terraform_data records, not one: $keys"; rc=1; }
-  key="$(head -1 <<<"$keys")"
-  tags="$(curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$key" '$k | split("/") | map(@uri) | join("/")')?tagging" | tr -d '\n\t ' || true)"
-  grep -qF "<Key>tofu-estate</Key><Value>$estate</Value>" <<<"$tags" || { log "the record is not tagged tofu-estate=$estate: $tags"; rc=1; }
-  grep -qF "<Key>tofu-address</Key><Value>terraform_data.shared</Value>" <<<"$tags" || { log "the record is not tagged tofu-address=terraform_data.shared: $tags"; rc=1; }
-  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
-  if [ $rc = 0 ]; then
-    # tf-plan finds the root by its live block: it has no backend and no provider block.
-    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --binary choudoufu; then
-      log "tf-plan in checkout $loser failed"; tail -20 "$work/replan.log" >&2; rc=1
-    else
-      got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | select(.address == "terraform_data.shared") | .attributes[] | select(.path == "input") | "\(.before) \(.after)"][0] // "none"' "$work/$loser/terragucci-report/report.json" 2>/dev/null || echo none)"
-      [ "$got" = "from-$winner from-$loser" ] || { log "the re-plan in checkout $loser shows input as '$got', not from-$winner to from-$loser"; rc=1; }
-    fi
-  fi
-  cdf_down "$work"
-  [ $rc = 0 ] && log "from-$winner landed; the wave in checkout $loser failed its If-Match on terraform_data.shared and overwrote nothing, the one record holds from-$winner under the estate and address tags, and the re-plan shows from-$winner to from-$loser"
-  return $rc
-}
-
 # A released choudoufu for Linux, its archive checked against the release's
 # SHA256SUMS, kept under .state/choudoufu/release-<version>-<arch>. Prints the
 # binary's path.
@@ -10457,109 +10219,296 @@ choudoufu_release() { # version
   tar -xzf "$dir/$name" -C "$dir" choudoufu || return 1
   echo "$out"
 }
+# ── choudoufu/concurrency: three checks on one estate ─────────────────────
+# The estate is seeded once, in checkouts $1/a and $1/b, and each check then
+# writes both checkouts and races a tf-apply wave from each. A check starts
+# its own proxy, so the proxy's held list, sequence numbers and log are its
+# own. CDF_SLOW holds the slow resources the time check added, which every
+# later checkout keeps, so no later wave destroys them.
+CDF_SLOW=""
 
-claim_choudoufu/killed_records() {
-  # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
-  # the choudoufu CI image: first, and second, which depends on first and
-  # whose local-exec provisioner leaves a mark in the wave's container and
-  # then sleeps. Once the mark is there, first's apply has returned; the wave's
-  # container is then killed. first's record must be in the record store, and
-  # second's not. tf-plan in the checkout must then plan second as a create
-  # and leave first alone: the killed apply's finished resource is recorded,
-  # so the next run does not create it again.
-  # BREAK: the wave runs choudoufu 0.23.0, which writes every record after
-  # the whole apply: the killed wave leaves no record for first, and the plan
-  # creates it again.
-  log() { echo "[smoke cdf-killed-records] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work estate over="" pid i keys got rc=0
-  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
-  build_cli || return 1
-  if [ -n "${BREAK:-}" ]; then over="$(choudoufu_release 0.23.0)" || { log "no choudoufu 0.23.0"; return 1; }; fi
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  estate="smoke-killed-$(date +%s)-$$"
-  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  rows_estate "$work/a" "$estate" "$(cat <<'HCL'
-resource "terraform_data" "first" {
-  input = "first"
+# Two checkouts of a new estate at left-0, right-0 and shared=seed, applied
+# once from a. BIN and OVER as for cdf_run; BACKEND as CDF_BACKEND.
+cdf_conc_seed() { # dir estate bin backend override
+  local d="$1" estate="$2" bin="$3" backend="$4" over="$5" values
+  CDF_SLOW=""
+  cdf_proxy_up "$d" || { log "the record store proxy did not start"; return 1; }
+  CDF_BACKEND="$backend" cdf_checkout "$d/a" "$estate" left=left-0 right=right-0 shared=seed
+  CDF_BACKEND="$backend" cdf_checkout "$d/b" "$estate" left=left-0 right=right-0 shared=seed
+  if ! cdf_run "$d/a" "$d/seed.log" "$CDF_ALIAS-seed" "$bin" "$over" tf-apply --wave 1 --layers estate --binary "$bin" --gate never; then
+    log "the first apply of the estate failed"; tail -20 "$d/seed.log" >&2; return 1
+  fi
+  values="$(cdf_values "$estate")"
+  [ "$values" = "left-0 right-0 seed" ] || { log "after the first apply the estate holds '$values', not left-0, right-0 and seed"; return 1; }
 }
 
-resource "terraform_data" "second" {
-  input      = "second"
-  depends_on = [terraform_data.first]
+# A terraform_data whose local-exec writes a mark (epoch ms) to floci when its
+# sleep starts and when it ends, under time-marks/<estate>/.
+cdf_slow_hcl() { # estate resource token mark seconds
+  cat <<HCL
+
+resource "terraform_data" "$2" {
+  input = "$3"
 
   provisioner "local-exec" {
-    command = "touch /repo/second-started && sleep 900"
+    command = <<-SH
+      mark() { node -e "fetch(process.env.AWS_ENDPOINT_URL + '/$CDF_RECORDS/time-marks/$1/' + process.argv[1], { method: 'PUT', body: String(Date.now()) }).then((r) => process.exit(r.ok ? 0 : 1))" "\$1"; }
+      mark $4-start
+      sleep $5
+      mark $4-end
+    SH
   }
 }
 HCL
-)"
-  printf 'second-started\n' >>"$work/a/.gitignore"
-  git -C "$work/a" init -q -b main && git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate" \
-    || { log "could not commit the estate"; cdf_down "$work"; return 1; }
-  ( cdf_run "$work/a" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate never ) >/dev/null 2>&1 &
-  pid=$!
-  # The checkout is copied into the container (run_copied), so the mark is looked for there.
-  started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
-  for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-  if ! started; then
-    log "second's provisioner never started"; tail -20 "$work/apply.log" >&2
-    docker rm -f "$CDF_ALIAS-apply" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; cdf_down "$work"; return 1
-  fi
-  # docker kill, not rm: the container stops as a killed job does, and
-  # run_copied still copies the checkout back out of it.
-  docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
-  wait "$pid" 2>/dev/null || true
-  log "the wave was killed while second's provisioner ran; its last line: $(tail -1 "$work/apply.log" | cut -c1-200)"
-  keys="$(cdf_keys "$estate" | grep '/terraform_data/' | jq -Rr 'split("/") | last | (try @base64d catch .)' | tr '\n' ' ')"
-  log "records after the kill: ${keys:-none}"
-  grep -q 'first' <<<"$keys" || { log "the killed wave left no record for terraform_data.first, whose apply had returned"; rc=1; }
-  ! grep -q 'second' <<<"$keys" || { log "the killed wave left a record for terraform_data.second, whose apply never returned"; rc=1; }
-  if ! cdf_run "$work/a" "$work/plan.log" "$CDF_ALIAS-plan" choudoufu "$over" tf-plan --binary choudoufu; then
-    log "tf-plan after the kill failed"; tail -20 "$work/plan.log" >&2; rc=1
+}
+
+# The time check: a adds left_slow and b adds right_slow, each sleeping 60
+# seconds. a starts first; b starts in a container already up, the moment
+# left_slow's start mark lands, so neither the host's load nor a container's
+# start counts against the waves. Both must apply, and the last end mark must
+# land under 90 seconds after the first start mark: the two sleeps overlapped.
+cdf_conc_time() { # dir estate bin backend
+  local d="$1" estate="$2" bin="$3" backend="$4" marks="time-marks/$2" slow=60 limit=90 left right side k values t0 wall span ls le rs re rc=0
+  left="$(cdf_slow_hcl "$estate" left_slow slow-left left "$slow")"
+  right="$(cdf_slow_hcl "$estate" right_slow slow-right right "$slow")"
+  CDF_EXTRA="$left" CDF_BACKEND="$backend" cdf_checkout "$d/a" "$estate" left=left-0 right=right-0 shared=seed
+  CDF_EXTRA="$right" CDF_BACKEND="$backend" cdf_checkout "$d/b" "$estate" left=left-0 right=right-0 shared=seed
+  # From here on, every checkout keeps both, as the estate will.
+  CDF_SLOW="$left$right"
+  mark_at() { curl -fsS "$FLOCI/$CDF_RECORDS/$marks/$1" 2>/dev/null | tr -dc '0-9'; }
+  rm -f "$d/a.rc" "$d/b.rc"
+  t0="$(date +%s)"
+  CDF_PIDS=()
+  ( cdf_run "$d/a" "$d/a.log" "$CDF_ALIAS-a" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never \
+      && echo 0 >"$d/a.rc" || echo $? >"$d/a.rc" ) >/dev/null 2>&1 &
+  CDF_PIDS+=($!)
+  ( CDF_RUN_AFTER="http://$CDF_ALIAS:4566/$CDF_RECORDS/$marks/left-start" cdf_run "$d/b" "$d/b.log" "$CDF_ALIAS-b" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never \
+      && echo 0 >"$d/b.rc" || echo $? >"$d/b.rc" ) >/dev/null 2>&1 &
+  CDF_PIDS+=($!)
+  cdf_race_end "$d"
+  wall=$(( $(date +%s) - t0 ))
+  for side in a b; do
+    [ "$(cat "$d/$side.rc")" = 0 ] || { log "time: the wave in checkout $side did not apply (exit $(cat "$d/$side.rc"))"; tail -20 "$d/$side.log" >&2; rc=1; }
+  done
+  ls="$(mark_at left-start)"; le="$(mark_at left-end)"; rs="$(mark_at right-start)"; re="$(mark_at right-end)"
+  if [ -n "$ls" ] && [ -n "$le" ] && [ -n "$rs" ] && [ -n "$re" ]; then
+    span=$(( ( (le > re ? le : re) - ls ) / 1000 ))
+    log "time: left_slow slept from +0s to +$(( (le - ls) / 1000 ))s, right_slow from +$(( (rs - ls) / 1000 ))s to +$(( (re - ls) / 1000 ))s: both done ${span}s after the first began (${wall}s for the whole race, containers included)"
+    [ "$span" -lt "$limit" ] || { log "time: the two ${slow}s resources took ${span}s together, not under ${limit}s: the second wave waited for the first"; rc=1; }
   else
-    got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | "\(.address)=\(.action)"] | sort | join(" ")' "$work/a/terragucci-report/report.json" 2>/dev/null || echo none)"
-    log "the plan after the kill: ${got:-no change}"
-    ! grep -q 'terraform_data.first=' <<<"$got" || { log "the plan after the kill changes terraform_data.first: the killed wave's finished resource would be created again"; rc=1; }
-    grep -q 'terraform_data.second=create' <<<"$got" || { log "the plan after the kill does not create terraform_data.second"; rc=1; }
+    log "time: a mark is missing: left ${ls:-none}-${le:-none}, right ${rs:-none}-${re:-none}"
+    rc=1
   fi
-  cdf_down "$work"
-  [ $rc = 0 ] && log "the killed wave left a record for first, whose apply had returned, and none for second; the next plan creates second only"
+  values="$(cdf_values "$estate")"
+  [ "$values" = "left-0 right-0 seed slow-left slow-right" ] || { log "time: the estate holds '$values', not left-0, right-0, seed, slow-left and slow-right"; rc=1; }
+  for k in $(curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=$marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do curl -s -o /dev/null -X DELETE "$FLOCI/$CDF_RECORDS/$k" || true; done
+  [ $rc = 0 ] && log "time: two waves of one estate, each with a ${slow}s resource, finished ${span}s after the first resource began: they applied at the same time"
   return $rc
 }
 
-claim_choudoufu/resume() {
-  # One choudoufu estate of two terraform_data behind gate always, its
-  # checkout's origin a bare repo: first, and second, which depends on first
-  # and whose local-exec provisioner, the first time it runs, leaves a mark and
-  # sleeps. Wave 1 waits; smoke-approver approves its digest; wave 1 runs
-  # again and is killed once the mark is there, so first's apply returned and
-  # second's did not. terragucci resume must name wave 1 as an approved apply
-  # that stopped, and wave 1 run once more must apply second alone, under that
-  # approval: exit 0, no pending fact or approval added to the ledger, first's
-  # record the one the killed run wrote, and both recorded at the end.
-  # TG_LOCK_STALE=1: the killed run is in a container that is gone, which
-  # only the age of its lease says here.
-  # BREAK: the wave never resumes a stopped apply, so its plan of second alone
-  # waits for an approval of its own.
-  log() { echo "[smoke cdf-resume] $*" >&2; }
+# The held check: a changes left to left-1, b changes right to right-2. The
+# proxy holds each record write until both waves have reached theirs, so
+# each wave planned and applied while the other was in flight, then lets them
+# through in turn. Both waves must apply, the records hold left-1 and right-2,
+# both writes carry If-Match, neither report lists a lock wait, and nothing
+# lock-shaped is in the bucket.
+cdf_conc_held() { # dir estate bin backend
+  local d="$1" estate="$2" bin="$3" backend="$4" re held values got side n rc=0
+  cdf_proxy_down
+  cdf_proxy_up "$d" || { log "held: the record store proxy did not start"; return 1; }
+  CDF_EXTRA="$CDF_SLOW" CDF_BACKEND="$backend" cdf_checkout "$d/a" "$estate" left=left-1 right=right-0 shared=seed
+  CDF_EXTRA="$CDF_SLOW" CDF_BACKEND="$backend" cdf_checkout "$d/b" "$estate" left=left-0 right=right-2 shared=seed
+  if [ "$backend" = tofu ]; then re="^/$CDF_RECORDS/cdf-concurrency/$estate/terraform\\.tfstate\$"; else re="^/$CDF_RECORDS/tofu-records/$estate/terraform_data/"; fi
+  cdf_hold "$re" left-1,right-2 || { log "held: the proxy did not take the hold"; return 1; }
+  rm -f "$d/a.rc" "$d/b.rc"
+  cdf_race "$d" "$bin" ""; held="$CDF_HELD"
+  log "held: writes held while both waves ran: $(curl -fsS "$CDF_CTL/held" | jq -c '[.[] | {seq, marker, record: (.path | split("?")[0] | split("/") | last | @base64d)}]')"
+  if [ "$held" -lt 2 ]; then
+    log "held: only $held of the two waves reached its write while the other was in flight: one waited for the other"
+    for side in a b; do grep -iE 'lock' "$d/$side.log" | head -3 | sed "s/^/[$side] /" >&2 || true; done
+    curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+    for side in a b; do docker rm -f "$CDF_ALIAS-$side" >/dev/null 2>&1 || true; done
+    cdf_race_end "$d"
+    return 1
+  fi
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "held: the proxy did not release the writes"; rc=1; }
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+  cdf_race_end "$d"
+  curl -fsS "$CDF_CTL/log" | grep "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/" | while read -r m p st c; do echo "[proxy] $m $(basename "$p" | base64 -d 2>/dev/null) $st $c"; done >&2 || true
+  for side in a b; do
+    [ "$(cat "$d/$side.rc")" = 0 ] || { log "held: the wave in checkout $side did not apply (exit $(cat "$d/$side.rc"))"; tail -20 "$d/$side.log" >&2; rc=1; }
+  done
+  values="$(cdf_values "$estate")"
+  [ "$values" = "left-1 right-2 seed slow-left slow-right" ] || { log "held: the estate holds '$values', not left-1, right-2, seed, slow-left and slow-right"; rc=1; }
+  curl -fsS "$CDF_CTL/log" >"$d/proxy.log" || true
+  n="$(grep -cE "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/[^ ]* 200 if-match:" "$d/proxy.log" || true)"
+  [ "$n" -ge 2 ] || { log "held: $n record update(s) landed with If-Match, not 2"; rc=1; }
+  ! grep -qE "^PUT /$CDF_RECORDS/tofu-records/$estate/[^ ]* [0-9]+ no-precondition" "$d/proxy.log" || { log "held: a record write carried no condition"; rc=1; }
+  for side in a b; do
+    got="$(jq '[.roots[]?.timings.lock_waits[]?] | length' "$d/$side/terragucci-report/report.json" 2>/dev/null || echo missing)"
+    [ "$got" = 0 ] || { log "held: the report of checkout $side lists lock waits: $got"; rc=1; }
+  done
+  got="$(cdf_keys "$estate" | grep -iE 'lock' || true)"
+  [ -z "$got" ] || { log "held: a lock-shaped object is in the bucket: $got"; rc=1; }
+  [ $rc = 0 ] && log "held: both waves held their record writes at once and both applied: the estate holds $values, each write carried If-Match, and neither wave waited on a lock"
+  return $rc
+}
+
+# The race check: a sets shared to from-a and b to from-b, left and right as
+# the estate holds them. The proxy holds both record writes until both are in
+# flight, then lets the first to arrive through and the second after it. The
+# first must land. The second must fail its If-Match: its wave fails, naming
+# a record store write conflict for terraform_data.shared and saying nothing
+# was overwritten. Nothing is half written: terraform_data.shared has one
+# record, with the value that landed, tagged with the estate and its address.
+# tf-plan in the losing checkout then shows input changing from the value
+# that landed to its own. OVER is a choudoufu build for both waves.
+cdf_conc_race() { # dir estate override left right
+  local d="$1" estate="$2" over="$3" left="$4" right="$5" first winner loser held rc=0 values keys key tags text side got
+  cdf_proxy_down
+  cdf_proxy_up "$d" || { log "race: the record store proxy did not start"; return 1; }
+  CDF_EXTRA="$CDF_SLOW" cdf_checkout "$d/a" "$estate" "left=$left" "right=$right" shared=from-a
+  CDF_EXTRA="$CDF_SLOW" cdf_checkout "$d/b" "$estate" "left=$left" "right=$right" shared=from-b
+  cdf_hold "^/$CDF_RECORDS/tofu-records/$estate/terraform_data/" from-a,from-b || { log "race: the proxy did not take the hold"; return 1; }
+  rm -f "$d/a.rc" "$d/b.rc"
+  cdf_race "$d" choudoufu "$over"; held="$CDF_HELD"
+  if [ "$held" -lt 2 ]; then
+    log "race: only $held of the two writes reached the store while the other was in flight, so there was no race to judge"
+    for side in a b; do tail -5 "$d/$side.log" | sed "s/^/[$side] /" >&2; done
+    curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+    cdf_race_end "$d"
+    return 1
+  fi
+  first="$(curl -fsS "$CDF_CTL/held" | jq -r '.[] | select(.seq == 1) | .marker')"
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "race: the proxy did not release the writes"; rc=1; }
+  cdf_race_end "$d"
+  curl -fsS "$CDF_CTL/log" >"$d/proxy.log" || true
+  grep -E "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/" "$d/proxy.log" | tail -2 | sed 's/^/[proxy] /' >&2 || true
+  if [ "$(cat "$d/a.rc")" = 0 ] && [ "$(cat "$d/b.rc")" = 0 ]; then
+    log "race: both waves applied over one record: the second write replaced the first, and the estate holds '$(cdf_values "$estate")'"
+    return 1
+  fi
+  if [ "$(cat "$d/a.rc")" != 0 ] && [ "$(cat "$d/b.rc")" != 0 ]; then
+    log "race: both waves failed; one write should have landed"
+    for side in a b; do tail -10 "$d/$side.log" | sed "s/^/[$side] /" >&2; done
+    return 1
+  fi
+  if [ "$(cat "$d/a.rc")" = 0 ]; then winner=a; loser=b; else winner=b; loser=a; fi
+  [ "from-$winner" = "$first" ] || { log "race: the write released first carried $first, but the wave in checkout $winner applied"; rc=1; }
+  text="$(flat_log "$d/$loser.log")"
+  grep -q 'Record store write conflict' <<<"$text" || { log "race: the wave in checkout $loser failed without naming a record store write conflict"; tail -20 "$d/$loser.log" >&2; rc=1; }
+  grep -q 'persisted record for terraform_data.shared' <<<"$text" || { log "race: the conflict does not name terraform_data.shared"; rc=1; }
+  grep -q 'Nothing was overwritten' <<<"$text" || { log "race: the conflict does not say nothing was overwritten"; rc=1; }
+  values="$(cdf_values "$estate")"
+  case " $values " in *" from-$winner "*) ;; *) log "race: the estate holds '$values', without from-$winner"; rc=1 ;; esac
+  case " $values " in *" from-$loser "*) log "race: the estate holds '$values', with from-$loser"; rc=1 ;; esac
+  keys="$(cdf_keys "$estate" | grep '/terraform_data/' | while read -r key; do [ "$(jq -Rr 'split("/") | last | (try @base64d catch .)' <<<"$key")" = terraform_data.shared ] && echo "$key"; done || true)"
+  [ "$(grep -c . <<<"$keys")" = 1 ] || { log "race: terraform_data.shared has $(grep -c . <<<"$keys") records, not one: $keys"; rc=1; }
+  key="$(head -1 <<<"$keys")"
+  tags="$(curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$key" '$k | split("/") | map(@uri) | join("/")')?tagging" | tr -d '\n\t ' || true)"
+  grep -qF "<Key>tofu-estate</Key><Value>$estate</Value>" <<<"$tags" || { log "race: the record is not tagged tofu-estate=$estate: $tags"; rc=1; }
+  grep -qF "<Key>tofu-address</Key><Value>terraform_data.shared</Value>" <<<"$tags" || { log "race: the record is not tagged tofu-address=terraform_data.shared: $tags"; rc=1; }
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+  if [ $rc = 0 ]; then
+    # tf-plan finds the root by its live block: it has no backend and no provider block.
+    if ! cdf_run "$d/$loser" "$d/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --binary choudoufu; then
+      log "race: tf-plan in checkout $loser failed"; tail -20 "$d/replan.log" >&2; rc=1
+    else
+      got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | select(.address == "terraform_data.shared") | .attributes[] | select(.path == "input") | "\(.before) \(.after)"][0] // "none"' "$d/$loser/terragucci-report/report.json" 2>/dev/null || echo none)"
+      [ "$got" = "from-$winner from-$loser" ] || { log "race: the re-plan in checkout $loser shows input as '$got', not from-$winner to from-$loser"; rc=1; }
+    fi
+  fi
+  [ $rc = 0 ] && log "race: from-$winner landed; the wave in checkout $loser failed its If-Match on terraform_data.shared and overwrote nothing, the one record holds from-$winner under the estate and address tags, and the re-plan shows from-$winner to from-$loser"
+  return $rc
+}
+
+claim_choudoufu/concurrency() {
+  # One choudoufu estate of terraform_data left, right and shared, seeded
+  # once from checkout a, and three checks on it, each racing two tf-apply
+  # waves from checkouts a and b (cdf_conc_time, cdf_conc_held,
+  # cdf_conc_race above): the time check (two 60-second resources finish
+  # under 90 seconds), the held check (two waves that change different
+  # resources both reach their record write together and both apply, with
+  # If-Match, no lock wait and no lock object), and the race check (two waves
+  # that change one resource: one lands, the other fails its If-Match naming
+  # the resource, and its re-plan shows the value that landed).
+  # BREAK: each check's property is broken in turn, and the run is caught
+  # only when every check fails under its break:
+  #   time and held: the same waves in stock OpenTofu, with the estate in one
+  #     state file under use_lockfile. b waits for the state lock a holds, so
+  #     right_slow sleeps only after left_slow is done (over 120 seconds),
+  #     and only one write is ever in flight.
+  #   race: a second estate, and both waves run a choudoufu built with no
+  #     If-Match on a record update (choudoufu_no_if_match), so both writes
+  #     land and both waves apply.
+  log() { echo "[smoke cdf-concurrency] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work estate bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" pid i digest keys got rc=0 v1 v2
-  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  local work estate over="" check caught="" missed="" rc=0 b
+  for b in choudoufu tofu; do
+    [ -z "${BREAK:-}" ] && [ "$b" = tofu ] && continue
+    docker image inspect "$(image_tag "$b")" >/dev/null 2>&1 || { log "no CI image $(image_tag "$b"); run 'just images' first"; return 1; }
+  done
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/terragucci.mjs" apply.ts 'if (ctx.resume && decision.status === "waiting" && decision.spent) {' 'if (false) {' \
-      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
-    bundle="$work/terragucci.mjs"
-  fi
-  estate="smoke-resume-$STAMP-$$"
+  estate="smoke-concurrency-$(date +%s)-$$"
   cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  rows_estate "$work/wave" "$estate" "$(cat <<'HCL'
+  if [ -z "${BREAK:-}" ]; then
+    cdf_conc_seed "$work" "$estate" choudoufu "" "" || rc=1
+    [ $rc = 0 ] && { cdf_conc_time "$work" "$estate" choudoufu "" || rc=1; }
+    [ $rc = 0 ] && { cdf_conc_held "$work" "$estate" choudoufu "" || rc=1; }
+    [ $rc = 0 ] && { cdf_conc_race "$work" "$estate" "" left-1 right-2 || rc=1; }
+    cdf_down "$work"
+    [ $rc = 0 ] && log "one estate: two waves with a 60s resource each overlapped, two waves that changed different resources held their writes at once and both applied, and two that changed one resource settled on one record"
+    return $rc
+  fi
+  # BREAK: time and held on stock OpenTofu, then race on a choudoufu with no If-Match.
+  if cdf_conc_seed "$work" "$estate" tofu tofu ""; then
+    for check in time held; do
+      if "cdf_conc_$check" "$work" "$estate" tofu tofu; then missed+=" $check"; else caught+=" $check"; fi
+    done
+  else
+    log "the stock OpenTofu estate did not seed"; caught+=" time held"
+  fi
+  cdf_proxy_down
+  if over="$(choudoufu_no_if_match)"; then
+    if cdf_conc_seed "$work/race" "$estate-race" choudoufu "" "$over" && cdf_conc_race "$work/race" "$estate-race" "$over" left-0 right-0; then missed+=" race"; else caught+=" race"; fi
+  else
+    log "no choudoufu built without If-Match"; caught+=" race"
+  fi
+  cdf_down "$work"
+  log "under BREAK: caught${caught:- none}; missed${missed:- none}"
+  return $([ -z "$missed" ] && echo 1 || echo 0)
+}
+
+# ── choudoufu/killed: a wave killed mid-apply, and the wave run again ──────
+# One pass on one estate of two terraform_data behind gate always, with
+# reports in a bucket and the checkout's origin a bare repo: first, and
+# second, which depends on first and whose local-exec provisioner, the first
+# time it runs, leaves a mark and sleeps. Wave 1 waits; smoke-approver
+# approves its digest; wave 1 runs again, and while second sleeps:
+#   progress  the wave's run view in the bucket (run.json and run.html) and
+#             the job's terragucci-report/progress.json show first done and
+#             second in flight, read from the record store as the apply runs;
+# then the wave is killed:
+#   records   first's record is in the record store, and second's is not;
+# then wave 1 runs once more:
+#   resume    it applies second alone under the same approval: exit 0, no
+#             pending fact or approval added to the ledger, first's record the
+#             one the killed run wrote, and both recorded at the end.
+# Sets CDF_FAILED to the checks that failed. A step the checks need that
+# fails fails every check. UPTO=records stops after the records check.
+CDF_FAILED=""
+cdf_killed_pass() { # dir bundle override upto
+  local d="$1" bundle="$2" over="$3" upto="$4" estate="" bucket=terragucci-smoke-progress pid="" i digest="" keys="" got="" key="" view="" html="" local_p="" v1="" v2="" want="terraform_data.first=done terraform_data.second=in-flight"
+  CDF_FAILED=""
+  failed() { case " $CDF_FAILED " in *" $1 "*) ;; *) CDF_FAILED="${CDF_FAILED:+$CDF_FAILED }$1" ;; esac; }
+  every() { failed progress; failed records; failed resume; }
+  estate="smoke-killed-$STAMP-$$-$RANDOM"
+  mkdir -p "$d"
+  curl -s -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  cdf_proxy_up "$d" || { log "the record store proxy did not start"; every; return; }
+  rows_estate "$d/wave" "$estate" "$(cat <<'HCL'
 resource "terraform_data" "first" {
   input = "first"
 }
@@ -10574,150 +10523,137 @@ resource "terraform_data" "second" {
 }
 HCL
 )"
-  printf 'second-started\nterragucci-resume.env\n' >>"$work/wave/.gitignore"
-  audit_origin "$work"
-  CDF_RUN_ARGS=(-v "$work/origin.git:/origin.git" -e TG_LOCK_STALE=1)
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$bucket" "$estate" >"$d/wave/terragucci.yml"
+  printf 'second-started\nterragucci-resume.env\n' >>"$d/wave/.gitignore"
+  audit_origin "$d"
+  # TG_LOCK_STALE=1: the killed run is in a container that is gone, which
+  # only the age of its lease says here.
+  CDF_RUN_ARGS=(-v "$d/origin.git:/origin.git" -e TG_LOCK_STALE=1)
   CDF_BUNDLE="$bundle"
-  # An approval line on the ledger, as chant approve writes it.
-  approve_wave() { # digest
-    git clone -q -b chant/lifecycle "$work/origin.git" "$work/ledger" || return 1
-    sleep 1
-    printf '%s\n' "$(jq -cn --arg d "$1" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "smoke-approver", timestamp: $t, planDigest: $d}')" >>"$work/ledger/_gates/tf-apply.jsonl"
-    git -C "$work/ledger" -c user.name=smoke-approver -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "approve wave-1" && git -C "$work/ledger" push -q origin chant/lifecycle
-  }
-  ledger_lines() { git --git-dir="$work/origin.git" show chant/lifecycle:_gates/tf-apply.jsonl 2>/dev/null | grep -c "\"kind\":\"$1\"" || true; }
-  if cdf_run "$work/wave" "$work/waits.log" "$CDF_ALIAS-waits" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate always; then
-    log "wave 1 applied without waiting"; tail -20 "$work/waits.log" >&2; rc=1
+  CDF_ENV="TG_PROGRESS_SECONDS=1"
+  ledger_lines() { git --git-dir="$d/origin.git" show chant/lifecycle:_gates/tf-apply.jsonl 2>/dev/null | grep -c "\"kind\":\"$1\"" || true; }
+  # 1. Wave 1 waits, and smoke-approver approves its digest with a line on the ledger, as chant approve writes it.
+  if cdf_run "$d/wave" "$d/waits.log" "$CDF_ALIAS-waits" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate always; then
+    log "wave 1 applied without waiting"; tail -20 "$d/waits.log" >&2; every
   fi
-  digest="$(sed -n 's/^wave 1 of 1 waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
-  [ $rc = 0 ] && [ -z "$digest" ] && { log "wave 1 printed no digest to approve"; tail -20 "$work/waits.log" >&2; rc=1; }
-  [ $rc = 0 ] && { approve_wave "$digest" || { log "could not approve $digest"; rc=1; }; }
-  if [ $rc = 0 ]; then
-    ( cdf_run "$work/wave" "$work/killed.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate always ) >/dev/null 2>&1 &
+  digest="$(sed -n 's/^wave 1 of 1 waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$d/waits.log")"
+  [ -z "$CDF_FAILED" ] && [ -z "$digest" ] && { log "wave 1 printed no digest to approve"; tail -20 "$d/waits.log" >&2; every; }
+  if [ -z "$CDF_FAILED" ]; then
+    { git clone -q -b chant/lifecycle "$d/origin.git" "$d/ledger" && sleep 1 \
+      && printf '%s\n' "$(jq -cn --arg g "$digest" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "smoke-approver", timestamp: $t, planDigest: $g}')" >>"$d/ledger/_gates/tf-apply.jsonl" \
+      && git -C "$d/ledger" -c user.name=smoke-approver -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "approve wave-1" && git -C "$d/ledger" push -q origin chant/lifecycle; } \
+      || { log "could not approve $digest"; every; }
+  fi
+  # 2. Wave 1 again, under the approval; while second sleeps, the run view and progress.json.
+  if [ -z "$CDF_FAILED" ]; then
+    ( cdf_run "$d/wave" "$d/killed.log" "$CDF_ALIAS-apply" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate always ) >/dev/null 2>&1 &
     pid=$!
+    # The checkout is copied into the container (run_copied), so the mark is looked for there.
     started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
     for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    if ! started; then
-      log "second's provisioner never started"; tail -20 "$work/killed.log" >&2; rc=1
-    fi
+    started || { log "second's provisioner never started"; tail -20 "$d/killed.log" >&2; every; }
+  fi
+  if [ -z "$CDF_FAILED" ] && [ "$upto" != records ]; then
+    # second sleeps for 15 minutes: give the run view up to 30 seconds to show first done.
+    for i in $(seq 1 30); do
+      for key in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$estate/" | grep -o '<Key>[^<]*/runs/[^<]*/run.json</Key>' | sed -E 's#</?Key>##g'); do
+        view="$(curl -fsS "$FLOCI/$bucket/$key" 2>/dev/null || true)"
+        got="$(jq -r '[.waves[0].progress.resources[]? | "\(.address)=\(.status)"] | sort | join(" ")' <<<"$view" 2>/dev/null || true)"
+        [ "$got" = "$want" ] && break 2
+      done
+      sleep 1
+    done
+    log "progress: the run view while second applies: wave $(jq -r '.waves[0].state' <<<"$view" 2>/dev/null || echo none), ${got:-no progress}"
+    [ -n "$key" ] && html="$(curl -fsS "$FLOCI/$bucket/${key%run.json}run.html" 2>/dev/null || true)"
+    local_p="$(docker exec "$CDF_ALIAS-apply" cat /repo/terragucci-report/progress.json 2>/dev/null | jq -r '[.resources[] | "\(.address)=\(.status)"] | sort | join(" ")' 2>/dev/null || true)"
+    log "progress: progress.json in the job while second applies: ${local_p:-none}"
+    [ "$got" = "$want" ] || { log "progress: mid-apply the run view does not show first done and second in flight"; failed progress; }
+    grep -q 'data-status="done" data-address="terraform_data.first"' <<<"$html" && grep -q 'data-status="in-flight" data-address="terraform_data.second"' <<<"$html" \
+      || { log "progress: mid-apply run.html does not show first done and second in flight"; failed progress; }
+    [ "$local_p" = "$want" ] || { log "progress: mid-apply terragucci-report/progress.json does not show first done and second in flight"; failed progress; }
+  fi
+  # 3. The kill: docker kill, not rm, so the container stops as a killed job does and run_copied still copies the checkout back.
+  if [ -n "${pid:-}" ]; then
     docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
     wait "$pid" 2>/dev/null || true
   fi
-  if [ $rc = 0 ]; then
-    grep -q "approved by smoke-approver for this digest" "$work/killed.log" || { log "the killed run did not apply under the approval"; tail -20 "$work/killed.log" >&2; rc=1; }
+  if [ -z "$CDF_FAILED" ] || [ "$CDF_FAILED" = progress ]; then
+    grep -q "approved by smoke-approver for this digest" "$d/killed.log" || { log "the killed run did not apply under the approval"; tail -20 "$d/killed.log" >&2; every; }
+  fi
+  if [ -z "$CDF_FAILED" ] || [ "$CDF_FAILED" = progress ]; then
     keys="$(cdf_keys "$estate" | grep '/terraform_data/' | jq -Rr 'split("/") | last | (try @base64d catch .)' | tr '\n' ' ')"
-    log "records after the kill: ${keys:-none}"
-    grep -q first <<<"$keys" && ! grep -q second <<<"$keys" || { log "the kill did not leave a record of first alone"; rc=1; }
+    log "records: after the kill: ${keys:-none}"
+    grep -q first <<<"$keys" || { log "records: the killed wave left no record for terraform_data.first, whose apply had returned"; failed records; }
+    ! grep -q second <<<"$keys" || { log "records: the killed wave left a record for terraform_data.second, whose apply never returned"; failed records; }
     v1="$(cdf_record_version "$estate" first)"
   fi
-  if [ $rc = 0 ]; then
-    CDF_COMMAND=resume cdf_run "$work/wave" "$work/resume.log" "$CDF_ALIAS-resume" choudoufu "" --forge forgejo --out terragucci-resume.env || true
-    sed 's/^/[resume] /' "$work/resume.log" >&2
-    [ -s "$work/wave/terragucci-resume.env" ] || { log "terragucci resume wrote no commit to apply"; rc=1; }
-    grep -q "the apply of wave 1, approved by smoke-approver for $digest, stopped before it finished; the wave applies the rest" "$work/resume.log" \
-      || { log "terragucci resume did not name wave 1 as an approved apply that stopped"; rc=1; }
-  fi
-  if [ $rc = 0 ]; then
-    if ! cdf_run "$work/wave" "$work/resumed.log" "$CDF_ALIAS-resumed" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate always; then
-      log "wave 1 run again did not apply"; tail -30 "$work/resumed.log" >&2; rc=1
+  [ "$upto" = records ] && { CDF_RUN_ARGS=(); CDF_BUNDLE=""; CDF_ENV=""; return; }
+  # 4. Wave 1 once more: it applies the rest under the same approval.
+  if ! case " $CDF_FAILED " in *" records "*|*" resume "*) true ;; *) false ;; esac; then
+    if ! cdf_run "$d/wave" "$d/resumed.log" "$CDF_ALIAS-resumed" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate always; then
+      log "resume: wave 1 run again did not apply"; tail -30 "$d/resumed.log" >&2; failed resume
     fi
-    got="$(grep -E "^wave 1 of 1: (the apply of|set digest)" "$work/resumed.log" | tr '\n' ' ')"
-    log "wave 1 run again: $got"
-    grep -q "stopped before it finished; 1 of its 2 changes are done in the records, and these plans make the other 1, so that approval covers them" "$work/resumed.log" \
-      || { log "wave 1 did not resume under the approval of $digest"; rc=1; }
-    grep -q "^estate: Plan: 1 to add, 0 to change, 0 to destroy" "$work/resumed.log" || { log "wave 1 run again did not plan second alone"; rc=1; }
-    grep -q "^applied estate: Resources: 1 added, 0 changed, 0 destroyed" "$work/resumed.log" || { log "wave 1 run again did not apply one resource"; rc=1; }
-    [ "$(ledger_lines resolution)" = 1 ] || { log "the ledger holds $(ledger_lines resolution) approvals, not the one"; rc=1; }
-    [ "$(ledger_lines pending)" = 1 ] || { log "the ledger holds $(ledger_lines pending) pending facts, not the one wave 1 asked first"; rc=1; }
+    log "resume: wave 1 run again: $(grep -E "^wave 1 of 1: (the apply of|set digest)" "$d/resumed.log" | tr '\n' ' ')"
+    grep -q "stopped before it finished; 1 of its 2 changes are done in the records, and these plans make the other 1, so that approval covers them" "$d/resumed.log" \
+      || { log "resume: wave 1 did not resume under the approval of $digest"; failed resume; }
+    grep -q "^estate: Plan: 1 to add, 0 to change, 0 to destroy" "$d/resumed.log" || { log "resume: wave 1 run again did not plan second alone"; failed resume; }
+    grep -q "^applied estate: Resources: 1 added, 0 changed, 0 destroyed" "$d/resumed.log" || { log "resume: wave 1 run again did not apply one resource"; failed resume; }
+    [ "$(ledger_lines resolution)" = 1 ] || { log "resume: the ledger holds $(ledger_lines resolution) approvals, not the one"; failed resume; }
+    [ "$(ledger_lines pending)" = 1 ] || { log "resume: the ledger holds $(ledger_lines pending) pending facts, not the one wave 1 asked first"; failed resume; }
     v2="$(cdf_record_version "$estate" first)"
-    [ -n "$v1" ] && [ "$v1" = "$v2" ] || { log "first's record moved from version '$v1' to '$v2': it was written again"; rc=1; }
+    [ -n "$v1" ] && [ "$v1" = "$v2" ] || { log "resume: first's record moved from version '$v1' to '$v2': it was written again"; failed resume; }
     keys="$(cdf_keys "$estate" | grep '/terraform_data/' | jq -Rr 'split("/") | last | (try @base64d catch .)' | sort | tr '\n' ' ')"
-    grep -q first <<<"$keys" && grep -q second <<<"$keys" || { log "records at the end: ${keys:-none}, not first and second"; rc=1; }
+    grep -q first <<<"$keys" && grep -q second <<<"$keys" || { log "resume: records at the end: ${keys:-none}, not first and second"; failed resume; }
   fi
-  CDF_RUN_ARGS=(); CDF_BUNDLE=""
-  cdf_down "$work"
-  [ $rc = 0 ] && log "the killed wave's approved apply resumed under the same approval: terragucci resume named it, and the wave applied second alone, first's record untouched"
-  return $rc
+  CDF_RUN_ARGS=(); CDF_BUNDLE=""; CDF_ENV=""
 }
 
-claim_choudoufu/live_progress() {
-  # One choudoufu estate of two terraform_data, applied by a tf-apply wave in
-  # the choudoufu CI image with a reports bucket: first, and second, which
-  # depends on first and whose local-exec provisioner leaves a mark in the
-  # wave's container and then sleeps. Once the mark is there, first's apply
-  # has returned and second's is running. While second sleeps, the wave's
-  # run view in the bucket (run.json and run.html) must show first done and
-  # second in flight, and the job's terragucci-report/progress.json the same:
-  # the progress is read from the record store as the apply runs.
-  # BREAK: the wave's bundle reads the records only when the apply ends, so
-  # mid-apply the run view still shows first in flight and second waiting.
-  log() { echo "[smoke cdf-live-progress] $*" >&2; }
+claim_choudoufu/killed() {
+  # cdf_killed_pass above, once: the progress, records and resume checks all
+  # pass.
+  # BREAK: each check's property is broken in turn, on a pass of its own
+  # estate, and the run is caught only when every check fails under its
+  # break:
+  #   progress and resume, one pass: the wave's bundle reads the records only
+  #     when the apply ends, so mid-apply the run view still shows first in
+  #     flight and second waiting; and the wave never resumes a stopped
+  #     apply, so its plan of second alone waits for an approval of its own.
+  #   records, a second pass up to the kill: the waves run choudoufu 0.23.0,
+  #     which writes every record after the whole apply, so the killed wave
+  #     leaves no record for first.
+  log() { echo "[smoke cdf-killed] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work estate bucket=terragucci-smoke-progress pid i keys key view="" html="" local_p="" got rc=0 CDF_BUNDLE="" CDF_ENV="TG_PROGRESS_SECONDS=1"
+  local work bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" over check caught="" missed="" rc=0
   docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply-progress.ts 'this.every();' '' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
-    CDF_BUNDLE="$work/break.mjs"
-  fi
-  estate="smoke-progress-$(date +%s)-$$"
   cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  curl -s -o /dev/null -X PUT "$FLOCI/$bucket" || true
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  rows_estate "$work/a" "$estate" "$(cat <<'HCL'
-resource "terraform_data" "first" {
-  input = "first"
-}
-
-resource "terraform_data" "second" {
-  input      = "second"
-  depends_on = [terraform_data.first]
-
-  provisioner "local-exec" {
-    command = "touch /repo/second-started && sleep 900"
-  }
-}
-HCL
-)"
-  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$bucket" "$estate" >"$work/a/terragucci.yml"
-  printf 'second-started\n' >>"$work/a/.gitignore"
-  git -C "$work/a" init -q -b main && git -C "$work/a" add -A && git -C "$work/a" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate" \
-    || { log "could not commit the estate"; cdf_down "$work"; return 1; }
-  ( CDF_BUNDLE="$CDF_BUNDLE" CDF_ENV="$CDF_ENV" cdf_run "$work/a" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers estate --binary choudoufu --gate never ) >/dev/null 2>&1 &
-  pid=$!
-  # The checkout is copied into the container (run_copied), so the mark is looked for there.
-  started() { docker exec "$CDF_ALIAS-apply" test -e /repo/second-started >/dev/null 2>&1; }
-  for i in $(seq 1 180); do started && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-  if ! started; then
-    log "second's provisioner never started"; tail -20 "$work/apply.log" >&2
-    docker rm -f "$CDF_ALIAS-apply" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; cdf_down "$work"; return 1
+  if [ -z "${BREAK:-}" ]; then
+    cdf_killed_pass "$work/plain" "$bundle" "" ""
+    cdf_down "$work"
+    [ -z "$CDF_FAILED" ] || { log "failed: $CDF_FAILED"; return 1; }
+    log "while second applied, the run view, its page and progress.json showed first done and second in flight; the killed wave left a record for first alone; and the wave run again applied second alone under the same approval, first's record untouched"
+    return 0
   fi
-  # second sleeps for 15 minutes: give the run view up to 30 seconds to show first done.
-  for i in $(seq 1 30); do
-    key="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=$estate/" | grep -o '<Key>[^<]*/runs/[^<]*/run.json</Key>' | sed -E 's#</?Key>##g' | head -1)"
-    if [ -n "$key" ]; then
-      view="$(curl -fsS "$FLOCI/$bucket/$key" 2>/dev/null || true)"
-      got="$(jq -r '[.waves[0].progress.resources[]? | "\(.address)=\(.status)"] | sort | join(" ")' <<<"$view" 2>/dev/null || true)"
-      [ "$got" = "terraform_data.first=done terraform_data.second=in-flight" ] && break
-    fi
-    sleep 1
-  done
-  log "the run view while second applies: wave $(jq -r '.waves[0].state' <<<"$view" 2>/dev/null || echo none), ${got:-no progress}"
-  [ -n "$key" ] && html="$(curl -fsS "$FLOCI/$bucket/${key%run.json}run.html" 2>/dev/null || true)"
-  local_p="$(docker exec "$CDF_ALIAS-apply" cat /repo/terragucci-report/progress.json 2>/dev/null | jq -r '[.resources[] | "\(.address)=\(.status)"] | sort | join(" ")' 2>/dev/null || true)"
-  log "progress.json in the job while second applies: ${local_p:-none}"
-  docker kill "$CDF_ALIAS-apply" >/dev/null 2>&1 || true
-  wait "$pid" 2>/dev/null || true
-  grep 'progress' "$work/apply.log" | sed 's/^/  /' >&2 || true
-  [ "$got" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply the run view does not show first done and second in flight"; rc=1; }
-  grep -q 'data-status="done" data-address="terraform_data.first"' <<<"$html" && grep -q 'data-status="in-flight" data-address="terraform_data.second"' <<<"$html" \
-    || { log "mid-apply run.html does not show first done and second in flight"; rc=1; }
-  [ "$local_p" = "terraform_data.first=done terraform_data.second=in-flight" ] || { log "mid-apply terragucci-report/progress.json does not show first done and second in flight"; rc=1; }
+  if break_bundle "$work/break.mjs" apply-progress.ts 'this.every();' '' apply.ts 'if (at.resume && decision.spent) {' 'if (false) {'; then
+    cdf_killed_pass "$work/bundle" "$work/break.mjs" "" ""
+    for check in progress resume; do
+      case " $CDF_FAILED " in *" $check "*) caught+=" $check" ;; *) missed+=" $check" ;; esac
+    done
+  else
+    log "the BREAK bundle did not build"; caught+=" progress resume"
+  fi
+  cdf_proxy_down
+  if over="$(choudoufu_release 0.23.0)"; then
+    cdf_killed_pass "$work/records" "$bundle" "$over" records
+    case " $CDF_FAILED " in *" records "*) caught+=" records" ;; *) missed+=" records" ;; esac
+  else
+    log "no choudoufu 0.23.0"; caught+=" records"
+  fi
   cdf_down "$work"
-  [ $rc = 0 ] && log "while second applied, the run view, its page and the job's progress.json showed first done and second in flight, read from the records"
-  return $rc
+  log "under BREAK: caught${caught:- none}; missed${missed:- none}"
+  return $([ -z "$missed" ] && echo 1 || echo 0)
 }
 
 claim_choudoufu/record_versions() {
@@ -15760,9 +15696,9 @@ HCL
 }
 
 # ── choudoufu estates: gated retags and adoptions ─────────────────────────
-# cdf-migrate and cdf-adopt run wave 1 of a local repo (audit_origin) in the
+# choudoufu/migrate runs wave 1 of a local repo (audit_origin) in the
 # choudoufu CI image, with every AWS call through the claim's record store
-# proxy, as cdf-shared-bucket does. Each root holds SQS queues on floci, whose
+# proxy, as choudoufu/shared-bucket does. Each root holds SQS queues on floci, whose
 # ownership markers (tofu-estate, tofu-address) the provider reads back.
 
 # A root of SQS queues: a live block naming ESTATE, or with ESTATE "-" the
@@ -15823,148 +15759,167 @@ cdf_root_creates() { # work root
 }
 
 claim_choudoufu/migrate() {
-  # Estate <stamp>-mono (root mono) holds the queues jobs and keep, applied
-  # by wave 1; root team is estate <stamp>-team, with no resources. A commit
-  # moves the jobs block to team and adds migrations/carve-jobs.yml naming
-  # it. Wave 1 proves the retag (each root's plan changes only the queue that
-  # moves, and live-mv -dry-run finds it) and waits; smoke-approver approves
-  # the digest and wave 1 runs again: live-mv rewrites the queue's markers,
-  # both roots plan with no change, and the wave applies nothing. The queue
-  # carries tofu-estate <stamp>-team, a tf-plan of both roots right after
-  # shows no change, and _gates/tf-migrate/done.jsonl on chant/lifecycle
-  # names the retag.
-  # BREAK: the retag's write is skipped, so the queue keeps mono's markers,
-  # wave 1 fails, and the next plan of team creates a second jobs queue.
+  # Two migrations of one change, on one setup, both applied by wave 1
+  # (cdf_migrations below): carve, a retag that moves a queue between two
+  # estates, and adopt, which takes a root on s3 state into an estate.
+  # BREAK: each migration's property is broken in turn, each on a setup of
+  # its own with that migration alone, and the run is caught only when both
+  # fail under their breaks:
+  #   carve: the retag's write is skipped, so the queue keeps mono's markers,
+  #     wave 1 fails, and the next plan of team creates a second jobs queue.
+  #   adopt: live-import runs without -approve, so no marker is stamped, wave
+  #     1 fails, and the next plan of app creates both queues again.
   log() { echo "[smoke cdf-migrate] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work rc=0 bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" mono team prefix digest done got
+  local work rc=0 bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" caught="" missed=""
   docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/terragucci.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log);' 'void 0;' \
-      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
-    bundle="$work/terragucci.mjs"
-  fi
-  mono="cdfm-$STAMP-$$-mono"; team="cdfm-$STAMP-$$-team"; prefix="tgs-cdfm-$STAMP-$$"
   cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  cdf_queue_root "$work/wave/mono" "$mono" "$prefix" jobs keep
-  cdf_queue_root "$work/wave/team" "$team" "$prefix"
-  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$work/wave/.gitignore"
-  audit_origin "$work"
-  cdf_migrate_stage "$work" "$bundle" first tf-apply --wave 1 --layers mono --binary choudoufu --gate never
-  [ "$AUDIT_CODE" = 0 ] || { log "the first apply of mono exited $AUDIT_CODE, not 0"; rc=1; }
-  [ $rc = 0 ] && { got="$(cdf_queue_estate "$prefix-jobs")"; [ "$got" = "$mono" ] || { log "after the first apply the jobs queue carries tofu-estate '$got', not $mono"; rc=1; }; }
-  if [ $rc = 0 ]; then
-    cdf_queue_root "$work/wave/mono" "$mono" "$prefix" keep
-    cdf_queue_root "$work/wave/team" "$team" "$prefix" jobs
-    mkdir -p "$work/wave/migrations"
-    printf 'moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs]\n' >"$work/wave/migrations/carve-jobs.yml"
-    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "jobs to team"
-    cdf_migrate_stage "$work" "$bundle" waits tf-apply --wave 1 --layers mono,team --binary choudoufu --gate never
-    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the retag"; rc=1; }
-    grep -q "^migration carve-jobs: every change each root plans is one the retag removes; digest " "$work/waits.log" || { log "wave 1 did not prove the retag"; rc=1; }
-    digest="$(sed -n 's/^migration carve-jobs waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
-    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
-    got="$(cdf_queue_estate "$prefix-jobs")"
-    [ "$got" = "$mono" ] || { log "before the approval the jobs queue carries tofu-estate '$got', not $mono"; rc=1; }
+  if [ -z "${BREAK:-}" ]; then
+    cdf_migrations "$work/both" "$bundle" carve adopt || rc=1
+    cdf_down "$work"
+    [ $rc = 0 ] && log "one change carried both migrations: the jobs queue moved estates by a retag, app's state became an estate with its state left as it was, each approved by its digest, and the next plan of every root shows no change"
+    return $rc
   fi
-  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver carve-jobs "$digest" || { log "could not approve the retag"; rc=1; }; }
-  if [ $rc = 0 ]; then
-    cdf_migrate_stage "$work" "$bundle" applies tf-apply --wave 1 --layers mono,team --binary choudoufu --gate never
-    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
-    grep -q "^migration carve-jobs applied$" "$work/applies.log" || { log "the log does not say the retag applied"; rc=1; }
-    got="$(cdf_queue_estate "$prefix-jobs")"
-    [ "$got" = "$team" ] || { log "the jobs queue carries tofu-estate '$got', not $team"; rc=1; }
-    got="$(cdf_queue_estate "$prefix-keep")"
-    [ "$got" = "$mono" ] || { log "the keep queue carries tofu-estate '$got', not $mono"; rc=1; }
-    got="$(cdf_migrate_planned "$work" "$bundle" mono,team)"
-    [ "$got" = 0 ] || { log "the next plan of mono and team shows $got change(s), not none; a plan of team would create: $(cdf_root_creates "$work" team)"; rc=1; }
-    done="$(git --git-dir="$work/origin.git" show "chant/lifecycle:_gates/tf-migrate/done.jsonl" 2>/dev/null | grep '"gate":"carve-jobs"' | tail -1)"
-    jq -c '{result, change, retags}' <<<"$done" >&2 || true
-    [ "$(jq -r '[.result, .change, .retags[0].address, .retags[0].from_estate, .retags[0].to_estate] | join(" ")' <<<"$done" 2>/dev/null)" = "applied retag aws_sqs_queue.jobs $mono $team" ] \
-      || { log "chant/lifecycle does not record the retag of aws_sqs_queue.jobs from $mono to $team"; rc=1; }
+  if break_bundle "$work/carve.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log);' 'void 0;'; then
+    if cdf_migrations "$work/carve" "$work/carve.mjs" carve; then missed+=" carve"; else caught+=" carve"; fi
+  else
+    log "the carve BREAK bundle did not build"; caught+=" carve"
+  fi
+  cdf_proxy_down
+  if break_bundle "$work/adopt.mjs" migrate-estate.ts 'const STAMP = "-approve";' 'const STAMP = "-no-color";'; then
+    if cdf_migrations "$work/adopt" "$work/adopt.mjs" adopt; then missed+=" adopt"; else caught+=" adopt"; fi
+  else
+    log "the adopt BREAK bundle did not build"; caught+=" adopt"
   fi
   cdf_down "$work"
-  [ $rc = 0 ] && log "the jobs queue moved from $mono to $team by a retag approved by digest, both estates plan with no change, and the move is on chant/lifecycle"
-  return $rc
+  log "under BREAK: caught${caught:- none}; missed${missed:- none}"
+  return $([ -z "$missed" ] && echo 1 || echo 0)
 }
 
-claim_choudoufu/adopt() {
-  # Root app holds the queues a and b, its state app.tfstate in the versioned
-  # bucket tgca-<stamp>, applied by wave 1 with choudoufu as stock OpenTofu.
-  # A commit replaces its backend block with a live block naming estate
-  # <stamp>-app and adds migrations/adopt-app.yml, whose from names the old
-  # state. Wave 1 proves the adoption (live-import verifies both queues, and
-  # the plan's only changes are their creates) and waits; smoke-approver
-  # approves the digest and wave 1 runs again: live-import stamps both, the
-  # root plans with no change, and the wave applies nothing. Both queues carry
-  # tofu-estate <stamp>-app, a tf-plan right after shows no change,
-  # app.tfstate is still the version it was, the record names that version as
-  # the source, and no lock file is left.
-  # BREAK: live-import runs without -approve, so no marker is stamped, wave 1
-  # fails, and the next plan of app creates both queues again.
-  log() { echo "[smoke cdf-adopt] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work rc=0 bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" estate prefix bucket="tgca-$STAMP-$$" digest record was got keys
-  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
-  build_cli || return 1
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/terragucci.mjs" migrate-estate.ts 'const STAMP = "-approve";' 'const STAMP = "-no-color";' \
-      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
-    bundle="$work/terragucci.mjs"
+# The migrations named (carve, adopt or both), in one change, applied by
+# wave 1 of one checkout in $1/wave, its origin a bare repo, with the bundle
+# given:
+#   carve  estate <stamp>-mono (root mono) holds the queues jobs and keep;
+#          root team is estate <stamp>-team, with no resources. The change
+#          moves the jobs block to team and adds migrations/carve-jobs.yml.
+#          The wave proves the retag (each root's plan changes only the queue
+#          that moves) and waits. Once approved, live-mv rewrites the queue's
+#          markers: it carries tofu-estate <stamp>-team, keep stays in mono,
+#          and _gates/tf-migrate/done.jsonl on chant/lifecycle names the
+#          retag.
+#   adopt  root app holds the queues a and b, its state app.tfstate in the
+#          versioned bucket tgca-<stamp>, applied with choudoufu as stock
+#          OpenTofu. The change replaces its backend block with a live block
+#          naming estate <stamp>-app and adds migrations/adopt-app.yml, whose
+#          from names the old state. The wave proves the adoption (live-import
+#          verifies both queues) and waits. Once approved, live-import stamps
+#          both: they carry tofu-estate <stamp>-app, app.tfstate is still the
+#          version it was, the record names that version as the source, and
+#          no lock file is left.
+# Wave 1 waits for each migration in turn, smoke-approver approves the digest
+# it printed, and the wave runs again, up to three runs, until it exits 0
+# with every migration applied. A tf-plan of every root right after shows no
+# change.
+cdf_migrations() { # dir bundle carve|adopt...
+  local d="$1" bundle="$2" carve="" adopt="" w n name digest approved="" layers="" all="" first="" got done record was keys rc=0 m
+  shift 2
+  for m in "$@"; do case "$m" in carve) carve=1 ;; adopt) adopt=1 ;; esac; done
+  local tag="$STAMP-$$-$RANDOM"
+  local mono="cdfm-$tag-mono" team="cdfm-$tag-team" mprefix="tgs-cdfm-$tag"
+  local estate="cdfa-$tag-app" aprefix="tgs-cdfa-$tag" bucket="tgca-$tag"
+  mkdir -p "$d"
+  if [ -n "$adopt" ]; then versioned_bucket "$bucket" || { log "could not create the state bucket $bucket"; return 1; }; fi
+  cdf_proxy_up "$d" || { log "the record store proxy did not start"; return 1; }
+  if [ -n "$carve" ]; then
+    cdf_queue_root "$d/wave/mono" "$mono" "$mprefix" jobs keep
+    cdf_queue_root "$d/wave/team" "$team" "$mprefix"
+    first="mono"; all="mono,team"
   fi
-  estate="cdfa-$STAMP-$$-app"; prefix="tgs-cdfa-$STAMP-$$"
-  versioned_bucket "$bucket" || { log "could not create the state bucket $bucket"; drop_work "$work"; return 1; }
-  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
-  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
-  CDF_STOCK="$(printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n' "$bucket")"
-  cdf_queue_root "$work/wave/app" - "$prefix" a b
-  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$work/wave/.gitignore"
-  audit_origin "$work"
-  cdf_migrate_stage "$work" "$bundle" first tf-apply --wave 1 --layers app --binary choudoufu --gate never
-  [ "$AUDIT_CODE" = 0 ] || { log "the first apply of app exited $AUDIT_CODE, not 0"; rc=1; }
-  if [ $rc = 0 ]; then
+  if [ -n "$adopt" ]; then
+    CDF_STOCK="$(printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n' "$bucket")"
+    cdf_queue_root "$d/wave/app" - "$aprefix" a b
+    first="${first:+$first,}app"; all="${all:+$all,}app"
+  fi
+  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$d/wave/.gitignore"
+  audit_origin "$d"
+  cdf_migrate_stage "$d" "$bundle" first tf-apply --wave 1 --layers "$first" --binary choudoufu --gate never
+  [ "$AUDIT_CODE" = 0 ] || { log "the first apply of $first exited $AUDIT_CODE, not 0"; return 1; }
+  if [ -n "$carve" ]; then
+    got="$(cdf_queue_estate "$mprefix-jobs")"
+    [ "$got" = "$mono" ] || { log "carve: after the first apply the jobs queue carries tofu-estate '$got', not $mono"; return 1; }
+  fi
+  if [ -n "$adopt" ]; then
     was="$(current_version "$bucket" app.tfstate)"
-    [ "$(curl -fsS "$FLOCI/$bucket/app.tfstate" | jq -r '[.resources[].name] | join(",")')" = "a,b" ] || { log "app.tfstate does not hold both queues"; rc=1; }
-    [ -z "$(cdf_queue_estate "$prefix-a")" ] || { log "the stock apply stamped a marker on queue a"; rc=1; }
+    [ "$(curl -fsS "$FLOCI/$bucket/app.tfstate" | jq -r '[.resources[].name] | join(",")')" = "a,b" ] || { log "adopt: app.tfstate does not hold both queues"; return 1; }
+    [ -z "$(cdf_queue_estate "$aprefix-a")" ] || { log "adopt: the stock apply stamped a marker on queue a"; return 1; }
   fi
-  if [ $rc = 0 ]; then
-    cdf_queue_root "$work/wave/app" "$estate" "$prefix" a b
-    mkdir -p "$work/wave/migrations"
-    printf 'backends:\n  - root: app\n    from:\n      backend: s3\n      config:\n        bucket: %s\n        key: app.tfstate\n        region: us-east-1\n        use_lockfile: true\n        use_path_style: true\n' "$bucket" >"$work/wave/migrations/adopt-app.yml"
-    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "app into estate $estate"
-    cdf_migrate_stage "$work" "$bundle" waits tf-apply --wave 1 --layers app --binary choudoufu --gate never
-    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the adoption"; rc=1; }
-    grep -q "^migration adopt-app: every resource of the state verifies against the live system, and every change the root plans is one the stamp removes; digest " "$work/waits.log" \
-      || { log "wave 1 did not prove the adoption"; rc=1; }
-    digest="$(sed -n 's/^migration adopt-app waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
-    [ -n "$digest" ] || { log "wave 1 printed no digest to approve"; rc=1; }
+  # The change: each migration's roots and its file.
+  mkdir -p "$d/wave/migrations" "$d/records"
+  if [ -n "$carve" ]; then
+    cdf_queue_root "$d/wave/mono" "$mono" "$mprefix" keep
+    cdf_queue_root "$d/wave/team" "$team" "$mprefix" jobs
+    printf 'moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs]\n' >"$d/wave/migrations/carve-jobs.yml"
   fi
-  [ $rc = 0 ] && { migrate_approve "$work/origin.git" "$work/ledger" smoke-approver adopt-app "$digest" || { log "could not approve the adoption"; rc=1; }; }
-  if [ $rc = 0 ]; then
-    cdf_migrate_stage "$work" "$bundle" applies tf-apply --wave 1 --layers app --binary choudoufu --gate never
-    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
-    grep -q "^migration adopt-app applied$" "$work/applies.log" || { log "the log does not say the adoption applied"; rc=1; }
+  if [ -n "$adopt" ]; then
+    cdf_queue_root "$d/wave/app" "$estate" "$aprefix" a b
+    printf 'backends:\n  - root: app\n    from:\n      backend: s3\n      config:\n        bucket: %s\n        key: app.tfstate\n        region: us-east-1\n        use_lockfile: true\n        use_path_style: true\n' "$bucket" >"$d/wave/migrations/adopt-app.yml"
+  fi
+  git -C "$d/wave" add -A && git -C "$d/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "the migrations: $*"
+  # Wave 1 until it applies, approving each migration it waits for.
+  for n in 1 2 3; do
+    cdf_migrate_stage "$d" "$bundle" "run-$n" tf-apply --wave 1 --layers "$all" --binary choudoufu --gate never
+    cp "$d/wave/terragucci-report/migrations/"*.json "$d/records/" 2>/dev/null || true
+    [ "$AUDIT_CODE" = 0 ] && break
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 run $n exited $AUDIT_CODE, not 0 or 3"; return 1; }
+    w="$(sed -n 's/^migration \([^ ]*\) waits for an approval of digest \([^ ]*\)\. .*/\1 \2/p' "$d/run-$n.log")"
+    [ -n "$w" ] || { log "wave 1 run $n waited, but for no migration"; return 1; }
+    while read -r name digest; do
+      case " $approved " in *" $name "*) log "wave 1 run $n waits again for $name, which was approved"; return 1 ;; esac
+      # Before its approval, the retag has written nothing.
+      if [ "$name" = carve-jobs ]; then
+        got="$(cdf_queue_estate "$mprefix-jobs")"
+        [ "$got" = "$mono" ] || { log "carve: before the approval the jobs queue carries tofu-estate '$got', not $mono"; rc=1; }
+      fi
+      migrate_approve "$d/origin.git" "$d/ledger" smoke-approver "$name" "$digest" || { log "could not approve $name"; return 1; }
+      approved="$approved $name"
+    done <<<"$w"
+  done
+  [ "$AUDIT_CODE" = 0 ] || { log "wave 1 still waits after three runs"; return 1; }
+  cat "$d"/run-*.log >"$d/runs.log"
+  if [ -n "$carve" ]; then
+    case " $approved " in *" carve-jobs "*) ;; *) log "carve: wave 1 never waited for an approval of the retag"; rc=1 ;; esac
+    grep -q "^migration carve-jobs: every change each root plans is one the retag removes; digest " "$d/runs.log" || { log "carve: wave 1 did not prove the retag"; rc=1; }
+    grep -q "^migration carve-jobs applied$" "$d/runs.log" || { log "carve: the log does not say the retag applied"; rc=1; }
+    got="$(cdf_queue_estate "$mprefix-jobs")"
+    [ "$got" = "$team" ] || { log "carve: the jobs queue carries tofu-estate '$got', not $team"; rc=1; }
+    got="$(cdf_queue_estate "$mprefix-keep")"
+    [ "$got" = "$mono" ] || { log "carve: the keep queue carries tofu-estate '$got', not $mono"; rc=1; }
+    done="$(git --git-dir="$d/origin.git" show "chant/lifecycle:_gates/tf-migrate/done.jsonl" 2>/dev/null | grep '"gate":"carve-jobs"' | tail -1)"
+    jq -c '{result, change, retags}' <<<"$done" >&2 || true
+    [ "$(jq -r '[.result, .change, .retags[0].address, .retags[0].from_estate, .retags[0].to_estate] | join(" ")' <<<"$done" 2>/dev/null)" = "applied retag aws_sqs_queue.jobs $mono $team" ] \
+      || { log "carve: chant/lifecycle does not record the retag of aws_sqs_queue.jobs from $mono to $team"; rc=1; }
+  fi
+  if [ -n "$adopt" ]; then
+    case " $approved " in *" adopt-app "*) ;; *) log "adopt: wave 1 never waited for an approval of the adoption"; rc=1 ;; esac
+    grep -q "^migration adopt-app: every resource of the state verifies against the live system, and every change the root plans is one the stamp removes; digest " "$d/runs.log" \
+      || { log "adopt: wave 1 did not prove the adoption"; rc=1; }
+    grep -q "^migration adopt-app applied$" "$d/runs.log" || { log "adopt: the log does not say the adoption applied"; rc=1; }
     for got in a b; do
-      [ "$(cdf_queue_estate "$prefix-$got")" = "$estate" ] || { log "queue $got carries tofu-estate '$(cdf_queue_estate "$prefix-$got")', not $estate"; rc=1; }
+      [ "$(cdf_queue_estate "$aprefix-$got")" = "$estate" ] || { log "adopt: queue $got carries tofu-estate '$(cdf_queue_estate "$aprefix-$got")', not $estate"; rc=1; }
     done
-    got="$(cdf_migrate_planned "$work" "$bundle" app)"
-    [ "$got" = 0 ] || { log "the next plan of app shows $got change(s), not none; a plan of app would create: $(cdf_root_creates "$work" app)"; rc=1; }
-    [ "$(current_version "$bucket" app.tfstate)" = "$was" ] || { log "app.tfstate is not the version it was"; rc=1; }
-    record="$(cat "$work/wave/terragucci-report/migrations/adopt-app.json" 2>/dev/null)"
+    [ "$(current_version "$bucket" app.tfstate)" = "$was" ] || { log "adopt: app.tfstate is not the version it was"; rc=1; }
+    record="$(cat "$d/records/adopt-app.json" 2>/dev/null)"
     jq -c '{status, change, roots: [.roots[] | {root, location, source}]}' <<<"$record" >&2 || true
     [ "$(jq -r '[.status, .change, .roots[0].location, .roots[0].source.location, .roots[0].source.version_id] | join(" ")' <<<"$record" 2>/dev/null)" = "applied adopt estate $estate s3://$bucket/app.tfstate $was" ] \
-      || { log "the record does not name the estate and the version of the state it adopted"; rc=1; }
+      || { log "adopt: the record does not name the estate and the version of the state it adopted"; rc=1; }
     keys="$(curl -fsS "$FLOCI/$bucket?list-type=2" | grep -o '<Key>[^<]*</Key>' | tr '\n' ' ')"
-    case "$keys" in *.tflock*) log "a lock file is left: $keys"; rc=1 ;; esac
+    case "$keys" in *.tflock*) log "adopt: a lock file is left: $keys"; rc=1 ;; esac
   fi
-  cdf_down "$work"
-  [ $rc = 0 ] && log "app's state at version $was became estate $estate with no change, both queues stamped, and the state left as that version"
+  got="$(cdf_migrate_planned "$d" "$bundle" "$all")"
+  [ "$got" = 0 ] || { log "the next plan of $all shows $got change(s), not none; a plan would create: $( [ -n "$carve" ] && cdf_root_creates "$d" team)$( [ -n "$adopt" ] && cdf_root_creates "$d" app)"; rc=1; }
   return $rc
 }
 
@@ -21018,14 +20973,10 @@ approval/pr-review-status     runner self! weight=250
 refuse/approve-plan         runner self! weight=150
 approval/resume       runner self! weight=250
 approval/resume-schedule      runner self! weight=300
-choudoufu/concurrency      weight=150
-choudoufu/concurrency-time weight=250
-choudoufu/write-race       weight=150
+choudoufu/concurrency      weight=500
 choudoufu/iam              self! weight=250
 choudoufu/record-versions  weight=120
-choudoufu/killed-records   weight=90
-choudoufu/resume           weight=150
-choudoufu/live-progress    weight=90
+choudoufu/killed           weight=300
 apply/per-root       runner self! weight=300
 apply/stand-down     runner self! weight=300
 choudoufu/rows-overlap     runner self! weight=250
@@ -21085,8 +21036,7 @@ report/index-writes         self! weight=90
 note/footer          runner self! weight=150
 comment/dispatch      runner self! weight=150
 choudoufu/shared-bucket    weight=120
-choudoufu/migrate          weight=200
-choudoufu/adopt            weight=200
+choudoufu/migrate          weight=350
 init/cdktn-synth          runner self! weight=200
 audit/tofu                weight=150
 report/outcome        self! weight=120

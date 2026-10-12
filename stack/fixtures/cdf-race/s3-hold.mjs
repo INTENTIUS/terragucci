@@ -1,5 +1,5 @@
-// A proxy in front of floci's S3 for the cdf-concurrency and
-// cdf-write-race smoke claims (stack/smoke.sh), after choudoufu's own
+// A proxy in front of floci's S3 for the choudoufu/* smoke claims
+// (stack/smoke.sh), after choudoufu's own
 // live/smoke/s3proxy.py. Two applies started together rarely overlap: one
 // writes before the other has read. The proxy holds every PUT whose path
 // matches a pattern until the claim releases it, so both writes are in flight
