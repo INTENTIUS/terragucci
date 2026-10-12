@@ -166,14 +166,6 @@
     },
     {
       "claim": "rollout/tofu",
-      "says": "a module version rolls out one pull request per wave",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "rollout/tofu",
       "says": "a module version rolls out one merge request per wave, each changing only its roots and opened only after the last wave merged and applied",
       "needs": null,
       "verdict": "pass",
@@ -1497,30 +1489,6 @@
     {
       "claim": "rollout/control",
       "says": "from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "rollout/provider",
-      "says": "rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "rollout/pins",
-      "says": "rollout moves an oci:// tag and a registry version pin, each in the shape it had",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "rollout/continue",
-      "says": "with rollouts set, once wave 1 merged and applied the rollout job opens wave 2 with no manual run",
       "needs": null,
       "verdict": "pass",
       "break": "caught",

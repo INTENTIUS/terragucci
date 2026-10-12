@@ -186,7 +186,7 @@ waves/tofu|each wave goes out only once approved|
 refuse/tofu|a wave whose plans changed after approval applies nothing|
 approval/sealed|under approval: sealed a wave counts only an approval sealed by a key the signers file lists|
 drift/tofu|drift is reported by root|
-rollout/tofu|a module version rolls out one pull request per wave|
+rollout/tofu|a module version rolls out one pull request per wave, each opened only after the last merged and applied, and with rollouts set the rollout job opens the next wave with no manual run|
 modules/publish|changed modules are published at a new version|
 modules/attest|with modules.attest each release is signed, attested and recorded in the release ledger with its tag|
 modules/require|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
@@ -338,9 +338,7 @@ security/fork|a pull request from a fork runs check and no plan job|
 report/sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
 approval/signer-trust|init --signer writes the signers line from git config user.signingkey, and an approval sealed with that key lets the wave apply|
 rollout/control|from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied|
-rollout/provider|rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave|
-rollout/pins|rollout moves an oci:// tag and a registry version pin, each in the shape it had|
-rollout/continue|with rollouts set, once wave 1 merged and applied the rollout job opens wave 2 with no manual run|
+rollout/pins|rollout moves a provider alone in the lock file and its exact constraint, an oci:// tag and a registry version pin, each in the shape it had|
 policy/opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
 policy/hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
 policy/hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
@@ -3172,27 +3170,34 @@ claim_modules/terragrunt_require() {
 
 claim_rollout/tofu() {
   # One repo, three roots taking modules/network by git tag: dev/app (the
-  # canary), prod/net, and prod/app, which reads prod/net's state. The module
-  # changes and tf-publish tags 0.2.0. A dry run with no version must find
-  # 0.2.0; then each run opens at most one wave's pull request, changing only
-  # that wave's root, and never opens a wave before the last one merged and its
-  # apply passed on the merge commit. BREAK: the opening runs are dry runs, so
-  # no pull request opens.
+  # canary), prod/net, and prod/app, which reads prod/net's state, with
+  # rollouts set and token_env naming a repo secret that holds the admin's
+  # token, so init writes the rollout workflow beside the pipeline (its cron
+  # is a day a year, so only the dispatch runs it). The module changes and
+  # tf-publish tags 0.2.0. A dry run with no version must find 0.2.0. Then
+  # each wave's pull request changes only that wave's root, and no wave opens
+  # before the last one merged and its apply passed on the merge commit:
+  # wave 1 is opened by hand, wave 2 by one run of the rollout job with no
+  # rollout run by hand, and wave 3 by hand; after three waves the rollout is
+  # complete.
+  # BREAK breaks two properties on the one repo, each in turn, and is caught
+  # only when both are: the first run that opens wave 1 is a dry run, so no
+  # pull request opens (wave 1 is then opened in apply mode to go on); and
+  # respond.rollout: off, so init writes no rollout workflow and the dispatch
+  # opens no wave 2, checked once, right after the dispatch, never by waiting.
   log() { echo "[smoke rollout] $*" >&2; }
-  fail() { log "FAIL: $*"; return 1; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/rollout" mode=apply out rc pr sha n files
+  local work repo="$USER/rollout" out rc pr sha n files run status deadline caught=""
+  local wf=".forgejo/workflows/terragucci-rollout.yml" b="terragucci/rollout/modules-network-0.2.0/wave"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
-  settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
-  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
-  settle "repos/$repo" 404 || return 1
-  api -o /dev/null -H 'content-type: application/json' -X POST \
-    -d '{"name":"rollout","private":false,"auto_init":false,"default_branch":"main"}' "$URL/api/v1/user/repos"
-  settle "repos/$repo" 200 || return 1
-  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
-  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  # A step that fails ends the plain run as a failure; it ends a BREAK run as
+  # not caught, since that run never reached the breaks it had left.
+  stop() { drop_work "$work"; [ -z "${BREAK:-}" ] && return 1; log "the BREAK run stopped before its breaks were checked (caught so far: ${caught:-none})"; return 0; }
+  rollout_repo rollout || { stop; return; }
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d "{\"data\":\"$TOKEN\"}" "$URL/api/v1/repos/$repo/actions/secrets/TERRAGUCCI_FORGEJO_TOKEN" \
+    || { log "could not set the TERRAGUCCI_FORGEJO_TOKEN secret"; stop; return; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
 
   local tree="$work/tree" remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
   local source="git::http://forgejo:3000/$repo.git//modules/network?ref=modules/network/v0.1.0"
@@ -3204,58 +3209,99 @@ claim_rollout/tofu() {
   root dev/app dev-app ""
   root prod/net prod-net ""
   root prod/app prod-app 'data "terraform_remote_state" "net" {\n  backend = "s3"\n  config = {\n    bucket         = "shop-terraform-state"\n    key            = "rollout/prod-net.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\n'
-  printf 'binary: tofu\nforge: forgejo\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nwaves:\n  canary: ["dev/*"]\nmodules:\n  path: modules/*\n  publish: git-tags\n' "$URL" "$repo" > "$tree/terragucci.yml"
-  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
+  printf 'binary: tofu\nforge: forgejo\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nwaves:\n  canary: ["dev/*"]\nmodules:\n  path: modules/*\n  publish: git-tags\nrollouts: "0 0 1 1 *"\n' > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] && printf 'respond:\n  rollout: "off"\n' >> "$tree/terragucci.yml"
+  out="$(cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu 2>&1)" || { echo "$out" >&2; stop; return; }
+  if [ -f "$tree/$wf" ]; then log "init wrote $wf"; else log "init wrote no $wf"; fi
   ( cd "$tree" && git init -q -b main && git remote add origin "$remote" && git add -A \
     && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat: three roots on modules/network 0.1.0" \
     && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m "modules/network 0.1.0" \
-    && git push -q origin refs/tags/modules/network/v0.1.0 main ) 2>/dev/null || { log "could not push the repo"; drop_work "$work"; return 1; }
+    && git push -q origin refs/tags/modules/network/v0.1.0 main ) 2>/dev/null || { log "could not push the repo"; stop; return; }
   sha="$(git -C "$tree" rev-parse HEAD)"
   wait_run "$repo" "$sha"
-  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; stop; return; }
 
   # A new module version, published by tf-publish as a git tag.
   printf '\noutput "version" {\n  value = "0.2.0"\n}\n' >> "$tree/modules/network/main.tf"
   ( cd "$tree" && git add -A && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat(network): a version output" \
-    && git push -q origin main ) 2>/dev/null || { drop_work "$work"; return 1; }
+    && git push -q origin main ) 2>/dev/null || { stop; return; }
   wait_run "$repo" "$(git -C "$tree" rev-parse HEAD)"
-  (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" publish) >&2 || { drop_work "$work"; return 1; }
+  (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" publish) >&2 || { stop; return; }
 
   ro() { (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout modules/network "$@" 2>&1); }
-  out="$(ro)" || { echo "$out" >&2; drop_work "$work"; return 1; }
+  out="$(ro)" || { echo "$out" >&2; stop; return; }
   echo "$out" >&2
   grep -q "modules/network 0.1.0 -> 0.2.0 (newest published: tag modules/network/v0.2.0): would-open" <<<"$out" \
-    || { log "the dry run did not find 0.2.0 on its own"; drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && mode=dry-run
+    || { log "the dry run did not find 0.2.0 on its own"; stop; return; }
 
-  pr_for() { api "$URL/api/v1/repos/$repo/pulls?state=all&limit=50" | jq -r --arg b "terragucci/rollout/modules-network-0.2.0/wave-$1" '.[] | select(.head.ref == $b) | .number' | head -1; }
+  pr_for() { branch_pr "$repo" "$b-$1"; }
+  # The rollout job, once, as its schedule runs it.
+  rollout_job() {
+    dispatched() { api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -c '.workflow_runs // []'; }
+    if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
+        "$URL/api/v1/repos/$repo/actions/workflows/terragucci-rollout.yml/dispatches" 2>/dev/null)"; then
+      run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
+      deadline=$(( $(date +%s) + TIMEOUT )); status=""
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        status="$(dispatched | jq -r --arg r "${run:-0}" '[.[] | select($r == "0" or .id == ($r | tonumber))] | (.[0].status // "")')"
+        case "$status" in success|failure|cancelled|skipped) break ;; esac
+        sleep 3
+      done
+      log "the rollout job ended '${status:-unknown}'"
+      [ "$status" = success ] || { [ -n "$run" ] && print_logs "$repo" "$run" >&2; }
+    else
+      log "Forgejo has no rollout workflow to run in $repo"
+    fi
+  }
   local wave expect=("" "dev/app/main.tf" "prod/net/main.tf" "prod/app/main.tf")
   for wave in 1 2 3; do
-    out="$(ro --mode "$mode")"; rc=$?
-    echo "$out" >&2
+    case $wave in
+      1)
+        if [ -n "${BREAK:-}" ]; then
+          out="$(ro --mode dry-run)"; echo "$out" >&2
+          if [ -z "$(pr_for 1)" ]; then caught="dry-run"; log "caught: the dry run opened no pull request for wave 1"
+          else log "missed: the dry run opened wave 1's pull request"; drop_work "$work"; return 0; fi
+        fi
+        out="$(ro --mode apply)"; echo "$out" >&2 ;;
+      2)
+        rollout_job
+        if [ -n "${BREAK:-}" ]; then
+          drop_work "$work"
+          [ -z "$(pr_for 2)" ] || { log "missed: wave 2 opened with respond.rollout off"; return 0; }
+          log "caught: with respond.rollout off the dispatch opened no wave 2; caught $caught and rollout-job"
+          return 1
+        fi ;;
+      3)
+        out="$(ro --mode apply)"; echo "$out" >&2 ;;
+    esac
     pr="$(pr_for "$wave")"
-    [ -n "$pr" ] || { log "wave $wave: no pull request opened"; drop_work "$work"; return 1; }
-    files="$(api "$URL/api/v1/repos/$repo/pulls/$pr/files" | jq -r '[.[].filename] | join(",")')"
-    [ "$files" = "${expect[$wave]}" ] || { log "wave $wave's pull request changes '$files', not ${expect[$wave]}"; drop_work "$work"; return 1; }
+    [ -n "$pr" ] || { log "wave $wave: no pull request opened"; stop; return; }
+    files="$(pr_files "$repo" "$pr")"
+    [ "$files" = "${expect[$wave]}" ] || { log "wave $wave's pull request changes '$files', not ${expect[$wave]}"; stop; return; }
     # Open: the next run waits and opens nothing.
-    out="$(ro --mode "$mode")"; rc=$?
-    [ $rc = 3 ] && [ -z "$(pr_for $((wave + 1)))" ] || { echo "$out" >&2; log "wave $wave open: exit $rc, or the next wave opened"; drop_work "$work"; return 1; }
+    out="$(ro --mode apply)"; rc=$?
+    [ $rc = 3 ] && [ -z "$(pr_for $((wave + 1)))" ] || { echo "$out" >&2; log "wave $wave open: exit $rc, or the next wave opened"; stop; return; }
     api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge"
     sha="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merge_commit_sha)"
-    # Merged, apply not yet reported: still nothing opens.
-    out="$(ro --mode "$mode")"; rc=$?
-    if [ -n "$(pr_for $((wave + 1)))" ]; then
-      n="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context | test("/ apply"))] | max_by(.id) | .status // "none"')"
-      [ "$n" = success ] || { echo "$out" >&2; log "wave $((wave + 1)) opened while wave $wave's apply was '$n'"; drop_work "$work"; return 1; }
+    # Merged, apply not yet reported: still nothing opens. Not after wave 1,
+    # whose next wave only the rollout job may open.
+    if [ $wave != 1 ]; then
+      out="$(ro --mode apply)"
+      if [ -n "$(pr_for $((wave + 1)))" ]; then
+        n="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context | test("/ apply"))] | max_by(.id) | .status // "none"')"
+        [ "$n" = success ] || { echo "$out" >&2; log "wave $((wave + 1)) opened while wave $wave's apply was '$n'"; stop; return; }
+      fi
     fi
-    wait_run "$repo" "$sha"
-    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave $wave's apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
+    wait_run "$repo" "$sha" push
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave $wave's apply ended $RUN_STATUS"; stop; return; }
+    # Wave 2 is the rollout job's to open, so it is not open before the job runs.
+    if [ $wave = 1 ] && [ -n "$(pr_for 2)" ]; then log "wave 2 opened before the rollout job ran"; stop; return; fi
   done
-  out="$(ro --mode "$mode")"; rc=$?
+  out="$(ro --mode apply)"; rc=$?
   echo "$out" >&2
   drop_work "$work"
   [ $rc = 0 ] && grep -q ": complete" <<<"$out" || { log "after three waves the rollout is not complete (exit $rc)"; return 1; }
-  log "0.2.0 found from its tag; three waves, one pull request each moving only its root, each opened only after the last applied"
+  log "0.2.0 found from its tag; three waves, one pull request each moving only its root, each opened only after the last applied, wave 2 by one run of the rollout job"
 }
 
 # ── responses to pipeline events ──────────────────────────────────────────
@@ -14725,22 +14771,27 @@ YML
   return $rc
 }
 
-claim_rollout/provider() {
-  # A repo whose root app locks hashicorp/external at 2.3.4 (pinned exactly
-  # in required_providers) and hashicorp/aws at 6.67.0. rollout --provider
-  # hashicorp/external 2.3.5 --mode apply, run in the tofu CI image, opens one
-  # pull request that changes app/.terraform.lock.hcl and app/main.tf: the
-  # external entry and its constraint are at 2.3.5, and the aws entry is the
-  # same text as before.
-  # BREAK: the rollout runs as a dry run, so no pull request opens.
-  log() { echo "[smoke rollout-provider] $*" >&2; }
+claim_rollout/pins() {
+  # One repo, no pipeline, three roots each pinning at a kind of its own:
+  # app locks hashicorp/external at 2.3.4 (pinned exactly in
+  # required_providers) and hashicorp/aws at 6.67.0; dev/oci calls
+  # modules/network from an OCI registry pinned ?tag=1.3.0; dev/reg calls
+  # acme/network/aws from a registry with version = "1.3.0". Three rollouts,
+  # each --mode apply in the tofu CI image, open one pull request each, and
+  # each changes its own root alone:
+  #   rollout --provider hashicorp/external 2.3.5 changes
+  #     app/.terraform.lock.hcl and app/main.tf: the external entry and its
+  #     constraint are at 2.3.5, and the aws entry is the same text as before;
+  #   rollout modules/network 1.4.0 ends the OCI source ?tag=1.4.0;
+  #   rollout acme/network/aws 1.4.0 says version = "1.4.0".
+  # BREAK: the rollouts run as dry runs, so no pull request opens.
+  log() { echo "[smoke rollout-pins] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/rollout-provider" mode=apply out pr sha lock aws_before aws_after files rc=0
-  local branch="terragucci/rollout/hashicorp-external-2.3.5/wave-1"
+  local work repo="$USER/rollout-pins" tree mode=apply out want pr args branch files line sha lock aws_before aws_after i rc=0
   [ -n "${BREAK:-}" ] && mode=dry-run
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  rollout_repo rollout-provider || return 1
+  rollout_repo rollout-pins || return 1
   respond_tree "$work" "$repo" 'terraform {
   required_providers {
     aws = {
@@ -14754,153 +14805,42 @@ claim_rollout/provider() {
   }
   backend "local" {}
 }'
-  rm -f "$work/tree/app/.terraform.lock.hcl"
-  in_image "$work/tree" sh -c 'cd app && tofu providers lock -no-color >/dev/null' >&2 || { log "could not lock the providers"; return 1; }
-  clean_mounted "$work/tree"
-  lock="$work/tree/app/.terraform.lock.hcl"
+  tree="$work/tree"
+  rm -f "$tree/app/.terraform.lock.hcl"
+  in_image "$tree" sh -c 'cd app && tofu providers lock -no-color >/dev/null' >&2 || { log "could not lock the providers"; return 1; }
+  clean_mounted "$tree"
+  lock="$tree/app/.terraform.lock.hcl"
   grep -q 'provider "registry.opentofu.org/hashicorp/external"' "$lock" || { log "the lock file has no external entry"; return 1; }
   aws_before="$(awk '/^provider "registry.opentofu.org\/hashicorp\/aws"/,/^}/' "$lock")"
-  push_tree "$work/tree" "$repo" main "app locks external 2.3.4 and aws 6.67.0" >/dev/null || return 1
-  out="$(in_image "$work/tree" terragucci rollout --provider hashicorp/external 2.3.5 --mode "$mode" 2>&1)" || true
-  echo "$out" >&2
-  pr="$(branch_pr "$repo" "$branch")"
-  [ -n "$pr" ] || { log "no pull request from $branch"; drop_work "$work"; return 1; }
-  files="$(pr_files "$repo" "$pr")"
-  [ "$files" = "app/.terraform.lock.hcl,app/main.tf" ] || { log "the pull request changes $files"; rc=1; }
-  sha="$(remote_head "$repo" "$branch")"
-  file_at "$repo" "$branch" "$sha" app/.terraform.lock.hcl > "$work/new.lock" || { log "cannot read the lock file on $branch"; rc=1; }
-  awk '/^provider "registry.opentofu.org\/hashicorp\/external"/,/^}/' "$work/new.lock" | grep -q 'version *= "2.3.5"' || { log "external is not at 2.3.5 in the new lock file"; rc=1; }
-  aws_after="$(awk '/^provider "registry.opentofu.org\/hashicorp\/aws"/,/^}/' "$work/new.lock")"
-  [ "$aws_after" = "$aws_before" ] || { log "the aws entry of the lock file moved"; rc=1; }
-  file_at "$repo" "$branch" "$sha" app/main.tf | grep -q 'version = "2.3.5"' || { log "the exact constraint of external did not move to 2.3.5"; rc=1; }
-  drop_work "$work"
-  [ $rc = 0 ] && log "pull request $pr moves external to 2.3.5 in the lock file and its constraint, and leaves aws as it was"
-  return $rc
-}
-
-claim_rollout/pins() {
-  # A repo with two roots: dev/oci calls modules/network from an OCI registry
-  # pinned ?tag=1.3.0, and dev/reg calls acme/network/aws from a registry with
-  # version = "1.3.0". rollout modules/network 1.4.0 and rollout
-  # acme/network/aws 1.4.0, each with --mode apply, open one pull request each:
-  # the OCI source ends ?tag=1.4.0 and the registry call says version =
-  # "1.4.0", each in the shape it had, and each changes its own root alone.
-  # BREAK: the rollouts run as dry runs, so no pull request opens.
-  log() { echo "[smoke rollout-pins] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/rollout-pins" tree mode=apply out want pr name branch file line sha rc=0
-  [ -n "${BREAK:-}" ] && mode=dry-run
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  rollout_repo rollout-pins || return 1
-  tree="$work/tree"
   mkdir -p "$tree/dev/oci" "$tree/dev/reg"
   printf 'terraform {\n  backend "local" {}\n}\n\nmodule "network" {\n  source = "oci://registry.example.com/acme/modules/network?tag=1.3.0"\n  name   = "oci"\n}\n' > "$tree/dev/oci/main.tf"
   printf 'terraform {\n  backend "local" {}\n}\n\nmodule "network" {\n  source  = "acme/network/aws"\n  version = "1.3.0"\n  name    = "reg"\n}\n' > "$tree/dev/reg/main.tf"
-  printf 'forge: forgejo\nbinary: tofu\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' "$URL" "$repo" > "$tree/terragucci.yml"
-  ( cd "$tree" && git init -q -b main && git remote add origin "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" ) || return 1
-  push_tree "$tree" "$repo" main "two roots on two pin kinds" >/dev/null || return 1
+  push_tree "$tree" "$repo" main "three roots on three pin kinds" >/dev/null || return 1
   # Forgejo marks a repo not empty a moment after its first push, and until then
   # answers 404 for its pull requests, which the rollout would take for a failure.
-  local i; for i in $(seq 1 30); do api -o /dev/null "$URL/api/v1/repos/$repo/pulls?state=all&limit=1" 2>/dev/null && break; sleep 1; done
-  for want in "modules/network|terragucci/rollout/modules-network-1.4.0/wave-1|dev/oci/main.tf|source = \"oci://registry.example.com/acme/modules/network?tag=1.4.0\"" \
-              "acme/network/aws|terragucci/rollout/acme-network-aws-1.4.0/wave-1|dev/reg/main.tf|version = \"1.4.0\""; do
-    IFS='|' read -r name branch file line <<<"$want"
-    out="$(cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout "$name" 1.4.0 --mode "$mode" 2>&1)" || true
+  for i in $(seq 1 30); do api -o /dev/null "$URL/api/v1/repos/$repo/pulls?state=all&limit=1" 2>/dev/null && break; sleep 1; done
+  for want in "--provider hashicorp/external 2.3.5|terragucci/rollout/hashicorp-external-2.3.5/wave-1|app/.terraform.lock.hcl,app/main.tf|version = \"2.3.5\"" \
+              "modules/network 1.4.0|terragucci/rollout/modules-network-1.4.0/wave-1|dev/oci/main.tf|source = \"oci://registry.example.com/acme/modules/network?tag=1.4.0\"" \
+              "acme/network/aws 1.4.0|terragucci/rollout/acme-network-aws-1.4.0/wave-1|dev/reg/main.tf|version = \"1.4.0\""; do
+    IFS='|' read -r args branch files line <<<"$want"
+    # shellcheck disable=SC2086
+    out="$(in_image "$tree" terragucci rollout $args --mode "$mode" 2>&1)" || true
     echo "$out" >&2
     pr="$(branch_pr "$repo" "$branch")"
-    [ -n "$pr" ] || { log "$name: no pull request from $branch"; rc=1; continue; }
-    [ "$(pr_files "$repo" "$pr")" = "$file" ] || { log "$name: the pull request changes $(pr_files "$repo" "$pr"), not $file"; rc=1; }
+    [ -n "$pr" ] || { log "$args: no pull request from $branch"; rc=1; continue; }
+    [ "$(pr_files "$repo" "$pr")" = "$files" ] || { log "$args: the pull request changes $(pr_files "$repo" "$pr"), not $files"; rc=1; }
     sha="$(remote_head "$repo" "$branch")"
-    file_at "$repo" "$branch" "$sha" "$file" | grep -qF "$line" || { log "$name: $file on $branch does not hold $line"; rc=1; }
+    file_at "$repo" "$branch" "$sha" "${files##*,}" | grep -qF "$line" || { log "$args: ${files##*,} on $branch does not hold $line"; rc=1; }
+    if [ "${args%% *}" = --provider ]; then
+      file_at "$repo" "$branch" "$sha" app/.terraform.lock.hcl > "$work/new.lock" || { log "cannot read the lock file on $branch"; rc=1; continue; }
+      awk '/^provider "registry.opentofu.org\/hashicorp\/external"/,/^}/' "$work/new.lock" | grep -q 'version *= "2.3.5"' || { log "external is not at 2.3.5 in the new lock file"; rc=1; }
+      aws_after="$(awk '/^provider "registry.opentofu.org\/hashicorp\/aws"/,/^}/' "$work/new.lock")"
+      [ "$aws_after" = "$aws_before" ] || { log "the aws entry of the lock file moved"; rc=1; }
+    fi
   done
   drop_work "$work"
-  [ $rc = 0 ] && log "the OCI tag and the registry version each moved to 1.4.0 in its own shape, one pull request each"
+  [ $rc = 0 ] && log "external moved to 2.3.5 in the lock file and its constraint with aws left as it was, and the OCI tag and the registry version each moved to 1.4.0 in its own shape, one pull request each"
   return $rc
-}
-
-claim_rollout/continue() {
-  # One repo, dev/app (the canary) and prod/app on modules/network 0.1.0 by
-  # git tag, with rollouts set and token_env naming a repo secret that holds
-  # the admin's token. init writes the rollout workflow beside the pipeline.
-  # 0.2.0 is tagged and rollout --mode apply opens wave 1 (dev/app). It is
-  # merged and its push run applies. Then the rollout workflow runs once, as
-  # its schedule would, and wave 2's pull request (prod/app alone) must be
-  # open when that run ends: no rollout command was run by hand after wave 1.
-  # The workflow's cron is a day a year, so only the dispatch runs it.
-  # BREAK: respond.rollout: off, so init writes no rollout workflow, the
-  # dispatch has nothing to run, and wave 2 never opens; the check is made
-  # once, right after the dispatch, never by waiting.
-  log() { echo "[smoke rollout-continue] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/rollout-continue" tree out pr sha run status deadline wf=".forgejo/workflows/terragucci-rollout.yml"
-  local b1="terragucci/rollout/modules-network-0.2.0/wave-1" b2="terragucci/rollout/modules-network-0.2.0/wave-2"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  rollout_repo rollout-continue || return 1
-  api -o /dev/null -H 'content-type: application/json' -X PUT -d "{\"data\":\"$TOKEN\"}" "$URL/api/v1/repos/$repo/actions/secrets/TERRAGUCCI_FORGEJO_TOKEN" \
-    || { log "could not set the TERRAGUCCI_FORGEJO_TOKEN secret"; return 1; }
-  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
-  tree="$work/tree"
-  local source="git::http://forgejo:3000/$repo.git//modules/network?ref=modules/network/v0.1.0" r
-  # The module first, with no pipeline, so its 0.1.0 tag is there before any run reads it.
-  mkdir -p "$tree/modules/network" "$tree/dev/app" "$tree/prod/app"
-  printf 'variable "name" {}\n\noutput "name" {\n  value = var.name\n}\n' > "$tree/modules/network/main.tf"
-  ( cd "$tree" && git init -q -b main && git remote add origin "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" ) || { drop_work "$work"; return 1; }
-  push_tree "$tree" "$repo" main "feat: modules/network 0.1.0" >/dev/null || { drop_work "$work"; return 1; }
-  ( cd "$tree" && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m "modules/network 0.1.0" \
-    && git push -q origin refs/tags/modules/network/v0.1.0 ) 2>/dev/null || { log "could not push the 0.1.0 tag"; drop_work "$work"; return 1; }
-  for r in dev/app prod/app; do
-    printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "rollout-continue/%s.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nmodule "network" {\n  source = "%s"\n  name   = "%s"\n}\n' "${r%/app}" "$source" "${r%/app}" > "$tree/$r/main.tf"
-  done
-  printf 'binary: tofu\nforge: forgejo\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nwaves:\n  canary: ["dev/*"]\nrollouts: "0 0 1 1 *"\n' > "$tree/terragucci.yml"
-  [ -n "${BREAK:-}" ] && printf 'respond:\n  rollout: "off"\n' >> "$tree/terragucci.yml"
-  out="$(cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu 2>&1)" || { echo "$out" >&2; drop_work "$work"; return 1; }
-  echo "$out" >&2
-  if [ -f "$tree/$wf" ]; then log "init wrote $wf"; else log "init wrote no $wf"; fi
-  sha="$(push_tree "$tree" "$repo" main "feat: two roots on modules/network 0.1.0")" || { drop_work "$work"; return 1; }
-  wait_run "$repo" "$sha"
-  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
-
-  # 0.2.0 of the module, tagged; then wave 1, opened by hand as the guide says.
-  printf '\noutput "version" {\n  value = "0.2.0"\n}\n' >> "$tree/modules/network/main.tf"
-  sha="$(push_tree "$tree" "$repo" main "feat(network): a version output")" || { drop_work "$work"; return 1; }
-  ( cd "$tree" && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.2.0 -m "modules/network 0.2.0" \
-    && git push -q origin refs/tags/modules/network/v0.2.0 ) 2>/dev/null || { log "could not push the 0.2.0 tag"; drop_work "$work"; return 1; }
-  wait_run "$repo" "$sha"
-  out="$(cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout modules/network 0.2.0 --mode apply 2>&1)" || true
-  echo "$out" >&2
-  pr="$(branch_pr "$repo" "$b1")"
-  [ -n "$pr" ] || { log "rollout opened no wave 1"; drop_work "$work"; return 1; }
-  [ "$(pr_files "$repo" "$pr")" = "dev/app/main.tf" ] || { log "wave 1 changes $(pr_files "$repo" "$pr"), not dev/app/main.tf"; drop_work "$work"; return 1; }
-  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" \
-    || { log "could not merge wave 1"; drop_work "$work"; return 1; }
-  sha="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merge_commit_sha)"
-  wait_run "$repo" "$sha" push
-  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave 1's apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
-  [ -z "$(branch_pr "$repo" "$b2")" ] || { log "wave 2 opened before the rollout job ran"; drop_work "$work"; return 1; }
-
-  # The rollout job, once, as its schedule runs it. Then wave 2 is open, or it never will be.
-  dispatched() { api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -c '.workflow_runs // []'; }
-  if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
-      "$URL/api/v1/repos/$repo/actions/workflows/terragucci-rollout.yml/dispatches" 2>/dev/null)"; then
-    run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
-    deadline=$(( $(date +%s) + TIMEOUT )); status=""
-    while [ "$(date +%s)" -lt "$deadline" ]; do
-      status="$(dispatched | jq -r --arg r "${run:-0}" '[.[] | select($r == "0" or .id == ($r | tonumber))] | (.[0].status // "")')"
-      case "$status" in success|failure|cancelled|skipped) break ;; esac
-      sleep 3
-    done
-    log "the rollout job ended '${status:-unknown}'"
-    [ "$status" = success ] || { [ -n "$run" ] && print_logs "$repo" "$run" >&2; }
-  else
-    log "Forgejo has no rollout workflow to run in $repo"
-  fi
-  pr="$(branch_pr "$repo" "$b2")"
-  [ -n "$pr" ] || { log "wave 1 merged and applied, and the rollout job opened no wave 2"; drop_work "$work"; return 1; }
-  [ "$(pr_files "$repo" "$pr")" = "prod/app/main.tf" ] || { log "wave 2 changes $(pr_files "$repo" "$pr"), not prod/app/main.tf"; drop_work "$work"; return 1; }
-  drop_work "$work"
-  log "wave 1 merged and applied; one run of the rollout job opened wave 2 (#$pr, prod/app alone) with no rollout run by hand"
 }
 
 # ── policy engines and Terragrunt ─────────────────────────────────────────
@@ -21262,7 +21202,7 @@ report/highlight       ex after=boot/tofu weight=300
 tips/tofu            ex after=boot/tofu weight=300
 reconcile/tofu       runner self! weight=300
 reconcile/mixed self! weight=60
-rollout/tofu         runner self! weight=250
+rollout/tofu         runner self! weight=500
 linked/fresh      ex after=boot/tofu weight=250
 waves/tofu           runner self! weight=200
 linked/states   runner self! weight=260
@@ -21411,9 +21351,7 @@ security/fork         runner self! weight=250
 report/sensitive  weight=90
 approval/signer-trust         runner self! weight=250
 rollout/control      runner self! weight=400
-rollout/provider     self! weight=120
-rollout/pins         self! weight=80
-rollout/continue     runner self! weight=300
+rollout/pins         self! weight=180
 policy/opa           weight=150
 policy/hcp           weight=150
 policy/hcl           weight=150
