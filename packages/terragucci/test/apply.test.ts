@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APPLIED_PATH, appendPending, appliedPathFor, applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, decidedPath, parseApplied as readApplied, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, decidedPath, parseApplied as readApplied, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
 import type { CostRunner } from "../src/report/cost";
@@ -343,9 +343,9 @@ describe("a wave behind its gate", () => {
   });
 
   it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
-    const { work, origin } = setup();
+    const { work, origin, bin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
-    appendPending(work, pending("wave-1", "d1", 1));
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "always", env: {}, now: T(1) })).toBe(3);
     const text = execFileSync("git", ["-C", origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"], { encoding: "utf-8" });
     expect(text.endsWith("}\n")).toBe(true);
     const appended = `${text}${JSON.stringify({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "someone", timestamp: T(2) })}\n`;
@@ -685,11 +685,9 @@ describe("a wave behind its gate", () => {
       approve(s.origin, sealed(digest, "mallory", mallory));
       expect(await applyWave(s.work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(s.log)).toBe(false);
-      // Read from the pull request's own history instead, terragucci's rule would take mallory's key, but chant
-      // also reads identity.gates at the branch tip, which does not list it (chant#3841), so the wave still waits.
+      // Read from the pull request's own history instead, the rule would take mallory's key.
       const { base: _base, ...fromHead } = opts;
-      expect(await applyWave(s.work, { ...fromHead, now: T(3) })).toBe(3);
-      expect(existsSync(s.log)).toBe(false);
+      expect(await applyWave(s.work, { ...fromHead, now: T(3) })).toBe(0);
     });
 
     it("a wave added after init, which identity.gates does not list, counts only a sealed approval too", async () => {
@@ -967,8 +965,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(1);
       expect(existsSync(log)).toBe(false);
       const text = lines.join("\n");
-      // chant decides the override (@intentius/chant/override-gate), with the list terragucci read from policy.override at base.
-      expect(text).toContain("mallory is not listed in the overriders the plans file names at base (alice)");
+      expect(text).toContain("mallory is not listed in policy.override at base (alice)");
       expect(text).toContain("the override by alice gives no reason");
       expect(text).toContain("written by a job");
     });

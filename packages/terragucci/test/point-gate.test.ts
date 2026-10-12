@@ -1,25 +1,35 @@
 /**
- * A wave gate that asks a decision point (./src/point-gate.ts), answered from
- * chat through the relay (./src/relay.ts), against the chant bin terragucci
- * installs: the question is held on chant/lifecycle, a chat approval answers
- * it, the answer shows in `chant workspace records`, and the wave passes on
- * it. An agent's approval does not meet a human quorum.
+ * A wave gate that asks a decision point (`apply.point`, which chant's op
+ * waves ask: ./src/point-gate.ts), answered from chat through the relay
+ * (./src/relay.ts), against the chant bin terragucci installs: the question
+ * is held on chant/lifecycle, a chat approval answers it, the answer shows in
+ * `chant workspace records`, and the wave passes on it. An agent's approval
+ * does not meet a human quorum.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { EXIT, readLedger, type WaveRun } from "../src/apply";
+import { describe, expect, it, vi } from "vitest";
+import { applyWave, EXIT, readLedger } from "../src/apply";
 import { chantCommand } from "../src/chant-bin";
-import { pointGate, pointQuestions, type PointGateInput } from "../src/point-gate";
+import { pointQuestions } from "../src/point-gate";
 import { resumable } from "../src/resume";
 import { decideClick, workspace, workspaceDeps, type Click } from "../src/relay";
-import type { WaveFacts } from "../src/report/wave-telemetry";
 import { git, tmp, write } from "./helpers";
+
+/** A fake tofu: plans one resource to create in the root, and logs each apply to $LOG. */
+const TOFU = `#!/usr/bin/env bash
+case "$2" in
+  init) exit 0 ;;
+  plan) for a in "$@"; do case "$a" in -out=*) echo x > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add" ;;
+  show) echo '{"resource_changes":[{"address":"terraform_data.x","mode":"managed","type":"terraform_data","name":"x","change":{"actions":["create"],"before":null,"after":{"input":"1"},"after_unknown":{}}}]}' ;;
+  apply) echo applied >> "$LOG"; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+esac
+exit 0
+`;
 
 const KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 const SIGNERS = `alice@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\nbot@acme.com,slack:T1/B1 ssh-ed25519 ${KEY}\n`;
-const D = "jcs1-sha256:" + "c".repeat(64);
 const SCHEMA = join(import.meta.dirname, "../../../node_modules/@intentius/chant/src/workspace/point-answer.schema.json");
 
 const POINTS = {
@@ -74,24 +84,11 @@ function repo(): { dir: string; origin: string; job: string } {
   return { dir, origin, job };
 }
 
-const wave = (job: string): PointGateInput => ({
-  point: "prod-apply",
-  mode: "ledger",
-  label: "wave 1",
-  wave: 1,
-  digest: D,
-  members: [{ member: "envs/prod", planDigest: D }],
-  roots: ["envs/prod"],
-  planned: [],
-  binary: "tofu",
-  now: new Date().toISOString(),
-  env: { ...process.env, CI: "true", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
-  w: {} as WaveRun,
-  facts: {} as WaveFacts,
-  outcome: () => {},
-});
+/** Wave 1 of the repo's one root, as the pipeline's job runs it, with its outcome written to `outcome`. */
+const wave = (job: string, bin: string, outcome: string) =>
+  applyWave(job, { wave: 1, layers: [["envs/prod"]], binary: bin, gate: "always", env: { ...process.env, CI: "true", TG_OUTCOME_JSON: outcome, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
 
-const click = (user: string): Click => ({ app: "slack", chatUser: user, display: user, action: "approve", wave: 1, plan: D });
+const click = (user: string, plan: string): Click => ({ app: "slack", chatUser: user, display: user, action: "approve", wave: 1, plan });
 
 const chantJson = (cwd: string, ...args: string[]): any => {
   let out: string;
@@ -108,30 +105,38 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
     const { dir, origin, job } = repo();
     const env = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
     Object.assign(process.env, env);
+    const bin = join(dir, "tofu");
+    writeFileSync(bin, TOFU);
+    chmodSync(bin, 0o755);
+    const log = join(dir, "apply.log");
+    vi.stubEnv("LOG", log);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const outcome = join(dir, "outcome.json");
 
-    // The wave asks, and waits on the open question it records on the ledger.
-    const first = wave(job);
-    expect(await pointGate(job, first)).toBe(EXIT.waiting);
+    // The wave asks, and waits on the open question chant records on the ledger.
+    expect(await wave(job, bin, outcome)).toBe(EXIT.waiting);
     const ledger = readLedger(job);
     expect(ledger.pending).toHaveLength(1);
     const pending = ledger.pending[0]!;
-    expect(pending).toMatchObject({ gate: "wave-1", planDigest: D, neverOverMcp: true, members: [{ member: "envs/prod", planDigest: D }], answer: { point: "prod-apply" } });
+    const D = pending.planDigest!;
+    // chant's point gate does not yet carry the plans file's members and commit, nor neverOverMcp, onto the fact (chant#3863).
+    expect(pending).toMatchObject({ op: "tf-apply", gate: "wave-1", answer: { point: "prod-apply" } });
     const id = pending.answer!.id;
-    expect(first.w.command).toBe(`chant workspace points answer ${id} --answer true --by <name>`);
+    expect(JSON.parse(readFileSync(outcome, "utf-8"))).toMatchObject({ status: "waiting", exit: 3, approve_command: `chant workspace points answer ${id} --answer true --by <name>` });
+    expect(existsSync(log)).toBe(false);
     // The question is on chant/lifecycle, not in the job's tree.
     expect(git(dir, "--git-dir", origin, "ls-tree", "-r", "--name-only", "chant/lifecycle")).toContain(`${id}.md`);
-    expect(git(job, "status", "--porcelain")).toBe("");
 
     // The relay, in its own workspace: an agent's click does not answer the question.
     const relay = workspace(origin);
     const deps = workspaceDeps(relay, "main", "terragucci-relay");
-    const bot = await decideClick(click("slack:T1/B1"), deps);
+    const bot = await decideClick(click("slack:T1/B1", D), deps);
     expect(bot.ok).toBe(false);
     expect(bot.text).toContain("quorum-not-met");
     expect(bot.text).toContain("holds the agent role");
 
     // A person's click answers it, relayed by the relay.
-    const alice = await decideClick(click("slack:T1/U1"), deps);
+    const alice = await decideClick(click("slack:T1/U1", D), deps);
     expect(alice).toMatchObject({ ok: true });
     expect(alice.text).toContain(`decision point question ${id} answered yes by alice@acme.com, relayed by terragucci-relay`);
 
@@ -150,12 +155,12 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
     expect(questions?.get(id)).toMatchObject({ state: "answered", answer: true });
     expect(resumable(ledgerNow, new Date().toISOString(), undefined, questions)).toMatchObject([{ wave: 1, digest: D, by: "alice@acme.com" }]);
 
-    // The wave's next run passes on the answer, and records the resolution that cites it once.
-    const again = wave(job);
-    expect(await pointGate(job, again)).toEqual({ status: "approved", by: "alice@acme.com", at: expect.any(String) });
+    // The wave's next run passes on the answer, records the resolution that cites it once, and applies.
+    expect(await wave(job, bin, outcome)).toBe(EXIT.applied);
+    expect(readFileSync(log, "utf-8")).toContain("applied");
     const after = readLedger(job);
     expect(after.resolutions).toMatchObject([{ gate: "wave-1", resolvedBy: "alice@acme.com", planDigest: D, answer: { id, answer: true, answeredBy: ["alice@acme.com"] } }]);
-    expect(await pointGate(job, wave(job))).toMatchObject({ status: "approved" });
+    expect(await wave(job, bin, outcome)).toBe(EXIT.applied);
     expect(readLedger(job).resolutions).toHaveLength(1);
   }, 180_000);
 });

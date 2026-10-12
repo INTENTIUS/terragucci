@@ -145,7 +145,7 @@ import { ApplyProgress, progressInterval, progressLine } from "./apply-progress"
 import { readRecords, recordStoreOf } from "./cdf-records";
 import { recordVersions, versionsLine } from "./cdf-history";
 import { planAppliedChanges } from "./report/history";
-import { pointGate } from "./point-gate";
+import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 
@@ -927,8 +927,6 @@ interface WaveJob {
   changes?: ApprovedChange[];
   /** The plans, for the stored report a waiting wave keeps. */
   stored?: () => string;
-  /** Under apply.point, the decision point's question holds the wave (./point-gate.ts). */
-  pointed?: boolean;
   /** The approval chant let the wave through under. */
   approvedBy?: string;
   approvedAt?: string;
@@ -1000,6 +998,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     } catch (e) {
       if (options.gate !== "never") throw e;
     }
+    if (rule?.point && rule.mode !== "ledger") throw new ConfigError(`apply.point is set at base and approval is ${rule.mode}; a wave gate that asks a decision point takes its quorum from the point, so set approval to ledger or drop apply.point`);
     const ctx: WavesContext = { rule, configPath, work };
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
@@ -1012,6 +1011,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
         ...(options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
         call: waveCallArgv,
         migrations: existsSync(join(repo, MIGRATIONS_DIR)),
+        ...(rule?.point ? { point: rule.point } : {}),
       });
       const at = specAtBase(repo, base, writeSpec(repo, spec));
       // A share job applies the plans its wave's job decided on: chant's record, which the pipeline hands over in the decision file.
@@ -1546,7 +1546,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     runs: planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))),
     ...(priced ? { members: [priced] } : {}),
     pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members },
-    ...(j.overriders ? { overriders: j.overriders } : {}),
+    ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });
 
   j.apply = async (outcome, targets) => {
@@ -1947,11 +1947,11 @@ async function policyCheck(
 
 /**
  * What a gated wave settles before chant decides its gate, each recorded on
- * the ledger as the approval chant then counts: under `apply.point` at base,
- * the decision point's answer for this digest (./point-gate.ts); the rest of
- * a stopped apply, which its approval covers (./remainder.ts); and under
- * `approval: pr-review`, the merged pull request's approving review of these
- * plans. Nothing is recorded when an approval of the digest already stands.
+ * the ledger as the approval chant then counts: the rest of a stopped apply,
+ * which its approval covers (./remainder.ts), and under `approval:
+ * pr-review`, the merged pull request's approving review of these plans.
+ * Nothing is recorded when an approval of the digest already stands, nor
+ * under `apply.point`, whose gate chant asks the decision point for.
  */
 async function beforeGate(
   repo: string,
@@ -1967,18 +1967,8 @@ async function beforeGate(
   const env = options.env ?? process.env;
   const name = waveGate(wave);
   const now = new Date().toISOString();
-  // With apply.point at base the gate asks that decision point, and only its answer passes the wave (./point-gate.ts).
-  if (rule.point) {
-    const roots = at.roots ?? planned.map((p) => p.root);
-    const members = at.members ?? planned.filter((p) => p.member).map((p) => p.member!);
-    const pointed = await pointGate(repo, { point: rule.point, mode: rule.mode, label, wave, digest, members, roots, planned, binary: options.binary, now, env, commit: env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim(), w, facts, outcome: (line) => writeOutcome(options.env, line, w) });
-    if (typeof pointed === "number") {
-      j.code = pointed;
-      j.pointed = true;
-      return pointed === EXIT.waiting ? undefined : pointed;
-    }
-    return undefined;
-  }
+  // With apply.point at base chant asks the decision point, and only its answer passes the wave.
+  if (rule.point) return undefined;
   const ledger = readLedger(repo);
   // Under sealed every wave gate needs a seal: a wave added after init is never left open. chant counts only these; the log says why the others do not.
   if (rule.mode === "sealed") {
@@ -2069,6 +2059,15 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
     w.approval = "not-required";
     return EXIT.applied;
   }
+  if (status === "refused" && (d?.refused?.reason as string | undefined) === "point") {
+    // The decision point answered otherwise: nothing applies until the answer is taken back and the point asked again.
+    const answer = d?.point?.answer as { id?: string; answer?: unknown } | undefined;
+    console.log(`${label}: nothing was applied: ${(d?.refused as { message?: string } | undefined)?.message ?? `decision point ${d?.point?.name ?? ""} answered ${JSON.stringify(answer?.answer)}`}`);
+    if (answer?.id) w.command = retractLine(answer.id);
+    writeOutcome(options.env, `wave ${wave}: decision point ${d?.point?.name ?? ctx.rule?.point ?? ""} answered ${JSON.stringify(answer?.answer)}`, w);
+    j.code = EXIT.refused;
+    return EXIT.applied;
+  }
   if (status === "refused") {
     const moved = d?.refused?.reason === "override-moved";
     const runs = d?.refused?.runs ?? [];
@@ -2127,8 +2126,17 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
       console.log(`${label}: the report of these plans was not kept beside the pending fact: ${(e as Error).message}`);
     }
   }
-  // Under apply.point the decision point's question is what waits (beforeGate printed how to answer it).
-  if (j.pointed) return EXIT.applied;
+  // Under apply.point the decision point's question is what waits.
+  const question = d?.point?.question?.id ?? d?.pendingFact?.answer?.id;
+  if (question) {
+    console.log(`${label} waits for decision point ${d?.point?.name ?? ctx.rule?.point ?? ""} to answer question ${question} for digest ${digest}. Read its plans above, then answer it (a chat message's Approve button, through terragucci relay, answers it too):`);
+    console.log(`  ${answerLine(question)}`);
+    console.log("The point's quorum decides; an answer sent over MCP or ACP counts nobody toward it. Then run this job again.");
+    w.command = answerLine(question);
+    writeOutcome(options.env, `wave ${wave} waits: ${w.command}`, w);
+    j.code = EXIT.waiting;
+    return EXIT.applied;
+  }
   const report = j.stored;
   if (j.reviewMoved) {
     const moved = j.reviewMoved;
@@ -2222,13 +2230,8 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
   if (run.command) j.w.command = run.command;
   const what = last ? `migration ${last.name}` : "a migration";
   writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, j.w);
-  if (run.code !== EXIT.waiting || approved) console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
-  // A hold made after another migration applied in this run cannot wait on chant's gate: the next run of the job holds on it.
-  if (run.code === EXIT.waiting && approved) {
-    console.log(`wave 1: ${what} waits on its own gate; run this job again to record it`);
-    j.code = EXIT.failed;
-    return EXIT.failed;
-  }
+  if (run.code !== EXIT.waiting) console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
+  // A hold, also one made after an approved migration applied in this run (the next migration's, chant#3847), waits on chant's decision of its gate.
   // A hold waits on chant's decision of the migration's gate (gateCall); anything else is this wave's own code.
   if (run.code !== EXIT.waiting) j.code = run.code;
   return run.code;
@@ -2551,7 +2554,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     ...(priced ? { members: [priced] } : {}),
     waves: cut.length,
     pending: { description: `${label}: ${changing.map((p) => p.root).join(", ")}`, ...(commit ? { commit } : {}), members },
-    ...(j.overriders ? { overriders: j.overriders } : {}),
+    ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });
 
   /** Apply the saved plans of the units that change, with the steps around them. */

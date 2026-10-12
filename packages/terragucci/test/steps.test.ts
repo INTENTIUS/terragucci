@@ -263,8 +263,7 @@ describe("a wave with steps", () => {
     const line = JSON.stringify({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
     const clone = tmp("tg-approve-");
     git(clone, "clone", "-q", "-b", "chant/lifecycle", origin, ".");
-    // chant's ledger may end without a newline (chant#3849).
-    writeFileSync(join(clone, "_gates/tf-apply.jsonl"), `${readFileSync(join(clone, "_gates/tf-apply.jsonl"), "utf-8").replace(/\n$/, "")}\n${line}\n`);
+    writeFileSync(join(clone, "_gates/tf-apply.jsonl"), readFileSync(join(clone, "_gates/tf-apply.jsonl"), "utf-8") + line + "\n");
     git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "approve");
     git(clone, "push", "-q", "origin", "chant/lifecycle");
     expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
