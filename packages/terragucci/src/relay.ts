@@ -28,7 +28,7 @@
  *      The point's quorum decides whether that principal counts: someone
  *      holding the agent role in the trust policy at base never does, and
  *      neither does the relay. The answer record is on chant/lifecycle, and
- *      the wave passes on it when its job runs again;
+ *      the resume job starts the wave, which passes on it;
  *   4. for Decline, records nothing and says in the thread who declined; the
  *      wave keeps waiting and applies only on an approval.
  *
@@ -236,6 +236,10 @@ export interface Answer {
   text: string;
 }
 
+/** What starts the wave once it may apply: the resume job, or a person. */
+const resumeLine = (resume: number | undefined): string =>
+  resume ? `The resume job applies it within ${resume} minutes.` : "Run its job again, or comment /terragucci apply on its pull request, to apply it.";
+
 /** Decide a click and record what it approves. Never throws: an error is the answer's text. */
 export async function decideClick(click: Click, deps: RelayDeps): Promise<Answer> {
   // A Re-plan button is a link; Slack still tells the relay it was clicked.
@@ -262,11 +266,12 @@ export async function decideClick(click: Click, deps: RelayDeps): Promise<Answer
     if (wave.question) {
       const r = await deps.answer(wave.question, principal);
       if ("error" in r) return { ok: false, text: `Not approved: ${gate} asks a decision point, and its question ${wave.question} was not answered for ${principal}: ${r.error}` };
-      return { ok: true, text: `${gate}: decision point question ${wave.question} answered yes by ${principal}, relayed by ${deps.principal}, for ${wave.digest} and no other plans. Run its job again, or comment /terragucci apply on its pull request, to apply it.` };
+      // The relay's token only pushes chant/lifecycle, so it starts no job, as for an approval: the resume job starts the wave once the answer passes its gate.
+      return { ok: true, text: `${gate}: decision point question ${wave.question} answered yes by ${principal}, relayed by ${deps.principal}, for ${wave.digest} and no other plans. ${resumeLine(rule.resume)}` };
     }
     const timestamp = (deps.now?.() ?? new Date()).toISOString();
     deps.record({ version: 1, kind: "resolution", op: APPLY_OP, gate, resolvedBy: principal, relayedBy: deps.principal, timestamp, planDigest: wave.digest, via: click.app });
-    const next = rule.resume ? `The resume job applies it within ${rule.resume} minutes.` : "Run its job again, or comment /terragucci apply on its pull request, to apply it.";
+    const next = resumeLine(rule.resume);
     return { ok: true, text: `${gate} approved by ${principal}, relayed by ${deps.principal}, for ${wave.digest} and no other plans. ${next}` };
   } catch (e) {
     return { ok: false, text: `Not recorded: ${(e as Error).message}` };

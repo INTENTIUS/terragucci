@@ -168,9 +168,10 @@ The point is declared in the workspace's points file, and must declare `gate.pla
 | Someone clicks Approve | the relay answers the question yes as the clicker's principal, with `--relayed-by` the relay, from the default branch's tip. The relay never counts toward the quorum |
 | The clicker holds the `agent` role in `.chant/trust.json` at base | not counted; with too few people the relay replies `quorum-not-met` and nothing is answered |
 | An agent answers over MCP or ACP | counted for nobody, and refused for a wave gate, whose pending fact is marked never over MCP |
-| The wave's job runs again | the answer passes the gate: the wave records a resolution that cites the answer record, then applies. Any other answer applies nothing (exit 4) |
+| The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) runs | it reads the question's answer, and starts the wave again when the answer passes the gate, as it does for an approval |
+| The wave runs again | the answer passes the gate: the wave records a resolution that cites the answer record, then applies. Any other answer applies nothing (exit 4) |
 
-`chant workspace points` lists the question and its answer, with who answered and who relayed it. `terragucci approve` does not pass a gate that asks a point. The resume job does not start the wave on an answer: run its job again, or comment `/terragucci apply`.
+`chant workspace points` and `chant workspace records` list the question and its answer, with who answered and who relayed it. `terragucci approve` does not pass a gate that asks a point. Without `apply.resume`, run the wave's job again after the answer, or comment `/terragucci apply`.
 
 ## Next
 

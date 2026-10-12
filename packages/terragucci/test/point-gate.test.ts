@@ -10,8 +10,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, readLedger, type WaveRun } from "../src/apply";
-import { chantCommand } from "../src/approve";
-import { pointGate, type PointGateInput } from "../src/point-gate";
+import { chantCommand } from "../src/chant-bin";
+import { pointGate, pointQuestions, type PointGateInput } from "../src/point-gate";
+import { resumable } from "../src/resume";
 import { decideClick, workspace, workspaceDeps, type Click } from "../src/relay";
 import type { WaveFacts } from "../src/report/wave-telemetry";
 import { git, tmp, write } from "./helpers";
@@ -134,12 +135,20 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
     expect(alice).toMatchObject({ ok: true });
     expect(alice.text).toContain(`decision point question ${id} answered yes by alice@acme.com, relayed by terragucci-relay`);
 
-    // The answer record, read from another clone. `chant workspace records` lists a ledger-held answer once chant#3833 lands; `points` does now.
+    // The answer record shows in chant workspace records, read from a fresh clone, which fetches chant/lifecycle itself.
     const reader = join(dir, "reader");
     git(dir, "clone", "-q", origin, reader);
-    git(reader, "fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle");
+    const records = chantJson(reader, "workspace", "records", "--json");
+    const listed = records.kinds.flatMap((k: { records: { id: string }[] }) => k.records).find((r: { id: string }) => r.id === id);
+    expect(listed).toMatchObject({ id, state: "answered", ledger: expect.stringMatching(/^chant\/lifecycle:/) });
     const points = chantJson(reader, "workspace", "points", "--json");
     expect(points.questions.find((q: { id: string }) => q.id === id)).toMatchObject({ state: "answered", answer: true, answeredBy: ["alice@acme.com"], relayedBy: "terragucci-relay", subject: "gate:tf-apply/wave-1" });
+
+    // The resume job, in the job's checkout, sees the answer pass the gate and resumes wave 1.
+    const ledgerNow = readLedger(job);
+    const questions = await pointQuestions(job, ledgerNow);
+    expect(questions?.get(id)).toMatchObject({ state: "answered", answer: true });
+    expect(resumable(ledgerNow, new Date().toISOString(), undefined, questions)).toMatchObject([{ wave: 1, digest: D, by: "alice@acme.com" }]);
 
     // The wave's next run passes on the answer, and records the resolution that cites it once.
     const again = wave(job);
