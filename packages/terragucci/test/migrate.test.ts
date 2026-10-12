@@ -344,12 +344,12 @@ describe("a migration in the audit trail", () => {
     expect(MIGRATE_DONE_FILE).toBe(MIGRATE_DONE);
     expect(MIGRATE_LEDGER_FILE).toBe(MIGRATE_LEDGER);
     const line = JSON.stringify({ version: 1, kind: "migration", op: "tf-migrate", gate: "split-b", timestamp: T(3), planDigest: "jcs1-sha256:" + "a".repeat(64), file_digest: "sha256:f", result: "applied", approvedBy: "alice", roots: [{ root: "one", location: "s3://b/one.tfstate", before: "v1", after: "v2" }] });
-    const [e] = ledgerEntries("p", MIGRATE_DONE_FILE, [{ line, added: true, commit: "c1", author: "terragucci", date: T(3) }]);
+    const [e] = ledgerEntries("p", MIGRATE_DONE_FILE, [{ text: line, commit: "c1", added: { at: T(3), by: "terragucci" } }]);
     expect(e).toMatchObject({ kind: "migration", what: "split-b", who: "alice", result: "applied", at: T(3), evidence: { source: "ledger", path: MIGRATE_DONE_FILE, commit: "c1" } });
     expect(e.detail?.roots).toEqual([{ root: "one", location: "s3://b/one.tfstate", before: "v1", after: "v2" }]);
     // The gate's own lines read as any gate's: a request and an approval of the migration's digest.
     const pending = JSON.stringify({ version: 1, kind: "pending", op: "tf-migrate", gate: "split-b", timestamp: T(1), expiresAt: T(9), planDigest: "d", members: [{ member: "one", planDigest: "x" }] });
-    expect(ledgerEntries("p", MIGRATE_LEDGER_FILE, [{ line: pending, added: true, commit: "c0", author: "t", date: T(1) }])[0]).toMatchObject({ kind: "approval-requested", what: "split-b", detail: { roots: ["one"] } });
+    expect(ledgerEntries("p", MIGRATE_LEDGER_FILE, [{ text: pending, commit: "c0", added: { at: T(1), by: "t" } }])[0]).toMatchObject({ kind: "approval-requested", what: "split-b", detail: { roots: ["one"] } });
   });
 });
 

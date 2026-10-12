@@ -7,14 +7,14 @@ import {
   ledgerEntries,
   missingEntries,
   OVERRIDE_LEDGER_FILE,
-  parseLedgerLog,
   readRecord,
   renderAuditHtml,
   reportEntry,
   reportEntryId,
   summarize,
-  type LedgerChange,
 } from "../src/report/audit";
+import { createHash } from "node:crypto";
+import { gateLedgerLinesFromLog, type GateLedgerLine } from "@intentius/chant/lifecycle/gate-audit";
 import { RUN, smallFixture } from "./report-fixtures";
 
 const D = `sha256:${"a".repeat(64)}`;
@@ -37,18 +37,19 @@ describe("the ledger's history", () => {
   ].join("");
 
   it("reads the lines each commit added and removed, in order", () => {
-    const changes = parseLedgerLog(log);
-    expect(changes.map((c) => [c.commit, c.added, JSON.parse(c.line).resolvedBy ?? "pending"])).toEqual([
+    const changes = gateLedgerLinesFromLog(log);
+    expect(changes.map((c) => [c.commit, !c.removed, JSON.parse(c.text!).resolvedBy ?? "pending"])).toEqual([
       ["c1", true, "pending"],
       ["c2", true, "bob"],
       ["c3", false, "bob"],
       ["c4", true, "carol"],
     ]);
-    expect(changes[2].date).toBe("2026-10-07T16:07:00.000Z");
+    expect(changes[2].removed).toEqual({ at: "2026-10-07T16:07:00.000Z", by: "alice" });
+    expect(changes[1].added).toEqual({ at: "2026-10-07T10:05:00.000Z", by: "bob" });
   });
 
   it("gives a request, each approval with how it was signed, and a revocation with who removed the line", () => {
-    const entries = ledgerEntries(P, APPLY_LEDGER, parseLedgerLog(log), (c) => `https://github.com/acme/infra/commit/${c}`);
+    const entries = ledgerEntries(P, APPLY_LEDGER, gateLedgerLinesFromLog(log), (c) => `https://github.com/acme/infra/commit/${c}`);
     expect(entries.map((e) => [e.kind, e.who, e.result])).toEqual([
       ["approval-requested", null, "waiting"],
       ["approval", "bob", "unsigned"],
@@ -59,13 +60,18 @@ describe("the ledger's history", () => {
     expect(entries[3].detail).toMatchObject({ signer: "carol" });
     expect(entries[2].detail).toMatchObject({ approved_by: "bob" });
     expect(entries[1].evidence).toEqual({ source: "ledger", branch: "chant/lifecycle", path: APPLY_LEDGER, commit: "c2", url: "https://github.com/acme/infra/commit/c2" });
+    // The ids are the ones a record already holds: over the line, and for a revocation the commit that removed it.
+    const sha = (...p: string[]): string => `sha256:${createHash("sha256").update(p.join("\n")).digest("hex")}`;
+    expect(entries[1].id).toBe(sha("ledger", P, APPLY_LEDGER, JSON.stringify(bob)));
+    expect(entries[2].id).toBe(sha("removed", P, APPLY_LEDGER, "c3", JSON.stringify(bob)));
+    expect(entries[1].detail).toMatchObject({ committed_by: "bob" });
     // Built again from the same history, the ids are the same.
-    expect(ledgerEntries(P, APPLY_LEDGER, parseLedgerLog(log)).map((e) => e.id)).toEqual(entries.map((e) => e.id));
+    expect(ledgerEntries(P, APPLY_LEDGER, gateLedgerLinesFromLog(log)).map((e) => e.id)).toEqual(entries.map((e) => e.id));
   });
 
   it("keeps who relayed an approval, and leaves it out when nobody did", () => {
     const relayed = { ...bob, resolvedBy: "github:dana", relayedBy: "chat-bot", timestamp: "2026-10-07T10:06:00.000Z" };
-    const [own, other] = ledgerEntries(P, APPLY_LEDGER, [bob, relayed].map((l, i) => ({ line: JSON.stringify(l), added: true, commit: `r${i}`, author: "x", date: l.timestamp })));
+    const [own, other] = ledgerEntries(P, APPLY_LEDGER, [bob, relayed].map((l, i) => ({ text: JSON.stringify(l), commit: `r${i}`, added: { at: l.timestamp, by: "x" } })));
     expect(other).toMatchObject({ kind: "approval", who: "github:dana", detail: { relayed_by: "chat-bot", committed_by: "x" } });
     expect(own!.detail).not.toHaveProperty("relayed_by");
   });
@@ -73,7 +79,7 @@ describe("the ledger's history", () => {
   it("gives an override its reason, and the rules and plan digest of the denial it answers", () => {
     const denial = { version: 1, kind: "pending", op: "policy-override", gate: "app", timestamp: "2026-10-07T09:00:00.000Z", expiresAt: "2026-10-09T09:00:00.000Z", planDigest: "sha256:o1", members: [{ member: "app", planDigest: "sha256:p1" }], rules: ["main.deny_public"] };
     const dave = { version: 1, kind: "resolution", op: "policy-override", gate: "app", resolvedBy: "dave", timestamp: "2026-10-07T09:30:00.000Z", planDigest: "sha256:o1", note: "the probe goes out" };
-    const changes: LedgerChange[] = [denial, dave].map((l, i) => ({ line: JSON.stringify(l), added: true, commit: `o${i}`, author: "x", date: "2026-10-07T09:00:00.000Z" }));
+    const changes: GateLedgerLine[] = [denial, dave].map((l, i) => ({ text: JSON.stringify(l), commit: `o${i}`, added: { at: "2026-10-07T09:00:00.000Z", by: "x" } }));
     const [requested, override] = ledgerEntries(P, OVERRIDE_LEDGER_FILE, changes);
     expect(requested).toMatchObject({ kind: "override-requested", what: "app", result: "denied", detail: { rules: ["main.deny_public"], plan_digest: "sha256:p1" } });
     expect(override).toMatchObject({ kind: "override", who: "dave", digest: "sha256:o1", result: "unsigned", detail: { reason: "the probe goes out", rules: ["main.deny_public"], plan_digest: "sha256:p1" } });
@@ -87,7 +93,7 @@ describe("a wave report's entry", () => {
       roots: smallFixture().slice(0, 1),
       waves: [{ number: 1, roots: ["envs/dev/orders"], approval: o.approval, setDigest: o.digest, ...(o.refused ? { refused: o.refused } : {}) }],
     });
-  const approvals = ledgerEntries(P, APPLY_LEDGER, [bob, carol].map((l, i) => ({ line: JSON.stringify(l), added: true, commit: `c${i}`, author: "x", date: l.timestamp })));
+  const approvals = ledgerEntries(P, APPLY_LEDGER, [bob, carol].map((l, i) => ({ text: JSON.stringify(l), commit: `c${i}`, added: { at: l.timestamp, by: "x" } })));
   const evidence = { source: "report" as const, bucket: "s3://b", key: "k" };
 
   it("names the newest approval of its gate and digest written before it finished", () => {
@@ -112,7 +118,7 @@ describe("a wave report's entry", () => {
 });
 
 describe("the record", () => {
-  const entries = ledgerEntries(P, APPLY_LEDGER, [pending, bob].map((l, i) => ({ line: JSON.stringify(l), added: true, commit: `c${i}`, author: "x", date: l.timestamp })));
+  const entries = ledgerEntries(P, APPLY_LEDGER, [pending, bob].map((l, i) => ({ text: JSON.stringify(l), commit: `c${i}`, added: { at: l.timestamp, by: "x" } })));
 
   it("keeps every line it holds and appends what it lacks, once", () => {
     const first = appendEntries(readRecord(undefined), missingEntries(readRecord(undefined), entries.slice(0, 1)));
