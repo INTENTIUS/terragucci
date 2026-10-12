@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { appendLifecycle, applyWave, parseLedger } from "../src/apply";
+import { appendLifecycle, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
 import {
   addressMatches,
   applyMigration,
@@ -12,8 +12,10 @@ import {
   lockInfo,
   MIGRATE_DONE,
   MIGRATE_LEDGER,
+  beforeMembers,
   migrateApproveCommand,
   moveResources,
+  movedSinceApproval,
   OVERRIDE_FILE,
   parseMigration,
   planMigration,
@@ -334,6 +336,44 @@ describe("running a migration from wave 1", () => {
     expect(again.records[0]).toMatchObject({ status: "refused", moved: ["one"] });
     expect(names(work, "two")).toEqual(["c"]);
     expect(lines.join("\n")).toContain("the states moved since: one");
+  });
+
+  it("under chant run wave, names the roots whose state moved since the approved digest's pending fact", () => {
+    const fact = (planDigest: string, members: { member: string; planDigest: string }[]) => ({ version: 1 as const, kind: "pending" as const, op: "tf-migrate", gate: "move-backends", timestamp: T(1), expiresAt: T(59), planDigest, members });
+    const approved = [
+      { member: "pg", planDigest: "- sha256:p from - sha256:p0" },
+      { member: "s3", planDigest: "- sha256:s from v1 sha256:s0" },
+      { member: "tfe", planDigest: "- sha256:t from sv-1 sha256:t0" },
+    ];
+    // Each source written again since: another version, or another digest; tfe's source is as it was.
+    const now = [
+      { member: "pg", planDigest: "- sha256:p from - sha256:p1" },
+      { member: "s3", planDigest: "- sha256:s from v2 sha256:s0" },
+      { member: "tfe", planDigest: "- sha256:t from sv-1 sha256:t0" },
+    ];
+    const ledger = { pending: [fact("jcs1-sha256:old", approved), fact("jcs1-sha256:new", now)] };
+    expect(movedSinceApproval(ledger, "move-backends", "jcs1-sha256:old", now, ["pg", "s3", "tfe"])).toEqual(["pg", "s3"]);
+    // Another gate's fact of that digest does not count, and with none to compare every root moved.
+    expect(movedSinceApproval(ledger, "split-moved", "jcs1-sha256:old", now, ["pg", "s3", "tfe"])).toEqual(["pg", "s3", "tfe"]);
+    expect(movedSinceApproval(ledger, "move-backends", undefined, now, ["pg", "s3", "tfe"])).toEqual(["pg", "s3", "tfe"]);
+  });
+
+  it("under chant run wave, wave 1 refused for a state written after the approval names the root", async () => {
+    const { work } = repo();
+    const log = () => {};
+    // The approved digest's pending fact, with its members, as the ledger keeps it.
+    const first = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(1), log });
+    approve(work, "split-b", first.records[0].digest, T(2));
+    writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
+    // chant finds no approval of the new digest, only alice's of the old one: the hook holds on the new digest.
+    const file = join(tmp(), "hold.json");
+    const held = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file }, now: T(3), log });
+    expect(held.code).toBe(3);
+    const record = held.records[0];
+    expect(record.digest).not.toBe(first.records[0].digest);
+    const line = migrationMovedLine(work, "split-b", { approved: first.records[0].digest, resolvedBy: "alice" }, { roots: record.roots.map((r) => r.root), members: beforeMembers(record.roots) });
+    expect(line).toBe(`wave 1: alice approved ${first.records[0].digest} of split-b, and the states moved since: one; nothing was written`);
+    expect(names(work, "two")).toEqual(["c"]);
   });
 
   it("writes nothing and records nothing to approve when a root would change against its new state", async () => {
