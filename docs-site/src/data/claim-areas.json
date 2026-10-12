@@ -265,7 +265,6 @@
     "telemetry/summed-timings": "Reports and visibility",
     "behold/terragucci-view": "Reports and visibility",
     "affected/terramate": "Plan and review",
-    "lock/terramate": "Locks and safety",
     "linked/terramate": "Approve and apply",
     "check/terramate": "Plan and review",
     "waves/terramate": "Approve and apply",

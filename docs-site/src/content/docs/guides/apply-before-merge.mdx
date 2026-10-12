@@ -1,7 +1,7 @@
 ---
 title: Apply a pull request before it merges
 description: Turn on apply.when pull-request, apply an approved change from a comment on GitHub, GitLab or Forgejo, and merge it once every wave applied.
-claims: [pr-apply/tofu, lock/apply, pr-apply/stale, pr-apply/requires, lock/comment, lock/plan, lock/plan-release, lock/terragrunt, pr-apply/confirm, pr-apply/guard, lock/close-release, lock/terragrunt-fanout, lock/atmos, lock/terramate, lock/cdktn]
+claims: [pr-apply/tofu, lock/apply, pr-apply/stale, pr-apply/requires, lock/comment, lock/plan, lock/plan-release, lock/terragrunt, pr-apply/confirm, pr-apply/guard, lock/close-release, lock/terragrunt-fanout, lock/atmos, lock/cdktn]
 prompt: |
   Read https://intentius.io/terragucci/guides/apply-before-merge/.
   Add `apply.when: pull-request` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.

@@ -37,14 +37,14 @@ const cell = (claim: string | null, col: Column): Row | undefined => {
 // Each layer's claims by repo shape. A null claim is a shape the layer has no claim for yet.
 type Spec = { layer: string; shape: string; claim: string | null; skip?: Column[] };
 const SPEC: Spec[] = [
-	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'lock/apply' },
-	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'lock/close-release' },
-	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'lock/comment' },
-	{ layer: 'Pull request locks', shape: 'Plain roots', claim: 'lock/plan' },
+	// A Terramate stack is a directory the lock reads as a plain root, so the plain claims cover it.
+	{ layer: 'Pull request locks', shape: 'Plain roots, Terramate', claim: 'lock/apply' },
+	{ layer: 'Pull request locks', shape: 'Plain roots, Terramate', claim: 'lock/close-release' },
+	{ layer: 'Pull request locks', shape: 'Plain roots, Terramate', claim: 'lock/comment' },
+	{ layer: 'Pull request locks', shape: 'Plain roots, Terramate', claim: 'lock/plan' },
 	{ layer: 'Pull request locks', shape: 'Terragrunt', claim: 'lock/terragrunt' },
 	{ layer: 'Pull request locks', shape: 'Terragrunt', claim: 'lock/terragrunt-fanout' },
 	{ layer: 'Pull request locks', shape: 'Atmos', claim: 'lock/atmos' },
-	{ layer: 'Pull request locks', shape: 'Terramate', claim: 'lock/terramate' },
 	{ layer: 'Pull request locks', shape: 'CDK Terrain', claim: 'lock/cdktn' },
 	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply/serial' },
 	{ layer: 'Applies kept apart', shape: 'Plain roots', claim: 'apply/per-root' },

@@ -264,7 +264,6 @@ check/atmos|the check job of an Atmos repo runs atmos validate stacks before it 
 init/atmos-version|atmos.version in terragucci.yml is the Atmos release every job installs|
 waves/terramate|init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate|
 affected/terramate|a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other|
-lock/terramate|with apply.when: pull-request in a Terramate repo, a pull request applied on a comment locks the stack it changes, and a second pull request that changes that stack is refused with the stack and the holder named, its state left as the first applied it|
 linked/terramate|a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied|
 check/terramate|the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change|
 oidc/atmos-roles|oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack|
@@ -6515,6 +6514,57 @@ claim_comment/apply() {
   return $rc
 }
 
+# ── one setup for the parts of an area ──
+# Parts of an area that boot the same repo share one setup: the first part
+# that runs in a record makes it (the repo, its first push, a reviewer), and
+# every later part copies its tree, brought to the repo's main, and starts by
+# putting back what the part before it left (setup_reset). The setup lives in
+# the runner's dir (SMOKE_RUN_DIR, which every claim process the runner
+# starts reuses), so it lasts one record, and a part run on its own makes its
+# own. The parts on one setup hold its name alone in CLAIM_GROUPS, so they
+# take turns on it; a BREAK run that changes the repo's config makes a repo of
+# its own instead and holds the name in the plain run only (plain:<name>!).
+
+setup_reset() { # name -> $USER/<name> with no open pull request, no lock file on chant/lifecycle and no state under <name>/, every run on it finished
+  local name="$1" repo="$USER/$1" n i blob key runs
+  for n in $(api "$URL/api/v1/repos/$repo/pulls?state=open&limit=50" | jq -r '.[].number'); do
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/pulls/$n" || { log "could not close pull request $n of $repo"; return 1; }
+  done
+  # The runs a closed pull request starts (a pr-lock job releasing its locks) finish before the lock file goes.
+  for i in $(seq 1 60); do
+    runs="$(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" 2>/dev/null | jq '[.workflow_runs[]? | select(.status | IN("success", "failure", "cancelled", "skipped") | not)] | length' 2>/dev/null || echo 0)"
+    [ "${runs:-0}" = 0 ] && break
+    sleep 3
+  done
+  blob="$(api "$URL/api/v1/repos/$repo/contents/_locks%2Ftf-apply.json?ref=chant%2Flifecycle" 2>/dev/null | jq -r '.sha // empty' 2>/dev/null || true)"
+  if [ -n "$blob" ]; then
+    api -o /dev/null -H 'content-type: application/json' -X DELETE \
+      -d "$(jq -cn --arg s "$blob" '{branch: "chant/lifecycle", sha: $s, message: "the next part starts with no locks"}')" "$URL/api/v1/repos/$repo/contents/_locks%2Ftf-apply.json" \
+      || { log "could not delete the lock file of $repo"; return 1; }
+  fi
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$name/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+}
+
+setup_shared() { # name, make-fn -> $work/tree a copy of the setup's tree at main of $USER/<name>; SETUP_DIR the setup's dir
+  # make-fn runs with work set to the setup's dir: it makes the repo $USER/<name> with its tree in $work/tree, pushes main, and keeps anything a part reads back (a reviewer's token) as a file there.
+  local name="$1" make="$2" dir
+  dir="${SMOKE_RUN_DIR:-${TMPDIR:-/tmp}}/setup.$name"
+  if [ -f "$dir/ready" ] && setup_reset "$name"; then
+    log "the $name setup is shared: this part reuses $USER/$name"
+  else
+    rm -rf "$dir"; mkdir -p "$dir" || return 1
+    ( work="$dir"; "$make" ) || { log "the $name setup failed"; rm -rf "$dir"; return 1; }
+    touch "$dir/ready"
+  fi
+  SETUP_DIR="$dir"
+  cp -R "$dir/tree" "$work/tree" || return 1
+  git -C "$work/tree" fetch -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$name.git" main \
+    && git -C "$work/tree" checkout -q -B main FETCH_HEAD \
+    || { log "could not bring the copy of the $name setup to its main"; return 1; }
+}
+
 # ── apply before merge (apply.when: pull-request) ──
 # Each of the three claims below runs on a repo of its own made by gated_repo:
 # the five roots, gate never (so no wave waits and the claim is about the pull
@@ -6627,33 +6677,44 @@ claim_pr_apply/tofu() {
   return $rc
 }
 
+# The lock-pr setup, which lock/apply, lock/comment and lock/close-release
+# share: pr_repo's repo with apply.merge: manual, main pushed, and a reviewer
+# with write access whose token is kept in reviewer. No part merges, so main
+# stays where the setup left it.
+lock_pr_make() {
+  pr_repo lock-pr manual || return 1
+  push_tree "$work/tree" "$USER/lock-pr" main "lock-pr: first" >/dev/null || return 1
+  pr_reviewer "$USER/lock-pr" smoke-rev-lock-pr || return 1
+  echo "$PR_REVIEWER_TOKEN" > "$work/reviewer"
+}
+
 claim_lock/apply() {
-  # A repo with apply.when: pull-request and apply.merge: manual. Pull requests
-  # A and B each change canary/one (to a and to b). A is applied on a comment
-  # and stays open, holding the lock on canary/one. /terragucci apply on B must
-  # be refused, naming canary/one and pull request A, and canary/one must
-  # still hold a. /terragucci unlock on A must say it released canary/one, and
-  # /terragucci apply on B must then apply it: canary/one holds b.
+  # On the lock-pr setup (apply.when: pull-request, apply.merge: manual).
+  # Pull requests A and B each change canary/one (to a and to b). A is applied
+  # on a comment and stays open, holding the lock on canary/one. /terragucci
+  # apply on B must be refused, naming canary/one and pull request A, and
+  # canary/one must still hold a. /terragucci unlock on A must say it
+  # released canary/one, and /terragucci apply on B must then apply it:
+  # canary/one holds b.
   # BREAK: the lock file is deleted from chant/lifecycle after A applied, so
   # nothing holds canary/one and the first comment on B applies it.
-  log() { echo "[smoke pr-apply-lock] $*" >&2; }
+  log() { echo "[smoke lock/apply] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/pr-apply-lock" head_a head_b pr_a pr_b reply clone rc=0
+  local work repo="$USER/lock-pr" head_a head_b pr_a pr_b reply clone rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  pr_repo pr-apply-lock manual || { drop_work "$work"; return 1; }
-  push_tree "$work/tree" "$repo" main "pr-apply-lock: first" >/dev/null || { drop_work "$work"; return 1; }
-  pr_reviewer "$repo" smoke-rev-pr-apply-lock || { drop_work "$work"; return 1; }
+  setup_shared lock-pr lock_pr_make || { drop_work "$work"; return 1; }
+  PR_REVIEWER_TOKEN="$(cat "$SETUP_DIR/reviewer")"
   echo a > "$work/tree/canary/one/rev.txt"
-  head_a="$(push_tree "$work/tree" "$repo" change-a "pr-apply-lock: a")" || { drop_work "$work"; return 1; }
+  head_a="$(push_tree "$work/tree" "$repo" apply-a "lock/apply: a")" || { drop_work "$work"; return 1; }
   git -C "$work/tree" checkout -q main
   echo b > "$work/tree/canary/one/rev.txt"
-  head_b="$(push_tree "$work/tree" "$repo" change-b "pr-apply-lock: b")" || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "pr-apply-lock: a")" || { drop_work "$work"; return 1; }
-  pr_b="$(pr_open "$repo" change-b "pr-apply-lock: b")" || { drop_work "$work"; return 1; }
+  head_b="$(push_tree "$work/tree" "$repo" apply-b "lock/apply: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" apply-a "lock/apply: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" apply-b "lock/apply: b")" || { drop_work "$work"; return 1; }
   { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
-  log "A ($pr_a): ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
+  log "A ($pr_a): ${reply:-no reply}; canary/one holds $(pr_state_input lock-pr canary/one)"
   grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
   if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
     clone="$work/lifecycle"
@@ -6664,9 +6725,9 @@ claim_lock/apply() {
   fi
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
-    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
+    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; canary/one holds $(pr_state_input lock-pr canary/one)"
     grep -q "\`canary/one\` is locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds"; rc=1; }
-    [ "$(pr_state_input pr-apply-lock canary/one)" = a ] || { log "canary/one moved while A held it"; rc=1; }
+    [ "$(pr_state_input lock-pr canary/one)" = a ] || { log "canary/one moved while A held it"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_a" "/terragucci unlock")"
@@ -6675,10 +6736,9 @@ claim_lock/apply() {
   fi
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
-    log "B after the unlock: ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
-    [ "$(pr_state_input pr-apply-lock canary/one)" = b ] || { log "B did not apply canary/one after the unlock"; rc=1; }
+    log "B after the unlock: ${reply:-no reply}; canary/one holds $(pr_state_input lock-pr canary/one)"
+    [ "$(pr_state_input lock-pr canary/one)" = b ] || { log "B did not apply canary/one after the unlock"; rc=1; }
   fi
-  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-apply-lock?purge=true" 2>/dev/null || true
   drop_work "$work"
   [ $rc = 0 ] && log "B was refused while A held canary/one, and applied once A was unlocked"
   return $rc
@@ -6820,31 +6880,30 @@ claim_pr_apply/requires() {
 }
 
 claim_lock/comment() {
-  # A repo with apply.when: pull-request and apply.merge: manual. Pull requests
+  # On the lock-pr setup (apply.when: pull-request, apply.merge: manual). Pull requests
   # A and B each change canary/one. /terragucci lock on A must say it locked
   # canary/one and apply nothing. /terragucci apply on B, approved and green,
   # must be refused naming canary/one, pull request A and the lock, and
   # /terragucci lock on B must be refused the same way; no root has state.
   # BREAK: A is unlocked with /terragucci unlock right after the lock, so
   # nothing holds canary/one and the apply on B applies it.
-  log() { echo "[smoke pr-lock] $*" >&2; }
+  log() { echo "[smoke lock/comment] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/pr-lock" head_a head_b pr_a pr_b reply applied rc=0
+  local work repo="$USER/lock-pr" head_a head_b pr_a pr_b reply applied rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  pr_repo pr-lock manual || { drop_work "$work"; return 1; }
-  push_tree "$work/tree" "$repo" main "pr-lock: first" >/dev/null || { drop_work "$work"; return 1; }
-  pr_reviewer "$repo" smoke-rev-pr-lock || { drop_work "$work"; return 1; }
+  setup_shared lock-pr lock_pr_make || { drop_work "$work"; return 1; }
+  PR_REVIEWER_TOKEN="$(cat "$SETUP_DIR/reviewer")"
   echo a > "$work/tree/canary/one/rev.txt"
-  head_a="$(push_tree "$work/tree" "$repo" change-a "pr-lock: a")" || { drop_work "$work"; return 1; }
+  head_a="$(push_tree "$work/tree" "$repo" comment-a "lock/comment: a")" || { drop_work "$work"; return 1; }
   git -C "$work/tree" checkout -q main
   echo b > "$work/tree/canary/one/rev.txt"
-  head_b="$(push_tree "$work/tree" "$repo" change-b "pr-lock: b")" || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "pr-lock: a")" || { drop_work "$work"; return 1; }
-  pr_b="$(pr_open "$repo" change-b "pr-lock: b")" || { drop_work "$work"; return 1; }
+  head_b="$(push_tree "$work/tree" "$repo" comment-b "lock/comment: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" comment-a "lock/comment: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" comment-b "lock/comment: b")" || { drop_work "$work"; return 1; }
   pr_ready "$repo" "$pr_b" "$head_b" || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr_a" "/terragucci lock")"
-  applied="$(gated_applied pr-lock)"
+  applied="$(gated_applied lock-pr)"
   log "lock on A ($pr_a at ${head_a:0:8}): ${reply:-no reply}; state for: ${applied:-nothing}"
   grep -q "locked \`canary/one\` for pull request $pr_a" <<<"$reply" || { log "the lock on A did not lock canary/one"; rc=1; }
   grep -q "nothing was applied" <<<"$reply" || { log "the lock reply does not say nothing was applied"; rc=1; }
@@ -6855,16 +6914,15 @@ claim_lock/comment() {
   fi
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
-    log "apply on B ($pr_b) while A holds the lock: ${reply:-no reply}; canary/one holds $(pr_state_input pr-lock canary/one)"
+    log "apply on B ($pr_b) while A holds the lock: ${reply:-no reply}; canary/one holds $(pr_state_input lock-pr canary/one)"
     grep -q "\`canary/one\` is locked by pull request $pr_a (locked with \`/terragucci lock\` by $USER)" <<<"$reply" || { log "the apply on B was not refused for the lock A holds"; rc=1; }
-    [ -z "$(pr_state_input pr-lock canary/one)" ] || { log "canary/one was applied while A held it"; rc=1; }
+    [ -z "$(pr_state_input lock-pr canary/one)" ] || { log "canary/one was applied while A held it"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_b" "/terragucci lock")"
     log "lock on B: ${reply:-no reply}"
     grep -q "\`canary/one\` is locked by pull request $pr_a .*so pull request $pr_b is not locked" <<<"$reply" || { log "the lock on B was not refused for the lock A holds"; rc=1; }
   fi
-  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-lock?purge=true" 2>/dev/null || true
   drop_work "$work"
   [ $rc = 0 ] && log "A locked canary/one without applying, and B was refused naming A"
   return $rc
@@ -8604,8 +8662,18 @@ tg_pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, i
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
+# The lock-tg setup, which lock/terragrunt and lock/terragrunt-fanout share:
+# tg_pr_repo's Terragrunt repo with apply.merge: manual, main pushed, and a
+# reviewer whose token is kept in reviewer. No part merges.
+lock_tg_make() {
+  tg_pr_repo lock-tg manual || return 1
+  push_tree "$work/tree" "$USER/lock-tg" main "lock-tg: first" >/dev/null || return 1
+  pr_reviewer "$USER/lock-tg" smoke-rev-lock-tg || return 1
+  echo "$PR_REVIEWER_TOKEN" > "$work/reviewer"
+}
+
 claim_lock/terragrunt() {
-  # A Terragrunt repo with apply.when: pull-request and apply.merge: manual.
+  # On the lock-tg setup: a Terragrunt repo with apply.when: pull-request and apply.merge: manual.
   # Pull request A changes live/canary/one, and B changes live/fleet/two, which
   # names live/canary/one in its dependencies block and in no other way. A is
   # applied on a comment and stays open, holding live/canary/one and its
@@ -8614,24 +8682,23 @@ claim_lock/terragrunt() {
   # value A applied.
   # BREAK: the lock file is deleted from chant/lifecycle after A applied, so
   # nothing holds live/fleet/two and the comment on B applies it.
-  log() { echo "[smoke tg-pr-apply-lock] $*" >&2; }
+  log() { echo "[smoke lock/terragrunt] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/tg-pr-apply-lock" head_a head_b pr_a pr_b reply clone rc=0
+  local work repo="$USER/lock-tg" head_a head_b pr_a pr_b reply clone rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  tg_pr_repo tg-pr-apply-lock manual || { drop_work "$work"; return 1; }
-  push_tree "$work/tree" "$repo" main "tg-pr-apply-lock: first" >/dev/null || { drop_work "$work"; return 1; }
-  pr_reviewer "$repo" smoke-rev-tg-pr-apply-lock || { drop_work "$work"; return 1; }
+  setup_shared lock-tg lock_tg_make || { drop_work "$work"; return 1; }
+  PR_REVIEWER_TOKEN="$(cat "$SETUP_DIR/reviewer")"
   echo a > "$work/tree/live/canary/one/rev.txt"
-  head_a="$(push_tree "$work/tree" "$repo" change-a "tg-pr-apply-lock: a")" || { drop_work "$work"; return 1; }
+  head_a="$(push_tree "$work/tree" "$repo" tg-a "lock/terragrunt: a")" || { drop_work "$work"; return 1; }
   git -C "$work/tree" checkout -q main
   echo b > "$work/tree/live/fleet/two/rev.txt"
-  head_b="$(push_tree "$work/tree" "$repo" change-b "tg-pr-apply-lock: b")" || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "tg-pr-apply-lock: a")" || { drop_work "$work"; return 1; }
-  pr_b="$(pr_open "$repo" change-b "tg-pr-apply-lock: b")" || { drop_work "$work"; return 1; }
+  head_b="$(push_tree "$work/tree" "$repo" tg-b "lock/terragrunt: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" tg-a "lock/terragrunt: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" tg-b "lock/terragrunt: b")" || { drop_work "$work"; return 1; }
   { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
-  log "A ($pr_a): ${reply:-no reply}; live/fleet/two holds $(pr_state_input tg-pr-apply-lock live/fleet/two/terraform)"
+  log "A ($pr_a): ${reply:-no reply}; live/fleet/two holds $(pr_state_input lock-tg live/fleet/two/terraform)"
   grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
   if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
     clone="$work/lifecycle"
@@ -8642,20 +8709,20 @@ claim_lock/terragrunt() {
   fi
   if [ $rc = 0 ]; then
     reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
-    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; live/fleet/two holds $(pr_state_input tg-pr-apply-lock live/fleet/two/terraform)"
+    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; live/fleet/two holds $(pr_state_input lock-tg live/fleet/two/terraform)"
     grep -q "\`live/fleet/two\` is locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds on live/fleet/two"; rc=1; }
-    [ "$(pr_state_input tg-pr-apply-lock live/fleet/two/terraform)" = 1 ] || { log "live/fleet/two moved while A held it"; rc=1; }
+    [ "$(pr_state_input lock-tg live/fleet/two/terraform)" = 1 ] || { log "live/fleet/two moved while A held it"; rc=1; }
   fi
-  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-tg-pr-apply-lock?purge=true" 2>/dev/null || true
   drop_work "$work"
   [ $rc = 0 ] && log "B, which reaches live/canary/one only through the dependencies block of live/fleet/two, was refused while A held it"
   return $rc
 }
 
-# ── apply before merge in an Atmos or a Terramate repo ──
-# The fixture of each shape with gate never, apply.when: pull-request and
+# ── apply before merge in an Atmos repo ──
+# The fixture of the shape with gate never, apply.when: pull-request and
 # apply.merge: manual. Pull requests A and B each change one root (an Atmos
-# instance, a Terramate stack) to a value of their own. A is applied on a
+# instance) to a value of their own. A Terramate stack is a plain root to the
+# lock (reachedRoots), so lock/apply covers it. A is applied on a
 # comment and stays open, holding that root. /terragucci apply on B must be
 # refused, naming the root and pull request A, and the root's state must
 # still hold A's value.
@@ -8729,29 +8796,6 @@ claim_lock/atmos() {
     esac
   }
   shape_pr_apply_lock atmos-pr-apply-lock atmos-two-stacks prod/app atmos_lock_edit atmos_lock_state || rc=1
-  drop_work "$work"
-  return $rc
-}
-
-claim_lock/terramate() {
-  # shape_pr_apply_lock on the Terramate fixture: A and B each change the
-  # input of stacks/db, whose state is terramate-pr-apply-lock/db.tfstate.
-  log() { echo "[smoke terramate-pr-apply-lock] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work rc=0 TERRAGUCCI_TERRAMATE
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  TERRAGUCCI_TERRAMATE="$(terramate_host)" || { log "no host terramate"; drop_work "$work"; return 1; }
-  export TERRAGUCCI_TERRAMATE
-  terramate_lock_edit() { # tree, a|b
-    sed -E "s/:(1|a|b)\"/:$2\"/" "$1/stacks/db/main.tf" > "$1/db.tf.new" && mv "$1/db.tf.new" "$1/stacks/db/main.tf"
-  }
-  terramate_lock_state() {
-    case "$(pr_state_input terramate-pr-apply-lock db)" in
-      *:a) echo a ;; *:b) echo b ;; *:1) echo main ;; "") echo none ;; *) echo other ;;
-    esac
-  }
-  shape_pr_apply_lock terramate-pr-apply-lock terramate-stacks stacks/db terramate_lock_edit terramate_lock_state || rc=1
   drop_work "$work"
   return $rc
 }
@@ -8884,8 +8928,18 @@ last_reply() { # repo, number -> the last reply terragucci posted on it
   api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
 }
 
+# The lock-plan setup, which the plain runs of lock/plan, lock/plan-release
+# and lock/plan-fmt share: plan_lock_repo's repo, main pushed and its run
+# finished. lock/plan-release merges into it, so main moves: each part writes
+# values of its own. Their BREAK runs change the pipeline, so each makes a
+# repo of its own, as before.
+lock_plan_make() {
+  plan_lock_repo lock-plan || return 1
+  wait_run "$USER/lock-plan" "$(push_tree "$work/tree" "$USER/lock-plan" main "lock-plan: first")" || return 1
+}
+
 claim_lock/plan() {
-  # A repo with locks: plan. Pull request A changes canary/one; the pr-lock job
+  # On the lock-plan setup (locks: plan). Pull request A changes canary/one; the pr-lock job
   # locks it on pull_request_target and posts terragucci/lock success on the
   # head. Pull request B changes canary/one too: its terragucci/lock fails, and
   # the reply names canary/one and A, planned by its author. /terragucci unlock
@@ -8895,29 +8949,33 @@ claim_lock/plan() {
   # terragucci/lock, the claim reads B's status once every run on B's head has
   # finished, rather than waiting out the lock timeout for a status that
   # cannot come.
-  log() { echo "[smoke plan-lock] $*" >&2; }
+  log() { echo "[smoke lock/plan] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/plan-lock" head_a head_b pr_a pr_b got reply rc=0
+  local work repo head_a head_b pr_a pr_b got reply rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  plan_lock_repo plan-lock ${BREAK:+break} || { drop_work "$work"; return 1; }
-  if [ -z "${BREAK:-}" ]; then
+  if [ -n "${BREAK:-}" ]; then
+    repo="$USER/plan-lock"
+    plan_lock_repo plan-lock break || { drop_work "$work"; return 1; }
+    wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock: first")" || { drop_work "$work"; return 1; }
+  else
+    repo="$USER/lock-plan"
+    setup_shared lock-plan lock_plan_make || { drop_work "$work"; return 1; }
     grep -q '^  pr-lock:' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no pr-lock job"; drop_work "$work"; return 1; }
   fi
-  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock: first")" || { drop_work "$work"; return 1; }
-  echo a > "$work/tree/canary/one/rev.txt"
-  head_a="$(push_tree "$work/tree" "$repo" change-a "plan-lock: a")" || { drop_work "$work"; return 1; }
+  echo plan-a > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" plan-a "lock/plan: a")" || { drop_work "$work"; return 1; }
   git -C "$work/tree" checkout -q main
-  echo b > "$work/tree/canary/one/rev.txt"
-  head_b="$(push_tree "$work/tree" "$repo" change-b "plan-lock: b")" || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "plan-lock: a")" || { drop_work "$work"; return 1; }
+  echo plan-b > "$work/tree/canary/one/rev.txt"
+  head_b="$(push_tree "$work/tree" "$repo" plan-b "lock/plan: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" plan-a "lock/plan: a")" || { drop_work "$work"; return 1; }
   # Under BREAK no job posts the status, so A is not waited for.
   if [ -z "${BREAK:-}" ]; then
     got="$(wait_lock_status "$repo" "$head_a" success)"
     log "A ($pr_a): terragucci/lock ${got:-none}"
     [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; rc=1; }
   fi
-  pr_b="$(pr_open "$repo" change-b "plan-lock: b")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" plan-b "lock/plan: b")" || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     runs_done "$repo" "$head_b" pull_request || log "B's runs did not finish"
     got="$(lock_status "$repo" "$head_b")"
@@ -8945,25 +9003,30 @@ claim_lock/plan() {
 }
 
 claim_lock/plan_release() {
-  # A repo with locks: plan, applying after merge. Pull request A changes
-  # canary/one and locks it; then A merges, and the closed event releases its
-  # lock: canary/one is gone from _locks/tf-apply.json.
+  # On the lock-plan setup (locks: plan, applying after merge). Pull request
+  # A changes canary/one and locks it; then A merges, and the closed event
+  # releases its lock: canary/one is gone from _locks/tf-apply.json.
   # BREAK: closed is cut from the pull_request_target types of the committed
-  # pipeline, so nothing releases the lock and A still holds canary/one.
-  log() { echo "[smoke plan-lock-release] $*" >&2; }
+  # pipeline, so nothing releases the lock and A still holds canary/one. The
+  # cut pipeline is pushed to a repo of its own, plan-lock-release.
+  log() { echo "[smoke lock/plan-release] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/plan-lock-release" wf head pr got i held rc=0
+  local work repo wf head pr got i held rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  plan_lock_repo plan-lock-release || { drop_work "$work"; return 1; }
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
   if [ -n "${BREAK:-}" ]; then
+    repo="$USER/plan-lock-release"
+    plan_lock_repo plan-lock-release || { drop_work "$work"; return 1; }
+    wf="$work/tree/.forgejo/workflows/terragucci.yml"
     sed -i.bak '/^  pull_request_target:/,/^[a-z]/{/^      - closed$/d;}' "$wf" && rm -f "$wf.bak"
+    wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-release: first")" || { drop_work "$work"; return 1; }
+  else
+    repo="$USER/lock-plan"
+    setup_shared lock-plan lock_plan_make || { drop_work "$work"; return 1; }
   fi
-  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-release: first")" || { drop_work "$work"; return 1; }
-  echo a > "$work/tree/canary/one/rev.txt"
-  head="$(push_tree "$work/tree" "$repo" change "plan-lock-release: a")" || { drop_work "$work"; return 1; }
-  pr="$(pr_open "$repo" change "plan-lock-release: a")" || { drop_work "$work"; return 1; }
+  echo release > "$work/tree/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" release "lock/plan-release: a")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" release "lock/plan-release: a")" || { drop_work "$work"; return 1; }
   got="$(wait_lock_status "$repo" "$head" success)"
   log "A ($pr): terragucci/lock ${got:-none}"
   [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; rc=1; }
@@ -13958,24 +14021,23 @@ claim_pr_apply/guard() {
 }
 
 claim_lock/close_release() {
-  # A repo with apply.when: pull-request. Pull requests A and B each change
+  # On the lock-pr setup (apply.when: pull-request). Pull requests A and B each change
   # canary/one. /terragucci lock on A locks it; A is closed unmerged; then
   # /terragucci lock on B takes canary/one, which the closed A no longer holds.
   # BREAK: A stays open, so B is refused for the lock A holds.
-  log() { echo "[smoke pr-close-release] $*" >&2; }
+  log() { echo "[smoke lock/close-release] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/pr-close-release" pr_a pr_b reply rc=0
+  local work repo="$USER/lock-pr" pr_a pr_b reply rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  pr_repo pr-close-release manual || { drop_work "$work"; return 1; }
-  push_tree "$work/tree" "$repo" main "pr-close-release: first" >/dev/null || { drop_work "$work"; return 1; }
+  setup_shared lock-pr lock_pr_make || { drop_work "$work"; return 1; }
   echo a > "$work/tree/canary/one/rev.txt"
-  push_tree "$work/tree" "$repo" change-a "pr-close-release: a" >/dev/null || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" close-a "lock/close-release: a" >/dev/null || { drop_work "$work"; return 1; }
   git -C "$work/tree" checkout -q main
   echo b > "$work/tree/canary/one/rev.txt"
-  push_tree "$work/tree" "$repo" change-b "pr-close-release: b" >/dev/null || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "pr-close-release: a")" || { drop_work "$work"; return 1; }
-  pr_b="$(pr_open "$repo" change-b "pr-close-release: b")" || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" close-b "lock/close-release: b" >/dev/null || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" close-a "lock/close-release: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" close-b "lock/close-release: b")" || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr_a" "/terragucci lock")"
   log "lock on A ($pr_a): ${reply:-no reply}"
   grep -q "locked \`canary/one\` for pull request $pr_a" <<<"$reply" || { log "the lock on A did not lock canary/one"; rc=1; }
@@ -13993,30 +14055,29 @@ claim_lock/close_release() {
 }
 
 claim_lock/terragrunt_fanout() {
-  # A Terragrunt repo with apply.when: pull-request. Pull request A changes
+  # On the lock-tg setup (apply.when: pull-request). Pull request A changes
   # root.hcl, in no unit's directory: /terragucci lock on it says it locks
   # every unit because of root.hcl, and locks all three. Pull request B
   # changes Markdown only: /terragucci lock on it locks nothing.
   # BREAK: A changes live/fleet/three/rev.txt instead, so it locks that unit
   # alone.
-  log() { echo "[smoke tg-lock-fanout] $*" >&2; }
+  log() { echo "[smoke lock/terragrunt-fanout] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/tg-lock-fanout" pr_a pr_b reply held rc=0
+  local work repo="$USER/lock-tg" pr_a pr_b reply held rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  tg_pr_repo tg-lock-fanout manual || { drop_work "$work"; return 1; }
-  push_tree "$work/tree" "$repo" main "tg-lock-fanout: first" >/dev/null || { drop_work "$work"; return 1; }
+  setup_shared lock-tg lock_tg_make || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     echo a > "$work/tree/live/fleet/three/rev.txt"
   else
     printf '\n# a change outside every unit\n' >> "$work/tree/root.hcl"
   fi
-  push_tree "$work/tree" "$repo" change-a "tg-lock-fanout: a" >/dev/null || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" fanout-a "lock/terragrunt-fanout: a" >/dev/null || { drop_work "$work"; return 1; }
   git -C "$work/tree" checkout -q main
   printf '# Notes\n\nNothing here reaches a unit.\n' > "$work/tree/NOTES.md"
-  push_tree "$work/tree" "$repo" change-b "tg-lock-fanout: notes" >/dev/null || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "tg-lock-fanout: a")" || { drop_work "$work"; return 1; }
-  pr_b="$(pr_open "$repo" change-b "tg-lock-fanout: notes")" || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" fanout-b "lock/terragrunt-fanout: notes" >/dev/null || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" fanout-a "lock/terragrunt-fanout: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" fanout-b "lock/terragrunt-fanout: notes")" || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr_a" "/terragucci lock")"
   log "lock on A ($pr_a): ${reply:-no reply}"
   grep -qF "pull request $pr_a locks every unit: it changes \`root.hcl\`, which is in no unit's directory" <<<"$reply" || { log "A does not say root.hcl locks every unit"; rc=1; }
@@ -20915,46 +20976,54 @@ claim_tips/moved() {
 }
 
 claim_lock/plan_fmt() {
-  # A repo with locks: plan. Pull request A changes canary/one and holds it.
-  # Then an unformatted main.tf is pushed to its branch: the check fails, and
+  # On the lock-plan setup (locks: plan). Pull request A changes canary/one
+  # and holds it. Then an unformatted main.tf is pushed to its branch: the
+  # check fails, and
   # the fmt job commits the formatting with the job's token, a push that
   # starts no run, so no pr-lock run sees the formatted head. The fmt job then
   # answers the lock itself: terragucci/lock on the formatted head is success,
   # holding canary/one (and the roots its main.tf reaches), and A holds
   # canary/one at that head.
   # BREAK: the fmt job's lock step is cut from the pushed pipeline, so the
-  # formatted head is never answered.
-  log() { echo "[smoke plan-lock-fmt] $*" >&2; }
+  # formatted head is never answered. The cut pipeline is pushed to a repo of
+  # its own, plan-lock-fmt.
+  log() { echo "[smoke lock/plan-fmt] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/plan-lock-fmt" wf head_a head_u head_f="" pr_a got i rc=0
+  local work repo wf head_a head_u head_f="" pr_a got i rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  plan_lock_repo plan-lock-fmt || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    repo="$USER/plan-lock-fmt"
+    plan_lock_repo plan-lock-fmt || { drop_work "$work"; return 1; }
+  else
+    repo="$USER/lock-plan"
+    setup_shared lock-plan lock_plan_make || { drop_work "$work"; return 1; }
+  fi
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
   grep -q "Lock the roots the pull request's new head reaches" "$wf" || { log "init wrote no lock step in the fmt job"; drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     perl -0pi -e "s/\n      - name: Lock the roots the pull request's new head reaches\n.*?\n(?=  \S|      - )/\n/s" "$wf"
     ! grep -q "new head reaches" "$wf" || { log "the BREAK did not cut the lock step"; drop_work "$work"; return 1; }
+    wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-fmt: first")" || { drop_work "$work"; return 1; }
   fi
-  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-fmt: first")" || { drop_work "$work"; return 1; }
-  echo a > "$work/tree/canary/one/rev.txt"
-  head_a="$(push_tree "$work/tree" "$repo" change-a "plan-lock-fmt: a")" || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "plan-lock-fmt: a")" || { drop_work "$work"; return 1; }
+  echo fmt > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" fmt-a "lock/plan-fmt: a")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" fmt-a "lock/plan-fmt: a")" || { drop_work "$work"; return 1; }
   got="$(wait_lock_status "$repo" "$head_a" success)"
   log "A ($pr_a) at ${head_a:0:8}: terragucci/lock ${got:-none}"
   [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; drop_work "$work"; return 1; }
   perl -pi -e 's/^  input = trimspace/  input    =    trimspace/' "$work/tree/canary/one/main.tf"
-  head_u="$(push_tree "$work/tree" "$repo" change-a "plan-lock-fmt: unformatted")" || { drop_work "$work"; return 1; }
+  head_u="$(push_tree "$work/tree" "$repo" fmt-a "lock/plan-fmt: unformatted")" || { drop_work "$work"; return 1; }
   wait_run "$repo" "$head_u" push || { drop_work "$work"; return 1; }
   for i in $(seq 1 20); do
-    head_f="$(remote_head "$repo" change-a)"
+    head_f="$(remote_head "$repo" fmt-a)"
     [ -n "$head_f" ] && [ "$head_f" != "$head_u" ] && break
     sleep 3
   done
   if [ -z "$head_f" ] || [ "$head_f" = "$head_u" ]; then
-    log "the fmt job pushed no formatting onto change-a"; drop_work "$work"; return 1
+    log "the fmt job pushed no formatting onto fmt-a"; drop_work "$work"; return 1
   fi
-  log "the fmt job formatted change-a: ${head_u:0:8} -> ${head_f:0:8}; runs on the formatted head: $(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$head_f" | jq '.workflow_runs | length')"
+  log "the fmt job formatted fmt-a: ${head_u:0:8} -> ${head_f:0:8}; runs on the formatted head: $(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$head_f" | jq '.workflow_runs | length')"
   got="$(TIMEOUT=180 wait_lock_status "$repo" "$head_f" success)"
   log "A at the formatted head: terragucci/lock ${got:-none}; lock: $(lock_file "$repo" | jq -c '.locks["canary/one"] | {pr, head}' 2>/dev/null)"
   # A change to canary/one's main.tf also reaches the fleet roots, so the answer may hold more than canary/one.
@@ -21124,6 +21193,8 @@ runnable_names() {
 #   fountain   the fountain profile and its steward, which only steward uses
 #   self       the claim's own fixed names (its repo, branch, state keys), so
 #              its plain and BREAK runs do not overlap
+#   <setup>!   a setup the parts of an area share (setup_shared), named for
+#              its repo: lock-pr, lock-tg, lock-plan. Its parts take turns.
 #   stack      every run holds it shared; a claim with no line here holds it
 #              alone, after boot and tg-waves
 #
@@ -21224,7 +21295,7 @@ report/wave     weight=120
 policy/delete-key    ex after=boot/tofu weight=150
 report/oidc          ex after=boot/tofu weight=150
 pr-apply/tofu             runner self! weight=250
-lock/apply        runner self! weight=300
+lock/apply        runner self! lock-pr! weight=300
 pr-apply/stale       runner self! weight=200
 telemetry/provider-calls       weight=90
 telemetry/summed-timings       weight=90
@@ -21246,7 +21317,7 @@ policy/source        self! weight=150
 reconcile/parallelism weight=120
 reconcile/provider self! weight=90
 pr-apply/requires          runner self! weight=300
-lock/comment              runner self! weight=200
+lock/comment              runner self! lock-pr! weight=200
 report/front-door           self! weight=40
 approval/ledger       runner self! weight=200
 approval/at-base     runner self! weight=250
@@ -21277,11 +21348,10 @@ choudoufu/rows-wait        self! weight=200
 choudoufu/rows-takeover    runner self! weight=300
 drift/choudoufu            self! weight=150
 note/approve-command      runner self! weight=250
-lock/terragrunt     runner self! weight=300
+lock/terragrunt     runner self! lock-tg! weight=300
 lock/atmos  runner self! weight=300
-lock/terramate runner self! weight=300
-lock/plan            runner self! weight=250
-lock/plan-release    runner self! weight=200
+lock/plan            runner self! plain:lock-plan! weight=250
+lock/plan-release    runner self! plain:lock-plan! weight=190
 policy/override      weight=150
 policy/override-moved     weight=150
 policy/override-unlisted  weight=150
@@ -21307,8 +21377,8 @@ report/contracts     weight=110
 note/stale           runner self! weight=200
 pr-apply/confirm           runner self! weight=300
 pr-apply/guard             runner self! weight=300
-lock/close-release     runner self! weight=200
-lock/terragrunt-fanout       runner self! weight=200
+lock/close-release     runner self! lock-pr! weight=200
+lock/terragrunt-fanout       runner self! lock-tg! weight=200
 security/token-scrub          weight=60
 security/plan-token-free      runner self! weight=250
 security/fork         runner self! weight=250
@@ -21414,7 +21484,7 @@ estate/mcp       weight=120
 agent/drift          runner self! weight=250
 apply/runner-nudge         stack! self! weight=200
 drift/github   self! weight=90
-lock/plan-fmt        runner self! weight=200
+lock/plan-fmt        runner self! plain:lock-plan! weight=200
 ephemeral/pr         runner self! weight=250
 ephemeral/ttl        runner self! weight=250
 ephemeral/terragrunt      runner self! weight=300
