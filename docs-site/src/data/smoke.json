@@ -1374,22 +1374,6 @@
       "commit": "c64d95fa"
     },
     {
-      "claim": "review/description",
-      "says": "with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "review/decide",
-      "says": "decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "telemetry/headers",
       "says": "telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green",
       "needs": null,

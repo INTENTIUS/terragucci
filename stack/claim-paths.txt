@@ -65,7 +65,7 @@ packages/terragucci/src/migrate.ts        migrate/split migrate/resume migrate/b
 packages/terragucci/src/migrate-estate.ts choudoufu/migrate choudoufu/adopt
 packages/terragucci/src/state-source.ts   migrate/tfe import/hcp import/scalr
 packages/terragucci/src/generate reconcile/tofu generate/terragrunt generate/cdktn ephemeral/terragrunt generate/terragrunt-init
-packages/terragucci/src/config-schema.ts   init/config-ts init/role-refused oidc/state-roles approval/sealed-migrate oidc/atmos-roles init/atmos-refuse review/decide
+packages/terragucci/src/config-schema.ts   init/config-ts init/role-refused oidc/state-roles approval/sealed-migrate oidc/atmos-roles init/atmos-refuse review/description
 packages/terragucci/src/terragucci.schema.json init/config-ts
 packages/terragucci/src/generate-config.ts generate/tofu reconcile/tofu generate/terragrunt generate/terragrunt-init
 packages/terragucci/src/notify.ts         notify/chat notify/webhook chat/*
@@ -138,7 +138,7 @@ packages/terragucci/src/report/wave-telemetry.ts telemetry/metrics telemetry/das
 packages/terragucci/src/report/observe.ts telemetry/traces telemetry/metrics telemetry/dash-changes telemetry/dash-drift telemetry/dash-estate telemetry/dash-pipeline telemetry/dash-runs telemetry/dash-slos telemetry/dash-waves report/drill-down telemetry/alerts
 packages/terragucci/src/report            report/tofu modules/recorded modules/require report/highlight report/sensitive report/drill-down note/diff note/footer note/report-link note/split note/stale report/wave report/index-writes migrate/blob report/azure report/azure-key report/gcs report/gcs-key report/oidc note/grouped tips/tofu affected/cdktn apply/cdktn ephemeral/cdktn generate/cdktn init/cdktn-refuse init/cdktn-synth linked/cdktn lock/cdktn migrate/cdktn tips/cdktn audit/* estate/inventory estate/history estate/dora steps/before-plan steps/gate init/root-pins cost/estimate cost/gate cost/policy state/versions migrate/split migrate/backend migrate/revert modules/terragrunt-require linked/local linked/plan linked/states lock/plan-none note/sensitive apply/provider-cache tips/moved oidc/state-roles state/export estate/state-edges agent/drift estate/mcp linked/terragrunt-preview linked/terragrunt-preview-gate linked/terragrunt-mock affected/terragrunt-dependents affected/terragrunt state/terragrunt-versions estate/terragrunt-graph drift/branches affected/atmos apply/atmos-workspace check/atmos init/atmos-refuse init/atmos-version linked/atmos lock/atmos oidc/atmos-roles waves/atmos affected/terramate linked/terramate waves/after drift/choudoufu estate/query note/blast choudoufu/live-progress choudoufu/record-versions
 packages/terragucci/src/dashboards        telemetry/dash-changes telemetry/dash-drift telemetry/dash-estate telemetry/dash-pipeline telemetry/dash-runs telemetry/dash-slos telemetry/dash-waves report/drill-down telemetry/alerts estate/dora
-packages/terragucci/src/decide            review/decide respond/triage
+packages/terragucci/src/decide            review/description respond/triage
 packages/terragucci/src/respond           respond/drift respond/fmt respond/notes respond/refused respond/tips respond/triage drift/attribute drift/close rollout/continue tips/cdktn init/cdktn-refuse tips/moved respond/terragrunt-fmt respond/terragrunt-drift drift/terragrunt-attribute drift/choudoufu
 packages/terragucci/src/publish/require.ts modules/recorded modules/require modules/terragrunt-require modules/registry
 packages/terragucci/src/publish           modules/publish modules/attest modules/recorded modules/require modules/terragrunt-require modules/version-bump modules/registry
@@ -184,7 +184,7 @@ stack/fixtures/tg-preview                 linked/terragrunt-preview linked/terra
 stack/fixtures/unlock-state               state/unlock
 stack/fixtures/cost-policy                cost/gate cost/policy
 stack/fixtures/tg-gated-waves oidc/terragrunt respond/terragrunt-fmt state/terragrunt-versions apply/terragrunt-branches
-stack/fixtures/stand-in                   review/decide telemetry/headers oidc/terragrunt init/role-refused report/azure-key report/gcs-key report/index-writes telemetry/alerts notify/chat notify/webhook chat/* cost/estimate
+stack/fixtures/stand-in                   review/description telemetry/headers oidc/terragrunt init/role-refused report/azure-key report/gcs-key report/index-writes telemetry/alerts notify/chat notify/webhook chat/* cost/estimate
 stack/fixtures/provider-cache             apply/provider-cache
 stack/break-bundle.mjs                    lock/plan-none note/sensitive apply/provider-cache estate/mcp
 scripts/cli-bundle.mjs                    lock/plan-none note/sensitive apply/provider-cache estate/mcp
