@@ -59,7 +59,7 @@ import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { EPHEMERAL_LEDGER, EPHEMERAL_OP, ephemeralGate } from "./ephemeral";
 import { chantCommand, installedChant } from "./chant-bin";
-import type { GateRunLocator } from "@intentius/chant/op/gate-resume";
+import type { GateRunLocator } from "@intentius/chant/gate-resume-run";
 
 export { chantCommand, installedChant };
 
@@ -205,7 +205,7 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
     const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
     if (o.resume === false) log("not resumed (--no-resume): run its job again, comment /terragucci apply, or let the resume job apply it");
     else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run its job again, or comment /terragucci apply");
-    else log(await resumeAfterApproval({ origin, wave, repo, op: "tf-apply", gate: waveGate(wave.wave), ...(o.chant ? { chant: o.chant } : {}), ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+    else log(await resumeAfterApproval({ origin, wave, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
   }
   return { code, command, wave };
 }
@@ -277,7 +277,7 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
     const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
     if (o.resume === false) log("not resumed (--no-resume): run wave 1 again, comment /terragucci apply, or let the resume job run it");
     else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run wave 1 again, or comment /terragucci apply");
-    else log(await resumeAfterApproval({ origin, wave: { wave: 1, ...(m.runId ? { runId: m.runId } : {}), ...(m.commit ? { commit: m.commit } : {}), ...(m.resume ? { resume: m.resume } : {}) }, repo, op: MIGRATE_OP, gate: m.migration, ...(o.chant ? { chant: o.chant } : {}), ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+    else log(await resumeAfterApproval({ origin, wave: { wave: 1, ...(m.runId ? { runId: m.runId } : {}), ...(m.commit ? { commit: m.commit } : {}), ...(m.resume ? { resume: m.resume } : {}) }, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
   }
   return { code, command, migration: m };
 }

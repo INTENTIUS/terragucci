@@ -90,7 +90,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OpWaveDecision } from "@intentius/chant/op";
-import type { GateRunLocator } from "@intentius/chant/op/gate-resume";
+import { resolveGateRunLocator, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
@@ -313,6 +313,8 @@ export interface AppliedRecord {
   changes?: ApprovedChange[];
   /** The digest of the approved plans whose stopped apply this one resumes. */
   resumes?: string;
+  /** On a `changes` line: where the apply runs, in CI, so `chant run resume` starts it again once that run is gone (chant#3858). */
+  resume?: GateRunLocator;
 }
 
 /** How the apply an applied record with `changes` started ended, in the same file. A killed apply writes none. */
@@ -1618,6 +1620,7 @@ function recordChanges(repo: string, label: string, j: WaveJob, now?: string): v
   const env = process.env;
   const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const locator = resolveGateRunLocator(env);
   const record: AppliedRecord = {
     version: 1,
     kind: "changes",
@@ -1630,6 +1633,7 @@ function recordChanges(repo: string, label: string, j: WaveJob, now?: string): v
     ...(runId ? { runId } : {}),
     ...(commit ? { commit } : {}),
     holder: rowHolder(env).run,
+    ...(locator ? { resume: locator } : {}),
     changes: j.changes,
     ...(j.resumes ? { resumes: j.resumes } : {}),
   };
