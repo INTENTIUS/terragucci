@@ -41,7 +41,9 @@ unlock_mutex() { rm -rf "$SMOKE_LOCKS/.mutex"; }
 # way on stdout. All or nothing, so two runs never each hold half of what the
 # other needs.
 try_lock() {
-  local holder="$1" l res mode f p busy=""
+  # A holder names a run, and a claim is <area>/<part>: the slash would be a
+  # directory under the resource, so it becomes a dot, as in the logs' names.
+  local holder="${1//\//.}" l res mode f p busy=""
   shift
   lock_mutex
   for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x "$SMOKE_LOCKS"/*/*.w; do
@@ -82,7 +84,7 @@ try_lock() {
 unlock_holder() { # holder
   [ -d "$SMOKE_LOCKS" ] || return 0
   lock_mutex
-  rm -f "$SMOKE_LOCKS"/*/"$1".s "$SMOKE_LOCKS"/*/"$1".x "$SMOKE_LOCKS"/*/"$1".w
+  rm -f "$SMOKE_LOCKS"/*/"${1//\//.}".s "$SMOKE_LOCKS"/*/"${1//\//.}".x "$SMOKE_LOCKS"/*/"${1//\//.}".w
   unlock_mutex
 }
 
@@ -110,7 +112,7 @@ hold_locks() { # holder, lock... : wait until every lock is held
 }
 
 mark_waiting() { # holder, lock... : leave a .w marker for each lock wanted alone
-  local holder="$1" l
+  local holder="${1//\//.}" l
   shift
   lock_mutex
   for l in "$@"; do
