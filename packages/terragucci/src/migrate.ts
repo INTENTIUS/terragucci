@@ -493,6 +493,16 @@ export function migrationDigest(m: Migration, roots: MigrationRoot[]): string {
 export const beforeMembers = (roots: MigrationRoot[]): { member: string; planDigest: string }[] =>
   roots.map((r) => ({ member: r.root, planDigest: `${r.before.version_id ?? "-"} ${r.before.digest ?? "none"}${r.source ? ` from ${r.source.version_id ?? "-"} ${r.source.digest}` : ""}` })).sort((a, b) => (a.member < b.member ? -1 : 1));
 
+/**
+ * The roots whose state moved since a migration's approval of another
+ * digest: the members of the pending fact that digest answered against the
+ * ones planned now. With no such fact on the ledger, every root.
+ */
+export function movedSinceApproval(ledger: Pick<GateLedger, "pending">, gate: string, approved: string | undefined, members: readonly { member: string; planDigest: string }[], roots: readonly string[]): string[] {
+  const fact = [...ledger.pending].reverse().find((p) => p.gate === gate && p.members && samePlanDigest(p.planDigest, approved));
+  return fact ? movedMembers(fact.members!, members) : [...roots];
+}
+
 // ── running the binary ───────────────────────────────────────────────────
 
 export interface Ran {
@@ -1424,8 +1434,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
       appendPending(repo, pending, { [keptPath(m.name, record.digest)]: JSON.stringify(record, null, 2) + "\n" }, MIGRATE_LEDGER);
     }
     if (decision.status === "refused") {
-      const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === m.name && p.members && samePlanDigest(p.planDigest, decision.approved));
-      const moved = approvedFact ? movedMembers(approvedFact.members!, members) : record.roots.map((r) => r.root);
+      const moved = movedSinceApproval(ledger, m.name, decision.approved, members, record.roots.map((r) => r.root));
       log(`${label}: ${decision.by} approved ${decision.approved ?? "another digest"}, and the states moved since: ${moved.join(", ") || "the migration file"}; nothing was written`);
       log(`${label}: read the proof above, then approve this plan with:`);
       log(`  ${command}`);
