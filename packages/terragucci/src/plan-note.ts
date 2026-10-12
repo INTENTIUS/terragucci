@@ -28,7 +28,6 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiOf } from "./comment";
 import { poster, type Fetch } from "./forge";
 import { FORGED, PLAN_MARK, PLAN_NOTE_FILE, PLAN_STATUS_FILE, planStatus, ROOTS_LINE } from "./plan-note-gitlab";
 import { DRIFT_SCHEDULE_FILE, driftRuns, overdue } from "./report/drift-schedule";
@@ -113,14 +112,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
     log("terragucci plan-note: TG_PR and TG_SHA must name the pull request and its head, so nothing is posted");
     return said;
   }
-  const { api, repo, token } = apiOf(env);
   const forge = poster(o.forge, env, doFetch);
-  // A reply is a new comment each time, found by no marker: chant's client posts none of those, so it goes out here.
-  const call = async (method: string, path: string, body?: unknown): Promise<any> => {
-    const r = await doFetch(`${api}/${path}`, { method, headers: { "content-type": "application/json", authorization: `token ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) });
-    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
-    return r.status === 204 ? null : r.json();
-  };
   const read = (name: string): string | undefined => (existsSync(join(o.report, name)) ? readFileSync(join(o.report, name), "utf-8") : undefined);
 
   if (o.root) {
@@ -134,7 +126,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
     }
     if (unreached) {
       try {
-        await call("POST", `repos/${repo}/issues/${pr}/comments`, { body: `terragucci: ${o.root} is not affected by this pull request, so nothing was planned.` });
+        await forge.addComment(Number(pr), `terragucci: ${o.root} is not affected by this pull request, so nothing was planned.`);
         log(`terragucci plan-note: ${o.root} is not affected by pull request ${pr}; replied so`);
       } catch (e) {
         log(`terragucci: reply failed: ${(e as Error).message}`);

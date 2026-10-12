@@ -38,7 +38,7 @@ import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { reached, type ApplyCommentDecision, type Git } from "./comment-apply";
 import type { WavesAfter } from "./detect";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
-import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
+import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
 import { gitlabApprovals, type ForgeCalls } from "./review";
 
@@ -252,9 +252,10 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
     if (/ answered 404/.test((e as Error).message)) return stop(`note ${noteText} is not a note on !${iid}, so nothing runs`);
     return broke(`could not read note ${noteText} of !${iid} (${(e as Error).message})`);
   }
+  const forge = poster("gitlab", env, doFetch);
   const reply = async (text: string): Promise<void> => {
     try {
-      await api("POST", `/projects/${id}/merge_requests/${iid}/notes`, { body: `terragucci: ${text}` });
+      await forge.addComment(iid, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }
