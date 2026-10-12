@@ -2,7 +2,7 @@
 name: chant-ci-green
 
 # Tags each commit on the branch that passed its required phases ci/green/<sha>,
-# and a green commit that later fails one ci/revoked/<sha> (#3573).
+# and a green commit that later fails one ci/revoked/<sha>.
 on:
   workflow_run:
     workflows:
@@ -42,4 +42,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: npx --yes @intentius/chant@0.109.0 ci tick
+        run: npx --yes @intentius/chant@0.124.11 ci tick

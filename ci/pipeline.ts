@@ -5,43 +5,71 @@
  * fails when the committed file differs from what this renders, so a hand edit
  * to the YAML cannot quietly win over the declaration.
  *
- * The check job runs `just check`, the same chain a person runs before
- * pushing. No claim runs in CI: the validation and smoke claims hold a stack
- * and are a person's runs (`just validate-forge`, `just claims`).
+ * `just check` is the same chain a person runs before pushing, cut into jobs
+ * that run side by side: `static` runs `just check-static`, and each `test`
+ * job runs a third of the unit tests (`just test-shard`). No claim runs in CI:
+ * the validation and smoke claims hold a stack and are a person's runs
+ * (`just validate-forge`, `just claims`).
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, installJust, installTofu, installGo } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, installJust, installTofu, setupGo } from "../workflows/shared";
 import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 export const workflow = new Workflow({
   name: "terragucci",
   on: {
     push: { branches: ["main"] },
+    pull_request: {},
     workflow_dispatch: {},
   },
   permissions: { contents: "read" },
-  // main's pushes only, never pull requests: merges land without waiting for
-  // a run each, and chant-ci-green.yml tags the commits that pass ci/green/<sha>
-  // (chant.workspace.json's ci.green). A branch runs by hand:
-  // `gh workflow run ci.yml --ref BRANCH`, and a newer one cancels its run in
-  // progress. main's runs all finish. GitHub keeps one run going and one
+  // chant-ci-green.yml tags the main commits that pass ci/green/<sha>
+  // (chant.workspace.json's ci.green); it reads main's runs alone, so a pull
+  // request's runs tag nothing. A pull request's newer push cancels its run
+  // in progress, and so does a branch run by hand (`gh workflow run ci.yml
+  // --ref BRANCH`). main's runs all finish. GitHub keeps one run going and one
   // waiting per group, so a burst of merges to main runs the first and the
   // newest, and the commits between are never tagged.
   concurrency: { group: "ci-${{ github.ref }}", "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}" },
 });
 
-export const check = new Job({
+const SETUP = [
+  Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
+  SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
+  installJust(),
+];
+
+/** Typecheck, lint, the bundle, the provider, the docs, the tutorial and the rendered workflows. */
+export const staticChecks = new Job({
+  name: "static",
   "runs-on": "ubuntu-latest",
   timeoutMinutes: 10,
   steps: [
-    Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
-    SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
-    installJust(),
-    installTofu(TOOL_VERSIONS.tofu),
-    installGo(GO_VERSION),
+    ...SETUP,
+    setupGo(GO_VERSION),
     new Step({ name: "Install", run: "npm ci" }),
-    new Step({ name: "Check", run: "just check" }),
-    new Step({ name: "Workflows match their declarations", run: "just ci-check" }),
+    new Step({ name: "Check", run: "just check-static" }),
+  ],
+});
+
+/**
+ * The unit tests, a third each. chant.workspace.json's ci.green names each
+ * job, so a change to the shard count changes it too. A test that runs the
+ * real tofu skips without it, so each job installs it.
+ */
+export const test = new Job({
+  name: "test (${{ matrix.shard }}/3)",
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 10,
+  strategy: {
+    "fail-fast": false,
+    matrix: { shard: [1, 2, 3] },
+  },
+  steps: [
+    ...SETUP,
+    installTofu(TOOL_VERSIONS.tofu),
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Test", run: "just test-shard ${{ matrix.shard }} 3" }),
   ],
 });

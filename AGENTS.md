@@ -1,6 +1,6 @@
 # For agents
 
-- `just check` is CI's check job. Run it before proposing a change: a pull request runs only `diff-guard` (`just diff-guard`), and ci.yml runs on main's pushes.
+- Run `just check` before proposing a change. ci.yml runs it on each pull request and on main's pushes. Its `static` job runs `just check-static` and its three `test` jobs run `just test-shard <n>`. A pull request also runs `diff-guard` (`just diff-guard`).
 - A release tags the commit `just release-preflight <version>` names, the newest green one (`chant ci last-green`), never a hand-picked commit.
 - Workflows are declared in `ci/` and `pages/`. Edit the TypeScript and run `just ci`. Never edit `.github/workflows/*.yml` by hand; `just ci-check` fails on it.
 - Pins shared by both workflows live in `workflows/shared.ts`.

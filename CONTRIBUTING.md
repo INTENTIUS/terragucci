@@ -2,7 +2,7 @@
 
 ```bash
 npm install
-just check      # what CI's check job runs: typecheck, lint, tests, the docs' prose and the tutorial
+just check      # what CI runs: typecheck, lint, tests, the docs' prose, the tutorial and the rendered workflows
 just docs       # serve the docs locally with hot reload and open them
 just docs-preview  # build the docs as CI does and open that build
 ```
@@ -111,18 +111,18 @@ just ci-check    # fail if a committed workflow differs from its declaration
 
 The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/render-dashboards.ts` renders the declarations with a placeholder for each value `terragucci.yml` sets (the `dashboards:` settings, and the reports address, rendered once with it and once without) and writes the result to `rendered.json`; `init` fills the placeholders (`src/dashboards/template.ts`), and `just build-cli` puts the template into the bundle gzipped. So the bundle carries neither the grafana, prometheus and otel lexicons nor js-yaml or the lezer PromQL parser, and `just bundle-check` fails if any of them, or `src/dashboards/index.ts`, reaches it. Before it writes or checks anything, the script fills the template with several settings, odd YAML values among them, and fails unless each comes out byte for byte as the declarations render it. `just ci-check` fails when `rendered.json` is stale. After an edit to the declarations, run `just ci` and commit `rendered.json` with the stack's files.
 
-## CI on main, and the one pull request check
+## CI
 
-A pull request runs one check, `diff-guard`, which takes seconds. The test suite (`ci.yml`: `check`) runs on each push to main, so many merges can land without waiting for a run each. A branch runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
+`ci.yml` runs `just check` on every pull request and on each push to main, cut into four jobs that run side by side: `static` runs `just check-static` (everything but the unit tests), and `test (1/3)` to `test (3/3)` each run a third of the unit tests (`just test-shard <n>`, vitest's `--shard`). A pull request also runs `diff-guard`, which takes seconds. A branch with no pull request runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
 
 | Workflow | Runs | What it does |
 |---|---|---|
 | `diff-guard.yml` | every pull request to main | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has |
-| `ci.yml` | each push to main, and by hand | `just check` |
+| `ci.yml` | every pull request, each push to main, and by hand | `just check-static` in `static`, `just test-shard <n>` in `test (<n>/3)` |
 | `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
 | `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
 
-main's runs of `ci.yml` are never cancelled. GitHub keeps one run going and one waiting per concurrency group, so in a burst of merges the first and the newest are tested and the commits between them get no tag. A run by hand on a branch cancels that branch's run in progress.
+main's runs of `ci.yml` are never cancelled. GitHub keeps one run going and one waiting per concurrency group, so in a burst of merges the first and the newest are tested and the commits between them get no tag. A pull request's new push cancels its run in progress, and so does a run by hand on a branch. The tick reads main's commits alone, so a pull request's runs tag nothing.
 
 ### diff-guard
 
@@ -134,7 +134,7 @@ just diff-guard             # origin/main against HEAD
 
 ### Green commits
 
-`chant.workspace.json` declares `ci.green` for main over the `ci.yml` check job, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.
+`chant.workspace.json` declares `ci.green` for main over the `ci.yml` jobs, `static` and the three `test` jobs by name, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.
 
 ```bash
 git fetch origin --tags
