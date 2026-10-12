@@ -7,6 +7,8 @@
 #   api ARGS...                curl with the admin token
 #   verify_tree DIR            every resource the example's roots in DIR declare
 #                              is in floci (expected lists them)
+#   local_images DIR           DIR's pipelines name the CI images `just images`
+#                              built from this tree (push_tree does it itself)
 #   push_tree DIR REPO BRANCH MESSAGE   commit DIR as one commit and force-push it;
 #                              on Forgejo, waits until the repo is not empty;
 #                              prints the sha. TG_FIXED_DATE=1 pins the commit
@@ -79,12 +81,9 @@ file_at() { # repo, branch, sha, path -> prints the file as the sha holds it
   return $rc
 }
 
-push_tree() { # dir, repo, branch, message -> prints the pushed sha
-  local dir="$1" repo="$2" branch="$3" message="$4"
+local_images() { # dir: its pipelines name this tree's CI images, not the release's
   (
-    cd "$dir"
-    [ -d .git ] || git init -q -b "$branch"
-    git checkout -q -B "$branch"
+    cd "$1" || exit 1
     # init pins terragucci's CI images by the digest of the published release.
     # The stack tests the code as it is now, built by `just images` under the
     # same tag, so the pushed pipeline names the image by its tag alone and the
@@ -99,6 +98,16 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
         if [ -f "$f" ] && [ -n "${TG_TOFU_IMAGE:-}" ]; then TG_TOFU_IMAGE="$TG_TOFU_IMAGE" perl -pi -e 's#ghcr\.io/intentius/terragucci-tofu:[^@\s"'"'"']+#$ENV{TG_TOFU_IMAGE}#g' "$f"; fi
       done
     fi
+  )
+}
+
+push_tree() { # dir, repo, branch, message -> prints the pushed sha
+  local dir="$1" repo="$2" branch="$3" message="$4"
+  (
+    cd "$dir"
+    [ -d .git ] || git init -q -b "$branch"
+    git checkout -q -B "$branch"
+    local_images .
     git add -A
     if [ -n "${TG_FIXED_DATE:-}" ]; then
       export GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" GIT_COMMITTER_DATE="2026-01-01T00:00:00Z"
