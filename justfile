@@ -28,6 +28,7 @@ lint:
       if [ "$(cat "$logs/$d.rc")" != 0 ]; then echo "  chant lint $d failed"; rc=1; fi
     done
     bash -n stack/smoke.sh || rc=1
+    node scripts/check-breaks.mjs || rc=1
     exit $rc
 
 [doc("Run the unit tests, after building the bundle the bundle's own tests run. Arguments go to vitest.")]
