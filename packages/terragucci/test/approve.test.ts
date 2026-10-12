@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { realpathSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,7 +9,6 @@ import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
 import { decideOverride, OVERRIDE_LEDGER, overrideDigest, recordedDenials } from "../src/override";
 import { git, tmp, twoRootRepo, write } from "./helpers";
-import { gateSigners } from "./sshsig";
 import { EXPORT_LEDGER, exportApproveCommand } from "../src/export";
 import { UNLOCK_LEDGER, unlockApproveCommand } from "../src/unlock";
 import { EPHEMERAL_LEDGER, ephemeralApproveCommand } from "../src/ephemeral";
@@ -205,8 +205,13 @@ describe("terragucci override", () => {
     expect(overrideDigest("envs/prod/app", "jcs1-sha256:" + "2".repeat(64), ["main.deny_public", "main.deny_data"])).not.toBe(digest);
   });
 
+  it("keeps terragucci's digest formula, so the denials and overrides already on the ledger still match", () => {
+    const text = ["policy-override", "envs/prod/app", plan, "main.deny_data", "main.deny_public"].join("\n");
+    expect(digest).toBe(`sha256:${createHash("sha256").update(text).digest("hex")}`);
+  });
+
   it("an override older than the newest denial of the root does not answer it", () => {
-    const rule = { mode: "ledger" as const, overriders: ["Alice"], signers: gateSigners(), signersPath: ".chant/allowed_signers" };
+    const rule = { mode: "ledger" as const, overriders: ["Alice"] };
     const line = (h: number) => ({ version: 1, kind: "resolution", op: "policy-override", gate: "envs/prod/app", resolvedBy: "alice", timestamp: T(h), planDigest: digest, note: "why" });
     const rules = ["main.deny_public", "main.deny_data"];
     expect(decideOverride(parseLedger(jsonl(denial(1), line(2))), rule, "envs/prod/app", plan, rules, T(3)).status).toBe("overridden");
@@ -218,7 +223,7 @@ describe("terragucci override", () => {
     const lines: string[] = [];
     const work = checkout(jsonl(denial(1)));
     const r = await overrideDenial(work, { root: "envs/prod/app", rules: ["main.deny_public", "main.deny_data"], reason: "the outage needs it", actor: "github:alice", dryRun: true, log: (l) => void lines.push(l) });
-    expect(r.command).toBe(`chant approve policy-override envs/prod/app --plan ${digest} --note 'the outage needs it' --actor github:alice`);
+    expect(r.command).toBe("chant approve policy-override envs/prod/app --rule main.deny_data --rule main.deny_public --reason 'the outage needs it' --actor github:alice");
     expect(lines[0]).toContain(`its plan ${plan} was denied by main.deny_data, main.deny_public`);
   });
 
@@ -229,7 +234,7 @@ describe("terragucci override", () => {
     execFileSync("chmod", ["+x", fake]);
     const r = await overrideDenial(work, { root: "envs/prod/app", rules: ["main.deny_data", "main.deny_public"], reason: "why", chant: fake, log: () => {} });
     expect(r.code).toBe(0);
-    expect(readFileSync(join(work, "..", "args"), "utf-8").trim().split("\n")).toEqual(["approve", "policy-override", "envs/prod/app", "--plan", digest, "--note", "why", "--sign"]);
+    expect(readFileSync(join(work, "..", "args"), "utf-8").trim().split("\n")).toEqual(["approve", "policy-override", "envs/prod/app", "--rule", "main.deny_data", "--rule", "main.deny_public", "--reason", "why", "--sign"]);
   });
 
   it("refuses rules that are not exactly the rules that denied the plan, a root with no denial, and no reason", async () => {

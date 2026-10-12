@@ -29,7 +29,7 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
-import { decideOverride, OVERRIDE_LEDGER } from "../override";
+import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
 import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
@@ -1666,13 +1666,14 @@ export async function planOverrides(repo: string, options: StageOptions, env: No
     if (rule.overriders.length === 0) return inputs;
     policy.overriders = rule.overriders;
     const ledger = readLedger(repo, OVERRIDE_LEDGER);
+    const judge = overrideRule(repo, rule);
     const now = new Date().toISOString();
     const overridden: string[] = [];
     const out = inputs.map((i) => {
       if (!denied.includes(i)) return i;
       const planDigest = terraformChangeSetPart({ member: i.path, plan: i.plan, planner: i.planner ?? "terraform" }).member.planDigest;
       if (!planDigest) return i;
-      const decision = decideOverride(ledger, rule, i.path, planDigest, i.policy!.rules ?? [], now);
+      const decision = decideOverride(ledger, judge, i.path, planDigest, i.policy!.rules ?? [], now);
       if (decision.status !== "overridden") return i;
       overridden.push(i.path);
       log(`${i.path}: the policy denial is overridden by ${decision.override.by} at ${decision.override.at}, so tf-apply applies this plan; the plan still fails here`);
