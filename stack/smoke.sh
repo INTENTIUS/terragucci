@@ -404,6 +404,7 @@ migrate/terragrunt-split|a migration file moves a resource from the state of one
 init/terragrunt-root-pins|three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each|
 binary/terragrunt-choudoufu|in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH|
 estate/terragrunt-graph|in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block|
+estate/terragrunt-remote-state|a Terragrunt unit whose root.hcl remote_state builds its key from path_relative_to_include() holds that state in its run view, and the estate graph draws an edge to the root of another project that reads it through terraform_remote_state|
 state/terragrunt-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
 apply/terragrunt-branches|with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved|
 waves/terragrunt-stack|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
@@ -416,6 +417,7 @@ chat/teams|a Teams reply that approves a waiting wave, signed as an outgoing web
 chat/replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
 linked/plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
 linked/local|two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer|
+linked/backend-config|a root whose backend block names no path, which init takes from the backend.hcl that TF_CLI_ARGS_init in terragucci.yml passes, is ordered before the root that reads its state, and the reader plans on its planned outputs|
 note/blast|a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output|
 linked/states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
 lock/plan-none|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
@@ -1876,6 +1878,63 @@ claim_linked/local() {
   jq -e '[.roots[] | select(.unknown_reads or .unaddressed)] == []' "$r" >/dev/null || { log "the report names a state the code does not address: $(jq -c '[.roots[] | {path, unknown_reads, unaddressed}]' "$r")"; rc=1; }
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "net and app, on the local backend, ordered into waves 1 and 2 from their code, and app planned on net's planned outputs"
+  return $rc
+}
+
+claim_linked/backend_config() {
+  # The backend-config fixture: net and app on the local backend, each block
+  # naming no path, and terragucci.yml's env passing -backend-config=backend.hcl
+  # to every init through TF_CLI_ARGS_init; net's backend.hcl puts its state at
+  # state/net.tfstate, which app reads through terraform_remote_state. Both
+  # applied at rev 1 with that init, then net goes to rev 2 and tf-plan runs in
+  # the CI image with no --layers and the job's TF_CLI_ARGS_init: net in wave
+  # 1, app in wave 2 reading it, app planned on net's planned outputs, and no
+  # state the report calls unaddressed.
+  # BREAK: the bundle reads no -backend-config from terragucci.yml, so net's
+  # state is terraform.tfstate beside it, which app does not read: one wave,
+  # and app plans on net's applied state.
+  log() { echo "[smoke linked-backend-config] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle r plan root code=0 rc=0 args='-backend-config=backend.hcl'
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" detect.ts '  const supplied = initArgs.length ? ' '  const supplied = initArgs.length < 0 ? ' || { drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/backend-config/." "$work/tree/"
+  grep -qF "TF_CLI_ARGS_init: \"$args\"" "$work/tree/terragucci.yml" || { log "the fixture's terragucci.yml does not pass $args"; drop_work "$work"; return 1; }
+  for root in net app; do
+    run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w "/repo/$root" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TF_CLI_ARGS_init=$args" \
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $root"; drop_work "$work" "$image"; return 1; }
+  done
+  [ -s "$work/tree/state/net.tfstate" ] && [ -s "$work/tree/state/app.tfstate" ] || { log "the applies left no state under state/: init did not take backend.hcl"; drop_work "$work" "$image"; return 1; }
+  echo 2 > "$work/tree/net/rev.txt"
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "linked-backend-config: net at rev 2"
+  run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TF_CLI_ARGS_init=$args" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan >&2 || code=$?
+  clean_mounted "$work/tree" "$image"
+  r="$work/tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "tf-plan exited $code and wrote no report"; drop_work "$work" "$image"; return 1; }
+  log "waves: $(jq -c '[.waves[] | {number, roots, reads}]' "$r")"
+  jq -e '[.waves[] | {roots, reads}] == [{roots: ["net"], reads: null}, {roots: ["app"], reads: [1]}]' "$r" >/dev/null \
+    || { log "net and app are not in waves 1 and 2 with wave 2 reading wave 1"; rc=1; }
+  jq -e '.roots[] | select(.path == "app") | .reads == [{upstream: "net", data: "net", outputs: "planned", unknown: ["stamp"]}]' "$r" >/dev/null \
+    || { log "the report does not say app read net's planned outputs with stamp unknown: $(jq -c '.roots[] | select(.path == "app") | .reads' "$r")"; rc=1; }
+  plan="$(cat "$work/tree/terragucci-report/roots/app/plan.txt" 2>/dev/null || true)"
+  grep -q '"net-1" -> "net-2"' <<<"$plan" || { log "app's plan does not move its name to net-2"; rc=1; }
+  jq -e '[.roots[] | select(.unknown_reads or .unaddressed)] == []' "$r" >/dev/null || { log "the report names a state the code does not address: $(jq -c '[.roots[] | {path, unknown_reads, unaddressed}]' "$r")"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "net, whose path comes from the backend.hcl terragucci.yml passes to init, ordered before app, and app planned on net's planned outputs"
   return $rc
 }
 
@@ -16250,8 +16309,8 @@ audit_origin() { # work -> commits $1/wave and pushes it to $1/origin.git, its o
   git -C "$1/wave" remote add origin /origin.git
 }
 
-audit_in() { # work, command... -> runs it in the CI image in /repo ($1/wave), with /origin.git
-  local work="$1" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
+audit_in() { # work, command... -> runs it in the CI image in /repo ($1/wave), with /origin.git; AUDIT_BUNDLE names another bundle
+  local work="$1" bundle="${AUDIT_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}"; shift
   run_copied --rm --network "${TG_NETWORK:-terragucci}" -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -17130,6 +17189,81 @@ claim_estate/terragrunt_graph() {
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "the plan note and the run view give live/vpc's blast radius through both dependents, and the estate graph holds each unit by wave with both dependency edges"
+  return $rc
+}
+
+claim_estate/terragrunt_remote_state() {
+  # tg_graph_repo's units take their backend from root.hcl's remote_state,
+  # whose key is "${path_relative_to_include()}/terraform.tfstate".
+  # tf-apply --terragrunt wave 1 applies live/vpc, and the run view in the
+  # bucket holds live/vpc with the state that key names for it. billing, a
+  # second project with one plain root, invoices, reads that state through
+  # terraform_remote_state and applies its wave 1. terragucci estate then
+  # draws an edge from the Terragrunt project's live/vpc to billing's
+  # invoices, between projects.
+  # BREAK: the bundle leaves path_relative_to_include() unread, so live/vpc's
+  # key is an expression, the run view holds no state for it, and the graph
+  # has no edge between the projects.
+  log() { echo "[smoke tg-remote-state] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image tofu bundle="" rc=0 prefix="tgrs-$STAMP${BREAK:+b}" bucket="tgrs-$STAMP${BREAK:+b}" layers='live/vpc;live/app;live/web' sha key view page html edge
+  image="$(image_tag terragrunt)"
+  tofu="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  docker image inspect "$tofu" >/dev/null 2>&1 || { log "no CI image $tofu; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" detect.ts '(all, name: string | undefined) => relTo(name) ?? all)' '(all) => all)' || { drop_work "$work"; return 1; }
+  fi
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; rc=1; }
+  if [ $rc = 0 ]; then
+    tg_graph_repo "$work" "$prefix" "$bucket"
+    mkdir -p "$work/billing/wave/invoices"
+    printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "billing/invoices.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\ndata "terraform_remote_state" "vpc" {\n  backend = "s3"\n  config = {\n    bucket         = "%s"\n    key            = "live/vpc/terraform.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "invoices" {\n  input = data.terraform_remote_state.vpc.outputs.id\n}\n' "$bucket" "$bucket" > "$work/billing/wave/invoices/main.tf"
+    printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/billing/wave/terragucci.yml"
+    audit_origin "$work/billing"
+    sha="$(git -C "$work/wave" rev-parse HEAD)"
+    key="$prefix/repo/runs/$sha"
+    AUDIT_CODE=0
+    # Under BREAK the broken bundle cuts this wave's run view; billing and the estate run the plain one.
+    AUDIT_BUNDLE="$bundle" AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-apply --wave 1 --layers "$layers" --binary tofu --gate never --terragrunt > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "the Terragrunt project's wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    view="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$key/run.json")" || { log "no run.json at $REPORT_BUCKET/$key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    log "the run view's units: $(jq -c '[.roots[] | {root, wave, state}]' <<<"$view")"
+    jq -e --arg b "$bucket" '.roots[] | select(.root == "live/vpc") | .state == {bucket: $b, key: "live/vpc/terraform.tfstate"}' <<<"$view" >/dev/null \
+      || { log "the run view does not hold live/vpc with the state its remote_state names"; rc=1; }
+    AUDIT_CODE=0
+    AUDIT_IMAGE=tofu audit_in "$work/billing" env GITHUB_REPOSITORY=smoke/billing terragucci stage tf-apply --wave 1 --layers invoices --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/billing/wave" "$tofu"
+    [ "$AUDIT_CODE" = 0 ] || { log "billing's wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    AUDIT_IMAGE=terragrunt audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    edge="$(jq -c '[.graph.edges[]? | select(.from.project != .to.project)]' <<<"$page")"
+    log "between projects: $edge"
+    [ "$edge" = '[{"from":{"project":"repo","root":"live/vpc"},"to":{"project":"github.com/smoke/billing","root":"invoices"}}]' ] || { log "the graph does not have billing's invoices reading the Terragrunt project's live/vpc, alone, between projects"; rc=1; }
+    grep -q '<path class="edge cross" data-from="repo live/vpc" data-to="github.com/smoke/billing invoices"' <<<"$html" || { log "estate.html draws no dashed edge from live/vpc to invoices"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "live/vpc holds the state its remote_state names in the run view, and the estate graph draws its edge to billing's invoices"
   return $rc
 }
 
@@ -20920,6 +21054,7 @@ waves/tofu           runner self! weight=200
 linked/states   runner self! weight=260
 linked/plan     self! weight=90
 linked/local self! weight=90
+linked/backend-config self! weight=90
 note/blast  weight=150
 refuse/tofu          runner self! weight=200
 approval/sealed          runner self! weight=200
@@ -21133,6 +21268,7 @@ check/terragrunt-stack       runner self! weight=150
 affected/terragrunt-stack    weight=120
 drift/terragrunt-stack       weight=150
 estate/terragrunt-graph      weight=200
+estate/terragrunt-remote-state weight=220
 state/terragrunt-export      weight=200
 apply/terragrunt-branches    runner self! weight=300
 chat/slack         runner self! weight=300

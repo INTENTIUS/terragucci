@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { waveSpans } from "../src/apply";
-import { rootStates } from "../src/detect";
+import { rootStates, unitStates } from "../src/detect";
 import { buildEstate, renderEstateHtml, type ProjectIndex } from "../src/report/estate";
 import { blastRadius, phaseTotals, renderGraphSvg, renderTimelineSvg } from "../src/report/graph";
 import { mergeSpans, renderRunHtml, runBlast, runSkeleton, SPANS_KEPT, withWave, type RunView } from "../src/report/run-view";
@@ -54,6 +54,31 @@ describe("each root's state and its reads outside the project", () => {
       { root: "net", wave: 1, reads: [], state: { bucket: "state", key: "net.tfstate" } },
       { root: "app", wave: 2, reads: ["net"], state: { bucket: "state", key: "app.tfstate" }, external: [{ data: "dns", bucket: "shared", key: "dns/zone.tfstate" }] },
     ]);
+  });
+});
+
+describe("states whose address comes from the files that supply it", () => {
+  const views = (project: string, view: RunView): ProjectIndex => ({ project, base: `${project}/`, reports: [apply(project, view.commit)], run: view });
+
+  it("a Terragrunt unit holds the state its remote_state names, and a plain root of another project that reads it gets an edge", () => {
+    const tg = write(tmp(), {
+      "root.hcl": 'remote_state {\n  backend = "s3"\n  config = {\n    bucket = "tg-state"\n    key    = "${path_relative_to_include()}/terraform.tfstate"\n  }\n}\n',
+      "live/vpc/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n',
+    });
+    const units = runSkeleton("forge/acme/live", "t1", [["live/vpc"]], new Map(), unitStates(tg, ["live/vpc"]));
+    expect(units.roots).toEqual([{ root: "live/vpc", wave: 1, reads: [], state: { bucket: "tg-state", key: "live/vpc/terraform.tfstate" } }]);
+    const billing = write(tmp(), { "invoices/main.tf": backend("billing", "invoices.tfstate") + reads("vpc", "tg-state", "live/vpc/terraform.tfstate") });
+    const plain = runSkeleton("forge/acme/billing", "b1", [["invoices"]], new Map(), rootStates(billing, ["invoices"]));
+    expect(buildEstate([views("forge/acme/live", units), views("forge/acme/billing", plain)], NOW).graph!.edges).toEqual([{ from: { project: "forge/acme/live", root: "live/vpc" }, to: { project: "forge/acme/billing", root: "invoices" } }]);
+  });
+
+  it("a root whose key a -backend-config file supplies holds that state in the run view", () => {
+    const repo = write(tmp(), {
+      "terragucci.yml": 'env:\n  TF_CLI_ARGS_init: "-backend-config=backend.hcl"\n',
+      "net/main.tf": 'terraform {\n  backend "s3" {}\n}\n',
+      "net/backend.hcl": 'bucket = "state"\nkey    = "net.tfstate"\n',
+    });
+    expect(rootStates(repo, ["net"]).get("net")).toEqual({ state: { bucket: "state", key: "net.tfstate" }, external: [] });
   });
 });
 

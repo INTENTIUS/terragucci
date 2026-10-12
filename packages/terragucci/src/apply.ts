@@ -101,7 +101,7 @@ import {
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
-import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates } from "./detect";
+import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
@@ -1289,7 +1289,8 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     // A Terragrunt repo's waves and edges are the ones the wave cut from terragrunt find; before it did, the units' files give the edges.
     const waves = options.terragrunt ? (w.units?.waves ?? options.layers) : applyWaves(options.layers, options.canary);
     const reads = options.terragrunt ? (w.units?.edges ?? unitEdges(walkUnits(repo, w.settings?.terragrunt?.exclude))) : rootOrder(repo, options.layers.flat(), detectShape(repo, settings).after);
-    const states = options.terragrunt ? new Map() : rootStates(repo, options.layers.flat());
+    // A unit holds the state its remote_state block names, so a read from another project lines up with it on the estate page.
+    const states = options.terragrunt ? unitStates(repo, waves.flat()) : rootStates(repo, options.layers.flat());
     const skeleton = runSkeleton(facts.project, facts.commit, waves, reads, states);
     const spans = waveSpans(w);
     const timing = { ...(spans.length ? { spans } : {}), ...(w.changedRoots ? { changed: w.changedRoots } : {}) };

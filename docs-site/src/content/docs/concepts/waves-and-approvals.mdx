@@ -11,7 +11,7 @@ A shared module change goes out in batches, each after the last; a batch waits o
 
 The roots in `waves.canary` go first, then one dependency layer per wave, so no root in a wave reads another in it. The report's wave 3 is the gate `wave-3`.
 
-A root's dependencies are the roots whose state it reads through `terraform_remote_state`. For plain roots that read nothing of each other, [`waves.after`](/terragucci/reference/config/#root-order) gives the order instead:
+A root's dependencies are the roots whose state it reads through `terraform_remote_state`, matched by the address each backend names in its block or in a `-backend-config` file `TF_CLI_ARGS_init` passes ([state addresses](/terragucci/guides/track-cross-state-edges/#state-addresses)). For plain roots that read nothing of each other, [`waves.after`](/terragucci/reference/config/#root-order) gives the order instead:
 
 ```yaml
 waves:
