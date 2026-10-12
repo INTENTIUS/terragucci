@@ -19,7 +19,8 @@ import {
 import { parseLedger } from "../src/apply";
 import { validateConfig, type ForgeName } from "../src/config";
 import { renderPipeline } from "../src/render";
-import { ledgerEntries, parseLedgerLog, EPHEMERAL_DONE_FILE } from "../src/report/audit";
+import { ledgerEntries, EPHEMERAL_DONE_FILE } from "../src/report/audit";
+import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { buildEstate, renderEstateHtml } from "../src/report/estate";
 import type { Fetch } from "../src/forge";
 import { git, tmp, write } from "./helpers";
@@ -185,7 +186,7 @@ describe("a pull request's copy", () => {
 
     // The audit trail lists the apply and the destroy from the record.
     const log = git(s.origin, "log", "-p", "--unified=0", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "chant/lifecycle", "--", EPHEMERAL_DONE_FILE);
-    const entries = ledgerEntries("host/o/r", EPHEMERAL_DONE_FILE, parseLedgerLog(log));
+    const entries = ledgerEntries("host/o/r", EPHEMERAL_DONE_FILE, gateLedgerLinesFromLog(log));
     expect(entries.map((e) => [e.kind, e.what, e.result, e.detail?.reason])).toEqual([["ephemeral-apply", "pr-7", "applied", undefined], ["ephemeral-destroy", "pr-7", "destroyed", "closed"]]);
     expect(entries[1].digest).toBe(destroyed.planDigest);
   });

@@ -24,6 +24,7 @@
  * single repo the project is the checkout's own, and its ledger is origin's.
  */
 import { spawnSync } from "node:child_process";
+import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -47,7 +48,6 @@ import {
   EXPORT_DONE_FILE,
   EPHEMERAL_LEDGER_FILE,
   EPHEMERAL_DONE_FILE,
-  parseLedgerLog,
   readRecord,
   renderAuditHtml,
   reportEntry,
@@ -198,7 +198,7 @@ function readLedger(source: Source): AuditEntry[] | "none" {
     for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE, MIGRATE_LEDGER_FILE, MIGRATE_DONE_FILE, UNLOCK_LEDGER_FILE, UNLOCK_DONE_FILE, EXPORT_LEDGER_FILE, EXPORT_DONE_FILE, EPHEMERAL_LEDGER_FILE, EPHEMERAL_DONE_FILE]) {
       const log = git(dir, ["-c", "core.quotepath=off", "log", "--reverse", "--no-color", "--no-ext-diff", "--no-renames", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", ref, "--", path]);
       if (!log.ok) throw new Error(`cannot read the history of ${path} on ${LEDGER_BRANCH}: ${log.err}`);
-      entries.push(...ledgerEntries(source.project, path, parseLedgerLog(log.out), source.commitUrl));
+      entries.push(...ledgerEntries(source.project, path, gateLedgerLinesFromLog(log.out), source.commitUrl));
     }
     return entries;
   } finally {

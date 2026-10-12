@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { appendLifecycle } from "../src/apply";
 import { ConfigError } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { ledgerEntries, parseLedgerLog, UNLOCK_DONE_FILE } from "../src/report/audit";
+import { ledgerEntries, UNLOCK_DONE_FILE } from "../src/report/audit";
+import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { S3Fetch } from "../src/report/s3";
 import { liveRuns, lockDigest, parseLockInfo, parseUnlocks, possibleHolders, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { tmp, write } from "./helpers";
@@ -207,7 +208,7 @@ describe("unlockState", () => {
 
     // The audit trail reads the release from the ledger's history.
     const log = execFileSync("git", ["--git-dir", w.origin, "log", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", "chant/lifecycle", "--", UNLOCK_DONE_FILE], { encoding: "utf-8" });
-    const [entry] = ledgerEntries("forge.test/o/r", UNLOCK_DONE_FILE, parseLedgerLog(log));
+    const [entry] = ledgerEntries("forge.test/o/r", UNLOCK_DONE_FILE, gateLedgerLinesFromLog(log));
     expect(entry).toMatchObject({ kind: "unlock", what: "app", who: "dana", digest, result: "released", detail: { lock_id: "lock-1", locked_by: "runner@job-1", approved_by: "lee", location: LOCATION } });
   });
 
