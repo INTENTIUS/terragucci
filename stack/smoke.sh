@@ -409,7 +409,7 @@ init/own-jobs|with own_jobs naming a file of jobs in terragucci.yml, init run tw
 waves/jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps/before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps/stop|a step before apply that exits 1 fails the wave job before anything applies|
-steps/gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
+steps/gate|a step with on_failure approve that fails holds its wave at the gate under gate never, naming the step, with the approve command for its digest|
 respond/terragrunt-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|
 state/terragrunt-versions|a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds|
 respond/terragrunt-drift|a drifted Terragrunt unit gets a pull request that writes the live value into its own terragrunt.hcl inputs and leaves the module its units share alone|
@@ -20319,14 +20319,15 @@ claim_steps/gate() {
   # The gated-waves fixture with gate: never and a step after plan on canary/*
   # that exits 1 with on_failure: approve. The push to main stops at wave 1:
   # the step asks for an approval, so the wave waits at its gate and prints
-  # the terragucci approve command, and no root has state. Approving wave 1 on the
-  # ledger and pushing again applies every root: canary/one under the
-  # approval, wave 2 with no gate.
+  # the terragucci approve command, and no root has state. That an approval
+  # of the held wave's digest then applies it is chant's: the step reaches
+  # chant run wave as its after-plan hook with onFailure approve, which
+  # op-waves.test.ts holds.
   # BREAK: terragucci.yml has no steps, so the first push applies every root.
   log() { echo "[smoke steps-gate] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/steps-gate" sha applied rc=0
+  local work repo="$USER/steps-gate" sha applied logs rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   steps_repo steps-gate <<'YAML' || { drop_work "$work"; return 1; }
 steps:
@@ -20342,18 +20343,13 @@ YAML
     applied="$(gated_applied steps-gate)"
     log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "a root applied before the wave held by the step was approved"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -E 'step verify asks for an approval|terragucci approve wave-1' >&2 || { log "wave 1 did not wait for an approval"; rc=1; }
-  fi
-  [ $rc = 0 ] && { gated_approve steps-gate 1 || rc=1; }
-  if [ $rc = 0 ]; then
-    sha="$(push_tree "$work/tree" "$repo" main "steps-gate: after wave 1 was approved")" || rc=1
-    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
-    applied="$(gated_applied steps-gate)"
-    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
-    [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected every root to apply once wave 1 was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -E 'step verify asks for an approval|terragucci approve wave-1' <<<"$logs" >&2 || true
+    grep -q 'step verify asks for an approval' <<<"$logs" || { log "the log does not say the step verify asks for an approval"; rc=1; }
+    grep -qE 'terragucci approve wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 gave no approve command"; rc=1; }
   fi
   drop_work "$work"
-  [ $rc = 0 ] && log "the step held wave 1 at its gate under gate: never, and the approval of its digest let it apply"
+  [ $rc = 0 ] && log "the step held wave 1 at its gate under gate: never, with the approve command for its digest"
   return $rc
 }
 
