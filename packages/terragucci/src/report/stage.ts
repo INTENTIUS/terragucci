@@ -13,7 +13,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { rootRoleEnv } from "../roles";
 import { workspaceEnv, workspaceInit } from "../backend";
 import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
@@ -30,7 +30,7 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
-import { ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
+import { CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
@@ -55,7 +55,7 @@ import { DRIFT_ISSUE_FILE } from "../drift-agent";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
-import { checkPlans, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
+import { checkPlans, configAtBase, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
@@ -70,6 +70,7 @@ import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost,
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
+import { outsideWatch, settingsChanged, type OutsideRoots } from "../affected";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, type StepWhen } from "../steps";
 import type { StepSettings } from "../config";
 import { binaryText, type ReportStep } from "./schema";
@@ -965,12 +966,26 @@ export async function runStage(stage: string, repo: string, options: StageOption
   let selected: Set<string> | undefined;
   // Roots git holds (a Terramate repo's stacks, with their generated code) are named by the diff, even with a prepare step.
   if (base && synth && !shape.rootsInGit) {
-    // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
-    const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, withOrder(atmosDependencies(repo, all), explicit));
-    selected = synthed.selected;
-    notices.push(synthed.notice);
+    const outside = await outsideRoots(repo, base, configPath, options.project, settings, layers.flat(), env, log, false);
+    if (shape.kind === "synth" && outside.synth) {
+      // The base's roots came from another command, so running this one there compares nothing: every root plans.
+      const why = `the synth command changed (${outside.synth})`;
+      log(`every root: ${why}`);
+      notices.push(`Every synthesized root is planned: ${why}.`);
+    } else {
+      // An Atmos instance's dependents plan with it: the instances whose dependencies.components or reads name it.
+      const synthed = await synthAffected(repo, base, synth, layers.flat(), rootDependencies(repo, all), env, log, withOrder(atmosDependencies(repo, all), explicit));
+      selected = synthed.selected;
+      for (const [r, keys] of outside.outside.settings ?? []) {
+        if (!selected || selected.has(r)) continue;
+        selected.add(r);
+        log(`affected: ${r}: its terragucci.yml settings changed (${keys.join(", ")})`);
+      }
+      notices.push(synthed.notice);
+    }
   } else if (base) {
-    selected = affectedRoots(repo, base, all, layers.flat(), log, after);
+    const outside = await outsideRoots(repo, base, configPath, options.project, settings, layers.flat(), env, log, true);
+    selected = affectedRoots(repo, base, all, layers.flat(), log, after, outside.outside);
   }
   // steps: read at base, so the change under review cannot add, edit or remove one. Drift has no base: the default branch's own.
   const stepsRead = await readSteps(repo, base, settings.steps, { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) });
@@ -1562,19 +1577,25 @@ function mergePlanned(parts: Awaited<ReturnType<typeof planUnits>>[]): Awaited<R
 
 /**
  * The roots a change from `base` to HEAD reaches: chant's path rules (a file
- * in the root, in a local module it calls, or one of its var files), plus
- * every root that reads a reached root's state or that `waves.after` puts
- * after one, followed through. Undefined, so every root plans, when git
- * cannot diff the range.
+ * in the root, in a local module it calls, or one of its var files), the
+ * files `outside` says a root reads beyond its directory (var files from
+ * TF_CLI_ARGS, symlink targets), the roots whose terragucci.yml settings
+ * changed, plus every root that reads a reached root's state or that
+ * `waves.after` puts after one, followed through. Undefined, so every root
+ * plans, when git cannot diff the range.
  */
-export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void, after?: WavesAfter): Set<string> | undefined {
+export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void, after?: WavesAfter, outside: OutsideRoots = {}): Set<string> | undefined {
   const diff = spawnSync("git", ["-C", repo, "diff", "--name-only", "--no-renames", "--relative", `${base}...HEAD`], { encoding: "utf-8" });
   if (diff.status !== 0) {
     log(`every root: affected selection failed (git diff ${base}...HEAD: ${(diff.stderr || "").trim().split("\n")[0]})`);
     return undefined;
   }
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-  const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
+  const watch = outside.watch ?? {};
+  const own = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
+  const read = Object.keys(watch).length ? changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r, ...(watch[r] ? { varFiles: watch[r] } : {}) }])), files) : own;
+  const fromSettings = [...(outside.settings?.keys() ?? [])].filter((r) => roots.includes(r));
+  const changed = [...new Set([...read, ...fromSettings])].sort();
   const deps = rootDependencies(repo, all);
   // A Terramate stack's dependents plan with it: the stacks its after, before, nesting or inputs put after it (../terramate.ts).
   const order = withOrder(atmosDependencies(repo, all), explicitOrder(after, all));
@@ -1589,7 +1610,11 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
       }
     }
   }
-  for (const r of changed) log(`affected: ${r} changed`);
+  for (const r of changed) {
+    if (own.includes(r)) log(`affected: ${r} changed`);
+    else if (read.includes(r)) log(`affected: ${r} reads ${outsideFiles(repo, r, watch[r] ?? [], files).join(", ")}, which changed`);
+    else log(`affected: ${r}: its terragucci.yml settings changed (${outside.settings!.get(r)!.join(", ")})`);
+  }
   for (const r of [...selected].filter((r) => !changed.includes(r)).sort()) {
     const reads = [...(deps.get(r) ?? [])].filter((d) => selected.has(d)).sort();
     const after = [...(order.get(r) ?? [])].filter((d) => selected.has(d) && !reads.includes(d)).sort();
@@ -1597,6 +1622,59 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   }
   log(`affected: ${changed.length} of ${roots.length} roots against ${base}, ${selected.size - changed.length} dependents after them`);
   return new Set([...selected].filter((r) => roots.includes(r)));
+}
+
+/** The changed files among the paths, relative to `root`, that it reads outside its directory. */
+function outsideFiles(repo: string, root: string, paths: string[], files: string[]): string[] {
+  const top = resolve(repo);
+  const watched = paths.map((p) => relative(top, resolve(top, root, p)).split(sep).join("/"));
+  return files.filter((f) => watched.some((w) => f === w || f.startsWith(`${w}/`))).sort();
+}
+
+/**
+ * What a change reaches from outside every root's directory (../affected.ts):
+ * each root's var files and symlink targets (`watch`, plain roots only), and,
+ * when the change edits terragucci.yml, the roots whose plan settings differ
+ * from the config at the base, and `synth` when its command changed. A
+ * control repo's project reads its settings from the control repo, so only
+ * the files count there. A base config that cannot be read selects nothing
+ * for its settings, and the log says so.
+ */
+async function outsideRoots(
+  repo: string,
+  base: string,
+  configPath: string | undefined,
+  project: string | undefined,
+  settings: ReturnType<typeof resolveRepo>,
+  roots: string[],
+  env: NodeJS.ProcessEnv,
+  log: (line: string) => void,
+  files: boolean,
+): Promise<{ outside: OutsideRoots; synth?: string }> {
+  const outside: OutsideRoots = files ? { watch: outsideWatch(repo, roots, { ...settings.env, ...env }) } : {};
+  if (project || !configChanged(repo, base, configPath)) return { outside };
+  const read = await configAtBase(repo, base, configPath ? { config: configPath } : {});
+  let at: ReturnType<typeof resolveRepo>;
+  try {
+    if ("error" in read) throw new Error(read.error);
+    at = resolveRepo(read.config);
+  } catch (e) {
+    log(`affected: the config at ${base} could not be read (${(e as Error).message}), so no root is selected for its settings`);
+    return { outside };
+  }
+  outside.settings = settingsChanged(at, settings, roots);
+  const synth = (at.synth ?? "") !== (settings.synth ?? "") ? `${at.synth ? `\`${at.synth}\`` : "none"} at the base, ${settings.synth ? `\`${settings.synth}\`` : "none"} here` : undefined;
+  return { outside, ...(synth ? { synth } : {}) };
+}
+
+/** Whether the change from `base` to HEAD edits the config file, or adds or removes one beside it. */
+function configChanged(repo: string, base: string, configPath: string | undefined): boolean {
+  const rel = configPath ? relative(resolve(repo), resolve(configPath)).split(sep).join("/") : undefined;
+  if (rel !== undefined && (rel.startsWith("../") || rel === "..")) return false;
+  const dir = rel && rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/") + 1) : "";
+  const paths = [...new Set([...(rel ? [rel] : []), ...CONFIG_NAMES.map((n) => `${dir}${n}`)])];
+  const diff = spawnSync("git", ["-C", repo, "diff", "--name-only", "--no-renames", "--relative", `${base}...HEAD`, "--", ...paths], { encoding: "utf-8" });
+  return diff.status === 0 && diff.stdout.trim() !== "";
 }
 
 /** `a` with `b`'s edges added, each root's upstreams joined. */
