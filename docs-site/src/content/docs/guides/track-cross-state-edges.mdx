@@ -1,10 +1,10 @@
 ---
 title: Track the roots that read other roots' state
 description: The estate page lists each root that reads another root's state, with its last plan against the producer's last apply, and marks it stale when the producer changed after that plan.
-claims: [estate/state-edges, linked/gitlab-state]
+claims: [estate/state-edges, linked/gitlab-state, linked/backend-config, estate/terragrunt-remote-state]
 prompt: |
   Read https://intentius.io/terragucci/guides/track-cross-state-edges/.
-  List the terraform_remote_state blocks in this repo's roots and the root whose state each reads, from the backend blocks, and tell me which reads terragucci cannot match to a root.
+  List the terraform_remote_state blocks in this repo's roots and the root whose state each reads, from the backend blocks, the -backend-config files TF_CLI_ARGS_init in terragucci.yml passes, and any Terragrunt remote_state blocks, and tell me which reads terragucci cannot match to a root.
   Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -26,7 +26,7 @@ A consumer goes stale when a change reaches the producer and not the consumer: i
 
 | A root reads another through | terragucci reads |
 |---|---|
-| a `terraform_remote_state` block whose config names the state another root's backend block names | the code of both roots, as it orders the apply waves |
+| a `terraform_remote_state` block whose config names the state another root's backend names | the code of both roots, and the [files that supply a backend's address](#addresses-outside-the-backend-block), as it orders the apply waves |
 | a Terragrunt unit's `dependency` or `dependencies` block | the unit's `terragrunt.hcl` |
 
 ## State addresses
@@ -45,13 +45,35 @@ A read matches a root when both name the same address:
 
 Credentials in `conn_str` or `address` are dropped from the address.
 
-An address that is not plain strings in the code can't be matched. This covers an expression such as `var.env`, a value the backend takes from the environment (`PG_CONN_STR`, `TF_HTTP_ADDRESS`, `CONSUL_HTTP_ADDR`, `KUBE_NAMESPACE`, `TF_CLOUD_ORGANIZATION`) or from a `-backend-config` file, and a workspace picked by tags or prefix. Nothing orders that read, so terragucci names it:
+### Addresses outside the backend block
+
+A backend's address can come from a file instead of its block:
+
+| The address comes from | terragucci reads |
+|---|---|
+| `-backend-config=<file>` or `-backend-config=<key>=<value>` in `TF_CLI_ARGS_init` (or `TF_CLI_ARGS`) under `env` in `terragucci.yml` | each file as HCL `key = "value"` lines, resolved against the root's directory, where init runs; its settings replace the block's, later ones over earlier ones, as init merges them |
+| a Terragrunt unit's `remote_state` block, in its `terragrunt.hcl` or a file it includes (`find_in_parent_folders(...)`, `get_repo_root()` or a path) | `backend` and `config`; `path_relative_to_include()` and `path_relative_to_include("<name>")` resolve to the unit's path from the included file's directory |
+
+`env` reaches every job, so the init terragucci runs takes the same `-backend-config` it reads:
+
+```yaml
+env:
+  TF_CLI_ARGS_init: "-backend-config=backend.hcl"
+```
+
+A root then orders after the root whose `backend.hcl` names the state it reads. A Terragrunt unit's run view holds the state its `remote_state` names, so a `terraform_remote_state` read in another project gets an edge to the unit on the [estate graph](/terragucci/guides/see-every-project/).
+
+### Addresses that can't be matched
+
+An address that is not plain strings can't be matched. This covers an expression such as `var.env` or `local.env`, a value the backend takes from the environment (`PG_CONN_STR`, `TF_HTTP_ADDRESS`, `CONSUL_HTTP_ADDR`, `KUBE_NAMESPACE`, `TF_CLOUD_ORGANIZATION`), a `-backend-config` file that `terragucci.yml` doesn't pass, and a workspace picked by tags or prefix. Nothing orders that read, so terragucci names it:
 
 - `terragucci config check` warns for each such read, and for each root whose own state has no address when any root reads state.
 - The report lists the read under `roots[].unknown_reads` and the root under `roots[].unaddressed`.
 - The plan log and `report.html` name both.
 
-Write the address in the block to give the read its edge.
+The reason names the files tried: a `-backend-config` file that does not supply the missing setting, one that is not in the repo, and a `backend.hcl`, `backend.tfvars` or `*.tfbackend` beside the root that no `-backend-config` passes.
+
+Write the address in the block, or pass its file in `TF_CLI_ARGS_init`, to give the read its edge.
 
 A report lists a root's `terraform_remote_state` reads as `roots[].reads` and a unit's dependencies as `roots[].dependencies`. Every upload keeps them in the project's `edges.json` beside each root's newest plan run and newest apply wave that changed it. The reads follow the newest plan or apply of the default branch. A pull request's plan or a drift check moves the consumer's last plan forward but never changes its reads. Nothing reads a state or an output's value.
 
