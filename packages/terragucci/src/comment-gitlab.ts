@@ -191,7 +191,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
     for (const note of asks) outcomes.push(await answer({ api, forge, meName, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: true } : {}) }));
     if (o.review) {
-      const started = await startReview({ api, id, me, base, env, fetch: doFetch }, mr, notes);
+      const started = await startReview({ api, id, me, meName, base, env, fetch: doFetch }, mr, notes);
       if (started) reviews.push(started);
     }
   }

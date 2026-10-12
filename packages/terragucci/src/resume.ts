@@ -42,6 +42,7 @@ import { decideGate, type AppliedRecord, type GateLedger, type PendingRecord } f
 import { forgeLiveness, type Liveness } from "./apply-rows";
 import { finishOf } from "./remainder";
 import { forgeCalls, gitlabCalls, pullOf } from "./review";
+import { forgejoForge } from "@intentius/chant/pr-forge";
 import type { Fetch } from "./forge";
 
 /** A wave the ledger says can apply now. */
@@ -238,7 +239,7 @@ export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: num
     const auth = { authorization: `token ${token}` };
     const pr = await call("GET", `${api}/commits/${o.wave.commit}/pull`, auth).catch(() => null);
     if (!Number.isInteger(pr?.number)) return `not resumed from here: no merged pull request made ${o.wave.commit.slice(0, 8)}; ${later}`;
-    await call("POST", `${api}/issues/${pr.number}/comments`, auth, { body: "/terragucci apply" });
+    await forgejoForge({ apiBase: `${web}/api/v1`, repo: path, token, host, fetch: doFetch }).addComment(pr.number, "/terragucci apply");
     return `resumed: commented /terragucci apply on pull request ${pr.number}, so its waves run again and each gate decides`;
   } catch (e) {
     return `not resumed from here (${(e as Error).message}); ${later}`;

@@ -38,7 +38,7 @@ import { landAgentChange, type PushResult } from "./agent-comment";
 import { BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
 import { gitlabApi, type GitLabCall } from "./comment-apply-gitlab";
 import { ConfigError } from "./config";
-import type { Fetch } from "./forge";
+import { poster, type Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
 import { noReview, parseReviewMarker, REVIEW_FILE, REVIEW_MARK, REVIEWED_FILE, reviewMarker, reviewNoteBody, verdictOf, writeReviewPrompt, type PolicyReview, type WrittenPrompt } from "./review-agent";
 
@@ -190,7 +190,7 @@ export async function pushGitLabAgentChange(o: GitLabAgentPushOptions): Promise<
   const reply = async (text: string): Promise<void> => {
     if (ask.pr === undefined) return;
     try {
-      await api("POST", `/projects/${projectOf(env)}/merge_requests/${ask.pr}/notes`, { body: `terragucci: ${text}` });
+      await poster("gitlab", env, doFetch).addComment(ask.pr, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }
@@ -311,11 +311,15 @@ export async function writeGitLabReviewPrompt(o: GitLabReviewPromptOptions): Pro
   return { written, report: said };
 }
 
-/** My newest note on a merge request that starts with the review's marker, or undefined. */
+/**
+ * My review note on a merge request: my oldest note that starts with the
+ * review's marker, the one chant's client edits, or undefined. The job keeps
+ * one such note, so it is the only one.
+ */
 function myReviewNote(notes: any[], me: number): any | undefined {
   return (Array.isArray(notes) ? notes : [])
     .filter((n) => n?.author?.id === me && typeof n?.body === "string" && n.body.startsWith(REVIEW_MARK))
-    .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0];
+    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0))[0];
 }
 
 export interface GitLabPostReviewOptions {
@@ -346,11 +350,8 @@ export async function postGitLabReview(o: GitLabPostReviewOptions): Promise<{ po
     const job = (Array.isArray(jobs) ? jobs : []).filter((j) => j?.name === REVIEW_JOB && Number.isInteger(j?.id)).sort((a, b) => b.id - a.id)[0];
     const body = reviewNoteBody({ head, review: o.read(REVIEW_FILE), rc: o.read("rc").trim(), instructions: o.read("instructions"), what: "merge request", ...(job ? { job: job.id } : {}) });
     const risk = parseReviewMarker(body)?.risk ?? "unknown";
-    const me = Number((await api("GET", "/user"))?.id);
-    const notes = (await api("GET", `/projects/${id}/merge_requests/${iid}/notes?per_page=100&sort=desc&order_by=created_at`)) as any[];
-    const old = myReviewNote(notes, me);
-    if (old) await api("PUT", `/projects/${id}/merge_requests/${iid}/notes/${old.id}`, { body });
-    else await api("POST", `/projects/${id}/merge_requests/${iid}/notes`, { body });
+    const me = String((await api("GET", "/user"))?.username ?? "");
+    await poster("gitlab", env, doFetch).upsertComment(iid, REVIEW_MARK, body, { author: me });
     return { posted: true, risk, reason: `posted the review of ${short(head)} on !${iid}: risk ${risk}` };
   } catch (e) {
     return { posted: false, risk: "unknown", reason: `the review note was not posted: ${(e as Error).message}` };
@@ -371,7 +372,7 @@ export interface ReviewStart {
  * names no review of that head, start the review's pipeline and say so in the
  * review note. Undefined when there is nothing to do yet.
  */
-export async function startReview(c: { api: GitLabCall; id: string; me: number; base: string; env: NodeJS.ProcessEnv; fetch: Fetch }, mr: any, notes: any[]): Promise<ReviewStart | undefined> {
+export async function startReview(c: { api: GitLabCall; id: string; me: number; meName: string; base: string; env: NodeJS.ProcessEnv; fetch: Fetch }, mr: any, notes: any[]): Promise<ReviewStart | undefined> {
   const iid: number = mr?.iid;
   if (mr?.state !== "opened" || !Number.isInteger(iid)) return undefined;
   if (mr.source_project_id !== mr.target_project_id || mr.target_branch !== c.base) return undefined;
@@ -396,8 +397,7 @@ export async function startReview(c: { api: GitLabCall; id: string; me: number; 
   const link = typeof pipeline?.web_url === "string" && /^https?:\/\//.test(pipeline.web_url) ? ` ${pipeline.web_url}` : "";
   const body = [reviewMarker(head, "unknown"), `### terragucci review of \`${short(head)}\``, "", `A model reviews this head in pipeline${link}; this note shows its review once that pipeline ends. This note approves nothing.`, ""].join("\n");
   try {
-    if (old) await c.api("PUT", `/projects/${c.id}/merge_requests/${iid}/notes/${old.id}`, { body });
-    else await c.api("POST", `/projects/${c.id}/merge_requests/${iid}/notes`, { body });
+    await poster("gitlab", c.env, c.fetch).upsertComment(iid, REVIEW_MARK, body, { author: c.meName });
   } catch (e) {
     return { mr: iid, started: true, fail: true, reason: `started the review's pipeline${link}, and the note failed (${(e as Error).message})` };
   }

@@ -269,7 +269,7 @@ describe("the comments poll starts the review", () => {
   });
 
   it("a new head gets a new review, in the same note", async () => {
-    const old = { id: 600, body: `${reviewMarker("e".repeat(40), "low", 9)}\nold review`, author: { id: BOT }, created_at: "2026-10-07T11:00:00Z" };
+    const old = { id: 600, body: `${reviewMarker("e".repeat(40), "low", 9)}\nold review`, author: { id: BOT, username: "terragucci-bot" }, created_at: "2026-10-07T11:00:00Z" };
     const w: World = { mrs: [openMr()], notes: { 3: [old] }, mrPipelines: ended, jobs: planJobs("failed") };
     const api = gitlab(w);
     await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, review: true });
@@ -280,7 +280,7 @@ describe("the comments poll starts the review", () => {
 
 describe("postGitLabReview: the review-note job", () => {
   it("edits the job's own review note with the review, the risk and the review job of this pipeline", async () => {
-    const placeholder = { id: 600, body: `${reviewMarker(HEAD, "unknown")}\nstarted`, author: { id: BOT }, created_at: "2026-10-07T11:00:00Z" };
+    const placeholder = { id: 600, body: `${reviewMarker(HEAD, "unknown")}\nstarted`, author: { id: BOT, username: "terragucci-bot" }, created_at: "2026-10-07T11:00:00Z" };
     const w: World = { mrs: [openMr()], notes: { 3: [placeholder] }, jobs: { 300: [{ id: 301, name: "review" }, { id: 302, name: "review-note" }] } };
     const api = gitlab(w);
     const files: Record<string, string> = { "review.md": "Mismatch: it destroys old.\n\nrisk: high\n", rc: "0\n", instructions: "default\n" };
@@ -288,6 +288,7 @@ describe("postGitLabReview: the review-note job", () => {
     expect(r).toEqual(expect.objectContaining({ posted: true, risk: "high" }));
     expect(w.notes[3][0].body.split("\n")[0]).toBe(reviewMarker(HEAD, "high", 301));
     expect(w.notes[3][0].body).toContain("Mismatch: it destroys old.");
+    expect(w.notes[3]).toHaveLength(1);
   });
 });
 
