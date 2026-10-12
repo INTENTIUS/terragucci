@@ -93,12 +93,20 @@ const finalStage = (name: string, description: string) => ({
     // starts, which drops GIT_CONFIG_* from its environment. Debian's git 2.39
     // matches no path prefix, so it is every directory.
     "git config --system --add safe.directory '*'",
-    // The HCL parser the tips and rollouts read with, and chant, whose bin a wave job
-    // runs (`chant run wave`) and approve and the relay record through. Both go to
-    // /usr/local/node_modules, which is on the bundle's module path and where
-    // installedChant looks from /usr/local/bin, so `terragucci` finds them with no
-    // further setup. chant is the version the package pins.
-    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} @intentius/chant@${pkg.dependencies["@intentius/chant"]} && npm cache clean --force`,
+    // The HCL parser the tips and rollouts read with. /usr/local/node_modules is on the
+    // bundle's module path, so `terragucci` finds it with no further setup.
+    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} && npm cache clean --force`,
+    // chant, whose bin a wave job runs (`chant run wave`) and approve and the relay
+    // record through: its one-file wave runtime from the release the package pins
+    // (npm checks the tarball's integrity), with a `chant` on the path that runs it.
+    // No chant package is installed, so the bundle finds this `chant` on the path.
+    [
+      `cd /tmp && npm pack --silent @intentius/chant@${pkg.dependencies["@intentius/chant"]}`,
+      `tar -xzf intentius-chant-${pkg.dependencies["@intentius/chant"]}.tgz package/dist/wave-runtime.mjs`,
+      "install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs",
+      `printf '#!/bin/sh\\nexec node /opt/chant/wave-runtime.mjs "$@"\\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant`,
+      "rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force",
+    ].join(" && "),
   ],
   copy: [
     "--from=fetch /out/ /usr/local/bin/",

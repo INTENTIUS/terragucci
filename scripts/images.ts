@@ -37,14 +37,11 @@ const PROBES: Record<Name, Array<[string[], string]>> = {
 };
 
 /**
- * The chant bin a wave job runs, found as the bundle finds it (installedChant):
- * node_modules/@intentius/chant above /usr/local/bin, through its package.json's
- * bin, run as the bundle runs it: directly, since it is a script. Prints the version it runs, which must be the one the package pins.
+ * The chant a wave job runs: the image's `chant` on the path, which the bundle
+ * runs when no chant package is installed beside it. Prints the version it
+ * runs, which must be the one the package pins.
  */
-const CHANT_BIN = [
-  "cd /usr/local/node_modules/@intentius/chant",
-  `"./$(node -p "const b = require('./package.json').bin; typeof b === 'string' ? b : b.chant")" --version`,
-].join(" && ");
+const CHANT_BIN = "test ! -e /usr/local/node_modules/@intentius/chant && command -v chant >/dev/null && chant --version";
 
 /**
  * git in a checkout another user owns, both ways round: root in one uid 1001
