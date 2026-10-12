@@ -226,8 +226,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - if: steps.decide.outputs.go == '1'
-        name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        name: Restore the Terragrunt sources and providers cache
+        uses: https://code.forgejo.org/actions/cache/restore@v4
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
