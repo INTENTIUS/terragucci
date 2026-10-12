@@ -217,7 +217,7 @@ linked/fresh|on a fresh estate the plan job holds back a root whose upstream is 
 oidc/forgejo|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
 apply/steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy/tofu|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
-comment/plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
+comment/plan|a pull request comment re-plans on request and never applies; apply on an open pull request, a root outside the configured ones, and approve, merge, destroy, import, state or force-unlock are each answered with a refusal, and nothing plans or applies|
 import/atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
 import/spacelift|terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask|
 import/env0|terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval|
@@ -332,7 +332,6 @@ drift/close|a drift run that finds no drift closes the drift issue an earlier ru
 estate/control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
 estate/override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
 report/contracts|the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers|
-comment/refused|a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies|
 note/stale|a push to the default branch that changes a root an open pull request planned marks its plan note stale|
 pr-apply/confirm|with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing|
 pr-apply/guard|with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing|
@@ -4275,15 +4274,17 @@ claim_comment/plan() {
   # plans). Then comments, each by the repo's admin: `/terragucci plan app`
   # must start a run for the comment that posts a new terragucci/plan status
   # on the pull request's head; `/terragucci apply`, a root that is not one of
-  # the repo's, and a root written as a shell command must each be answered
-  # with a refusal and start no plan, and main must gain no terragucci/apply
-  # status from any of them.
+  # the repo's, a root written as a shell command, and `/terragucci approve`,
+  # `merge`, `destroy`, `import`, `state` and `force-unlock` (a comment never
+  # runs these) must each be answered with a refusal and start no plan, and
+  # main must gain no terragucci/apply status from any of them.
   # BREAK: the issue_comment trigger is cut from the pushed pipeline, so a
   # comment starts no run and the re-plan never comes.
   log() { echo "[smoke comment-plan] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/comment" main_sha head_sha pr i rc=0 wf before after replies
+  local work repo="$USER/comment" main_sha head_sha pr i rc=0 wf before after replies verb
+  local verbs=(approve merge destroy import state force-unlock)
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo comment || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
@@ -4374,20 +4375,26 @@ TF
   comment "/terragucci apply"
   comment "/terragucci plan envs/nope"
   comment '/terragucci plan $(id)'
-  for i in $(seq 1 $(( wait / 3 ))); do
-    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | map(.body) | join("\n")')"
-    [ "$(grep -c '^terragucci: ' <<<"$replies")" -ge 3 ] && break
+  for verb in "${verbs[@]}"; do comment "/terragucci $verb"; done
+  # Each comment is answered within a minute; five minutes is the wait.
+  for i in $(seq 1 100); do
+    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | map(.body) | join("\n")')"
+    [ "$(grep -c '^terragucci: ' <<<"$replies")" -ge $(( 3 + ${#verbs[@]} )) ] && break
+    [ $(( i % 20 )) = 0 ] && log "$(grep -c '^terragucci: ' <<<"$replies") of $(( 3 + ${#verbs[@]} )) comments answered after $(( i * 3 ))s"
     sleep 3
   done
   grep -q "pull request $pr is not merged" <<<"$replies" || { log "a comment that applies was not refused"; rc=1; }
   grep -q 'envs/nope is not a root' <<<"$replies" || { log "a root outside the configured ones was not refused"; rc=1; }
   grep -q 'the root is a path' <<<"$replies" || { log "a root written as a shell command was not refused"; rc=1; }
+  for verb in "${verbs[@]}"; do
+    grep -qF "a comment never runs \`$verb\`" <<<"$replies" || { log "/terragucci $verb got no refusal"; rc=1; }
+  done
   after="$(statuses "$head_sha" terragucci/plan)"
   [ "$after" = "$before" ] || { log "a refused comment still planned ($before before, $after after)"; rc=1; }
   [ "$(statuses "$main_sha" terragucci/apply)" = "$applied_before" ] || { log "main gained an apply status from a comment"; rc=1; }
   [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
   drop_work "$work" 2>/dev/null || true
-  [ "$rc" = 0 ] && log "plan re-planned the pull request; apply, an unknown root and a shell-shaped root were each refused and planned nothing"
+  [ "$rc" = 0 ] && log "plan re-planned the pull request; apply, an unknown root, a shell-shaped root, approve, merge, destroy, import, state and force-unlock were each refused and planned nothing"
   return "$rc"
 }
 
@@ -13840,59 +13847,6 @@ claim_comment/dispatch() {
   return $rc
 }
 
-claim_comment/refused() {
-  # A scratch repo with two roots and a pull request that changes app. Once
-  # its own plan finished, the admin comments /terragucci approve, merge,
-  # destroy, import, state and force-unlock on it. Each is answered that a
-  # comment never runs it, none plans, and main gains no apply.
-  # BREAK: the issue_comment trigger is cut from the pipeline on main, the
-  # one a comment runs, so no comment is answered.
-  log() { echo "[smoke comment-refused] $*" >&2; }
-  # shellcheck source=lib.sh
-  . "$HERE/lib.sh"
-  local work repo="$USER/comment-refused" head pr i before after replies verb applied rc=0 wf
-  local verbs=(approve merge destroy import state force-unlock)
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  two_root_repo comment-refused || return 1
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  if [ -n "${BREAK:-}" ]; then
-    awk '/^  issue_comment:/ { skip = 2; next } skip > 0 { skip--; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
-    # A comment runs the workflow of the default branch, not the pull request's.
-    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "comment-refused: no issue_comment trigger")" || return 1
-    wait_run "$repo" "$MAIN_SHA" || return 1
-  fi
-  echo 2 > "$work/tree/app/rev.txt"
-  head="$(push_tree "$work/tree" "$repo" refused-change "comment-refused: change app")" || return 1
-  pr="$(pr_open "$repo" refused-change "comment-refused: change app")" || return 1
-  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
-    [ "$(statuses_of "$repo" "$head" terragucci/plan)" -ge 2 ] && break
-    sleep 3
-  done
-  before="$(statuses_of "$repo" "$head" terragucci/plan)"
-  applied="$(statuses_of "$repo" "$MAIN_SHA" terragucci/apply)"
-  for verb in "${verbs[@]}"; do
-    api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "/terragucci $verb" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$pr/comments"
-  done
-  # Each comment is answered within a minute; five minutes is the wait, with
-  # a line each minute so the runner sees the claim is alive.
-  for i in $(seq 1 100); do
-    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: ")) | .body] | join("\n")')"
-    [ "$(grep -c 'a comment never runs' <<<"$replies")" -ge ${#verbs[@]} ] && break
-    [ $(( i % 20 )) = 0 ] && log "$(grep -c 'a comment never runs' <<<"$replies") of ${#verbs[@]} comments answered after $(( i * 3 ))s"
-    sleep 3
-  done
-  for verb in "${verbs[@]}"; do
-    grep -qF "a comment never runs \`$verb\`" <<<"$replies" || { log "/terragucci $verb got no refusal"; rc=1; }
-  done
-  after="$(statuses_of "$repo" "$head" terragucci/plan)"
-  [ "$after" = "$before" ] || { log "a refused comment planned ($before plan statuses before, $after after)"; rc=1; }
-  [ "$(statuses_of "$repo" "$MAIN_SHA" terragucci/apply)" = "$applied" ] || { log "main gained an apply status from a comment"; rc=1; }
-  [ "$(remote_head "$repo" main)" = "$MAIN_SHA" ] || { log "main moved"; rc=1; }
-  drop_work "$work"
-  [ $rc = 0 ] && log "approve, merge, destroy, import, state and force-unlock were each refused by name, and nothing planned or applied"
-  return $rc
-}
-
 claim_note/stale() {
   # A scratch repo with two roots. A pull request changes app, and its plan
   # note covers app. Then a push to main changes app too: its first apply
@@ -21370,7 +21324,6 @@ drift/close          self! weight=90
 estate/control       self! weight=80
 estate/override      weight=150
 report/contracts     weight=110
-comment/refused      runner self! weight=200
 note/stale           runner self! weight=200
 pr-apply/confirm           runner self! weight=300
 pr-apply/guard             runner self! weight=300

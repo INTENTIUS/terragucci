@@ -476,14 +476,6 @@
       "commit": "8022dedb"
     },
     {
-      "claim": "comment/plan",
-      "says": "a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
       "claim": "import/atlantis",
       "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
       "needs": null,
@@ -1472,14 +1464,6 @@
     {
       "claim": "report/contracts",
       "says": "the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "c64d95fa"
-    },
-    {
-      "claim": "comment/refused",
-      "says": "a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
