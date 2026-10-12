@@ -1,4 +1,4 @@
-// A TFE API for the migrate-backend-tfe, import-hcp and import-scalr smoke
+// A TFE API for the migrate/backends, import/hcp and import/scalr smoke
 // claims (stack/smoke.sh). For the move, the part the remote backend and the
 // cloud block use to read and lock a workspace's state: one organization,
 // acme, with one workspace, app-prod (ws-app). For the imports, the reads of
