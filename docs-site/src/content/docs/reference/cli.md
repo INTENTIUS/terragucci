@@ -40,7 +40,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
-| `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-root`, `check-pins`, `check-policy`, `check-sources` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
@@ -783,12 +783,13 @@ envs/prod/app: its plan jcs1-sha256:4c1e09d2... was denied by main.deny_public_b
   the override binds the root, that plan and those rules: sha256:9b0f2a71...
 ```
 
-## check-root, check-pins and check-policy
+## check-root, check-pins, check-policy and check-sources
 
 ```bash
 terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
 terragucci check-pins [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
+terragucci check-sources <dir> [--config <file>] [--base <ref>]
 ```
 
 | Command | Does |
@@ -796,8 +797,9 @@ terragucci check-policy [--config <file>] [--base <ref>]
 | `check-root` | runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu`, also `choudoufu live-check -json`. Under `modules.require: attested` (read at `--base`) it first checks the root's module pins |
 | `check-pins` | the same pin check on each Terragrunt unit's `terraform { source }`; prints nothing without `modules.require: attested` |
 | `check-policy` | runs the policy's tests when `policy` is set |
+| `check-sources` | checks a root's module sources and providers against [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), read at `--base`, before its `init`; prints nothing without the key |
 
-Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs all three. See [Stages](/terragucci/reference/stages/#check).
+Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs them, `check-sources` only when `sources` is set. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 
@@ -838,7 +840,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok`, with or without warnings | | problems found | | |
 | `state export` | the version written and recorded | | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
-| `check-root`, `check-pins`, `check-policy` | passed | failed | | | |
+| `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | | |
 | `install` | done | | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |

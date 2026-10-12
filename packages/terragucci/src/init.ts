@@ -297,6 +297,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
     ...(settings.generate && !tgInput ? { generate: true } : {}),
+    // sources: tf-check checks each root's sources before its init.
+    ...(settings.sources && !tgInput ? { sources: true } : {}),
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,

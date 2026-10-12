@@ -1040,13 +1040,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
     }
   }
   // sources: each root's module and provider sources against the list at base, before anything is downloaded for it (../sources.ts).
+  // What init fetched and locked is checked again after each root's init, before its plan.
   const sourceRefusals = new Map<string, string[]>();
-  if (roots.length > 0) {
-    const sourcesOf = await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log });
-    for (const root of sourcesOf ? roots : []) {
-      const refused = await sourcesOf!(root, checkoutOf(root));
-      if (refused.length) sourceRefusals.set(root, refused);
-    }
+  const sourcesOf = roots.length > 0 ? await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log }) : undefined;
+  for (const root of sourcesOf ? roots : []) {
+    const refused = await sourcesOf!.before(root, checkoutOf(root));
+    if (refused.length) sourceRefusals.set(root, refused);
   }
 
   const inputs: RootInput[] = [];
@@ -1180,6 +1179,14 @@ export async function runStage(stage: string, repo: string, options: StageOption
         if (sel.status !== 0) return failed(`workspace select failed:\n${tail(sel.stderr || sel.stdout)}`, `${root}: workspace select failed`);
       }
       for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
+      // sources: the modules init fetched and the providers it locked, before any of their code plans (../sources.ts).
+      let fetched: string[] = [];
+      try {
+        fetched = sourcesOf ? await sourcesOf.afterInit(root, checkoutOf(root), rootEnv) : [];
+      } catch (e) {
+        return failed((e as Error).message, `${root}: ${(e as Error).message}`);
+      }
+      if (fetched.length) return failed(fetched.join("\n"), `${root}: refused by sources after init, so it was not planned`);
       // An Atmos instance that reads another's outputs plans on their values, never on a stand-in: held back while one has none yet.
       const filled = await fillReads(checkoutOf(root), root, outputsOf);
       if (filled.errors.length > 0) return failed(filled.errors.join("\n"), `${root}: could not read the state its stacks read`);
@@ -1455,11 +1462,11 @@ async function runTerragruntStage(
   }
   // sources: each unit's terraform source and the module and provider sources under it, against the list at base (../sources.ts).
   {
-    const sourcesOf = waves.length > 0 ? await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log }) : undefined;
+    const sourcesOf = waves.length > 0 ? await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log, afterInit: false }) : undefined;
     const already = new Set(refusedUnits.map((u) => u.path));
     for (const unit of sourcesOf ? waves.flat() : []) {
       if (already.has(unit)) continue;
-      const r = await sourcesOf!(unit);
+      const r = await sourcesOf!.before(unit);
       if (r.length) {
         log(`${unit}: refused by sources, so it was not planned`);
         refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.join("\n"), preventDestroy: new Set(), terragrunt: { ...unitStack(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });

@@ -17,6 +17,7 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci check-sources <dir> [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>   (Linux builds, for a CI job)
  *   terragucci atmos write   (write each Atmos instance to <stack>/<component> from atmos describe stacks; run by the generated pipeline)
@@ -110,7 +111,8 @@ import { RenderError } from "./render";
 import { applyWave, parseBranches, readLedger } from "./apply";
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
-import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
+import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
+import { sourceChecker } from "./sources";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { detectShape } from "./shape";
@@ -148,6 +150,7 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
+  terragucci check-sources <dir> [--config <file>] [--base <ref>]   (each root's module and provider sources under sources, before its init)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
@@ -468,6 +471,18 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
         const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd, pins ? { pins } : {});
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
+      }
+      case "check-sources": {
+        // tf-check's step before each root's init, when `sources:` is set: the root's module and provider sources against the list at base.
+        const dir = args[0];
+        if (!dir) throw new ConfigError("usage: terragucci check-sources <dir> [--config <file>] [--base <ref>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const check = await sourceChecker(cwd, settings.sources, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {}, { afterInit: false });
+        if (!check) return 0;
+        const result = checkSourcesResult(dir, await check.before(dir));
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
