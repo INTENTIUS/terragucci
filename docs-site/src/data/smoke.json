@@ -2602,6 +2602,22 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "8022dedb"
+    },
+    {
+      "claim": "security/replan-apply-role",
+      "says": "a /terragucci plan re-plan trades its OIDC token for the plan role before any pull request code runs, and that code finds no token the apply role trusts and no way to ask for one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2071cf73"
+    },
+    {
+      "claim": "security/replan-cache",
+      "says": "a /terragucci plan re-plan restores the Terragrunt cache and saves none, so what the code of a pull request leaves in .terragrunt-cache never reaches an apply job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2071cf73"
     }
   ]
 }
