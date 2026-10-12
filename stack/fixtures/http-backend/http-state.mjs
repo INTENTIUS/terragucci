@@ -1,4 +1,4 @@
-// An http state backend for the migrate-backend-http smoke claim
+// An http state backend for the migrate/backends smoke claim
 // (stack/smoke.sh): the REST protocol Terraform's and OpenTofu's http backend
 // speaks, with locking, holding each state in memory by its path.
 //
