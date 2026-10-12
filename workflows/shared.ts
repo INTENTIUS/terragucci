@@ -88,14 +88,15 @@ export const installTofu = (version: string): InstanceType<typeof Step> =>
 /** Go for the provider's tests (`just provider-test`), at the version its go.mod names. */
 export const GO_VERSION = "1.25.5";
 
-export const installGo = (version: string): InstanceType<typeof Step> =>
+export const SETUP_GO = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"; // v7.0.0
+
+/**
+ * Go, with its module and build caches keyed on the provider's go.sum, so
+ * `go vet` and `go test` start warm while the provider's dependencies stay put.
+ */
+export const setupGo = (version: string): InstanceType<typeof Step> =>
   new Step({
-    name: "Install Go",
-    run: [
-      `arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac`,
-      `curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go${version}.linux-$arch.tar.gz`,
-      `sudo tar -xzf /tmp/go.tar.gz -C /usr/local`,
-      `echo /usr/local/go/bin >> "$GITHUB_PATH"`,
-      `/usr/local/go/bin/go version`,
-    ].join("\n"),
+    name: "Setup Go",
+    uses: SETUP_GO,
+    with: { "go-version": version, "cache-dependency-path": "terraform-provider-terragucci/go.sum" },
   });

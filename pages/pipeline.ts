@@ -37,7 +37,8 @@ export const build = new Job({
   steps: [
     // The site's videos are in Git LFS; the build needs the files, not their pointers.
     new Step({ name: "Checkout", uses: CHECKOUT, with: { lfs: true } }),
-    SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
+    // `just site` installs docs-site's own packages, so its lockfile keys the cache.
+    SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", cacheFilePath: "docs-site/package-lock.json", defaults: { step: { uses: SETUP_NODE } } }).step,
     new Step({ name: "Configure Pages", uses: CONFIGURE_PAGES }),
     installJust(),
     // The PostHog project key is public by design (it ships in the page); a

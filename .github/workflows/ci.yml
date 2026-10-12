@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  pull_request: {}
   workflow_dispatch: {}
 
 permissions:
@@ -14,9 +15,44 @@ concurrency:
   cancel-in-progress: '${{ github.ref != ''refs/heads/main'' }}'
 
 jobs:
-  check:
+  static-checks:
+    name: static
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.25.5'
+          cache-dependency-path: terraform-provider-terragucci/go.sum
+      - name: Install
+        run: npm ci
+      - name: Check
+        run: just check-static
+  test:
+    name: test (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -38,16 +74,7 @@ jobs:
           tar -xzf /tmp/tofu.tar.gz -C /tmp tofu
           sudo mv /tmp/tofu /usr/local/bin/tofu
           tofu version
-      - name: Install Go
-        run: |
-          arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-          curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go1.25.5.linux-$arch.tar.gz
-          sudo tar -xzf /tmp/go.tar.gz -C /usr/local
-          echo /usr/local/go/bin >> "$GITHUB_PATH"
-          /usr/local/go/bin/go version
       - name: Install
         run: npm ci
-      - name: Check
-        run: just check
-      - name: Workflows match their declarations
-        run: just ci-check
+      - name: Test
+        run: just test-shard ${{ matrix.shard }} 3
