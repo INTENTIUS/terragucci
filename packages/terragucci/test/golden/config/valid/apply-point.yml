@@ -1,0 +1,4 @@
+# Every wave gate asks the workspace decision point prod-apply.
+gate: always
+apply:
+  point: prod-apply

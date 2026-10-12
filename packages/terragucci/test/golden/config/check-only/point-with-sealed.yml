@@ -1,0 +1,4 @@
+# apply.point takes its quorum from the decision point, so approval stays ledger: a rule across two keys.
+approval: sealed
+apply:
+  point: prod-apply

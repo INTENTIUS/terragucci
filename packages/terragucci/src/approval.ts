@@ -38,6 +38,8 @@ export interface ApprovalRule extends ApprovalMode, SealRule {
   base: string;
   /** Who may override a policy denial: `policy.override` in the config at base. Empty: nobody. */
   overriders: string[];
+  /** The decision point every wave gate asks: `apply.point` in the config at base (./point-gate.ts). Unset, the gate waits for an approval. */
+  point?: string;
 }
 
 /** Whether a value is one of APPROVALS. */
@@ -93,7 +95,8 @@ export async function approvalRule(repo: string, options: { at?: string; config?
   const own = !(read.config as TerragucciConfig).projects;
   const key = own ? read.config.approval : undefined;
   const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o) => typeof o === "string") : [];
-  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders };
+  const point = own && typeof read.config.apply?.point === "string" ? read.config.apply.point : undefined;
+  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}) };
 }
 
 /** The mode a repo's checkout holds, as `config check` reports it. */
