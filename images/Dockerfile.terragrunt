@@ -8,7 +8,7 @@ ENV USER=terragucci
 ENV HOME=/tmp
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory '*'
-RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@0.24.0 && npm cache clean --force
+RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@0.24.0 @intentius/chant@0.124.13 && npm cache clean --force
 COPY --from=fetch /out/ /usr/local/bin/
 COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci
 LABEL org.opencontainers.image.title="terragucci-terragrunt"
