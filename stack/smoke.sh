@@ -14611,8 +14611,8 @@ claim_security/replan_apply_role() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      render.ts '      ...(needsToken ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' '      ...(false ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' \
-      render.ts 'run: `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: needsToken })}`,' 'run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true })}`,' \
+      render.ts '      ...(trades ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' '      ...(false ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' \
+      render.ts ': `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: trades })}`,' ': `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, sweep: false })}`,' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   fresh_repo replan-apply-role || { drop_work "$work"; return 1; }

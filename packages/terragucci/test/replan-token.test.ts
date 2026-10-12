@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
-import { dropForgeTokens, LEFTOVER_SWEEP, OIDC_REQUEST_VARS, renderPipeline, replanTradeScript, TRADED_FILE, type PipelineInput } from "../src/render";
+import { REPLAN_AZURE_WARNING, dropForgeTokens, LEFTOVER_SWEEP, OIDC_REQUEST_VARS, renderPipeline, replanTradeScript, TRADED_FILE, type PipelineInput } from "../src/render";
 import { awsRoles, stsEndpoint, trade, tradeCommand } from "../src/oidc-trade";
 import { TRADED_ENV } from "../src/traded";
 import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV } from "../src/roles";
@@ -100,12 +100,29 @@ describe("the re-plan's rendered steps", () => {
     expect(run).not.toMatch(/GOOGLE_APPLICATION_CREDENTIALS|TERRAGUCCI_GCP_TOKEN_FILE|tg oidc|apply@/);
   });
 
-  it("azure: the re-plan stops in the trade step and says why in the plan status", () => {
+  it.each(["github", "forgejo"] as const)("%s azure: the re-plan plans with the job's token as before, and its log warns and names the workaround", (forge) => {
     const azure = { tenant_id: "t", subscription_id: "s", plan_client_id: "p", apply_client_id: "a" };
-    const t = tradeStep(steps(render("github", { oidc: { ...OIDC, azure } as never }), "replan"))!;
-    expect(t.run).not.toContain("tg oidc");
-    expect(t.run).toContain("a re-plan does not run with oidc.azure");
-    expect(t.run).toContain(">terragucci-report/plan-status.txt; exit 1");
+    const doc = render(forge, { oidc: { ...OIDC, azure } as never });
+    const s = steps(doc, "replan");
+    expect(tradeStep(s), "no trade step: azurerm takes only the token").toBeUndefined();
+    const run = planStep(s).run!;
+    // The step as it was before the trade: the forge tokens dropped, the token fetched in the step, no traded file.
+    expect(run.split("\n")[0]).toBe(dropForgeTokens());
+    expect(run.split("\n")[1]).toBe(REPLAN_AZURE_WARNING);
+    expect(after(run)).toContain("tg oidc");
+    expect(after(run)).toContain("ARM_OIDC_TOKEN_FILE_PATH");
+    expect(after(run)).not.toContain(TRADED_FILE);
+    expect(after(run)).not.toContain(LEFTOVER_SWEEP);
+    expect(REPLAN_AZURE_WARNING).toMatch(/^echo '::warning::.*oidc\.azure.*default branch subject.*push to the pull request instead of commenting.*' >&2$/);
+    // The job keeps its id-token permission (Forgejo: enable-openid-connect), as before.
+    if (forge === "github") expect(doc.jobs.replan.permissions["id-token"]).toBe("write");
+    else expect(doc.jobs.replan["enable-openid-connect"]).toBe(true);
+    // The plan job is as it was, without the warning.
+    expect(planStep(steps(doc, "plan")).run).not.toContain("::warning::");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: without oidc.azure the plan step carries no Azure warning", (forge) => {
+    expect(planStep(steps(render(forge, { oidc: OIDC }), "replan")).run).not.toContain(REPLAN_AZURE_WARNING);
   });
 
   it("Terragrunt credentials: the trade step fetches the token for the units' roles; the plan step's prelude names no token", () => {
@@ -235,11 +252,11 @@ describe("terragucci oidc-trade", () => {
     expect(readFileSync(out, "utf-8")).not.toContain("AWS_ACCESS_KEY_ID");
   });
 
-  it("refuses a job with oidc.azure, and deletes the tokens anyway", async () => {
+  it("refuses a job with oidc.azure, which a re-plan never trades for, and deletes the tokens anyway", async () => {
     const { dir, env } = jobWithToken();
     writeFileSync(join(dir, "azure"), "az-jwt");
     env.ARM_OIDC_TOKEN_FILE_PATH = join(dir, "azure");
-    await expect(tradeCommand(join(dir, "traded.env"), env, { fetchFn: recorder().fetchFn })).rejects.toThrow(/does not run with oidc\.azure/);
+    await expect(tradeCommand(join(dir, "traded.env"), env, { fetchFn: recorder().fetchFn })).rejects.toThrow(/does not trade for oidc\.azure/);
     expect(existsSync(env.AWS_WEB_IDENTITY_TOKEN_FILE!)).toBe(false);
     expect(existsSync(join(dir, "traded.env"))).toBe(false);
   });

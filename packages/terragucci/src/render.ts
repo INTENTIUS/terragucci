@@ -1523,7 +1523,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
  * (`TG_ROOT`) and reads its range from `TG_BASE`; its checkout must be the
  * head the comment's decision read.
  */
-export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean; traded?: boolean } = {}): string {
+export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean; traded?: boolean; sweep?: boolean } = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1541,8 +1541,8 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
   return [
     READS_EXIT,
     ...(options.tokenCheck ? [options.tokenCheck] : []),
-    // A re-plan: what the change's code leaves running dies with the step.
-    ...(options.replan ? [LEFTOVER_SWEEP] : []),
+    // A re-plan that holds no token: what the change's code leaves running dies with the step.
+    ...(options.replan && options.sweep !== false ? [LEFTOVER_SWEEP] : []),
     // The OIDC token request; no forge token is in the job. A re-plan's identities were traded before this step.
     ...(forge !== "gitlab" && oidc && !options.traded ? [forgeApi(forge)] : []),
     ...(options.replan ? ['if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi'] : []),
@@ -1625,14 +1625,13 @@ export function dropForgeTokens(shell: "bash" | "sh" = "bash", oidcRequest = fal
  * leaves in TRADED_FILE, and deleted. The plan step starts without the
  * token-request variables and reads that file instead (planFilesScript with
  * `traded`), so the pull request's code never holds a token with the default
- * branch's subject. Azure's provider and backend take only the token itself,
- * so a re-plan with oidc.azure stops here and says so. A failed trade writes
- * the plan status, which the replan-note job posts.
+ * branch's subject. A failed trade writes the plan status, which the
+ * replan-note job posts. A re-plan with oidc.azure has no trade step
+ * (REPLAN_AZURE_WARNING).
  */
 export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>, reportsRole?: string): string {
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
   const refuse = (why: string): string => `echo ${sh(`terragucci: ${why}`)} >&2; mkdir -p ${REPORT_DIR} && echo ${sh(`failure ${why}`)} >${status}; exit 1`;
-  if (oidc?.azure) return refuse("a re-plan does not run with oidc.azure: the azurerm provider and backend need the job's OIDC token itself, which the pull request's code would hold. The pull request's push plans it");
   return [
     forgeApi(forge),
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
@@ -1640,6 +1639,18 @@ export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: Pip
     `terragucci oidc-trade --out ${TRADED_FILE}${reportsRole ? ` --reports-role ${sh(reportsRole)}` : ""} || { ${refuse("the re-plan could not trade the job's OIDC token for the plan identities")}; }`,
   ].join("\n");
 }
+
+/**
+ * The first lines of a re-plan's plan step with oidc.azure. The azurerm
+ * provider and backend take only the OIDC token itself, not keys or an access
+ * token a trade could leave, so that re-plan plans as it always has: the step
+ * fetches the job's token, which carries the default branch's subject that
+ * the Azure apply client trusts, and runs the pull request's code beside it.
+ * The log says so, and how to plan the change without it.
+ */
+export const REPLAN_AZURE_WARNING = `echo ${sh(
+  "::warning::terragucci: this re-plan runs with oidc.azure, so the pull request code runs in a job that holds an OIDC token with the default branch subject, which the Azure apply client trusts. Anyone who can comment /terragucci plan can run code with that token. To plan an Azure change without it, push to the pull request instead of commenting /terragucci plan: the plan job of a push holds only the pull request subject.",
+)} >&2`;
 
 /** The exports of a stage's identities by root glob, without a token: what a re-plan's plan step reads beside the traded credentials. */
 function rootIdentityExports(oidc: OidcSettings | undefined, stage: "plan" | "apply"): string[] {
@@ -2537,6 +2548,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // step holds the job's token and runs before the change is checked out; the plan step holds none, and the
   // replan-note job posts the note.
   const go = "steps.decide.outputs.go == '1'";
+  const azureReplan = Boolean(oidc?.azure);
+  const trades = needsToken && !azureReplan;
   const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
   const replan = new Job({
     "runs-on": "ubuntu-latest",
@@ -2555,14 +2568,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...toolSteps(true, true, go),
       // The job's OIDC token carries the default branch's subject, which the apply identities trust. terragucci trades it
       // here, before any of the head's code runs, for the plan identities' credentials, and deletes it; the plan step
-      // starts without the variables that ask for one.
-      ...(needsToken ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
+      // starts without the variables that ask for one. With oidc.azure, whose provider and backend take only the token,
+      // the plan step holds the token as before and its log says so (REPLAN_AZURE_WARNING).
+      ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       new Step({
         if: go,
         name: "Re-plan the pull request on request and write the plan report",
         shell: "bash",
         env: { TG_PR: "${{ steps.decide.outputs.pr }}", TG_SHA: "${{ steps.decide.outputs.sha }}", TG_ROOT: "${{ steps.decide.outputs.root }}", TG_BASE: "origin/${{ steps.decide.outputs.base }}" },
-        run: `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: needsToken })}`,
+        run: azureReplan
+          ? `${dropForgeTokens()}\n${REPLAN_AZURE_WARNING}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, sweep: false })}`
+          : `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: trades })}`,
       }),
       new Step({
         name: "Keep the plan report",
