@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { applyWave, changesOutputs, parseLedger, readDecision } from "../src/apply";
+import { applyWave, changesOutputs, parseLedger } from "../src/apply";
 import type { CostRunner } from "../src/report/cost";
 import { buildReport } from "../src/report/build";
 import { noteMarker } from "../src/report/marker";
@@ -11,7 +11,9 @@ import { notePreviews } from "../src/tg-preview";
 import { git, tmp, write } from "./helpers";
 import { RUN } from "./report-fixtures";
 
-const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
+// Hours from the start of the run: chant stamps the pending facts it records with the time it runs, so an approval at T(h) is newer than any of them.
+const T0 = Date.now();
+const T = (h: number): string => new Date(T0 + h * 3600_000).toISOString();
 
 describe("changesOutputs", () => {
   it("is true when an output is created, updated or deleted, and false for no-op outputs or none", () => {
@@ -383,13 +385,14 @@ describe("a Terragrunt wave behind its gate", () => {
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, now: T(1) })).toBe(0);
       expect(runs(tg)).toEqual(["plan live/c,live/d,live/e"]);
       expect(tg.applied.size).toBe(0);
-      const d = readDecision(decided);
-      expect(d).toMatchObject({ wave: 1, shares: 2, approval: "not-required", changes: 3 });
+      // chant's decision, which the pipeline hands the share jobs.
+      const d = JSON.parse(readFileSync(decided, "utf-8")) as { wave: number; status: string; members: { member: string }[] };
+      expect(d).toMatchObject({ wave: 1, status: "not-required" });
       expect(d.members.map((m) => m.member)).toEqual(["live/c", "live/d", "live/e"]);
-      expect(out.mock.calls.flat().join("\n")).toContain("wave 1 of 1: share 1 of 2 applies live/c, live/e");
+      expect(out.mock.calls.flat().join("\n")).toContain("its 2 share jobs apply these plans");
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, share: 1, now: T(2) })).toBe(0);
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, share: 2, now: T(3) })).toBe(0);
-      expect(runs(tg)).toEqual(["plan live/c,live/d,live/e", "plan live/c,live/e", "apply live/c,live/e", "plan live/d", "apply live/d"]);
+      expect(runs(tg)).toEqual(["plan live/c,live/d,live/e", "plan live/c,live/d", "apply live/c,live/d", "plan live/e", "apply live/e"]);
       expect([...tg.applied].sort()).toEqual(["live/c", "live/d", "live/e"]);
     });
 
@@ -399,10 +402,11 @@ describe("a Terragrunt wave behind its gate", () => {
       const tg = fakeTerragrunt(three);
       const decided = join(tmp("tg-decided-"), "wave-1.json");
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, now: T(1) })).toBe(0);
-      tg.inputs["live/d"] = "moved";
+      // chant cuts the units sorted into contiguous shares: share 2 is live/e.
+      tg.inputs["live/e"] = "moved";
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, share: 2, now: T(2) })).toBe(4);
       expect(tg.applied.size).toBe(0);
-      expect(out.mock.calls.flat().join("\n")).toContain("these units planned differently since wave 1 decided on");
+      expect(out.mock.calls.flat().join("\n")).toContain("live/e: its plan moved since wave 1 was decided, so it was not applied");
     });
 
     it("a wave with nothing to change still hands its shares a decision, and they apply nothing", async () => {
@@ -412,9 +416,10 @@ describe("a Terragrunt wave behind its gate", () => {
       for (const u of ["live/c", "live/d", "live/e"]) tg.applied.add(u);
       const decided = join(tmp("tg-decided-"), "wave-1.json");
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, now: T(1) })).toBe(0);
-      expect(readDecision(decided)).toMatchObject({ changes: 0 });
+      expect(JSON.parse(readFileSync(decided, "utf-8"))).toMatchObject({ status: "not-required" });
+      // The share plans its units again, as chant checks each against the decision, and applies nothing.
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, share: 1, now: T(2) })).toBe(0);
-      expect(runs(tg)).toEqual(["plan live/c,live/d,live/e"]);
+      expect(runs(tg)).toEqual(["plan live/c,live/d,live/e", "plan live/c,live/d"]);
     });
   });
 

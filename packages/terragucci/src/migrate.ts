@@ -60,7 +60,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { hostname, tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
@@ -1226,7 +1226,25 @@ export interface RunMigrationsOptions {
   terragrunt?: MigrateOptions["terragrunt"];
   /** Read only: prove each pending migration and print its digest, as a pull request's plan job does. */
   planOnly?: boolean;
+  /** Prove the first pending migration and go no further: wave 1's `migrations` hook, which fails the wave when one cannot be proved. */
+  prove?: boolean;
+  /** Under `chant run wave`: chant settles the migration's gate (MigrationHold). */
+  hold?: MigrationHold;
   log?: (line: string) => void;
+}
+
+/**
+ * How wave 1's `migration gate` hook holds the wave on a migration's own
+ * gate under `chant run wave`. Without `approved`, the run writes `file`
+ * (chant's `CHANT_HOLD`: the op, the gate, the digest and the pending fact's
+ * fields) and stops at the first migration not yet applied; chant records the
+ * pending fact, or finds the approval and runs the hook again with
+ * `approved` (`CHANT_HOLD_APPROVED`), and the migration then writes the
+ * states under that approval.
+ */
+export interface MigrationHold {
+  file: string;
+  approved?: { op: string; gate: string; digest: string; approvedBy: string; approvedAt: string };
 }
 
 export interface MigrationsRun {
@@ -1308,7 +1326,7 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
       writeRecord(repo, out.record);
       if (out.code !== EXIT.applied) return { code: out.code, records, ...(out.command ? { command: out.command } : {}) };
       // A later migration plans against the states this one writes, so a read-only run proves the first alone.
-      if (options.planOnly) {
+      if (options.planOnly || options.prove) {
         const later = pending.length - 1;
         if (later > 0) log(`migrations: ${later} more ${later === 1 ? "migration is" : "migrations are"} proved once ${m.name} applies`);
         return { code: EXIT.applied, records };
@@ -1342,7 +1360,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     return { code: EXIT.failed, record };
   }
   log(`${label}: ${proved}; digest ${record.digest}`);
-  if (options.planOnly) return { code: EXIT.applied, record };
+  if (options.planOnly || options.prove) return { code: EXIT.applied, record };
 
   const now = options.now ?? new Date().toISOString();
   const configPath = options.config ?? findConfig(repo);
@@ -1359,11 +1377,34 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
       }),
     };
   }
-  const decision = decideGate(ledger, m.name, record.digest, now);
   const command = migrateApproveCommand(m.name, record.digest, sealed);
   const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   const members = beforeMembers(record.roots);
+  let decision = options.hold ? undefined : decideGate(ledger, m.name, record.digest, now);
+  if (options.hold) {
+    // chant settles the gate: hold the wave on it, or write the states under the approval chant found.
+    const a = options.hold.approved;
+    if (!a || a.op !== MIGRATE_OP || a.gate !== m.name || !samePlanDigest(a.digest, record.digest)) {
+      const description = `${label}: ${record.roots.map((r) => r.root).join(", ")}`;
+      mkdirSync(dirname(options.hold.file), { recursive: true });
+      writeFileSync(options.hold.file, JSON.stringify({ op: MIGRATE_OP, gate: m.name, digest: record.digest, description, pending: { ...(commit ? { commit } : {}), members } }) + "\n");
+      // The proof beside the pending fact, which a refusal later compares with.
+      if (git(repo, ["cat-file", "-e", `refs/remotes/origin/chant/lifecycle:${keptPath(m.name, record.digest)}`]).status !== 0) {
+        try {
+          appendLifecycle(repo, "", [], { [keptPath(m.name, record.digest)]: JSON.stringify(record, null, 2) + "\n" }, `The proof of ${MIGRATE_OP} ${m.name}: ${record.digest}`);
+        } catch (e) {
+          log(`${label}: the proof was not kept beside the pending fact: ${(e as Error).message}`);
+        }
+      }
+      log(`${label} waits for an approval of digest ${record.digest}. Read the proof above, then approve it with:`);
+      log(`  ${command}`);
+      log("Then run this job again.");
+      return { code: EXIT.waiting, record: { ...record, status: "waiting" }, command };
+    }
+    decision = { status: "approved", by: a.approvedBy, at: a.approvedAt };
+  }
+  if (!decision) throw new ConfigError(`${label}: the gate was not decided`);
   if (decision.status !== "approved") {
     if (!decision.standing) {
       const pending: PendingRecord = {

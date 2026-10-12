@@ -46,7 +46,7 @@
 import { spawnSync } from "node:child_process";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { pointGateResumable, type PendingGateRecord, type PointQuestionState } from "@intentius/chant/point-decision";
-import { decideGate, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
+import { decideGate, runOf, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { forgeLiveness, type Liveness } from "./apply-rows";
 import { finishOf } from "./remainder";
 import { forgeCalls, gitlabCalls, pullOf } from "./review";
@@ -96,13 +96,13 @@ function approvedGates(ledger: GateLedger, now: string, take: (gate: string) => 
     if (d.status !== "approved") {
       // A gate that asks a decision point: its question answered with an answer the gate passes on (chant's rule). The wave writes the resolution when it runs.
       const point = p.answer && questions ? pointGateResumable(p as unknown as PendingGateRecord, questions.get(p.answer.id)) : undefined;
-      if (point?.resumable) out.push({ gate, digest: p.planDigest!, by: point.answeredBy, ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+      if (point?.resumable) out.push({ gate, digest: p.planDigest!, by: point.answeredBy, ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}) });
       continue;
     }
     // An approval an apply already used: that apply ran, so there is nothing to resume.
     const used = (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, p.planDigest) && at(a.approvedAt) >= at(d.at));
     if (used) continue;
-    out.push({ gate, digest: p.planDigest!, by: d.by, ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+    out.push({ gate, digest: p.planDigest!, by: d.by, ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}) });
   }
   return out;
 }

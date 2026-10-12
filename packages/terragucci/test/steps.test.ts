@@ -9,7 +9,9 @@ import { runStage } from "../src/report/stage";
 import { readSteps, runSteps, runUnitSteps, stepName, stepsAt, STEPS_AFTER_INIT_TERRAGRUNT, terragruntStepsRefusal } from "../src/steps";
 import { git, tmp, write } from "./helpers";
 
-const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
+// Hours from the start of the run: chant stamps the pending facts it records with the time it runs, so an approval at T(h) is newer than any of them.
+const T0 = Date.now();
+const T = (h: number): string => new Date(T0 + h * 3600_000).toISOString();
 
 const problems = (raw: unknown): string[] => {
   try {
@@ -261,7 +263,8 @@ describe("a wave with steps", () => {
     const line = JSON.stringify({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
     const clone = tmp("tg-approve-");
     git(clone, "clone", "-q", "-b", "chant/lifecycle", origin, ".");
-    writeFileSync(join(clone, "_gates/tf-apply.jsonl"), readFileSync(join(clone, "_gates/tf-apply.jsonl"), "utf-8") + line + "\n");
+    // chant's ledger may end without a newline (chant#3849).
+    writeFileSync(join(clone, "_gates/tf-apply.jsonl"), `${readFileSync(join(clone, "_gates/tf-apply.jsonl"), "utf-8").replace(/\n$/, "")}\n${line}\n`);
     git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "approve");
     git(clone, "push", "-q", "origin", "chant/lifecycle");
     expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);

@@ -261,6 +261,34 @@ describe("running a migration from wave 1", () => {
     expect(lines.join("\n")).toContain("changed after it applied");
   });
 
+  it("under chant run wave, proves the migration, holds wave 1 on its gate through CHANT_HOLD, and applies once chant hands it the approval", async () => {
+    const { work, origin } = repo();
+    const lines: string[] = [];
+    const log = (l: string) => void lines.push(l);
+    // wave 1's `migrations` hook: the proof alone, which fails the wave when it cannot be made.
+    const proved = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, prove: true, log });
+    expect(proved.code).toBe(0);
+    const digest = proved.records[0].digest;
+    // Its `migration gate` hook: chant settles the gate, so the run names it in the hold file and records no pending fact itself.
+    const file = join(tmp(), "hold.json");
+    const held = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file }, log });
+    expect(held.code).toBe(3);
+    expect(JSON.parse(readFileSync(file, "utf-8"))).toMatchObject({ op: "tf-migrate", gate: "split-b", digest, pending: { members: [{ member: "one" }, { member: "two" }] } });
+    expect(() => git(origin, "show", `chant/lifecycle:${MIGRATE_LEDGER}`)).toThrow();
+    expect(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/split-b/${digest.replace(":", "_")}.json`)).not.toContain("secret-");
+    expect(names(work, "one")).toEqual(["a", "b"]);
+    // chant found the approval and runs the hook again with CHANT_HOLD_APPROVED.
+    const approved = { op: "tf-migrate", gate: "split-b", digest, approvedBy: "alice", approvedAt: T(2) };
+    const applied = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved }, now: T(3), log });
+    expect(applied.code).toBe(0);
+    expect(applied.records[0]).toMatchObject({ status: "applied", approved_by: "alice" });
+    expect(names(work, "two")).toEqual(["c", "b"]);
+    expect(doneMigrations(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`)).get("split-b")?.status).toBe("applied");
+    // Once applied it never runs again, as when chant plans the wave again in the same job.
+    const other = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { ...approved, digest: "sha256:other" } }, log });
+    expect(other).toEqual({ code: 0, records: [] });
+  });
+
   it("refuses when a state moved after the approval, naming the root, and writes nothing", async () => {
     const { work } = repo();
     const lines: string[] = [];

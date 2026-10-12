@@ -48,7 +48,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { readLedger, storedReport, waveGate, type GateLedger } from "./apply";
+import { readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { checkoutApproval } from "./approval";
 import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
@@ -88,7 +88,7 @@ export function waitingWaves(ledger: GateLedger): WaitingWave[] {
   for (const [gate, p] of newest) {
     const answered = ledger.resolutions.some((r) => r.gate === gate && r.planDigest === p.planDigest && at(r.timestamp) >= at(p.timestamp));
     if (answered) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}) });
+    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}) });
   }
   return out.sort((a, b) => a.wave - b.wave);
 }
@@ -228,7 +228,7 @@ export function waitingMigrations(ledger: GateLedger): WaitingMigration[] {
   const out: WaitingMigration[] = [];
   for (const [gate, p] of newest) {
     if (ledger.resolutions.some((r) => r.gate === gate && samePlanDigest(r.planDigest, p.planDigest) && at(r.timestamp) >= at(p.timestamp))) continue;
-    out.push({ migration: gate, digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+    out.push({ migration: gate, digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}) });
   }
   return out.sort((a, b) => (a.migration < b.migration ? -1 : 1));
 }
