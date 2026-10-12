@@ -15,10 +15,16 @@ const jsonl = (...lines: unknown[]) => lines.map((l) => JSON.stringify(l)).join(
 const D = "jcs1-sha256:" + "a".repeat(64);
 const D2 = "jcs1-sha256:" + "b".repeat(64);
 
-function deps(o: { mode?: "ledger" | "pr-review" | "sealed"; ledger?: GateLedger; resume?: number } = {}): RelayDeps & { recorded: ResolutionRecord[] } {
+function deps(o: { mode?: "ledger" | "pr-review" | "sealed"; ledger?: GateLedger; resume?: number; answer?: RelayDeps["answer"] } = {}): RelayDeps & { recorded: ResolutionRecord[]; answered: [string, string][] } {
   const recorded: ResolutionRecord[] = [];
+  const answered: [string, string][] = [];
   return {
     recorded,
+    answered,
+    answer: async (id, by) => {
+      answered.push([id, by]);
+      return o.answer ? o.answer(id, by) : { answered: true };
+    },
     principal: "terragucci-relay",
     rule: async () => ({ mode: o.mode ?? "ledger", signers: gateSigners(SIGNERS), signersPath: ".chant/allowed_signers", ...(o.resume ? { resume: o.resume } : {}) }),
     ledger: () => o.ledger ?? parseLedger(jsonl(pending("wave-1", D, 1))),
@@ -115,6 +121,31 @@ describe("relay: deciding a click", () => {
     expect(a.ok).toBe(false);
     expect(a.text).toContain(`terragucci approve wave-1 --plan ${D} --sign`);
     expect(d.recorded).toEqual([]);
+  });
+
+  const Q = "prod-apply-0123456789ab";
+  const asking = (): GateLedger => parseLedger(jsonl({ ...pending("wave-1", D, 1), answer: { point: "prod-apply", id: Q, path: `answers/${Q}.md` } }));
+
+  it("answers the decision point question the wave waits on, as the mapped principal, and records no approval", async () => {
+    const d = deps({ ledger: asking(), resume: 5 });
+    const a = await decideClick(approveClick, d);
+    expect(d.answered).toEqual([[Q, "alice@acme.com"]]);
+    expect(d.recorded).toEqual([]);
+    expect(a).toEqual({ ok: true, text: `wave-1: decision point question ${Q} answered yes by alice@acme.com, relayed by terragucci-relay, for ${D} and no other plans. Run its job again, or comment /terragucci apply on its pull request, to apply it.` });
+  });
+
+  it("says so when chant does not count the answer, such as an agent's toward a human quorum", async () => {
+    const refusal = "quorum-not-met: prod-apply needs 1 person to answer, and 0 count; not counted: bot@acme.com, who holds the agent role";
+    const d = deps({ ledger: asking(), answer: async () => ({ error: refusal }) });
+    const a = await decideClick(approveClick, d);
+    expect(a).toEqual({ ok: false, text: `Not approved: wave-1 asks a decision point, and its question ${Q} was not answered for alice@acme.com: ${refusal}` });
+    expect(d.recorded).toEqual([]);
+  });
+
+  it("a question for plans that moved since the message is not answered", async () => {
+    const d = deps({ ledger: parseLedger(jsonl({ ...pending("wave-1", D2, 1), answer: { point: "prod-apply", id: Q, path: `answers/${Q}.md` } })) });
+    expect((await decideClick(approveClick, d)).ok).toBe(false);
+    expect(d.answered).toEqual([]);
   });
 
   it("a decline records nothing and names who declined", async () => {

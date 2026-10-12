@@ -157,6 +157,14 @@ export interface ApplySettings {
    * here matches. Plain roots only, with `when: merge`.
    */
   branches?: Record<string, string[]>;
+  /**
+   * The workspace decision point every wave gate asks instead of waiting for
+   * `terragucci approve` (chant's "A gate that asks a decision point"). The
+   * point declares `gate.planDigest`, so each plan is its own question, and
+   * its deciders and quorum decide. Read at base, like `approval:`, which
+   * stays `ledger`.
+   */
+  point?: string;
 }
 
 /**
@@ -818,7 +826,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   if (s.gate !== undefined && normalizeGate(s.gate) === undefined) problems.push(`${where}.gate is ${JSON.stringify(s.gate)}; use one of ${GATES.join(", ")}`);
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
-  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge);
+  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, s.approval);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
@@ -1233,7 +1241,7 @@ export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string)
 /** Why GitLab has no plan-time locks: no merge request event runs a pipeline from the default branch. */
 export const NO_GITLAB_PLAN_LOCKS = "plan is not supported on GitLab, where no merge request event runs a job from the default branch that could hold the lock; leave locks unset, and with apply.when: pull-request a merge request locks its roots on `/terragucci apply` or `/terragucci lock`";
 
-function checkApply(a: unknown, where: string, problems: string[], forge?: unknown): void {
+function checkApply(a: unknown, where: string, problems: string[], forge?: unknown, approval?: unknown): void {
   if (!isObject(a)) {
     problems.push(`${where} must be a map (settings: ${APPLY_KEYS.join(", ")})`);
     return;
@@ -1248,6 +1256,10 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
     if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
     // On GitLab the token also starts the apply pipeline, so it is set with merge: manual too.
     else if (a.merge !== "auto" && forge !== "gitlab") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env (on GitLab, where the token also starts the apply pipeline, set forge: gitlab)`);
+  }
+  if (a.point !== undefined) {
+    if (typeof a.point !== "string" || !POINT_NAME.test(a.point)) problems.push(`${where}.point must name a decision point the workspace declares: lower case letters, digits and hyphens, starting with a letter`);
+    else if (approval !== undefined && approval !== "ledger") problems.push(`${where}.point is set, and a wave gate that asks a decision point takes its quorum from the point; set approval to ledger or drop ${where}.point`);
   }
   if (a.branches !== undefined) checkApplyBranches(a.branches, `${where}.branches`, problems, a.when);
   if (a.requires !== undefined) {
@@ -1294,7 +1306,10 @@ function checkEphemeral(e: unknown, where: string, problems: string[], s: Record
   if (s.forge === "gitlab" && isObject(s.gitlab) && s.gitlab.token === "protected") problems.push(`${where}: ${EPHEMERAL_NOT_PROTECTED}`);
 }
 
-export const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];
+export const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches", "point"];
+
+/** A decision point's name, as chant's points file declares it. */
+export const POINT_NAME = /^[a-z][a-z0-9-]*$/;
 
 /** A branch name `apply.branches` may name: what a forge's rule and the job's shell both take as it is. */
 export const APPLY_BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;

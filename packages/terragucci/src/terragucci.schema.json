@@ -122,6 +122,10 @@
               "pattern": "^[^\\s,;=']+$"
             }
           }
+        },
+        "point": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
         }
       },
       "additionalProperties": false,
@@ -1511,6 +1515,10 @@
                   "pattern": "^[^\\s,;=']+$"
                 }
               }
+            },
+            "point": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
             }
           },
           "additionalProperties": false,

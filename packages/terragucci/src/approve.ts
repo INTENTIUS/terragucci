@@ -58,6 +58,9 @@ import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
 import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { EPHEMERAL_LEDGER, EPHEMERAL_OP, ephemeralGate } from "./ephemeral";
+import { chantCommand, installedChant } from "./chant-bin";
+
+export { chantCommand, installedChant };
 
 export interface WaitingWave {
   wave: number;
@@ -68,6 +71,8 @@ export interface WaitingWave {
   /** The run or pipeline that waited, and the commit it planned, when the pending fact names them. */
   runId?: string;
   commit?: string;
+  /** The decision point question the wave waits on, when its gate asks one (./point-gate.ts): an answer passes it, not an approval. */
+  question?: string;
 }
 
 const at = (iso: string): number => new Date(iso).getTime();
@@ -83,7 +88,7 @@ export function waitingWaves(ledger: GateLedger): WaitingWave[] {
   for (const [gate, p] of newest) {
     const answered = ledger.resolutions.some((r) => r.gate === gate && r.planDigest === p.planDigest && at(r.timestamp) >= at(p.timestamp));
     if (answered) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}) });
   }
   return out.sort((a, b) => a.wave - b.wave);
 }
@@ -270,39 +275,6 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
     else log(await resumeAfterApproval({ origin, wave: { wave: 1, ...(m.runId ? { runId: m.runId } : {}), ...(m.commit ? { commit: m.commit } : {}) }, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
   }
   return { code, command, migration: m };
-}
-
-/**
- * The chant bin of the @intentius/chant package installed with terragucci:
- * found from terragucci's own file upward, then from `from` upward, through
- * each node_modules/@intentius/chant/package.json and its `bin.chant`. The
- * package exports no ./package.json, so it is read from disk, not resolved.
- * Undefined when neither place has it.
- */
-export function installedChant(from: string[] = [dirname(fileURLToPath(import.meta.url))]): string | undefined {
-  for (const start of from) {
-    for (let dir = resolve(start); ; ) {
-      const manifest = join(dir, "node_modules", "@intentius", "chant", "package.json");
-      if (existsSync(manifest)) {
-        try {
-          const bin = (JSON.parse(readFileSync(manifest, "utf-8")) as { bin?: string | Record<string, string> }).bin;
-          const rel = typeof bin === "string" ? bin : bin?.chant;
-          if (rel && existsSync(resolve(dirname(manifest), rel))) return resolve(dirname(manifest), rel);
-        } catch {
-          // An unreadable manifest: look further up.
-        }
-      }
-      const up = dirname(dir);
-      if (up === dir) break;
-      dir = up;
-    }
-  }
-  return undefined;
-}
-
-/** The chant executable approve runs: `o.chant`, else the installed package's bin, else `chant` on the path. */
-export function chantCommand(repo: string, o: { chant?: string } = {}): string {
-  return o.chant ?? installedChant([dirname(fileURLToPath(import.meta.url)), repo]) ?? "chant";
 }
 
 /** Run chant with `args` from the repo, node_modules/.bin first on the path. Returns its exit code. */
