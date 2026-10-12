@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { renderPipeline, resumeCron, resumeScript } from "../src/render";
-import { originOf, resumable, resumeAfterApproval, resumeStep } from "../src/resume";
-import type { GateLedger } from "../src/apply";
+import { originOf, resumable, resumeAfterApproval, resumeStep, resumeWithChant } from "../src/resume";
+import { appendLifecycle, type GateLedger } from "../src/apply";
+import { git, tmp } from "./helpers";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 8, 12, m)).toISOString();
 const pending = (gate: string, digest: string, m: number, extra: Record<string, unknown> = {}) => ({ version: 1 as const, kind: "pending" as const, op: "tf-apply", gate, timestamp: T(m), expiresAt: T(m + 2880), planDigest: digest, ...extra });
@@ -100,16 +104,12 @@ describe("resumable, a state migration", () => {
     expect(resumable(ledger({}), T(6), mig({ pending: [pend] }))).toEqual([]);
   });
 
-  it("on GitLab retries apply-wave-1 for an approved migration, which waited there", async () => {
+  it("on GitLab leaves an approved migration to chant run resume, which retries the job that waited", async () => {
     const env = { CI_API_V4_URL: "https://api.test", CI_PROJECT_ID: "9", TG_TOKEN: "t", CI_DEFAULT_BRANCH: "main" };
-    const { fetch, calls } = forge({
-      "GET projects/9/pipelines": [{ id: 300 }],
-      "GET projects/9/pipelines/300/jobs": [{ id: 1, name: "apply-wave-1", status: "failed" }, { id: 2, name: "apply-wave-2", status: "skipped" }],
-      "POST projects/9/jobs/1/retry": {},
-    });
+    const { fetch, calls } = forge({});
     const migrations = mig({ pending: [pending("split-b", "jcs1-sha256:mm", 0, { op: "tf-migrate" })], resolutions: [resolution("split-b", "jcs1-sha256:mm", 5)] });
-    expect(await resumeStep({ ledger: ledger({}), migrations, forge: "gitlab", sha: "d".repeat(40), env, now: T(6), fetch })).toMatchObject({ kind: "retried", job: "apply-wave-1", waves: [{ wave: 1, migration: "split-b" }] });
-    expect(calls).toContain("POST projects/9/jobs/1/retry");
+    expect(await resumeStep({ ledger: ledger({}), migrations, forge: "gitlab", sha: "d".repeat(40), env, now: T(6), fetch })).toEqual({ kind: "none", why: "no approved apply stopped before it finished" });
+    expect(calls).toEqual([]);
   });
 });
 
@@ -127,44 +127,102 @@ describe("resumeStep", () => {
     expect(await resumeStep({ ledger: ledger({}), forge: "github", sha: SHA, env, now: T(6), fetch: none.fetch })).toEqual({ kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" });
   });
 
-  it("on GitLab retries the newest push pipeline's first unsuccessful apply job when its wave's approval stands", async () => {
+  it("on GitLab leaves a wave waiting at its gate to chant run resume, and retries the newest push pipeline's job of a stopped apply", async () => {
     const env = { CI_API_V4_URL: "https://api.test", CI_PROJECT_ID: "9", TG_TOKEN: "t", CI_DEFAULT_BRANCH: "main" };
     const routes = {
       "GET projects/9/pipelines": [{ id: 300, sha: SHA }],
       "GET projects/9/pipelines/300/jobs": [{ id: 1, name: "apply-wave-1", status: "success" }, { id: 2, name: "apply-wave-2", status: "failed" }, { id: 3, name: "apply-wave-3", status: "skipped" }],
       "POST projects/9/jobs/2/retry": { web_url: "https://gitlab.test/acme/infra/-/jobs/4" },
     };
+    const waiting = forge(routes);
+    expect(await resumeStep({ ledger: approved, forge: "gitlab", sha: SHA, env, now: T(6), fetch: waiting.fetch })).toEqual({ kind: "none", why: "no approved apply stopped before it finished" });
+    expect(waiting.calls).toEqual([]);
+    // An approved apply of wave 2 that recorded its changes and never how it ended, whose run is gone.
+    const stopped = ledger({ applied: [{ version: 1, kind: "changes", op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice", timestamp: T(6), holder: "55", changes: [{ root: "a", address: "x.y", actions: "create", digest: "d" }] }] as never });
     const f = forge(routes);
-    expect(await resumeStep({ ledger: approved, forge: "gitlab", sha: SHA, env, now: T(6), fetch: f.fetch })).toMatchObject({ kind: "retried", job: "apply-wave-2", pipeline: 300, url: "https://gitlab.test/acme/infra/-/jobs/4" });
+    expect(await resumeStep({ ledger: stopped, forge: "gitlab", sha: SHA, env, now: T(7), fetch: f.fetch, liveness: async () => "dead" })).toMatchObject({ kind: "retried", job: "apply-wave-2", pipeline: 300, url: "https://gitlab.test/acme/infra/-/jobs/4" });
     expect(f.calls).toContain("POST projects/9/jobs/2/retry");
-    // The waiting job is another wave's: nothing is retried.
-    const other = forge({ ...routes, "GET projects/9/pipelines/300/jobs": [{ id: 1, name: "apply-wave-1", status: "failed" }] });
-    expect(await resumeStep({ ledger: approved, forge: "gitlab", sha: SHA, env, now: T(6), fetch: other.fetch })).toMatchObject({ kind: "none", why: expect.stringContaining("apply-wave-1 of pipeline 300 has no approval that stands") });
-    expect(other.calls.some((c) => c.startsWith("POST"))).toBe(false);
   });
 });
 
-describe("resumeAfterApproval", () => {
-  it("re-runs the GitHub run's failed jobs with the approver's token", async () => {
-    const f = forge({ "POST repos/acme/infra/actions/runs/41/rerun-failed-jobs": {} }, "https://api.github.com/");
-    const line = await resumeAfterApproval({ origin: originOf("git@github.com:acme/infra.git")!, wave: { wave: 2, runId: "41" }, env: { GH_TOKEN: "me" }, fetch: f.fetch });
+describe("resumeAfterApproval, and the GitLab resume job, through chant run resume", () => {
+  let server: Server | undefined;
+  afterEach(() => new Promise<void>((done) => { if (!server) return done(); server.closeAllConnections(); server.close(() => done()); server = undefined; }));
+
+  /** A forge's API on localhost: answers `routes` by method and path, and records each call. */
+  async function api(routes: Record<string, unknown>): Promise<{ base: string; calls: string[] }> {
+    const calls: string[] = [];
+    server = createServer((req, res) => {
+      const key = `${req.method} ${(req.url ?? "").split("?")[0]}`;
+      calls.push(key);
+      if (!(key in routes)) {
+        res.writeHead(404).end("{}");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(routes[key] ?? {}));
+    });
+    await new Promise<void>((done) => server!.listen(0, "127.0.0.1", () => done()));
+    return { base: `http://127.0.0.1:${(server!.address() as AddressInfo).port}`, calls };
+  }
+
+  /** A checkout whose origin's chant/lifecycle holds `lines` in `_gates/<op>.jsonl`. */
+  function repoWith(op: string, lines: unknown[]): string {
+    const dir = tmp("tg-resume-");
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    const work = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", work);
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
+    git(work, "remote", "add", "origin", origin);
+    git(work, "push", "-q", "origin", "main");
+    appendLifecycle(work, `_gates/${op}.jsonl`, lines.map((l) => JSON.stringify(l)), {}, "ledger");
+    return work;
+  }
+
+  const now = Date.now();
+  const at = (m: number): string => new Date(now - 60_000 * (10 - m)).toISOString();
+  const waiting = (gate: string, resume: Record<string, unknown>, op = "tf-apply") => [
+    { version: 1, kind: "pending", op, gate, timestamp: at(0), expiresAt: new Date(now + 86_400_000).toISOString(), planDigest: "jcs1-sha256:aa", resume },
+    { version: 1, kind: "resolution", op, gate, resolvedBy: "alice", timestamp: at(5), planDigest: "jcs1-sha256:aa" },
+  ];
+
+  it("re-runs the GitHub run that waited, with the approver's token", async () => {
+    const f = await api({ "GET /repos/acme/infra/actions/runs/41": { status: "completed", conclusion: "failure", run_attempt: 1 }, "POST /repos/acme/infra/actions/runs/41/rerun-failed-jobs": {} });
+    const resume = { forge: "github", api: f.base, repo: "acme/infra", run: "41", attempt: 1 };
+    const repo = repoWith("tf-apply", waiting("wave-2", resume));
+    const line = await resumeAfterApproval({ origin: originOf("git@github.com:acme/infra.git")!, wave: { wave: 2, resume: resume as never }, env: { ...process.env, GH_TOKEN: "me" }, repo, gate: "wave-2" });
     expect(line).toBe("resumed: re-ran the failed jobs of run 41, so wave 2 runs again and its gate decides");
+    expect(f.calls).toContain("POST /repos/acme/infra/actions/runs/41/rerun-failed-jobs");
   });
 
-  it("retries GitLab's job of the wave, and comments /terragucci apply on Forgejo's merged pull request", async () => {
-    const gl = forge({ "GET projects/acme%2Finfra/pipelines/300/jobs": [{ id: 7, name: "apply-wave-2", status: "failed" }], "POST projects/acme%2Finfra/jobs/7/retry": {} }, "https://gitlab.com/api/v4/");
-    expect(await resumeAfterApproval({ origin: originOf("https://gitlab.com/acme/infra.git")!, wave: { wave: 2, runId: "300" }, env: { GITLAB_TOKEN: "me" }, fetch: gl.fetch })).toBe("resumed: retried apply-wave-2 of pipeline 300, and the waves after it follow");
+  it("retries GitLab's waiting job of a migration, and comments /terragucci apply on Forgejo's merged pull request", async () => {
+    const f = await api({ "GET /projects/9/jobs/7": { status: "failed", name: "apply-wave-1" }, "GET /projects/9/pipelines/300/jobs": [{ id: 7, name: "apply-wave-1" }], "POST /projects/9/jobs/7/retry": { id: 8 } });
+    const resume = { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "7", jobName: "apply-wave-1" };
+    const repo = repoWith("tf-migrate", waiting("split-b", resume, "tf-migrate"));
+    const line = await resumeAfterApproval({ origin: originOf("https://gitlab.com/acme/infra.git")!, wave: { wave: 1, resume: resume as never }, env: { ...process.env, GITLAB_TOKEN: "me" }, repo, op: "tf-migrate", gate: "split-b" });
+    expect(line).toBe("resumed: retried job 7 as job 8, so wave 1 runs again and its gate decides");
     const fj = forge({ [`GET repos/acme/infra/commits/${"c".repeat(40)}/pull`]: { number: 5 }, "POST repos/acme/infra/issues/5/comments": {} }, "https://code.test/api/v1/");
     expect(await resumeAfterApproval({ origin: originOf("https://code.test/acme/infra.git", "forgejo")!, wave: { wave: 2, commit: "c".repeat(40) }, env: { FORGEJO_TOKEN: "me" }, fetch: fj.fetch })).toBe("resumed: commented /terragucci apply on pull request 5, so its waves run again and each gate decides");
   });
 
-  it("says what is missing instead of failing: no token, no run, a forge that answers an error", async () => {
+  it("says what is missing instead of failing: no token, no CI job on the pending fact, a run that already succeeded", async () => {
     const origin = originOf("https://gitlab.com/acme/infra")!;
-    expect(await resumeAfterApproval({ origin, wave: { wave: 1, runId: "1" }, env: {} })).toMatch(/^not resumed from here: no token in GITLAB_TOKEN; the pipeline's resume job/);
-    expect(await resumeAfterApproval({ origin, wave: { wave: 1 }, env: { GITLAB_TOKEN: "x" } })).toMatch(/^not resumed from here: the pending fact names no pipeline/);
-    expect(await resumeAfterApproval({ origin, wave: { wave: 1, runId: "1" }, env: { GITLAB_TOKEN: "x" }, fetch: forge({}).fetch })).toMatch(/^not resumed from here \(GET .* answered 404\)/);
+    expect(await resumeAfterApproval({ origin, wave: { wave: 1, resume: {} as never }, env: {} })).toMatch(/^not resumed from here: no token in GITLAB_TOKEN; the pipeline's resume job/);
+    expect(await resumeAfterApproval({ origin, wave: { wave: 1 }, env: { GITLAB_TOKEN: "x" } })).toMatch(/^not resumed from here: the pending fact names no CI job/);
+    const f = await api({ "GET /repos/acme/infra/actions/runs/41": { status: "completed", conclusion: "success" } });
+    const resume = { forge: "github", api: f.base, repo: "acme/infra", run: "41" };
+    const repo = repoWith("tf-apply", waiting("wave-2", resume));
+    expect(await resumeAfterApproval({ origin: originOf("git@github.com:acme/infra.git")!, wave: { wave: 2, resume: resume as never }, env: { ...process.env, GH_TOKEN: "me" }, repo, gate: "wave-2" })).toMatch(/^not resumed from here: run 41 succeeded;/);
   });
 
+  it("the GitLab resume job runs chant run resume for the waves' and the migrations' gates, with the project token", async () => {
+    const f = await api({ "GET /projects/9/jobs/7": { status: "failed", name: "apply-wave-2" }, "GET /projects/9/pipelines/300/jobs": [{ id: 7, name: "apply-wave-2" }], "POST /projects/9/jobs/7/retry": { id: 8 } });
+    const repo = repoWith("tf-apply", waiting("wave-2", { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "7", jobName: "apply-wave-2" }));
+    const lines: string[] = [];
+    expect(await resumeWithChant(repo, { ...process.env, TG_TOKEN: "project" }, { log: (l) => void lines.push(l) })).toBe(0);
+    expect(lines).toEqual(["terragucci resume: chant run resume --op tf-apply", "terragucci resume: chant run resume --op tf-migrate"]);
+    expect(f.calls).toContain("POST /projects/9/jobs/7/retry");
+  });
   it("reads the forge from the origin, or from the config for any other host", () => {
     expect(originOf("git@github.com:acme/infra.git")).toEqual({ forge: "github", host: "github.com", web: "https://github.com", path: "acme/infra" });
     expect(originOf("https://gitlab.com/group/sub/infra.git")).toEqual({ forge: "gitlab", host: "gitlab.com", web: "https://gitlab.com", path: "group/sub/infra" });
