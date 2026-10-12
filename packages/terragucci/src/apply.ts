@@ -136,7 +136,7 @@ import { backendBootstrap } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
-import { MIGRATIONS_DIR, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
+import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
@@ -933,6 +933,14 @@ interface WaveJob {
   /** The approval chant let the wave through under. */
   approvedBy?: string;
   approvedAt?: string;
+  /** The migration wave 1 is held on, so a refusal names the roots that moved. */
+  migration?: HeldMigration;
+}
+
+/** A migration wave 1 is held on: its roots, and each one's state as its pending fact names it. */
+export interface HeldMigration {
+  roots: string[];
+  members: { member: string; planDigest: string }[];
 }
 
 /** What chant hands a wave-level call in `{runs}`. */
@@ -2025,6 +2033,23 @@ async function beforeGate(
   return undefined;
 }
 
+/**
+ * What wave 1 says when chant found an approval of another digest for the
+ * migration it is held on: who approved what, and the roots whose state moved
+ * since, from the pending fact that digest answered (every root of the
+ * migration when the ledger has none to compare).
+ */
+export function migrationMovedLine(repo: string, gate: string, mismatch: { approved?: string; resolvedBy: string }, held: HeldMigration | undefined): string {
+  const { roots, members } = held ?? { roots: [], members: [] };
+  let moved = roots;
+  try {
+    moved = movedSinceApproval(readLedger(repo, MIGRATE_LEDGER), gate, mismatch.approved, members, roots);
+  } catch {
+    // The ledger could not be read: every root, as with no fact to compare.
+  }
+  return `wave 1: ${mismatch.resolvedBy} approved ${mismatch.approved ?? "another digest"} of ${gate}, and the states moved since: ${moved.join(", ") || "the migration file"}; nothing was written`;
+}
+
 /** chant's decision record, as an `after-gate` hook reads it. */
 type GateRecord = OpWaveDecision;
 
@@ -2052,7 +2077,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
     // A state migration holds wave 1 on its own gate (migrationCall printed the proof and its command).
     j.code = EXIT.waiting;
     if (d.heldOn.mismatch) {
-      console.log(`wave 1: ${d.heldOn.mismatch.resolvedBy} approved ${d.heldOn.mismatch.approved ?? "another digest"} of ${d.heldOn.gate}, and the states moved since; nothing was written`);
+      console.log(migrationMovedLine(repo, d.heldOn.gate, d.heldOn.mismatch, j.migration));
       j.code = EXIT.refused;
       writeOutcome(options.env, `migration ${d.heldOn.gate}: the states moved since it was approved`, w);
     }
@@ -2210,6 +2235,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
  */
 async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob, hold: Record<string, string> | undefined, cwd: string): Promise<number> {
   delete j.code;
+  delete j.migration;
   if (j.k !== 1 || options.share !== undefined || !existsSync(join(repo, MIGRATIONS_DIR))) return EXIT.applied;
   const env = options.env ?? process.env;
   let approved: MigrationHold["approved"];
@@ -2232,6 +2258,7 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
   if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env);
   if (run.code === EXIT.applied) return EXIT.applied;
   const last = run.records[run.records.length - 1];
+  if (last) j.migration = { roots: last.roots.map((r) => r.root), members: beforeMembers(last.roots) };
   if (run.command) j.w.command = run.command;
   const what = last ? `migration ${last.name}` : "a migration";
   writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, j.w);
