@@ -26,7 +26,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { firstLine, forbiddenPaths, signersAt } from "./agent-comment";
 import { ConfigError, type ForgeName } from "./config";
-import { call, defaultBranch, ForgeError, openPullRequest, type Fetch, type ForgeTarget } from "./forge";
+import { defaultBranch, ForgeError, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
 import { targetFromEnv } from "./report/drift";
 import type { Report } from "./report/schema";
 
@@ -146,10 +146,11 @@ export async function pushDriftChange(o: DriftPushOptions): Promise<DriftPushRes
   if (!Number.isInteger(issue) || issue < 1 || !SHA.test(sha)) return { opened: false, fail: true, reason: "TG_ISSUE and TG_SHA must name the drift issue and the commit the drift job planned" };
   const token = env.TG_TOKEN ?? "";
   const target: ForgeTarget | undefined = targetFromEnv(o.forge, env, token);
-  if (!target) return { opened: false, fail: true, reason: "drift-agent push needs GITHUB_REPOSITORY, GITHUB_SERVER_URL and TG_TOKEN in the environment" };
+  if (!target || target.forge === "gitlab") return { opened: false, fail: true, reason: "drift-agent push needs GITHUB_REPOSITORY, GITHUB_SERVER_URL and TG_TOKEN in the environment" };
   const say = async (text: string): Promise<void> => {
     try {
-      await call(doFetch, target, "POST", `/repos/${target.path}/issues/${issue}/comments`, { body: `terragucci: ${text}` });
+      // The drift issue's comments are an issue's, which GitHub and Forgejo serve at the same address as a pull request's.
+      await prForgeOf(target, doFetch).addComment(issue, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not comment on drift issue #${issue}: ${(e as Error).message}`);
     }

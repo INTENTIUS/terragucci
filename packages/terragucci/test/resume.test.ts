@@ -18,8 +18,8 @@ function forge(routes: Record<string, unknown>, base = "https://api.test/"): { f
     const path = url.replace(base, "").split("?")[0]!;
     const key = `${init?.method ?? "GET"} ${path}`;
     calls.push(key);
-    if (!(key in routes)) return { ok: false, status: 404, json: async () => ({}) } as never;
-    return { ok: true, status: 200, json: async () => routes[key] } as never;
+    if (!(key in routes)) return { ok: false, status: 404, json: async () => ({}), text: async () => "{}" } as never;
+    return { ok: true, status: 200, json: async () => routes[key], text: async () => JSON.stringify(routes[key] ?? null) } as never;
   };
   return { fetch, calls };
 }

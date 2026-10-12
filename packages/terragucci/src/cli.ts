@@ -49,6 +49,7 @@
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
+ *   terragucci post status|note|reply|stale <args> [--forge github|gitlab|forgejo]   (say something on a pull request or commit through chant's forge client; the generated pipeline's tg function runs it)
  *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
  *   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
  *   terragucci review post --dir <dir> [--forge gitlab]   (post the review as a note on the pull request; run by the review-note job)
@@ -81,6 +82,7 @@ import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
+import { forgePost } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
@@ -158,6 +160,7 @@ const USAGE = `usage:
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
+  terragucci post status|note|reply|stale <args> [--forge github|gitlab|forgejo]
   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]
   terragucci review post --dir <dir> [--forge gitlab]
@@ -843,6 +846,13 @@ export async function main(argv: string[]): Promise<number> {
         await startRelay({ port });
         // Serves until the process is stopped.
         return await new Promise<number>(() => {});
+      }
+      case "post": {
+        const forge = str(flags, "forge") ?? process.env.TG_FORGE ?? "github";
+        if (forge !== "github" && forge !== "gitlab" && forge !== "forgejo") throw new ConfigError("post's --forge is github, gitlab or forgejo");
+        const said = await forgePost(args[0] ?? "", args.slice(1), { forge });
+        if (said) console.log(said);
+        return 0;
       }
       case "plan-note": {
         const forge = str(flags, "forge") ?? "github";

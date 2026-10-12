@@ -23,7 +23,8 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiOf, parseComment } from "./comment";
 import { CONFIG_NAMES, ConfigError, type AgentCommentSettings, type ProjectSettings } from "./config";
-import type { Fetch } from "./forge";
+import { detectForge } from "@intentius/chant/pr-forge";
+import { poster, type Fetch } from "./forge";
 
 /** The Claude Code release the default command runs. */
 export const CLAUDE_CODE_VERSION = "2.1.290";
@@ -175,15 +176,10 @@ export async function pushAgentChange(o: PushOptions): Promise<PushResult> {
   if (!Number.isInteger(pr) || pr < 1 || !SHA.test(sha) || !BRANCH.test(head) || head.split("/").some((s) => s === ".." || s === "")) {
     return { pushed: false, fail: true, reason: "TG_PR, TG_SHA and TG_HEAD must name the pull request, its head commit and its head branch" };
   }
-  const { api, repo, token } = apiOf(env);
+  const { repo, token } = apiOf(env);
   const reply = async (text: string): Promise<void> => {
     try {
-      const r = await doFetch(`${api}/repos/${repo}/issues/${pr}/comments`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `token ${token}` },
-        body: JSON.stringify({ body: `terragucci: ${text}` }),
-      });
-      if (!r.ok) throw new Error(`POST repos/${repo}/issues/${pr}/comments answered ${r.status}`);
+      await poster(detectForge(env) === "forgejo" ? "forgejo" : "github", env, doFetch).addComment(pr, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not reply: ${(e as Error).message}`);
     }

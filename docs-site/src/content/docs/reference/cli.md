@@ -29,6 +29,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and records an approval of its digest, with `--sign` under `approval: sealed`; also approves a migration, a state export, a lock release and a pull request environment; a person runs it |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and records the override with the reason; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
+| `post` | sets a commit status, posts or edits the plan note, replies, or marks plan notes stale; the generated pipeline's jobs run it |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
@@ -388,6 +389,24 @@ Merges the pull request while its head is still `--sha` and releases its root lo
 It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
 
 With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s user, that says every wave of `--sha` applied in this pipeline (`CI_PIPELINE_ID`). Without one it exits 0 and prints `nothing to merge`. The approval it checks is one given after the merge request's latest push.
+
+## post
+
+```text
+terragucci post status <context> pending|success|failure <description>
+terragucci post note <file>
+terragucci post reply <text>
+terragucci post stale <roots> <branch>
+```
+
+| Command | What it does |
+|---|---|
+| `status` | sets a commit status on `TG_SHA`, linked to the run; on GitLab a pending status shows as running |
+| `note` | posts the file as the plan note on `TG_PR`, or edits the plan note already there |
+| `reply` | adds a comment `terragucci: <text>` on `TG_PR` |
+| `stale` | adds a line to the plan note of every open pull request into `<branch>` that covers one of `<roots>` (comma-separated), saying the plan is stale |
+
+It posts with `TG_TOKEN`, on the forge `--forge` or `TG_FORGE` names (default `github`). The generated pipeline's jobs run it. With no token it posts nothing. A post the forge refuses is printed, and the command still exits 0.
 
 ## plan-note
 
