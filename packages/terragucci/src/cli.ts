@@ -108,7 +108,7 @@ import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
 import { applyWave, parseBranches, readLedger } from "./apply";
-import { resumeStep } from "./resume";
+import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
@@ -751,11 +751,13 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("resume's --forge is github, forgejo or gitlab");
         const out = str(flags, "out");
         const sha = process.env.TG_SHA || spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).stdout.trim();
+        // On GitLab chant retries each job that waits at a gate now answered; terragucci finishes the stopped applies after it.
+        const chantCode = forge === "gitlab" ? await resumeWithChant(cwd, process.env) : 0;
         const ledger = readLedger(cwd);
-        // A wave whose gate asks a decision point resumes once its question has an answer that passes the gate.
+        // A wave whose gate asks a decision point resumes once its question has an answer that passes the gate (on GitLab, chant run resume reads them).
         let questions: Awaited<ReturnType<typeof pointQuestions>>;
         try {
-          questions = await pointQuestions(cwd, ledger);
+          if (forge !== "gitlab") questions = await pointQuestions(cwd, ledger);
         } catch (e) {
           console.log(`terragucci resume: the decision point questions could not be read, so no wave waiting on one is resumed: ${(e as Error).message}`);
         }
@@ -766,7 +768,7 @@ export async function main(argv: string[]): Promise<number> {
           for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : w.stopped ? `terragucci resume: the apply of wave ${w.wave}, approved by ${w.by} for ${w.digest}, stopped before it finished; the wave applies the rest` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
           console.log(step.kind === "apply" ? `terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides` : `terragucci resume: retried ${step.job} of pipeline ${step.pipeline}${step.url ? ` (${step.url})` : ""}; the waves after it follow`);
         }
-        return 0;
+        return chantCode;
       }
       case "notify": {
         if (args[0] === "drift") {
