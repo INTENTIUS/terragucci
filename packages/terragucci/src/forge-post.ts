@@ -72,22 +72,10 @@ async function status(forge: PrForge, args: string[], o: PostOptions, env: NodeJ
   const sha = (env.TG_SHA ?? "").trim();
   if (!sha) throw new ConfigError("TG_SHA names no commit");
   const pipeline = o.forge === "gitlab" && sha === env.CI_COMMIT_SHA && /^[0-9]+$/.test(env.CI_PIPELINE_ID ?? "") ? Number(env.CI_PIPELINE_ID) : undefined;
-  if (o.forge === "gitlab" && state === "pending") {
-    // A GitLab status that is still going shows as running. chant's client posts it as pending (INTENTIUS/chant#3834),
-    // so this one call stays here.
-    const api = gitlabApi(env, env.TG_TOKEN, o.fetch ?? fetch);
-    await api("POST", `/projects/${encodeURIComponent(env.CI_PROJECT_ID ?? "")}/statuses/${sha}`, {
-      name: context,
-      state: "running",
-      description,
-      ...(forge.runUrl ? { target_url: forge.runUrl } : {}),
-      ...(pipeline !== undefined ? { pipeline_id: pipeline } : {}),
-    });
-    return;
-  }
   await forge.setStatus(sha, {
     context,
-    state: state as "pending" | "success" | "failure",
+    // A status still going is running: GitLab shows it so, and GitHub and Forgejo, which have no such state, as pending.
+    state: state === "pending" ? "running" : (state as "success" | "failure"),
     description,
     ...(forge.runUrl ? { url: forge.runUrl } : {}),
     ...(pipeline !== undefined ? { pipelineId: pipeline } : {}),
