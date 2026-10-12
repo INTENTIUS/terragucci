@@ -42,6 +42,19 @@ npx terragucci stage tf-plan
 | with [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#planned-stacks) | the command runs on the base too: roots whose synthesized files or local modules differ, new and removed ones, and the roots that read their state; the note counts the unchanged ones |
 | with `synth`, when the base cannot be synthesized | every root, and the note says why |
 
+### Changes outside every root
+
+A pull request also plans the roots a change outside their directories reaches. The job log names each one and why, such as `affected: envs/prod/app reads envs/prod/shared.tfvars, which changed`.
+
+| The change | Plans | Claim |
+|---|---|---|
+| a var file a `-var-file` in `TF_CLI_ARGS` or `TF_CLI_ARGS_plan` names, set in [`env`](/terragucci/reference/config/#keys) or the job's environment; the path is relative to each root | the roots that read it | `affected/outside-roots` |
+| a file or directory a symlink under a root points at, such as a shared `.terraform.lock.hcl`, provider file or `.auto.tfvars` | the roots that link it | `affected/outside-roots` |
+| `version`, `generate`, `pass`, `env` or `oidc` in `terragucci.yml`, resolved per root, its globs included | the roots whose settings differ from the base's | `affected/outside-roots` |
+| `synth` in `terragucci.yml` | every synthesized root, and the note says the command changed | `affected/outside-roots` |
+| a file the `synth` command reads | the roots whose synthesized files differ from the base's | `affected/cdktn` |
+| `policy`, `approval` or `steps` in `terragucci.yml`, or the policy directory | no root: the run reads these from the base, so the change takes effect once it merges | `affected/outside-roots` |
+
 It writes to `terragucci-report/`.
 
 | File | What it is |

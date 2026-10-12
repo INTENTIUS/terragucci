@@ -1,0 +1,2 @@
+binary: tofu
+synth: sh gen.sh one
