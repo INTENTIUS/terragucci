@@ -45,6 +45,7 @@ import { prForgeOf, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
+import { sourceChecker } from "../sources";
 import { describeTips, repoTips } from "../tips";
 import { renamesIn } from "../tips/moved";
 import type { DecideOptions } from "../decide";
@@ -1038,6 +1039,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
       else if (r.verified.length) log(`${root}: attested ${r.verified.join("; ")}`);
     }
   }
+  // sources: each root's module and provider sources against the list at base, before anything is downloaded for it (../sources.ts).
+  const sourceRefusals = new Map<string, string[]>();
+  if (roots.length > 0) {
+    const sourcesOf = await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log });
+    for (const root of sourcesOf ? roots : []) {
+      const refused = await sourcesOf!(root, checkoutOf(root));
+      if (refused.length) sourceRefusals.set(root, refused);
+    }
+  }
 
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
@@ -1139,6 +1149,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     if (refused) {
       observer.endRoot(timing);
       return failed(refused.join("\n"), `${root}: refused by modules.require: attested`);
+    }
+    const outside = sourceRefusals.get(root);
+    if (outside) {
+      observer.endRoot(timing);
+      return failed(outside.join("\n"), `${root}: refused by sources, so it was not initialised`);
     }
     const unchecked = sources?.failed.get(root);
     if (unchecked) {
@@ -1437,6 +1452,21 @@ async function runTerragruntStage(
         refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { ...unitStack(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
       } else if (r.verified.length) log(`${unit}: attested ${r.verified.join("; ")}`);
     }
+  }
+  // sources: each unit's terraform source and the module and provider sources under it, against the list at base (../sources.ts).
+  {
+    const sourcesOf = waves.length > 0 ? await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log }) : undefined;
+    const already = new Set(refusedUnits.map((u) => u.path));
+    for (const unit of sourcesOf ? waves.flat() : []) {
+      if (already.has(unit)) continue;
+      const r = await sourcesOf!(unit);
+      if (r.length) {
+        log(`${unit}: refused by sources, so it was not planned`);
+        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.join("\n"), preventDestroy: new Set(), terragrunt: { ...unitStack(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
+      }
+    }
+  }
+  if (refusedUnits.length > 0) {
     const refused = new Set(refusedUnits.map((u) => u.path));
     waves = waves.map((w) => w.filter((u) => !refused.has(u))).filter((w) => w.length > 0);
   }

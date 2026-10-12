@@ -339,6 +339,9 @@ rollout/pins|rollout moves a provider alone in the lock file and its exact const
 policy/opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
 policy/hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
 policy/hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
+policy/sources-module|with sources.modules set, tf-plan fails a root that calls a module from an unlisted host before its init, and the report names the call and the source|
+policy/sources-provider|with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and the report names the provider|
+policy/sources-at-base|a pull request that adds an unlisted host to its own sources list is still refused, checked against the list of the base branch|
 oidc/terragrunt|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
 affected/terragrunt-dependents|by default a pull request previews the dependents of a changed Terragrunt unit, provisional and outside every digest, terragrunt.dependents: follow opts out, and terragrunt.exclude leaves a unit out|
 linked/terragrunt-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
@@ -2342,9 +2345,10 @@ break_unowned() { # why -> returns 1
   break_setup_failed "no BREAK: $1"
 }
 
+# REPORT_BUNDLE: a bundle to run in place of the one build_cli wrote, such as a BREAK's.
 report_run() {
   local work="$1"; shift
-  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p rc=0
+  local image bundle="${REPORT_BUNDLE:-$HERE/../packages/terragucci/dist/terragucci.mjs}" p rc=0
   image="$(bin_image)"
   bin_prepare || return 1
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
@@ -7826,6 +7830,118 @@ awk '/^policy:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv te
   drop_work "$work"; drop_work "$tree"
   [ $rc = 0 ] && log "the change deleted the policy key, yet conftest denied terraform_data under the base policy and $root failed the plan job"
   return $rc
+}
+
+# sources: a pull request adds envs/dev/sources-probe, a root that uses a
+# source the list in terragucci.yml at base does not name. tf-plan must exit 1,
+# fail that root before its init, and name the block and the source in the
+# report. The base lists the example's own sources (its local modules and
+# hashicorp/aws), so every other root plans as it always has. The unlisted
+# host does not resolve: a root that reaches init fails there instead, with
+# init's words, never the refusal's.
+#   sources_claim <module|provider|at-base>
+#     module    the root calls a module from an unlisted git host
+#     provider  the root's required_providers names an unlisted provider
+#     at-base   as module, and the change adds that host to its own copy of the
+#               list: the refusal names the base's entries
+sources_claim() {
+  local kind="$1"
+  log() { echo "[smoke policy-sources-$kind] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work tree rc=0 run=0 r root=envs/dev/sources-probe edit body want list bundle=""
+  local host="git::https://git.unlisted.example/acme"
+  local backend="  required_version = \"~> 1.13.0\"
+
+  backend \"s3\" {
+    bucket         = \"shop-terraform-state\"
+    key            = \"envs/dev/sources-probe.tfstate\"
+    region         = \"us-east-1\"
+    use_lockfile   = true
+    use_path_style = true
+  }"
+  case "$kind" in
+    module|at-base)
+      body="terraform {
+$backend
+}
+
+module \"probe\" {
+  source = \"$host/probe.git?ref=v1.0.0\"
+}"
+      want="refused: $root: module.probe ($root/main.tf) uses module source $host/probe.git?ref=v1.0.0, which no entry of sources.modules matches"
+      list='sources:\n  modules: ["./**", "../**"]\n'
+      ;;
+    provider)
+      body="terraform {
+$backend
+
+  required_providers {
+    probe = { source = \"registry.unlisted.example/acme/probe\" }
+  }
+}"
+      want="refused: $root: required_providers.probe ($root/main.tf) uses provider registry.unlisted.example/acme/probe, which no entry of sources.providers matches"
+      list='sources:\n  providers: ["hashicorp/*"]\n'
+      ;;
+    *) log "no such case $kind"; return 1 ;;
+  esac
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    case "$kind" in
+      module) break_bundle "$bundle" sources.ts '    const list = u.kind === "module" ? lists.modules : lists.providers;' '    const list = u.kind === "module" ? undefined : lists.providers;' || { drop_work "$work"; return 1; } ;;
+      provider) break_bundle "$bundle" sources.ts '    const list = u.kind === "module" ? lists.modules : lists.providers;' '    const list = u.kind === "module" ? lists.modules : undefined;' || { drop_work "$work"; return 1; } ;;
+      at-base) break_bundle "$bundle" sources.ts '      return atBase ? { sources: atBase, from: "base" } : own;' '      return own;' || { drop_work "$work"; return 1; } ;;
+    esac
+  fi
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  # shellcheck disable=SC2059 # the list's \n are printf's
+  printf "$list" >> "$tree/terragucci.yml"
+  edit="mkdir -p $root
+cat > $root/main.tf <<'TF'
+$body
+TF"
+  [ "$kind" = at-base ] && edit="$edit
+awk '/^sources:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv terragucci.yml.new terragucci.yml
+printf 'sources:\n  modules: [\"./**\", \"../**\", \"$host/**\"]\n' >> terragucci.yml"
+  REPORT_BUNDLE="$bundle" REPORT_TREE="$tree" REPORT_BASE=1 REPORT_EDIT="$edit" report_run "$work" || run=$?
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; drop_work "$tree"; return 1; }
+  if [ "$kind" = at-base ] && ! grep -q 'git.unlisted.example' "$work/terragucci.yml"; then log "the change did not add the host to its own list"; rc=1; fi
+  [ "$run" = 1 ] || { log "the plan job exited $run, not 1"; rc=1; }
+  jq -e --arg n "$root" '.roots[] | select(.path == $n and .status == "failed")' "$r" >/dev/null || { log "$root is not failed in the report"; rc=1; }
+  jq -e --arg n "$root" --arg w "$want" '.roots[] | select(.path == $n) | .error | contains($w)' "$r" >/dev/null \
+    || { log "the report does not refuse $root with: $want"; log "its error: $(jq -r --arg n "$root" '.roots[] | select(.path == $n) | .error' "$r" | head -3)"; rc=1; }
+  if jq -e --arg n "$root" '.roots[] | select(.path == $n) | .error | test("init failed")' "$r" >/dev/null; then log "$root reached init"; rc=1; fi
+  if [ "$kind" = at-base ]; then
+    jq -e --arg n "$root" '.roots[] | select(.path == $n) | .error | contains("(sources.modules: ./**, ../**)")' "$r" >/dev/null || { log "the refusal does not name the base's entries"; rc=1; }
+  fi
+  drop_work "$work"; drop_work "$tree"
+  [ $rc = 0 ] && log "$root failed tf-plan before its init, refused by the list at base: $want"
+  return $rc
+}
+
+claim_policy/sources_module() {
+  # A root calling a module from a git host sources.modules does not list is
+  # refused before init. BREAK: the bundle checks no module source, so the
+  # root reaches init and fails there.
+  sources_claim module
+}
+
+claim_policy/sources_provider() {
+  # A root whose required_providers names a provider sources.providers does
+  # not list is refused before init. BREAK: the bundle checks no provider, so
+  # the root reaches init and fails there.
+  sources_claim provider
+}
+
+claim_policy/sources_at_base() {
+  # The change adds the unlisted host to its own sources.modules; the base's
+  # list still refuses the root, and the refusal names the base's entries.
+  # BREAK: the bundle reads the list from the checkout, so the change's entry
+  # lets the root through to init, which fails.
+  sources_claim at-base
 }
 
 claim_policy/source() {
@@ -21385,6 +21501,9 @@ rollout/pins         self! weight=180
 policy/opa           weight=150
 policy/hcp           weight=150
 policy/hcl           weight=150
+policy/sources-module    ex after=boot/tofu weight=150
+policy/sources-provider  ex after=boot/tofu weight=150
+policy/sources-at-base   ex after=boot/tofu weight=150
 oidc/terragrunt       weight=200
 affected/terragrunt-dependents        weight=250
 linked/terragrunt-preview           self! weight=120

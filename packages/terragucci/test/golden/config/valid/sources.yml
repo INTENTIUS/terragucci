@@ -1,0 +1,9 @@
+sources:
+  modules:
+    - "./**"
+    - "../modules/**"
+    - "registry.example.com/acme/*/*"
+    - "oci://registry.example.com/acme/modules/*"
+  providers:
+    - "hashicorp/*"
+    - "registry.example.com/acme/*"
