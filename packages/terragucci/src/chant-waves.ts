@@ -13,9 +13,9 @@
  * state migration's own gate.
  *
  * chant's exit codes map onto terragucci's (waveExit): an approval of other
- * plans leaves chant waiting where terragucci refuses (4), and chant's policy
+ * plans leaves chant waiting where terragucci refuses (4), chant's policy
  * refusal (7) is terragucci's 1, or 4 when an override stands for an earlier
- * plan.
+ * plan, and a decision point's refusing answer (8) is 4.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -52,6 +52,8 @@ export interface WavesSpecInput {
   call: (what: WaveCall, ...args: string[]) => string[];
   /** Wave 1 runs the repo's state migrations first. */
   migrations: boolean;
+  /** `apply.point` at base: every wave's gate asks this decision point in place of the ledger (chant#3836). */
+  point?: string;
 }
 
 /** The op-waves spec of a repo's apply. */
@@ -81,6 +83,8 @@ export function wavesSpec(input: WavesSpecInput): OpWavesSpec {
     digest: { over: "changing" },
     neverOverMcp: true,
     approvals: { spend: true },
+    // The question goes to chant/lifecycle, so it outlives the job's checkout, and its pending fact stands 48 hours.
+    ...(input.point ? { point: { name: input.point, store: "ledger", timeout: "48h" } } : {}),
     planWave: input.call("plan", "{runs}", "{plans}"),
     applyWave: input.call("apply", "{runs}"),
     hooks: {
@@ -138,6 +142,8 @@ export function waveExit(chant: number, own?: number): number {
   if (chant === 0) return 0;
   if (own !== undefined && own !== 0) return own;
   if (chant === 7) return 1;
+  // A decision point answered otherwise (chant#3836): the wave applies nothing, as terragucci's refusals do.
+  if (chant === 8) return 4;
   return chant;
 }
 

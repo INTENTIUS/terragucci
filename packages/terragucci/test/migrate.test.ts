@@ -289,6 +289,39 @@ describe("running a migration from wave 1", () => {
     expect(other).toEqual({ code: 0, records: [] });
   });
 
+  it("under chant run wave, the approved run of the first of two migrations applies it and holds wave 1 on the second's gate", async () => {
+    const { work } = repo();
+    // A second migration, of two other roots: three holds d, which the code now has in four.
+    write(work, {
+      "three/main.tf": "",
+      "three/want.json": JSON.stringify([]),
+      "three/terraform.tfstate": JSON.stringify(state("L3", 1, [res("terraform_data", "d")])),
+      "four/main.tf": 'resource "terraform_data" "d" {}\n',
+      "four/want.json": JSON.stringify(["terraform_data.d"]),
+      "four/terraform.tfstate": JSON.stringify(state("L4", 1, [])),
+      "migrations/split-d.yml": "moves:\n  - from: three\n    to: four\n    addresses: [terraform_data.d]\n",
+    });
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "move d");
+    const log = () => {};
+    const file = join(tmp(), "hold.json");
+    const hold = () => JSON.parse(readFileSync(file, "utf-8")) as { gate: string; digest: string };
+    expect((await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file }, log })).code).toBe(3);
+    const first = hold();
+    expect(first.gate).toBe("split-b");
+    // chant found split-b's approval: the run applies it, then holds on split-d, which plans against what split-b wrote (chant#3847).
+    const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { op: "tf-migrate", gate: "split-b", digest: first.digest, approvedBy: "alice", approvedAt: T(2) } }, now: T(3), log });
+    expect(second.code).toBe(3);
+    expect(second.records.map((r) => [r.name, r.status])).toEqual([["split-b", "applied"], ["split-d", "waiting"]]);
+    expect(names(work, "two")).toEqual(["c", "b"]);
+    expect(names(work, "four")).toEqual([]);
+    expect(hold().gate).toBe("split-d");
+    // Then split-d's approval: split-b is done, and split-d applies.
+    const third = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { op: "tf-migrate", gate: "split-d", digest: hold().digest, approvedBy: "alice", approvedAt: T(4) } }, now: T(5), log });
+    expect(third.code).toBe(0);
+    expect(names(work, "four")).toEqual(["d"]);
+  });
+
   it("refuses when a state moved after the approval, naming the root, and writes nothing", async () => {
     const { work } = repo();
     const lines: string[] = [];
