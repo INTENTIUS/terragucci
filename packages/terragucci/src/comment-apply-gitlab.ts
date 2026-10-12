@@ -381,8 +381,6 @@ export async function mergeGitLabMR(o: GitLabMergeOptions): Promise<string> {
   if (!/^\d+$/.test(pipeline)) throw new ConfigError("pr-merge --forge gitlab needs CI_PIPELINE_ID in the environment");
   const id = env.CI_PROJECT_ID ? encodeURIComponent(env.CI_PROJECT_ID) : "";
   const read = gitlabApi(env, env.TG_TOKEN, doFetch);
-  const token = env.TG_MERGE_TOKEN || env.TG_TOKEN;
-  const merge = gitlabApi(env, token, doFetch);
   const me = Number((await read("GET", "/user"))?.id);
   const notes = await read("GET", `/projects/${id}/merge_requests/${o.pr}/notes?order_by=created_at&sort=desc&per_page=100`);
   const marker = appliedMarker(o.sha, pipeline);
@@ -395,11 +393,9 @@ export async function mergeGitLabMR(o: GitLabMergeOptions): Promise<string> {
   if (env.CI_DEFAULT_BRANCH && mr?.target_branch !== env.CI_DEFAULT_BRANCH) throw new Error(`!${o.pr} targets ${String(mr?.target_branch)}, not ${env.CI_DEFAULT_BRANCH}`);
   const a = await gitlabApprovals(reviewCalls(read, id), mr);
   if (a.changes.length > 0 || a.by.length === 0 || a.pr.head !== o.sha) throw new Error(`no member other than its author approved it after its latest push, ${short(o.sha)}`);
-  try {
-    await merge("PUT", `/projects/${id}/merge_requests/${o.pr}/merge`, { sha: o.sha });
-  } catch (e) {
-    throw new Error(`GitLab refused the merge (${(e as Error).message})`);
-  }
+  // GitLab merges only while the head is still `sha`.
+  const merged = await poster("gitlab", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
+  if (!merged.merged) throw new Error(`GitLab refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);
   const released = releaseLocks(o.repo ?? process.cwd(), o.pr);
   return `merged !${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
 }

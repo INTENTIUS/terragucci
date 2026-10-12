@@ -669,7 +669,7 @@ describe("pr-merge", () => {
   const forgeFor = (head: string, o: { pr?: Record<string, unknown>; reviews?: unknown[]; merge?: { status: number; body: string } } = {}) => {
     const sent: { url: string; method?: string; body?: unknown; auth?: string }[] = [];
     const fetch: Fetch = async (u, init) => {
-      sent.push({ url: u, method: init?.method, body: init?.body ? JSON.parse(init.body) : undefined, auth: init?.headers?.authorization });
+      sent.push({ url: u, method: init?.method, body: init?.body ? JSON.parse(init.body) : undefined, auth: init?.headers?.authorization ?? init?.headers?.Authorization });
       const answer = (status: number, json: unknown, text = JSON.stringify(json)) => ({ ok: status < 300, status, json: async () => json, text: async () => text });
       if (u.endsWith("/merge")) return (o.merge ? answer(o.merge.status, {}, o.merge.body) : answer(200, {})) as never;
       if (u.includes("/reviews")) return answer(200, o.reviews ?? approved(head)) as never;
@@ -701,8 +701,9 @@ describe("pr-merge", () => {
     for (const forge of ["github", "forgejo"] as const) {
       const f = forgeFor(r.head);
       await mergePullRequest({ pr: 7, sha: r.head, forge, env: { ...ENV, TG_TOKEN: "job", TG_MERGE_TOKEN: "person" }, fetch: f.fetch, repo: r.work });
-      expect(f.merges().map((x) => x.auth)).toEqual(["token person"]);
-      expect(f.sent.filter((x) => !x.url.endsWith("/merge")).every((x) => x.auth === "token job")).toBe(true);
+      expect(f.merges().map((x) => x.auth)).toEqual([forge === "github" ? "Bearer person" : "token person"]);
+      // Every check before the merge reads with the job's own token.
+      expect(f.sent.slice(0, f.sent.findIndex((x) => x.url.endsWith("/merge"))).every((x) => x.auth === "token job")).toBe(true);
     }
   });
 
@@ -726,14 +727,14 @@ describe("pr-merge", () => {
     const body = JSON.stringify({ message: "PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main'", url: "x" });
     const f = forgeFor(r.head, { merge: { status: 409, body } });
     await expect(mergePullRequest({ pr: 7, sha: r.head, forge: "forgejo", env: ENV, fetch: f.fetch, repo: r.work }))
-      .rejects.toThrow("the forge refused the merge (POST answered 409: PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main')");
+      .rejects.toThrow("the forge refused the merge (PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main')");
   });
 
   it("throws when the forge refuses, and keeps the locks", async () => {
     const r = repos();
     await takeLocks(r.work, ["network"], { pr: 7, by: "dev", at: "2026-10-07T00:00:00.000Z", head: r.head }, async () => true);
     const f = forgeFor(r.head, { merge: { status: 409, body: "" } });
-    await expect(mergePullRequest({ pr: 7, sha: r.head, env: ENV, fetch: f.fetch, repo: r.work })).rejects.toThrow(/answered 409/);
+    await expect(mergePullRequest({ pr: 7, sha: r.head, env: ENV, fetch: f.fetch, repo: r.work })).rejects.toThrow(/the forge refused the merge/);
     expect(readLocks(r.work).locks.network?.pr).toBe(7);
   });
 });

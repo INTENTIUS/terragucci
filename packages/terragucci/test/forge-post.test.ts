@@ -26,6 +26,9 @@ describe("terragucci post", () => {
     const f = forge();
     expect(await forgePost("status", ["terragucci/apply", "success", "2 roots applied"], { forge: "github", env: GH, fetch: f.fetch })).toBeUndefined();
     expect(f.calls).toEqual([{ method: "POST", url: `http://api/repos/o/r/statuses/${SHA}`, body: { context: "terragucci/apply", state: "success", description: "2 roots applied", target_url: "http://forge/o/r/actions/runs/5" } }]);
+    // GitHub has no running state: a status still going is pending there.
+    await forgePost("status", ["terragucci/apply", "pending", "applying"], { forge: "github", env: GH, fetch: f.fetch });
+    expect(f.calls[1].body.state).toBe("pending");
   });
 
   it("on GitLab names the job's pipeline, and a status still going is running", async () => {
