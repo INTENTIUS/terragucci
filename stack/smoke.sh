@@ -14738,6 +14738,9 @@ claim_security/replan_cache() {
   # restores the cache under that key in its apply waves: the probe must run
   # there and find no marker, so the re-plan saved no cache the apply jobs
   # restore.
+  # The stack's runner has no cache server, so every job runs on a runner of
+  # the claim's own (cached_runner) with one on. root.hcl carries a comment
+  # unique to the run, so no key matches a cache an earlier run saved.
   # BREAK: init runs a bundle whose re-plan caches as the plan job does,
   # saving .terragrunt-cache when the job ends.
   log() { echo "[smoke replan-cache] $*" >&2; }
@@ -14753,6 +14756,9 @@ claim_security/replan_cache() {
   fi
   gated_repo replan-cache tg-gated-waves || { drop_work "$work"; return 1; }
   sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  cached_runner >/dev/null || { drop_work "$work"; return 1; }
+  printf 'runner: %s\n' "$CACHED_LABEL" >> "$work/tree/terragucci.yml"
+  printf '\n# run %s\n' "${work##*/}" >> "$work/tree/root.hcl"
   for k in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=replan-cache-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
     curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$k" || true
   done
@@ -14772,6 +14778,7 @@ JS
   # shellcheck disable=SC2016 # HCL interpolation
   printf '\ndata "external" "probe" {\n  program = ["node", "${path.module}/probe.mjs"]\n}\n' >> "$work/tree/modules/rev/main.tf"
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  grep -qx "    runs-on: $CACHED_LABEL" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init did not write runs-on: $CACHED_LABEL"; drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     grep -q 'actions/cache/restore@' "$work/tree/.forgejo/workflows/terragucci.yml" && { break_setup_failed "the BREAK pipeline's re-plan still restores the cache read-only"; drop_work "$work"; return 1; }
   else
@@ -20856,19 +20863,24 @@ claim_init/env() {
   return $rc
 }
 
-# The runner-label claim's runner: a second forgejo-runner beside the stack's,
-# on its network, that serves LABELLED_LABEL alone. A container of its own, so
-# the stack's runner is never reconfigured or restarted; it stays up after the
-# claim, and the next run reuses it while Forgejo lists it online.
+# A second forgejo-runner beside the stack's, on its network, that serves one
+# label alone. A container of its own, so the stack's runner is never
+# reconfigured or restarted; it stays up after the claim, and the next run
+# reuses it while Forgejo lists it online. The runner-label claim's serves
+# LABELLED_LABEL; replan-cache's serves CACHED_LABEL with the runner's cache
+# server on, which the stack's runner keeps off.
 LABELLED_LABEL=terragucci-labelled
-labelled_runner() { # -> prints the uuid of a runner online that serves LABELLED_LABEL alone, starting one when there is none
-  local name="${TG_PROJECT:-terragucci}-runner-labelled" uuid reg token stale i
+CACHED_LABEL=terragucci-cached
+labelled_runner() { side_runner labelled "$LABELLED_LABEL" false; }
+cached_runner() { side_runner cached "$CACHED_LABEL" true; }
+side_runner() { # suffix, label, cache enabled -> prints the uuid of a runner online that serves the label alone, starting one when there is none
+  local name="${TG_PROJECT:-terragucci}-runner-$1" label="$2" cache="$3" uuid reg token stale i
   uuid="$(api "$URL/api/v1/admin/actions/runners" | jq -r --arg n "$name" 'map(select(.name == $n and .status != "offline")) | .[0].uuid // empty')"
   if [ -n "$uuid" ] && [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = true ]; then echo "$uuid"; return 0; fi
   for stale in $(api "$URL/api/v1/admin/actions/runners" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id'); do
     api -o /dev/null -X DELETE "$URL/api/v1/admin/actions/runners/$stale" || true
   done
-  reg="$(jq -n --arg n "$name" '{name: $n, description: "terragucci stack, the runner-label claim"}' \
+  reg="$(jq -n --arg n "$name" --arg l "$label" '{name: $n, description: ("terragucci stack, the runner that serves " + $l + " alone")}' \
     | api -H 'content-type: application/json' -X POST -d @- "$URL/api/v1/admin/actions/runners")" || { log "Forgejo did not register $name"; return 1; }
   uuid="$(jq -r '.uuid // empty' <<<"$reg")"; token="$(jq -r '.token // empty' <<<"$reg")"
   [ -n "$uuid" ] && [ -n "$token" ] || { log "registering $name returned no uuid"; return 1; }
@@ -20900,9 +20912,9 @@ runner:
     AWS_SECRET_ACCESS_KEY: test
     AWS_REGION: us-east-1
   labels:
-    - "$LABELLED_LABEL:docker://public.ecr.aws/docker/library/node:22-bookworm"
+    - "$label:docker://public.ecr.aws/docker/library/node:22-bookworm"
 cache:
-  enabled: false
+  enabled: $cache
 container:
   network: $TG_NETWORK
   privileged: false
