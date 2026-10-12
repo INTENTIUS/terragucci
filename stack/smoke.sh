@@ -18426,8 +18426,11 @@ claim_migrate/resume() {
   gated_repo "$name" migrate-roots || { drop_work "$work"; return 1; }
   printf 'gate: never\n' >> "$work/tree/terragucci.yml"
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with gate: never failed"; drop_work "$work"; return 1; }
+  # The resume workflow's schedule (apply.resume: 5) starts a run on main's
+  # head every five minutes, which Forgejo lists with event push and the same
+  # head sha as the push's own run: the waits take terragucci.yml's push run.
   sha="$(push_tree "$work/tree" "$repo" main "migrate-resume: mono")"
-  wait_run "$repo" "$sha" push || rc=1
+  WAIT_WORKFLOW=terragucci.yml WAIT_TRIGGER=push wait_run "$repo" "$sha" push || rc=1
   [ $rc = 0 ] && [ "$RUN_STATUS" = success ] || { log "the first run of mono ended ${RUN_STATUS:-unknown}"; rc=1; }
   if [ $rc = 0 ]; then
     perl -0pi -e 's/\n\nresource "terraform_data" "moved" \{\n  input = "moved"\n\}\n/\n/' "$work/tree/mono/main.tf"
@@ -18443,7 +18446,7 @@ claim_migrate/resume() {
   fi
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "migrate-resume: split moved out of mono")"
-    wait_run "$repo" "$sha" push || rc=1
+    WAIT_WORKFLOW=terragucci.yml WAIT_TRIGGER=push wait_run "$repo" "$sha" push || rc=1
     [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'terragucci approve split-moved --plan' || { log "wave 1 did not wait for the migration"; rc=1; }; }
   fi
   if [ $rc = 0 ]; then
@@ -18470,8 +18473,15 @@ claim_migrate/resume() {
       log "the dispatched resume run ${run:-?} ended '${status:-unknown}'"
       out="$( [ -n "$run" ] && print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci resume|migration|wave [0-9]+' || true)"
       printf '%s\n' "$out" >&2
-      grep -q 'migration split-moved: approved by smoke-approver for this digest' <<<"$out" && grep -q 'migration split-moved applied' <<<"$out" \
-        || { log "the resume run did not apply split-moved under smoke-approver's approval"; rc=1; }
+      resumed() { grep -q 'migration split-moved: approved by smoke-approver for this digest' <<<"$1" && grep -q 'migration split-moved applied' <<<"$1"; }
+      if ! resumed "$out"; then
+        # A scheduled run of the same workflow that started between the approval and the dispatch applies it first; it is then the resume run.
+        for run in $(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq -r '.workflow_runs[]? | select(.trigger_event == "schedule" and .workflow_id == "terragucci-resume.yml") | .id'); do
+          out="$(print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci resume|migration|wave [0-9]+' || true)"
+          resumed "$out" && { log "the scheduled resume run $run applied split-moved before the dispatched one"; printf '%s\n' "$out" >&2; break; }
+        done
+      fi
+      resumed "$out" || { log "the resume run did not apply split-moved under smoke-approver's approval"; rc=1; }
     else
       log "Forgejo has no resume workflow to run in $repo"
       if [ -n "${BREAK:-}" ]; then
