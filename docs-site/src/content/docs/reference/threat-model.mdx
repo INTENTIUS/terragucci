@@ -42,7 +42,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's.
 | `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | `github.token`, `contents: write` | none |
 | `plan` | a pull request from the repo | the change | `github.token`, `statuses: write`, only in the step before the checkout | plan role |
 | `plan-note` | after `plan` | none of the change's; the plan job's note and status read as data | `github.token`: statuses and pull requests write | none |
-| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | `github.token`: statuses and pull requests write, only in the step that reads the comment, before the head is checked out | plan role |
+| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | `github.token`: statuses and pull requests write, only in the step that reads the comment, before the head is checked out | plan role, as keys traded for the job's OIDC token before the change's code runs ([Re-plan](#re-plan)) |
 | `replan-note` | after `replan` | as `plan-note` | as `plan-note` | none |
 | `apply-wave-<k>` | a push to the default branch | merged code | `github.token`, `contents: write` | apply role |
 | `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | `github.token`, `contents: write` | apply role |
@@ -111,7 +111,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's.
 | `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | the run's own | none |
 | `plan` | a pull request from the repo | the change | the run's own, dropped from the step that runs the change's code | plan role |
 | `plan-note` | after `plan` | none of the change's; the plan job's note and status read as data | the run's own | none |
-| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own, dropped from the step that runs the change's code | plan role |
+| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own, dropped from the step that runs the change's code | plan role, as keys traded for the job's OIDC token before the change's code runs ([Re-plan](#re-plan)) |
 | `replan-note` | after `replan` | as `plan-note` | the run's own | none |
 | `apply-wave-<k>` | a push to the default branch | merged code | the run's own | apply role |
 | `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | the run's own | apply role |
@@ -292,6 +292,18 @@ The review job keeps the verdict as the command's output plus the pull request, 
 Forgejo runs a `pull_request_target` workflow from the pull request's base, which may be a branch other than the default. A writer who opens a pull request against a branch whose review workflow they edited gets a run of that copy; its artifact is passed over, since the run's event names another base. There is no `workflow_run` on Forgejo.
 
 A Forgejo `pull_request_target` run's token can write, and the runner gives it to every step of the `review` job but the command's. Only a command that runs tools and leaves a process behind could read it, in the step that keeps the review ([Token scrub limits](#token-scrub-limits)).
+
+## Re-plan
+
+A re-plan runs the change's code from the default branch's workflow, so its OIDC token carries the default branch's subject, which the apply role trusts. The change's code never holds that token.
+
+| Step of `replan` | Holds |
+|---|---|
+| Trade, after the head's checkout and before any of its code runs | the token; `terragucci oidc-trade` trades it for each plan identity (`plan_role`, `oidc.roles`, Terragrunt's `credentials`, `reports.role`, the GCP plan service accounts) and deletes it |
+| Plan, which runs the change's code | the plan identities' keys and tokens; no OIDC token, no `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, here or in its parent processes |
+| Plan's end | in the job's container, every process the step started is killed, so none reads a later step's environment |
+
+With `oidc.azure` a re-plan stops at the trade and says why: the azurerm provider and backend take only the token itself. The pull request's push plans it.
 
 ## Token scrub limits
 

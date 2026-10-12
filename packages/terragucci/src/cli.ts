@@ -115,6 +115,7 @@ import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitChe
 import { sourceChecker } from "./sources";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
+import { tradeCommand } from "./oidc-trade";
 import { detectShape } from "./shape";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
@@ -155,6 +156,7 @@ const USAGE = `usage:
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
+  terragucci oidc-trade --out <file> [--reports-role <arn>]   (internal: a re-plan trades its OIDC token for the plan identities, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
@@ -512,6 +514,13 @@ export async function main(argv: string[]): Promise<number> {
         // A Terramate repo's prepare (../shape.ts): every job checks the generated code and writes each stack's edges.
         if (args[0] !== "generate") throw new ConfigError("usage: terragucci terramate generate");
         for (const line of await terramateWrite(cwd)) console.log(line);
+        return 0;
+      }
+      case "oidc-trade": {
+        // A re-plan's trade step, before the pull request's code is checked out: the job's OIDC token, traded for the plan identities' credentials and deleted (./oidc-trade.ts).
+        const out = str(flags, "out");
+        if (!out) throw new ConfigError("usage: terragucci oidc-trade --out <file> [--reports-role <arn>]");
+        for (const line of await tradeCommand(out, process.env, { reportsRole: str(flags, "reports-role") })) console.error(`terragucci: ${line}`);
         return 0;
       }
       case "auth-provider": {

