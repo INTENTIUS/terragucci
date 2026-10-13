@@ -31,6 +31,7 @@ import {
   DECIDE_KEYS,
   DEPENDENTS,
   DURATION,
+  ENVIRONMENT_NAME,
   EPHEMERAL_KEYS,
   FORGES,
   GATE_NAMES,
@@ -302,6 +303,23 @@ const ephemeral = map(EPHEMERAL_KEYS as (keyof EphemeralSettings)[], {
   sweep: whole(5, 60),
 } satisfies Record<keyof EphemeralSettings, JsonSchema>, { required: ["roots"] });
 
+const environmentOidc = map(["plan_role", "apply_role", "gcp", "azure"], {
+  plan_role: { type: "string", minLength: 1 },
+  apply_role: { type: "string", minLength: 1 },
+  gcp: map(["plan_service_account", "apply_service_account"], { plan_service_account: serviceAccount, apply_service_account: serviceAccount }, { required: ["plan_service_account", "apply_service_account"] }),
+  azure: map(["plan_client_id", "apply_client_id"], { plan_client_id: { type: "string", minLength: 1 }, apply_client_id: { type: "string", minLength: 1 } }, { required: ["plan_client_id", "apply_client_id"] }),
+}, { minProperties: 1, dependentRequired: { plan_role: ["apply_role"], apply_role: ["plan_role"] } });
+
+/** One environment of `environments`. A repo's own file names its roots; a control repo's defaults and projects may hold part of one, merged by name. */
+function environment(top: boolean): JsonSchema {
+  return map(["roots", "gate", "oidc", "parallelism"], {
+    roots: { type: "array", minItems: 1, items: glob },
+    gate: enumOf(GATE_NAMES),
+    oidc: environmentOidc,
+    parallelism: whole(1),
+  }, top ? { required: ["roots"] } : {});
+}
+
 /** Every setting, with a line for an editor to show. `top` is a repo's own file, where `version` may map root globs. */
 function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
   return {
@@ -427,6 +445,13 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       description: "Jobs of your own, in the forge's syntax, or the path of a YAML file holding them.",
     },
     ephemeral: { ...ephemeral, description: "Roots each pull request gets a copy of." },
+    environments: {
+      type: "object",
+      minProperties: 1,
+      propertyNames: pat(ENVIRONMENT_NAME),
+      additionalProperties: environment(top),
+      description: "Named environments: each one's root globs, and its gate, identities and parallelism.",
+    },
   };
 }
 

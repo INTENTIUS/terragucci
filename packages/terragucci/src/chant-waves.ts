@@ -44,6 +44,8 @@ export interface WavesSpecInput {
   /** Terragrunt only: the last wave goes on through the waves `terragrunt find` gives. */
   rest?: boolean;
   gate: "always" | "on-destructive" | "never";
+  /** Plain roots with `environments` at base: each wave's gate, by wave number from 1, in place of `gate` (the strictest of its roots', ./environments.ts). */
+  gates?: ("always" | "on-destructive" | "never")[];
   /** The approval mode at base. Under `pr-review` the plan call records the review's approval, and chant counts the ledger. */
   approval: "ledger" | "pr-review" | "sealed";
   /** `waves.jobs` on wave `wave`. */
@@ -69,7 +71,7 @@ export function wavesSpec(input: WavesSpecInput): OpWavesSpec {
       runs,
       ...(discover ? { discover: true } : {}),
       ...(discover && input.rest && k === count ? { rest: true } : {}),
-      gate: input.gate,
+      gate: input.gates?.[k - 1] ?? input.gate,
       approval: input.approval === "sealed" ? "sealed" : "ledger",
       ...(input.shares?.wave === k ? { shares: input.shares.shares } : {}),
       // A state migration in the change runs before wave 1 plans, behind its own gate: proved first, then held on that gate.

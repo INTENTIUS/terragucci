@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 32;
+export const REPORT_MINOR = 33;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -249,6 +249,8 @@ export function binaryText(b: ReportRootBinary): string {
 
 export interface ReportRoot {
   path: string;
+  /** The environment of `environments:` the root is in (minor 33). Absent when the config names no environments or the root is in none. */
+  environment?: string;
   /** The binary the root ran (minor 18). */
   binary?: ReportRootBinary;
   /** Set when the root is a Terragrunt unit. */
@@ -546,6 +548,8 @@ export interface ReportWave {
    * previewed any of its units.
    */
   preview?: ReportWavePreview;
+  /** The environments of `environments:` its roots are in, sorted (minor 33). Absent when none of its roots is in one. */
+  environments?: string[];
 }
 
 /** A wave's plans against the pull request's preview of them (minor 25). */

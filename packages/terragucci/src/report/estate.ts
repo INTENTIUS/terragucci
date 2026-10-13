@@ -86,6 +86,8 @@ export interface EstateInventoryRoot {
   wave?: number;
   /** The wave's report.html, when the page can link it. */
   report?: string;
+  /** The environment the root was in when the wave applied, from its inventory. Absent when it was in none. */
+  environment?: string;
   resources: EstateResource[];
 }
 
@@ -247,6 +249,7 @@ function inventoryOf(inv: Inventory, base: string | undefined): EstateInventory 
     finished: r.finished,
     ...(r.wave !== undefined ? { wave: r.wave } : {}),
     ...(base !== undefined ? { report: `${base}${r.path}/report.html` } : {}),
+    ...(r.environment ? { environment: r.environment } : {}),
     resources: r.resources.map((x) => ({ address: x.address, type: x.type, provider: x.provider })),
   }));
   const all = roots.flatMap((r) => r.resources);
@@ -501,8 +504,8 @@ function resourcesSection(estate: Estate, now: Date): string {
     const inv = p.inventory!;
     const types = inv.types.map((t) => `<code>${esc(t.type)}</code> ${t.count}`).join(", ");
     const roots = inv.roots.map((r) => {
-      const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${r.resources.length} ${r.resources.length === 1 ? "resource" : "resources"}, ${link(r.report, `${r.wave !== undefined ? `wave ${r.wave}` : "applied"}`)} ${short(r.commit)} ${when(r.finished, now)}</th></tr>`;
-      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td>${link(x.history, `<code>${esc(x.address)}</code>`)}${x.record_versions ? ` ${versionsNote(x.record_versions, x.history)}` : ""}</td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
+      const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>${r.environment ? ` <span class="env" data-environment="${esc(r.environment)}">${esc(r.environment)}</span>` : ""}: ${r.resources.length} ${r.resources.length === 1 ? "resource" : "resources"}, ${link(r.report, `${r.wave !== undefined ? `wave ${r.wave}` : "applied"}`)} ${short(r.commit)} ${when(r.finished, now)}</th></tr>`;
+      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root}${r.environment ? ` ${r.environment}` : ""} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td>${link(x.history, `<code>${esc(x.address)}</code>`)}${x.record_versions ? ` ${versionsNote(x.record_versions, x.history)}` : ""}</td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
       return `<tbody class="inv" data-root="${esc(r.root)}">${head}${rows.join("")}</tbody>`;
     });
     return `<h3>${link(p.index, esc(p.project))}: ${inv.resources} ${inv.resources === 1 ? "resource" : "resources"} in ${inv.roots.length} ${inv.roots.length === 1 ? "root" : "roots"}</h3>

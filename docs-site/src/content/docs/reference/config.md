@@ -56,7 +56,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too), `environments` (each environment's roles are in the pipeline too, by its root globs) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
@@ -185,6 +185,7 @@ dashboards: true
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 | `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
+| `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc` and `parallelism`; a root in no environment takes the top-level values. Read at base; see [Environments](#environments) |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
@@ -340,6 +341,39 @@ Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant
 terragucci runs no CLI workspaces, so a copy uses a state key suffix instead. A suffixed key is a separate state, and its lock file and the bucket listing show it by name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
 
 In a Terragrunt repo `roots` names units, and each unit's `remote_state` key must read `get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")`, which the job sets to `-pr-<n>`; a unit whose prepared backend does not carry the suffix fails the job with a config error before anything plans. The `terragucci.hcl` that `generate` writes reads it already. With `synth`, the job runs the command in the pull request's checkout before it finds the roots, and again on the applied commit before a destroy. `config check` refuses `ephemeral` on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The default branch supplies these settings, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
+
+## Environments
+
+```yaml
+gate: on-destructive
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    gate: always
+    oidc: { plan_role: arn:aws:iam::111111111111:role/prod-plan, apply_role: arn:aws:iam::111111111111:role/prod-apply }
+    parallelism: 2
+  dev:
+    roots: ["envs/dev/**"]
+    gate: never
+```
+
+An environment names its roots by glob, and sets only the keys below for them. A root matches at most one environment. A root in no environment takes the top-level `gate`, `oidc` and `parallelism`.
+
+| Key | Meaning |
+|---|---|
+| `roots` | root globs, required; in a Terragrunt repo they match unit paths, and in an Atmos repo instances (`<stack>/<component>`) |
+| `gate` | `always`, `on-destructive` or `never` for the environment's roots. A wave is approved as one set digest, so a wave whose roots are in several environments takes the strictest of their gates (`always`, then `on-destructive`, then `never`), and a root in no environment counts with the top-level `gate`. A Terragrunt wave finds its units when it plans, so it takes the strictest of the top-level `gate` and every environment's |
+| `oidc` | `plan_role` and `apply_role` (AWS), `gcp` with `plan_service_account` and `apply_service_account`, `azure` with `plan_client_id` and `apply_client_id`. The environment's roots plan and apply with them, as with a pair under `oidc.roles`, `oidc.gcp.roles` or `oidc.azure.roles` for each of its globs. `gcp` and `azure` need the top-level `oidc.gcp` or `oidc.azure`, which give the provider, the tenant and the token. Not in a Terragrunt repo, where `terragrunt.credentials` sets each unit's roles |
+| `parallelism` | how many of the environment's roots of one layer plan at once. A layer with roots in several environments plans as many at once as the lowest of their values allows. Not in a Terragrunt repo, where `terragrunt.parallelism` sets it |
+
+`terragucci config check` refuses:
+
+- any other key in an environment, naming the environment and the key; `runner` and `forge_environment` among them, since one apply job applies every root of its wave whatever its environment
+- `oidc.audience` in an environment: a job takes one token for every root it runs, so set `oidc.audience`
+- an environment with no `roots`, a glob listed by two environments, and a root of the repo that two environments' globs match, naming both environments and the root
+- a root given identities both by its environment and by `oidc.roles`, `oidc.gcp.roles` or `oidc.azure.roles`, naming the root, so each root's identities are set in one place
+
+`gate` is read from `terragucci.yml` at base, as `approval` is: a pull request that edits `environments` is gated by the default branch's block, and its own edits take effect once it merges. The plan note gives each wave's environments a column of its own, and the [report](/terragucci/reference/report-schema/) names each root's `environment`; the [estate page](/terragucci/guides/see-every-project/) shows it beside each root's resources. Run `npx terragucci init` after adding or changing an environment's `oidc` or `gate`: the pipeline carries the roles by glob, and a wave that an environment's gate can hold needs the jobs that record a waiting wave. In a [control repo](/terragucci/concepts/control-repo/), `defaults` and a project can each carry `environments`; they merge by environment name, and a project's keys for an environment replace the defaults' for that environment.
 
 ## Runners
 

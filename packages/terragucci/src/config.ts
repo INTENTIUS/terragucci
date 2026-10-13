@@ -563,6 +563,49 @@ export interface ProjectSettings {
   own_jobs?: string | Record<string, Record<string, unknown>>;
   /** Roots each pull request gets a copy of, under a state key of its own, destroyed on close or once its TTL passes; see EphemeralSettings. */
   ephemeral?: EphemeralSettings;
+  /**
+   * Named environments: each names its roots by glob and sets the keys that
+   * vary for them (./environments.ts). A root in no environment takes the
+   * top-level values. Read at base, like `gate`. A control repo's `defaults`
+   * and project blocks merge them per environment name.
+   */
+  environments?: Record<string, EnvironmentSettings>;
+}
+
+/** An environment's name: lower-case letters, digits, `-` and `_`. */
+export const ENVIRONMENT_NAME = /^[a-z0-9_-]+$/;
+/** The keys an environment takes. */
+export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"] as const;
+/** The keys of an environment's `oidc`. */
+export const ENVIRONMENT_OIDC_KEYS = ["plan_role", "apply_role", "audience", "gcp", "azure"] as const;
+
+/**
+ * One environment of `environments:`. `roots` are root globs; a root matches
+ * at most one environment. Each other key, when set, replaces the top-level
+ * key's value for the environment's roots.
+ */
+export interface EnvironmentSettings {
+  roots: string[];
+  /** The gate of a wave that holds the environment's roots. A wave of roots in several environments takes the strictest of their gates. */
+  gate?: GateName;
+  /** The environment's identities: its roots plan and apply with them, as `oidc.roles` gives a root glob a pair. */
+  oidc?: EnvironmentOidc;
+  /** The runner the environment's jobs run on. config check refuses it while one apply job applies the roots of several environments. */
+  runner?: RunnerSpec | { apply?: RunnerSpec; plan?: RunnerSpec };
+  /** How many of the environment's roots of one dependency layer plan at once. */
+  parallelism?: number;
+  /** The forge environment its apply jobs run in. Default: the environment's name. config check refuses it while apply jobs run in no forge environment. */
+  forge_environment?: string;
+}
+
+/** An environment's identities: an AWS role pair, and a GCP service account pair or an Azure client pair under the project's `oidc.gcp` or `oidc.azure`. */
+export interface EnvironmentOidc {
+  plan_role?: string;
+  apply_role?: string;
+  /** The token's audience. config check refuses it while one job's token serves the roots of every environment. */
+  audience?: string;
+  gcp?: { plan_service_account: string; apply_service_account: string };
+  azure?: { plan_client_id: string; apply_client_id: string };
 }
 
 /**
@@ -743,6 +786,7 @@ export const PROJECT_FILE_KEYS = [
   "token_env",
   "generate",
   "ephemeral",
+  "environments",
 ] as const satisfies ReadonlyArray<keyof ProjectSettings>;
 
 export class ConfigError extends Error {
@@ -774,7 +818,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -962,6 +1006,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.oidc !== undefined) checkOidc(s.oidc, `${where}.oidc`, problems);
+  // A repo's own file holds whole environments; a control repo's defaults and projects may each hold part of one, merged by name (resolveProject).
+  if (s.environments !== undefined) checkEnvironments(s.environments, `${where}.environments`, problems, s);
+  if (where === "config" && isObject(s.environments)) problems.push(...environmentNeeds(s as ProjectSettings, where));
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -1674,6 +1721,119 @@ function checkRoles(r: unknown, where: string, problems: string[], what = "role"
   }
 }
 
+/** The per-environment keys config check accepts, as its problems list them. */
+const ENVIRONMENT_ACCEPTED = ["roots", "gate", "oidc", "parallelism"];
+/** Why an environment's `runner` is refused: a wave's apply job applies the roots of every environment in the wave. */
+export const ENVIRONMENT_RUNNER = "one apply job applies the roots of every environment in its wave, so a runner cannot be chosen per environment; set runner at the top level";
+/** Why an environment's `forge_environment` is refused: the apply jobs run in no forge environment. */
+export const ENVIRONMENT_FORGE_ENVIRONMENT = "the apply jobs run in no forge environment, so there is none to name; leave it unset";
+/** Why an environment's `oidc.audience` is refused: a job's token serves every root the job runs. */
+export const ENVIRONMENT_AUDIENCE = "a job takes one OIDC token for every root it runs, whatever their environments, so its audience is oidc.audience; set it there";
+
+const isGlob = (g: unknown): boolean => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g);
+
+/**
+ * `environments`: a map of environment name to its roots and the keys that
+ * vary for them. A control repo's defaults and projects may each hold part
+ * of one, so what a whole environment needs (its roots, the project's
+ * `oidc.gcp`) is environmentNeeds', on a repo's own file and on a control
+ * repo's merged project.
+ */
+function checkEnvironments(v: unknown, where: string, problems: string[], s: Record<string, unknown>): void {
+  if (!isObject(v) || Object.keys(v).length === 0) {
+    problems.push(`${where} must map environment names to their roots and settings, such as prod: { roots: ["envs/prod/**"], gate: always }`);
+    return;
+  }
+  const globOwner = new Map<string, string>();
+  const oidc = isObject(s.oidc) ? s.oidc : undefined;
+  for (const [name, e] of Object.entries(v)) {
+    const at = `${where}.${name}`;
+    if (!ENVIRONMENT_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not an environment name; use lower-case letters, digits, "-" and "_"`);
+    if (!isObject(e)) {
+      problems.push(`${at} must be a map (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
+      continue;
+    }
+    for (const k of Object.keys(e)) {
+      if (k === "runner") problems.push(`${at}.runner: ${ENVIRONMENT_RUNNER}`);
+      else if (k === "forge_environment") problems.push(`${at}.forge_environment: ${ENVIRONMENT_FORGE_ENVIRONMENT}`);
+      else if (!(ENVIRONMENT_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a per-environment setting (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
+    }
+    // A missing roots is environmentNeeds': required once the environment is whole.
+    if (e.roots !== undefined && (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every(isGlob))) {
+      problems.push(`${at}.roots must be a list of root globs, such as ["envs/${name}/**"]`);
+    } else if (Array.isArray(e.roots)) {
+      for (const g of e.roots as string[]) {
+        const other = globOwner.get(g);
+        if (other !== undefined && other !== name) problems.push(`${where}: ${g} is a root glob of both ${other} and ${name}; a root belongs to one environment`);
+        else globOwner.set(g, name);
+      }
+    }
+    if (e.gate !== undefined && normalizeGate(e.gate) === undefined) problems.push(`${at}.gate is ${JSON.stringify(e.gate)}; use one of ${GATES.join(", ")}`);
+    if (e.parallelism !== undefined && !(Number.isInteger(e.parallelism) && (e.parallelism as number) >= 1)) problems.push(`${at}.parallelism must be a whole number of 1 or more`);
+    if (e.oidc !== undefined) checkEnvironmentOidc(e.oidc, `${at}.oidc`, problems);
+    // One place for each root's identities: an environment's, or a glob-keyed setting's, never both for the same glob.
+    if (isObject(e.oidc) && Array.isArray(e.roots)) {
+      const eo = e.oidc;
+      const keyed: [string, unknown, unknown][] = [
+        ["oidc.roles", eo.plan_role, oidc?.roles],
+        ["oidc.gcp.roles", eo.gcp, isObject(oidc?.gcp) ? oidc.gcp.roles : undefined],
+        ["oidc.azure.roles", eo.azure, isObject(oidc?.azure) ? oidc.azure.roles : undefined],
+      ];
+      for (const [key, mine, roles] of keyed) {
+        if (mine === undefined || !isObject(roles)) continue;
+        for (const g of e.roots) if (typeof g === "string" && g in roles) problems.push(`${at}.oidc: ${g} has identities in both ${at}.oidc and ${key}; set them in one place`);
+      }
+    }
+  }
+}
+
+function checkEnvironmentOidc(o: unknown, where: string, problems: string[]): void {
+  if (!isObject(o) || Object.keys(o).length === 0) {
+    problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
+    return;
+  }
+  for (const k of Object.keys(o)) {
+    if (k === "audience") problems.push(`${where}.audience: ${ENVIRONMENT_AUDIENCE}`);
+    else if (!(ENVIRONMENT_OIDC_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: plan_role, apply_role, gcp, azure)`);
+  }
+  if (o.plan_role !== undefined || o.apply_role !== undefined) {
+    for (const k of ["plan_role", "apply_role"] as const) if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
+    if (typeof o.plan_role === "string" && o.plan_role !== "" && o.plan_role === o.apply_role) problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+  }
+  const pair = (cloud: "gcp" | "azure", keys: [string, string], what: string, shape?: RegExp): void => {
+    const c = o[cloud];
+    if (c === undefined) return;
+    if (!isObject(c)) return void problems.push(`${where}.${cloud} must be a map with ${keys.join(" and ")}`);
+    for (const k of Object.keys(c)) if (!keys.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${keys.join(", ")})`);
+    for (const k of keys) {
+      if (typeof c[k] !== "string" || c[k] === "") problems.push(`${where}.${cloud}.${k} must be set`);
+      else if (shape && !shape.test(c[k] as string)) problems.push(`${where}.${cloud}.${k} must be a service account's email`);
+    }
+    if (typeof c[keys[0]] === "string" && c[keys[0]] !== "" && c[keys[0]] === c[keys[1]]) problems.push(`${where}.${cloud}.${keys[0]} and ${keys[1]} are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
+  };
+  pair("gcp", ["plan_service_account", "apply_service_account"], "service account", /^[^@\s]+@[^@\s]+$/);
+  pair("azure", ["plan_client_id", "apply_client_id"], "client");
+}
+
+/**
+ * What a whole set of environments needs from the settings around it: a
+ * root glob in each, and the project's `oidc.gcp` or `oidc.azure` for an
+ * environment that names a GCP or Azure pair, since the provider, the tenant
+ * and the token come from there. A repo's own file is checked whole in
+ * checkSettings; a control repo's project once its defaults are merged in.
+ */
+export function environmentNeeds(s: ProjectSettings, where: string): string[] {
+  const out: string[] = [];
+  for (const [name, e] of Object.entries(s.environments ?? {})) {
+    if (!isObject(e)) continue;
+    const at = `${where}.environments.${name}`;
+    if (e.roots === undefined) out.push(`${at}.roots is missing; name the environment's roots by glob, such as ["envs/${name}/**"]`);
+    if (isObject(e.oidc) && e.oidc.gcp !== undefined && !isObject(s.oidc?.gcp)) out.push(`${at}.oidc.gcp needs oidc.gcp: the workload identity provider and the token come from there`);
+    if (isObject(e.oidc) && e.oidc.azure !== undefined && !isObject(s.oidc?.azure)) out.push(`${at}.oidc.azure needs oidc.azure: the tenant, the subscription and the token come from there`);
+  }
+  return out;
+}
+
 /** Check a parsed config and return it typed, or throw with every problem listed. */
 export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   const problems: string[] = [];
@@ -1713,7 +1873,10 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   const out = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
   // An older gate name becomes the policy it names here, so every later comparison sees one value.
   const settings = [out, out.defaults, ...(isObject(out.projects) ? Object.values(out.projects) : [])];
-  for (const s of settings) if (isObject(s) && s.gate !== undefined) s.gate = normalizeGate(s.gate);
+  for (const s of settings) {
+    if (isObject(s) && s.gate !== undefined) s.gate = normalizeGate(s.gate);
+    if (isObject(s) && isObject(s.environments)) for (const e of Object.values(s.environments)) if (isObject(e) && e.gate !== undefined) e.gate = normalizeGate(e.gate);
+  }
   return out as TerragucciConfig;
 }
 
@@ -1841,7 +2004,23 @@ export function resolveRepo(config: TerragucciConfig): ResolvedSettings {
 export function resolveProject(config: TerragucciConfig, key: string): ResolvedSettings {
   const project = config.projects?.[key];
   if (project === undefined) throw new ConfigError(`no project "${key}" in the config`);
-  return merge(merge(BUILT_IN, config.defaults ?? {}), project ?? {});
+  const out = merge(merge(BUILT_IN, config.defaults ?? {}), project ?? {});
+  // Each environment is whole once the defaults' part and the project's are merged: its roots, and no glob in two environments.
+  const needs: string[] = [];
+  if (out.environments) {
+    checkEnvironments(out.environments, `projects["${key}"].environments`, needs, out as unknown as Record<string, unknown>);
+    needs.push(...environmentNeeds(out, `projects["${key}"]`));
+  }
+  if (needs.length) throw new ConfigError(`projects["${key}"] has ${needs.length} problem(s) once the defaults are merged in:\n  ${needs.join("\n  ")}`, needs);
+  return out;
+}
+
+/** `environments` merged per environment name: an environment both name takes `over`'s keys over `base`'s. */
+export function mergeEnvironments(base: Record<string, EnvironmentSettings> | undefined, over: Record<string, EnvironmentSettings> | undefined): Record<string, EnvironmentSettings> | undefined {
+  if (!base || !over) return over ?? base;
+  const out: Record<string, EnvironmentSettings> = { ...base };
+  for (const [name, e] of Object.entries(over)) out[name] = { ...base[name], ...e } as EnvironmentSettings;
+  return out;
 }
 
 function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings {
@@ -1854,5 +2033,6 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   if (base.apply || settings.apply) out.apply = { ...base.apply, ...settings.apply };
   if (base.generate || settings.generate) out.generate = combineGenerate(base.generate, settings.generate);
+  if (base.environments || settings.environments) out.environments = mergeEnvironments(base.environments, settings.environments);
   return out;
 }

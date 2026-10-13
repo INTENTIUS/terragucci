@@ -22,6 +22,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ResolvedSettings, RolePair } from "./config";
 import { globMatch } from "./detect";
+import { withEnvironmentRoles } from "./environments";
 import { rootSettings, versionPin } from "./generate";
 
 /** The variables whose `-var-file` arguments a root's plan reads. */
@@ -140,7 +141,8 @@ export function planSettings(s: Partial<ResolvedSettings>, root: string): Record
   } catch (e) {
     generate = { error: (e as Error).message };
   }
-  const o = s.oidc;
+  // An environment's identities are its roots' roles by glob (./environments.ts), so a change to them reaches those roots.
+  const o = withEnvironmentRoles(s.oidc, s.environments);
   let oidc: unknown;
   if (o) {
     const { roles: _aws, gcp, azure, plan_role, apply_role, ...rest } = o;

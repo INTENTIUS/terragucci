@@ -24,6 +24,8 @@ export interface InventoryRoot {
   wave?: number;
   /** The run's directory, relative to the project's index. */
   path: string;
+  /** The environment of `environments:` the root was in when the wave applied. Absent when it was in none. */
+  environment?: string;
   resources: ReportResource[];
 }
 
@@ -62,6 +64,7 @@ export function inventoryRoots(report: Report, path: string): InventoryRoot[] {
       finished: report.run.finished,
       ...(report.run.wave !== undefined ? { wave: report.run.wave } : {}),
       path,
+      ...(r.environment ? { environment: r.environment } : {}),
       resources: r.resources!,
     }));
 }
