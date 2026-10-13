@@ -1024,10 +1024,16 @@ export async function main(argv: string[]): Promise<number> {
           if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // One apply job per identity: groups whose jobs carry the same token subject get a tip, never a warning.
-          if (shape && problems.length === 0 && shape.kind !== "terragrunt") {
-            const roots = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
-            const tip = sharedSubjectTip(applyGroups(config, roots), config.forge ?? detectForge(repoDir)?.value);
-            if (tip) tips.push({ rule: SHARED_SUBJECT_TIP, message: tip });
+          // Only a config that can split into groups looks for its roots, and a tip never fails the check.
+          const groupable = Boolean(config.environments || config.oidc?.roles || config.oidc?.gcp?.roles || config.oidc?.azure?.roles);
+          if (shape && problems.length === 0 && shape.kind !== "terragrunt" && groupable) {
+            try {
+              const roots = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
+              const tip = sharedSubjectTip(applyGroups(config, roots), config.forge ?? detectForge(repoDir)?.value);
+              if (tip) tips.push({ rule: SHARED_SUBJECT_TIP, message: tip });
+            } catch {
+              // The roots could not be listed (no Atmos on the path): no tip.
+            }
           }
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
