@@ -1460,6 +1460,22 @@
       "commit": "c64d95fa"
     },
     {
+      "claim": "security/replan-apply-role",
+      "says": "a /terragucci plan re-plan trades its OIDC token for the plan role before any pull request code runs, and that code finds no token the apply role trusts and no way to ask for one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2071cf73"
+    },
+    {
+      "claim": "security/replan-cache",
+      "says": "a /terragucci plan re-plan restores the Terragrunt cache and saves none, so what the code of a pull request leaves in .terragrunt-cache never reaches an apply job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2071cf73"
+    },
+    {
       "claim": "security/fork",
       "says": "a pull request from a fork runs check and no plan job",
       "needs": null,
@@ -1525,19 +1541,19 @@
     },
     {
       "claim": "policy/sources-module",
-      "says": "with sources.modules set, tf-plan and the check job fail a root that calls a module from an unlisted host before its init, and tf-plan fails one whose listed remote module calls an unlisted one after its init and before its plan, naming the module path",
+      "says": "with sources.modules set, tf-plan and the check job fail a root that calls a module from an unlisted host before its init, and tf-plan fails one whose listed remote module calls an unlisted one after its init and before its plan, naming the module path; in a Terragrunt repo tf-plan fails such a unit after Terragrunt inits it and before its plan, naming the unit and the module path, and the check job fails a unit whose source is on an unlisted host before its validate",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c87781cc"
+      "commit": "9c265f66"
     },
     {
       "claim": "policy/sources-provider",
-      "says": "with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and one whose remote module brings in an unlisted provider after its init and before its plan, naming the module",
+      "says": "with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and one whose remote module brings in an unlisted provider after its init and before its plan, naming the module; in a Terragrunt repo tf-plan fails a unit whose source brings in an unlisted provider after Terragrunt inits it and before its plan, naming the unit and the provider",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c87781cc"
+      "commit": "9c265f66"
     },
     {
       "claim": "policy/sources-at-base",
@@ -2602,22 +2618,6 @@
       "break": "caught",
       "forge": "gitlab",
       "commit": "8022dedb"
-    },
-    {
-      "claim": "security/replan-apply-role",
-      "says": "a /terragucci plan re-plan trades its OIDC token for the plan role before any pull request code runs, and that code finds no token the apply role trusts and no way to ask for one",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "2071cf73"
-    },
-    {
-      "claim": "security/replan-cache",
-      "says": "a /terragucci plan re-plan restores the Terragrunt cache and saves none, so what the code of a pull request leaves in .terragrunt-cache never reaches an apply job",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "2071cf73"
     }
   ]
 }
