@@ -210,7 +210,7 @@ oidc:
 
 | Item | Value |
 |---|---|
-| Token audience | `sts.amazonaws.com`, or `oidc.audience` |
+| Token audience | `sts.amazonaws.com`, or `oidc.audience`: one for every job, or one per stage ([Audience per stage](/terragucci/reference/environment/#audience-per-stage)) |
 | The job sets | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Trust | an IAM OIDC provider for the issuer; each role allows `sts:AssumeRoleWithWebIdentity` on `aud` and `sub`: the pull-request and default branch subjects for plan, the default branch's alone for apply |
 
