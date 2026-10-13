@@ -19,6 +19,7 @@
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
+ *   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
  *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>   (Linux builds, for a CI job)
  *   terragucci atmos write   (write each Atmos instance to <stack>/<component> from atmos describe stacks; run by the generated pipeline)
  *   terragucci terramate generate   (fail on stale Terramate generated code, then write each stack's order and inputs beside it; run by the generated pipeline)
@@ -76,6 +77,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
+import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
+import { environmentTips } from "./environment-tips";
 import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
@@ -155,6 +158,7 @@ const USAGE = `usage:
   terragucci check-policy [--config <file>] [--base <ref>]
   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]   (a root's module and provider sources under sources, before its init; --units: each Terragrunt unit's)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
+  terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
@@ -249,7 +253,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "units"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "units", "self-hosted"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -496,6 +500,28 @@ export async function main(argv: string[]): Promise<number> {
         const result = { ok: results.every((r) => r.ok), log: results.flatMap((r) => r.log), report: results.flatMap((r) => r.report) };
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
+      }
+      case "check-job": {
+        // The first lines of an environment's apply job: stop it unless it runs where the environment's apply is set to run.
+        const forge = str(flags, "forge");
+        const environment = str(flags, "environment");
+        const branches = flags.branches === undefined ? undefined : str(flags, "branches");
+        if (!forge || !FORGES.includes(forge as ForgeName) || !environment || branches === undefined) {
+          throw new ConfigError("usage: terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]");
+        }
+        const list = (v: string | undefined): string[] => (v ?? "").split(",").map((x) => x.trim()).filter((x) => x !== "");
+        const expect: JobExpectation = {
+          forge: forge as ForgeName,
+          environment,
+          branches: list(branches),
+          ...(str(flags, "forge-environment") ? { forgeEnvironment: str(flags, "forge-environment") } : {}),
+          ...(str(flags, "runner-tags") ? { runnerTags: list(str(flags, "runner-tags")) } : {}),
+          ...(flags["self-hosted"] === true ? { selfHosted: true } : {}),
+        };
+        const told = describeJobCheck(expect, checkJob(expect, await jobSeen(expect)));
+        for (const l of told.out) console.log(l);
+        for (const l of told.err) console.error(l);
+        return told.ok ? 0 : 1;
       }
       case "check-pins": {
         // tf-check's pin step in a Terragrunt repo: each unit's terraform source, as check-root checks a root's module calls.
@@ -1029,8 +1055,12 @@ export async function main(argv: string[]): Promise<number> {
           if (shape && problems.length === 0 && shape.kind !== "terragrunt" && groupable) {
             try {
               const roots = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
-              const tip = sharedSubjectTip(applyGroups(config, roots), config.forge ?? detectForge(repoDir)?.value);
+              const forge = config.forge ?? detectForge(repoDir)?.value;
+              const groups = applyGroups(config, roots);
+              const tip = sharedSubjectTip(groups, forge);
               if (tip) tips.push({ rule: SHARED_SUBJECT_TIP, message: tip });
+              // Runners, apply identities and audiences two environments share (./environment-tips.ts).
+              tips.push(...environmentTips(groups, config, forge));
             } catch {
               // The roots could not be listed (no Atmos on the path): no tip.
             }

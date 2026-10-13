@@ -41,6 +41,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state; [config check tips](/terragucci/reference/tips/#config-check-tips) after `ok` |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
@@ -803,6 +804,14 @@ terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
 
 Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs them, `check-sources` only when `sources` is set. See [Stages](/terragucci/reference/stages/#check).
 
+## check-job
+
+```bash
+terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]
+```
+
+The first line of each [environment's](/terragucci/reference/config/#environments) apply job, before any token is fetched or traded. `init` writes the expected values into the job: the forge environment, the branches the job applies from (the default branch from the forge, and those of `apply.branches`), GitLab's runner tags, and `--self-hosted` when the runner's labels include `self-hosted`. It prints what it checked, or one line per value that differs, naming the expected and the found value, and exits 1. What it reads on each forge: [The apply job's own check](/terragucci/reference/environment/#the-apply-jobs-own-check).
+
 ## install
 
 ```bash
@@ -843,6 +852,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `config check` | `ok`, with or without warnings | | problems found | | |
 | `state export` | the version written and recorded | | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | | |
+| `check-job` | the job runs where its environment's apply is set to run | a forge environment, ref or runner differs | a flag missing | | |
 | `install` | done | | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |

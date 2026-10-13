@@ -47,6 +47,12 @@ export const TIPS_URL = "https://intentius.io/terragucci/reference/tips/";
 
 /** config check's tip when apply groups' jobs carry the same token subject (../groups.ts sharedSubjectTip). */
 export const SHARED_SUBJECT_TIP = "terragucci-shared-subject";
+/** config check's tip when an environment's apply runner can take the plan jobs' or another environment's apply jobs (../environment-tips.ts). */
+export const PERSISTENT_RUNNER_TIP = "terragucci-persistent-runner";
+/** config check's tip when environments' apply jobs take the project's one apply identity (../environment-tips.ts). */
+export const ENVIRONMENT_ROLE_TIP = "terragucci-environment-role";
+/** config check's tip when, on GitLab with AWS, environments' apply jobs carry one audience (../environment-tips.ts). */
+export const SHARED_AUDIENCE_TIP = "terragucci-gitlab-audience";
 
 /** A local module is shared widely at this many roots. */
 export const SHARED_MODULE_ROOTS = 10;
