@@ -31,6 +31,7 @@
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *   terragucci config identities [--config <file>] [--project <host/path>] [--forge <f>] [--repo <owner/name>] [--default-branch <b>] [--owner-id <id>] [--repo-id <id>] [--no-roots]
+ *   terragucci forge check [--config <file>] [--project <host/path>] [--forge <f>] [--repo <owner/name>] [--default-branch <b>] [--owner-id <id>] [--repo-id <id>] [--no-roots] [--require-clouds]   (the identities contract next to the live forge and cloud setup; read-only)
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's or migration's digest on chant/lifecycle, then start its apply again with your token)
@@ -65,7 +66,7 @@
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
  *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   (a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo; credentials from the environment)
  *
- * `--json` on init, reconcile, plan, stage, rollout, config check, config identities and query prints one envelope
+ * `--json` on init, reconcile, plan, stage, rollout, config check, config identities, forge check and query prints one envelope
  * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
@@ -124,6 +125,8 @@ import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { tradeCommand } from "./oidc-trade";
 import { detectShape } from "./shape";
 import { configIdentities, describeIdentities } from "./identities";
+import { describeForgeCheck, forgeCheck, forgeCheckExit } from "./forge-check";
+import type { Fetch } from "./forge";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
@@ -168,6 +171,7 @@ const USAGE = `usage:
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci config identities [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots]   (per environment and stage: roots, runner, forge environment, cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs)
+  terragucci forge check [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots] [--require-clouds]   (compare that contract with the live forge environments, runners, protections and cloud trusts, read-only; exit 1 on a mismatch)
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes] [--agent on] [--review]
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
@@ -204,7 +208,7 @@ const USAGE = `usage:
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
-init, reconcile, plan, stage, rollout, respond, config check, config identities and query take --json: one envelope on stdout.
+init, reconcile, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -256,7 +260,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "units", "self-hosted", "no-roots"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "units", "self-hosted", "no-roots", "require-clouds"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -1110,6 +1114,30 @@ export async function main(argv: string[]): Promise<number> {
         if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);
         return problems.length ? 2 : 0;
       }
+      case "forge": {
+        if (args[0] !== "check") throw new ConfigError("usage: terragucci forge check [--config <file>] [--json]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        if (!path) throw new ConfigError("no terragucci config here; pass --config <file>");
+        const result = await forgeCheck(
+          resolve(path),
+          relative(cwd, resolve(path)) || path,
+          {
+            ...(str(flags, "project") ? { project: str(flags, "project") } : {}),
+            ...(str(flags, "forge") ? { forge: str(flags, "forge") } : {}),
+            ...(str(flags, "repo") ? { repo: str(flags, "repo") } : {}),
+            ...(str(flags, "default-branch") ? { defaultBranch: str(flags, "default-branch") } : {}),
+            ...(str(flags, "owner-id") ? { ownerId: str(flags, "owner-id") } : {}),
+            ...(str(flags, "repo-id") ? { repoId: str(flags, "repo-id") } : {}),
+            noRoots: flags["no-roots"] === true,
+            requireClouds: flags["require-clouds"] === true,
+          },
+          { fetch: globalThis.fetch as unknown as Fetch, env: process.env },
+        );
+        const code = forgeCheckExit(result);
+        if (json) return emit(envelope("forge check", code, result));
+        console.log(describeForgeCheck(result));
+        return code;
+      }
       case "":
       case "help":
       case "--help":
@@ -1121,7 +1149,7 @@ export async function main(argv: string[]): Promise<number> {
     }
   } catch (e) {
     if (e instanceof ConfigError || e instanceof RenderError || e instanceof StoreError) {
-      if (json) return emit(envelope(cmd === "config" ? (args[0] === "identities" ? "config identities" : "config check") : cmd, 2, null, e.message));
+      if (json) return emit(envelope(cmd === "config" ? (args[0] === "identities" ? "config identities" : "config check") : cmd === "forge" ? "forge check" : cmd, 2, null, e.message));
       console.error(`terragucci: ${e.message}`);
       return 2;
     }
