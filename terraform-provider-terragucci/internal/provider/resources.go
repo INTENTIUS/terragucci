@@ -127,6 +127,12 @@ func configured(req any, resp *diag.Diagnostics) *control {
 	if req == nil {
 		return nil
 	}
+	if n, ok := req.(*noControl); ok {
+		for _, a := range n.missing {
+			resp.AddError("Missing provider attribute "+a, fmt.Sprintf("set %s in the terragucci provider block: the resources write the control repo's terragucci.yml through the forge's API (forge and repository name it)", a))
+		}
+		return nil
+	}
 	c, ok := req.(*control)
 	if !ok {
 		resp.AddError("Unexpected provider data", fmt.Sprintf("got %T", req))

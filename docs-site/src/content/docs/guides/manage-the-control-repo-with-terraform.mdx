@@ -90,7 +90,7 @@ Keys that no resource owns stay as they are, comments included. A resource whose
    }
    ```
 
-   `settings` takes the same keys as `terragucci.yml` ([keys](/terragucci/reference/config/#keys)), as an HCL object. The provider block also takes `url` for a forge that is not github.com, gitlab.com or codeberg.org, `api` when the API is not at the usual path under it, `branch` (default: the repository's default branch), `path` (default: `terragucci.yml`) and `token`.
+   `settings` takes the same keys as `terragucci.yml` ([keys](/terragucci/reference/config/#keys)), as an HCL object. The provider block also takes `url` for a forge that is not github.com, gitlab.com or codeberg.org, `api` when the API is not at the usual path under it, `branch` (default: the repository's default branch), `path` (default: `terragucci.yml`), `token`, and `terragucci_path`, the command [the data sources](#read-the-environments-trust) run (default: `terragucci` on `PATH`).
 
 4. Apply the configuration.
 
@@ -145,6 +145,151 @@ import {
 ```
 
 When the plan shows only the imports, the configuration matches the control repo.
+
+## Read the environments' trust
+
+Two data sources read a `terragucci.yml` and give back what each environment's jobs present to a cloud. They run [`terragucci config identities --json`](/terragucci/reference/cli-json/#config-identities) and pass its values through, so they say what terragucci itself prints. They need the `terragucci` command on the machine that plans: install it with `npm install -g @intentius/terragucci`, or set `terragucci_path = "npx -y @intentius/terragucci"` in the provider block.
+
+| Data source | Gives |
+|---|---|
+| `terragucci_environments` | `environments`: each environment by name, and `default` for the roots in none, with its `roots` and its `plan`, `decide`, `confirm`, `apply` and `drift` stages. Each stage has `runner_labels`, `runner_group`, `forge_environment`, `issuer`, `subject`, `claims`, and `aws`, `gcp` and `azure` with each identity, its audience and its trust. |
+| `terragucci_trust_policy` | for one `environment`, `stage` and `cloud`: `aws_assume_role_policy` (JSON), `gcp_attribute_condition` (CEL), or `azure_issuer`, `azure_subject` and `azure_audiences`. The AWS policy and the GCP condition accept every job that takes the stage's role or service account, which `trusts` lists: a plan role's accepts the plan, deciding, confirm and drift jobs |
+
+Both read the provider's control repo file from the forge, with `project` naming one of its projects. That file's projects keep their roots elsewhere, so `roots` is null. With `path`, they read a local `terragucci.yml` instead, and the roots beside it; the provider block then needs neither `forge` nor `repository`. The resources need both, and a plan with a resource fails, naming the one that is missing. `repository` and `default_branch` say which repository the jobs run in when the project key or the origin remote does not; `default_branch` defaults to `main`.
+
+Your own resources make the forge's environments and runners and the clouds' roles; the data sources only give them the names and conditions.
+
+### GitHub and AWS
+
+```hcl
+data "terragucci_environments" "infra" {
+  project = "github.com/acme/infra"
+}
+
+data "terragucci_trust_policy" "prod_apply" {
+  project     = "github.com/acme/infra"
+  environment = "prod"
+  stage       = "apply"
+  cloud       = "aws"
+}
+
+locals {
+  prod = data.terragucci_environments.infra.environments["prod"]
+}
+
+# The prod apply job's subject names this environment, not a branch: its deployment branch rule keeps other branches out.
+resource "github_repository_environment" "prod" {
+  repository  = "infra"
+  environment = local.prod.apply.forge_environment
+  deployment_branch_policy {
+    protected_branches     = true
+    custom_branch_policies = false
+  }
+}
+
+resource "github_actions_runner_group" "prod" {
+  name       = local.prod.apply.runner_group
+  visibility = "selected"
+}
+
+resource "aws_iam_role" "prod_apply" {
+  name               = "prod-apply"
+  assume_role_policy = data.terragucci_trust_policy.prod_apply.aws_assume_role_policy
+}
+```
+
+The account also needs an `aws_iam_openid_connect_provider` for the issuer, with each `audience` the roles' policies name in its `client_id_list`.
+
+### GitLab and GCP
+
+```hcl
+data "terragucci_environments" "infra" {
+  project = "gitlab.com/acme/platform/infra"
+}
+
+data "terragucci_trust_policy" "prod_apply" {
+  project     = "gitlab.com/acme/platform/infra"
+  environment = "prod"
+  stage       = "apply"
+  cloud       = "gcp"
+}
+
+locals {
+  prod = data.terragucci_environments.infra.environments["prod"]
+}
+
+# The condition requires environment_protected and ref_protected: protect the environment, and keep the default branch protected.
+resource "gitlab_project_protected_environment" "prod" {
+  project     = "acme/platform/infra"
+  environment = local.prod.apply.forge_environment
+  deploy_access_levels {
+    access_level = "maintainer"
+  }
+}
+
+# A variable only the prod environment's jobs see.
+resource "gitlab_project_variable" "prod_only" {
+  project           = "acme/platform/infra"
+  key               = "PROD_ONLY"
+  value             = var.prod_only
+  environment_scope = local.prod.apply.forge_environment
+  protected         = true
+}
+
+resource "google_iam_workload_identity_pool_provider" "prod_apply" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.terragucci.workload_identity_pool_id
+  workload_identity_pool_provider_id = "gitlab-prod-apply"
+  attribute_mapping                  = { "google.subject" = "assertion.sub" }
+  attribute_condition                = data.terragucci_trust_policy.prod_apply.gcp_attribute_condition
+  oidc {
+    issuer_uri = data.terragucci_trust_policy.prod_apply.issuer
+  }
+}
+```
+
+On GitLab, AWS reads only a token's `sub` and `aud`, so `aws_assume_role_policy` checks those two.
+
+### Forgejo and AWS
+
+```hcl
+data "terragucci_trust_policy" "apply" {
+  path             = "${path.module}/../infra/terragucci.yml"
+  repository       = "acme/infra"
+  environment      = "default"
+  stage            = "apply"
+  cloud            = "aws"
+  forgejo_owner_id = "3"
+  forgejo_repo_id  = "17"
+}
+
+resource "aws_iam_role" "apply" {
+  name               = "apply"
+  assume_role_policy = data.terragucci_trust_policy.apply.aws_assume_role_policy
+}
+```
+
+Forgejo puts the owner's and the repository's numeric ids in the subject. Without `forgejo_owner_id` and `forgejo_repo_id` the subject holds `<owner-id>` and `<repo-id>`, and a policy with them accepts no token. Forgejo has no deployment environments, so every apply job on the default branch presents the same subject: keep environments apart with a repository each.
+
+### Azure
+
+```hcl
+data "terragucci_trust_policy" "prod_apply" {
+  project     = "github.com/acme/infra"
+  environment = "prod"
+  stage       = "apply"
+  cloud       = "azure"
+}
+
+resource "azuread_application_federated_identity_credential" "prod_apply" {
+  application_id = azuread_application.prod_apply.id
+  display_name   = "terragucci-prod-apply"
+  issuer         = data.terragucci_trust_policy.prod_apply.azure_issuer
+  subject        = data.terragucci_trust_policy.prod_apply.azure_subject
+  audiences      = data.terragucci_trust_policy.prod_apply.azure_audiences
+}
+```
+
+A GitLab plan job's subject is a pattern, since a merge request pipeline's token names its source branch. A federated credential takes no pattern, so for that stage `azure_subject` is null and `azure_claims_matching_expression` holds the expression for a flexible federated credential.
 
 ## Next
 
