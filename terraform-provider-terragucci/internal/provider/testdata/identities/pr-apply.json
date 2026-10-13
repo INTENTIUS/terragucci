@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "command": "config identities",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "schema": "terragucci.identities/v1",
+    "file": "terragucci.yml",
+    "forge": "github",
+    "repository": {
+      "host": "github.com",
+      "path": "acme/infra",
+      "default_branch": "main"
+    },
+    "environments": [
+      {
+        "name": "default",
+        "environment": false,
+        "root_globs": null,
+        "roots": [
+          "app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:pull_request",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::121212121212:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "trusts": [
+                "plan",
+                "confirm"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::121212121212:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::121212121212:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-apply\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "decide": null,
+          "confirm": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:ref:refs/heads/main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::121212121212:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-apply",
+              "trusts": [
+                "plan",
+                "confirm"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::121212121212:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::121212121212:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-apply\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:ref:refs/heads/main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::121212121212:role/apply",
+              "root_roles": {},
+              "audience": "terragucci-apply",
+              "trusts": [
+                "apply"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::121212121212:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-apply\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "drift": null
+        }
+      }
+    ]
+  }
+}

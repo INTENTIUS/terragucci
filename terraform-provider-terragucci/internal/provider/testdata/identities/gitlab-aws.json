@@ -71,6 +71,7 @@
             "gcp": null,
             "azure": null
           },
+          "confirm": null,
           "apply": {
             "runner": {
               "labels": [
@@ -186,6 +187,7 @@
             "gcp": null,
             "azure": null
           },
+          "confirm": null,
           "apply": {
             "runner": null,
             "forge_environment": "dev",
@@ -294,6 +296,7 @@
             "gcp": null,
             "azure": null
           },
+          "confirm": null,
           "apply": {
             "runner": null,
             "forge_environment": null,

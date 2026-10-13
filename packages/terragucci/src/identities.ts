@@ -14,6 +14,10 @@
  *   decide  each wave's deciding job on the default branch, when the waves
  *           apply in a job per group (./groups.ts): the plan identities, on
  *           the plan audience. Null when a wave applies in one job.
+ *   confirm with `apply.when: pull-request`, the job the push after a merge
+ *           runs on the default branch: the plan identities, on the apply
+ *           audience (cloudScripts). Null otherwise; environments refuse
+ *           that setting, so only `default` has it.
  *   apply   the default branch's apply jobs: the apply identities, in the
  *           environment's forge environment on GitHub and GitLab, on its
  *           runner and with its audience when it sets them
@@ -22,7 +26,7 @@
  *
  * A role has one trust policy: each stage's AWS policy (and GCP condition)
  * accepts every job of the entry that takes the same identity, listed in
- * `trusts`, so the plan role's names the plan, deciding and drift jobs.
+ * `trusts`, so the plan role's names the plan, deciding, confirm and drift jobs.
  *
  * Subjects, by forge:
  *
@@ -60,7 +64,7 @@ import { detectTerragrunt, walkUnits } from "./terragrunt";
 /** The contract's name and version, in `results.schema`. It changes only when a field is removed or changes meaning. */
 export const IDENTITIES_SCHEMA = "terragucci.identities/v1";
 
-export const IDENTITY_STAGES = ["plan", "decide", "apply", "drift"] as const;
+export const IDENTITY_STAGES = ["plan", "decide", "confirm", "apply", "drift"] as const;
 export type IdentityStage = (typeof IDENTITY_STAGES)[number];
 export const CLOUDS = ["aws", "gcp", "azure"] as const;
 export type Cloud = (typeof CLOUDS)[number];
@@ -327,8 +331,8 @@ function runnerFor(stage: IdentityStage, top: RunnerSettings | undefined, e: Env
     const own = e ? environmentApplyRunner(e.runner) : undefined;
     if (own !== undefined) return own;
   }
-  // The deciding job is an apply job (jobStage): it takes the apply runner.
-  return runnerOf(top, stage === "decide" ? "apply" : stage);
+  // The deciding and confirm jobs are apply jobs (jobStage): they take the apply runner.
+  return runnerOf(top, stage === "decide" || stage === "confirm" ? "apply" : stage);
 }
 
 /** The roots that take an identity other than `own` for `stage`, by the first glob of `roles` each matches. */
@@ -390,6 +394,8 @@ const identityStage = (stage: IdentityStage): "plan" | "apply" => (stage === "ap
 function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository, settings: ProjectSettings & { drift?: string | false }, name: string | undefined, roots: string[] | null, grouped: boolean): StageIdentities | null {
   if (stage === "drift" && !settings.drift) return null;
   if (stage === "decide" && !grouped) return null;
+  // With apply.when: pull-request, the push after a merge runs confirm, which plans every root with the plan identities.
+  if (stage === "confirm" && settings.apply?.when !== "pull-request") return null;
   const e = name === undefined ? undefined : settings.environments![name]!;
   const own = environmentSettings(name, settings);
   const oidc: OidcSettings | undefined = own.oidc;
@@ -404,7 +410,7 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
   if ((oidc?.plan_role && oidc.apply_role) || (roles && Object.keys(roles).length > 0)) {
     const role = (idStage === "plan" ? oidc?.plan_role : oidc?.apply_role) ?? null;
     // An environment's own audience is its apply jobs' (groups.ts); the deciding job plans on the plan audience.
-    const audience = stage === "apply" && grouped && e?.oidc?.audience ? e.oidc.audience : stageAudience(settings.oidc, stage === "decide" ? "plan" : stage);
+    const audience = stage === "apply" && grouped && e?.oidc?.audience ? e.oidc.audience : stageAudience(settings.oidc, stage === "decide" ? "plan" : stage === "confirm" ? "apply" : stage);
     const root_roles = rootIdentities(roots, roles, idStage, role);
     aws = { role, root_roles, audience, trusts: [stage], assume_role_policy: awsTrustPolicy([{ token, audience }], role ?? Object.values(root_roles)[0] ?? null) };
   }

@@ -156,7 +156,7 @@ func TestEnvironmentsMatchEachGolden(t *testing.T) {
 					t.Fatalf("%s roots %v, golden %v", ge["name"], e.Roots, ge["roots"])
 				}
 				stages := ge["stages"].(map[string]any)
-				for st, got := range map[string]*stageModel{"plan": e.Plan, "decide": e.Decide, "apply": e.Apply, "drift": e.Drift} {
+				for st, got := range map[string]*stageModel{"plan": e.Plan, "decide": e.Decide, "confirm": e.Confirm, "apply": e.Apply, "drift": e.Drift} {
 					gs, _ := stages[st].(map[string]any)
 					if gs == nil {
 						if got != nil {
@@ -244,6 +244,11 @@ func TestTrustPolicyFromGoldens(t *testing.T) {
 				t.Fatalf("subject %s audience %s policy %s", m.Subject, m.Audience, m.AWSAssumeRolePolicy)
 			}
 		}},
+		{"pr-apply", "default", "confirm", "aws", func(t *testing.T, m trustPolicyModel) {
+			if m.Identity.ValueString() != "arn:aws:iam::121212121212:role/plan" || m.Audience.ValueString() != "terragucci-apply" || !strings.Contains(m.AWSAssumeRolePolicy.ValueString(), `"repo:acme/infra:pull_request"`) {
+				t.Fatalf("identity %s audience %s policy %s", m.Identity, m.Audience, m.AWSAssumeRolePolicy)
+			}
+		}},
 		{"no-environments", "default", "apply", "aws", func(t *testing.T, m trustPolicyModel) {
 			if m.Subject.ValueString() != "repo:acme/infra:ref:refs/heads/main" {
 				t.Fatalf("subject %s", m.Subject)
@@ -272,6 +277,7 @@ func TestTrustPolicyRefusesWhatTheConfigLacks(t *testing.T) {
 	cases := []struct{ golden, env, stage, cloud, want string }{
 		{"github-aws", "staging", "apply", "aws", `no environment "staging"`},
 		{"forgejo-aws", "prod", "drift", "aws", "drift is off"},
+		{"github-aws", "prod", "confirm", "aws", "apply.when: pull-request"},
 		{"github-aws", "prod", "apply", "gcp", "no oidc.gcp"},
 		{"gitlab-gcp", "prod", "apply", "azure", "no oidc.azure"},
 		{"azure", "prod", "apply", "aws", "no AWS role"},

@@ -49,6 +49,7 @@ const CASES: [string, string[]][] = [
   ["forgejo-aws-ids", ["--repo", "acme/infra", "--owner-id", "3", "--repo-id", "17"]],
   ["azure", ["--repo", "acme/infra"]],
   ["no-environments", ["--repo", "acme/infra"]],
+  ["pr-apply", ["--repo", "acme/infra"]],
   ["control", ["--project", "gitlab.com/acme/platform/infra"]],
 ];
 
@@ -267,6 +268,25 @@ describe("identities", () => {
     const [d] = identities(settings, ["app", "network"], { file: "terragucci.yml", repo: repo.path }).environments;
     expect(d!.stages.decide!.token.subject).toBe("repo:acme/infra:ref:refs/heads/main");
     expect(d!.stages.apply!.forge_environment).toBeNull();
+  });
+
+  it("with apply.when: pull-request, has a confirm job that takes the plan identities on the apply audience, which the plan role's trust admits", async () => {
+    const c = JSON.parse((await run(fixture("pr-apply"), "config", "identities", "--json", "--repo", "acme/infra")).out).results as Identities;
+    const [d] = c.environments;
+    expect(c.environments).toHaveLength(1);
+    expect(d!.stages.confirm!.token.subject).toBe("repo:acme/infra:ref:refs/heads/main");
+    expect(d!.stages.confirm!.aws!.role).toBe("arn:aws:iam::121212121212:role/plan");
+    expect(d!.stages.confirm!.aws!.audience).toBe("terragucci-apply");
+    expect(d!.stages.plan!.aws!.trusts).toEqual(["plan", "confirm"]);
+    expect(d!.stages.apply!.aws!.trusts).toEqual(["apply"]);
+    const key = "token.actions.githubusercontent.com";
+    expect(JSON.parse(d!.stages.plan!.aws!.assume_role_policy).Statement.map((x: { Condition: { StringEquals: Record<string, string> } }) => x.Condition.StringEquals)).toEqual([
+      { [`${key}:aud`]: "terragucci-plan", [`${key}:sub`]: "repo:acme/infra:pull_request" },
+      { [`${key}:aud`]: "terragucci-apply", [`${key}:sub`]: "repo:acme/infra:ref:refs/heads/main" },
+    ]);
+    // Without it, no confirm job.
+    const other = JSON.parse((await run(fixture("no-environments"), "config", "identities", "--json", "--repo", "acme/infra")).out).results as Identities;
+    expect(other.environments[0]!.stages.confirm).toBeNull();
   });
 
   it("writes a StringLike subject for a pattern, and a placeholder account when no role names one", () => {

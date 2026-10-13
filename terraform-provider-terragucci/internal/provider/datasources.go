@@ -126,6 +126,7 @@ type envModel struct {
 	Roots       []string    `tfsdk:"roots"`
 	Plan        *stageModel `tfsdk:"plan"`
 	Decide      *stageModel `tfsdk:"decide"`
+	Confirm     *stageModel `tfsdk:"confirm"`
 	Apply       *stageModel `tfsdk:"apply"`
 	Drift       *stageModel `tfsdk:"drift"`
 }
@@ -253,6 +254,7 @@ func (d *environmentsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			"roots":       computedStrings("The repo's roots in the environment; null when they were not read."),
 			"plan":        stageAttribute("The pull request's plan job."),
 			"decide":      stageAttribute("Each wave's deciding job on the default branch, when the waves apply in a job per environment or identity group; null otherwise."),
+			"confirm":     stageAttribute("With apply.when: pull-request, the job the push after a merge runs, with the plan identities on the apply audience; null otherwise."),
 			"apply":       stageAttribute("The default branch's apply jobs."),
 			"drift":       stageAttribute("The scheduled drift job; null when drift is off."),
 		}},
@@ -295,6 +297,7 @@ func environmentsState(m *environmentsModel, c *identitiesContract, raw []byte) 
 			Roots:       e.Roots,
 			Plan:        stageState(e.Stages["plan"]),
 			Decide:      stageState(e.Stages["decide"]),
+			Confirm:     stageState(e.Stages["confirm"]),
 			Apply:       stageState(e.Stages["apply"]),
 			Drift:       stageState(e.Stages["drift"]),
 		}
@@ -348,7 +351,7 @@ func nonNilList(l []string) []string {
 // ── terragucci_trust_policy ────────────────────────────────────────────────
 
 var (
-	stages = []string{"plan", "decide", "apply", "drift"}
+	stages = []string{"plan", "decide", "confirm", "apply", "drift"}
 	clouds = []string{"aws", "gcp", "azure"}
 )
 
@@ -386,7 +389,7 @@ func (d *trustPolicyDataSource) Metadata(_ context.Context, req datasource.Metad
 func (d *trustPolicyDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	attrs := sourceAttributes()
 	attrs["environment"] = schema.StringAttribute{Required: true, Description: "An environment of terragucci.yml, or default for the roots in none."}
-	attrs["stage"] = schema.StringAttribute{Required: true, Description: "plan, decide, apply or drift."}
+	attrs["stage"] = schema.StringAttribute{Required: true, Description: "plan, decide, confirm, apply or drift."}
 	attrs["cloud"] = schema.StringAttribute{Required: true, Description: "aws, gcp or azure."}
 	attrs["issuer"] = computedString("The OIDC token's issuer.")
 	attrs["subject"] = computedString("The token's sub claim; with subject_pattern, * stands for any text.")
@@ -447,8 +450,11 @@ func trustPolicyState(m *trustPolicyModel, c *identitiesContract) error {
 	s := e.Stages[stage]
 	if s == nil {
 		why := "drift is off"
-		if stage == "decide" {
+		switch stage {
+		case "decide":
 			why = "each wave applies in one job, which decides it"
+		case "confirm":
+			why = "only apply.when: pull-request has a confirm job"
 		}
 		return fmt.Errorf("%s has no %s job in %s: %s", env, stage, c.File, why)
 	}

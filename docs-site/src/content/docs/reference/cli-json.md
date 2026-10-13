@@ -186,7 +186,7 @@ Each entry:
 | `environment` | `false` for `default` |
 | `root_globs` | the environment's `roots`; for `default`, the top-level `roots`, or `null` when roots are detected |
 | `roots` | the repo's roots in the entry, found as `config check` finds them; `null` for a [control repo](/terragucci/concepts/control-repo/)'s project, or with `--no-roots` |
-| `stages` | `plan` (the pull request's plan job), `decide` (each wave's deciding job, as below), `apply` (the default branch's apply jobs) and `drift` (the scheduled drift job, `null` when `drift` is off) |
+| `stages` | `plan` (the pull request's plan job), `decide` (each wave's deciding job, as below), `confirm` (with `apply.when: pull-request`, the job the push after a merge runs; `null` otherwise), `apply` (the default branch's apply jobs) and `drift` (the scheduled drift job, `null` when `drift` is off) |
 
 Each stage:
 
@@ -199,15 +199,15 @@ Each stage:
 | `gcp` | `service_account`, `root_service_accounts`, `workload_identity_provider`, `audience` (the provider's full name), `trusts`, and `attribute_condition`, a CEL condition for the provider that holds for each stage in `trusts`; `null` without `oidc.gcp` |
 | `azure` | `client_id`, `root_client_ids`, `tenant_id`, and a federated credential's `issuer`, `subject` and `audiences` (`oidc.azure.audience`, by default `api://AzureADTokenExchange`); for a subject pattern, `subject` is `null` and `claims_matching_expression` holds a flexible federated credential's expression; `null` without `oidc.azure` |
 
-The plan, decide and drift stages take the plan identities, and apply the apply identities. An environment's own `oidc` pair wins over the top-level pair for its roots.
+The plan, decide, confirm and drift stages take the plan identities, and apply the apply identities. `confirm` presents them on the apply audience. An environment's own `oidc` pair wins over the top-level pair for its roots.
 
-`decide` is set when each environment's roots apply in jobs of their own, or when roles by glob tell the roots apart: each wave then has a job on the default branch that plans every root with the plan identities, on the plan audience, and decides the wave's gate, before each group's apply job. It is `null` when a wave applies in one job, as in a Terragrunt repo.
+`decide` is set when each environment's roots apply in jobs of their own, or when roles by glob tell the roots apart: each wave then has a job on the default branch that plans every root with the plan identities, on the plan audience, and decides the wave's gate, before each group's apply job. It is `null` when a wave applies in one job, as in a Terragrunt repo. With the roots not read, an entry has `decide` whenever the config has environments.
 
-A role has one trust policy, so `trusts` lists every stage of the entry whose jobs take the same identity, and `assume_role_policy` and `attribute_condition` accept each of them: the plan role's names the plan, deciding and drift jobs. An Azure client takes a federated credential per subject: give it one for each of those stages' `subject`.
+A role has one trust policy, so `trusts` lists every stage of the entry whose jobs take the same identity, and `assume_role_policy` and `attribute_condition` accept each of them: the plan role's names the plan, deciding, confirm and drift jobs. An Azure client takes a federated credential per subject: give it one for each of those stages' `subject`.
 
 The subject, by forge:
 
-| Forge | `plan` | `apply` | `decide` and `drift` |
+| Forge | `plan` | `apply` | `decide`, `confirm` and `drift` |
 |---|---|---|---|
 | GitHub | `repo:<owner>/<repo>:pull_request` | `repo:<owner>/<repo>:environment:<forge environment>`; for `default`, `repo:<owner>/<repo>:ref:refs/heads/<default branch>` | `repo:<owner>/<repo>:ref:refs/heads/<default branch>` |
 | GitLab | `project_path:<path>:ref_type:branch:ref:*`, a pattern, since a merge request pipeline's token names its source branch | `project_path:<path>:ref_type:branch:ref:<default branch>` | the same as `apply` |

@@ -71,6 +71,7 @@
               "claims_matching_expression": null
             }
           },
+          "confirm": null,
           "apply": {
             "runner": null,
             "forge_environment": "prod",
@@ -156,6 +157,7 @@
               "claims_matching_expression": null
             }
           },
+          "confirm": null,
           "apply": {
             "runner": null,
             "forge_environment": "dev",

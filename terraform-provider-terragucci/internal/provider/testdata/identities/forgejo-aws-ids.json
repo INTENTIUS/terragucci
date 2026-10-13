@@ -71,6 +71,7 @@
             "gcp": null,
             "azure": null
           },
+          "confirm": null,
           "apply": {
             "runner": null,
             "forge_environment": null,
@@ -152,6 +153,7 @@
             "gcp": null,
             "azure": null
           },
+          "confirm": null,
           "apply": {
             "runner": null,
             "forge_environment": null,
