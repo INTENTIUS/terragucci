@@ -14,6 +14,9 @@ import { wavesSpec, waveCallArgv } from "../src/chant-waves";
 import { renderPipeline, RenderError, type PipelineInput } from "../src/render";
 import { withEnvironmentRoles } from "../src/environments";
 import { shapeProblems } from "../src/refusals";
+import { groupedPipeline, runMigrations } from "../src/migrate";
+import { PIPELINE_PATHS } from "../src/render";
+import { tmp, write } from "./helpers";
 
 const PROD = { plan_role: "arn:aws:iam::222222222222:role/prod-plan", apply_role: "arn:aws:iam::222222222222:role/prod-apply" };
 const DEV = { plan_role: "arn:aws:iam::111111111111:role/dev-plan", apply_role: "arn:aws:iam::111111111111:role/dev-apply" };
@@ -228,5 +231,25 @@ describe("apply groups: config", () => {
   it("a Terragrunt repo refuses an environment's runner and forge_environment", () => {
     const p = shapeProblems("terragrunt", { environments: { prod: { roots: ["live/prod/**"], forge_environment: "prod" } } }, "config");
     expect(p).toEqual([expect.stringContaining("config.environments: Terragrunt applies a wave's units in one job")]);
+  });
+});
+
+describe("apply groups: state migrations", () => {
+  const MIGRATION = "moves:\n  - from: envs/dev/network\n    to: envs/dev/app\n    addresses: [aws_s3_bucket.logs]\n";
+
+  it("a pull request's plan refuses a migration in a repo whose pipeline applies a job per identity, naming the file", async () => {
+    for (const forge of ["github", "gitlab", "forgejo"] as const) {
+      const dir = write(tmp(), { [PIPELINE_PATHS[forge]]: renderPipeline(input(forge)).content, "migrations/move-logs.yml": MIGRATION });
+      expect(groupedPipeline(dir)).toBe(PIPELINE_PATHS[forge]);
+      const lines: string[] = [];
+      const r = await runMigrations(dir, { binary: "tofu", planOnly: true, log: (l) => void lines.push(l), exec: async () => ({ code: 1, stdout: "", out: "no binary should run" }) });
+      expect(r).toEqual({ code: 1, records: [] });
+      expect(lines.join("\n")).toContain(`migrations: migrations/move-logs.yml is a state migration, and ${PIPELINE_PATHS[forge]} applies each wave in a job per identity: wave 1's deciding job runs a migration, and it holds the plan roles alone`);
+    }
+  });
+
+  it("a pipeline with one apply job per wave is not grouped", () => {
+    const dir = write(tmp(), { [PIPELINE_PATHS.gitlab]: renderPipeline(input("gitlab", { oidc: TOP })).content });
+    expect(groupedPipeline(dir)).toBeUndefined();
   });
 });

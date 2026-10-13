@@ -195,6 +195,8 @@ The groups are the environments, each with the roots its globs match, and `defau
 
 One approval of the wave's set digest applies every group's job, and a refused root refuses the whole wave. The next wave needs every group's job, and `apply-done` posts the last success. The group jobs apply side by side under the run's apply lock, as shares do. With neither `environments` nor roles that tell roots apart, a wave keeps its one job. A Terragrunt repo's waves keep one job each.
 
+A [state migration](/terragucci/reference/migration-files/) runs in wave 1's deciding job, which holds the plan roles alone and cannot write a state, so a repo with groups runs none: a pull request's plan fails on a migration file that has not applied, naming it.
+
 ## Applies side by side
 
 Two pushes that change different roots apply at the same time, and a root's own applies take turns at its state lock; with [choudoufu](/terragucci/concepts/glossary/#choudoufu), waves wait only for a run changing one of their resources. A wave a newer push superseded stands down. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#applies-side-by-side).
