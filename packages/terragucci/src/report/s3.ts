@@ -132,8 +132,8 @@ export function signRequest(t: S3Location & S3Credentials, method: string, key: 
   return { url, headers: sign(t, method, url, { ...(contentType ? { "content-type": contentType } : {}), ...extra }, sha256(body), now) };
 }
 
-/** Signature Version 4 headers for a request; its query string, if any, is signed in canonical order. `headers` are signed too. */
-export function sign(t: Pick<S3Location, "region"> & S3Credentials, method: string, rawUrl: string, extra: Record<string, string>, payload: string, now: Date): Record<string, string> {
+/** Signature Version 4 headers for a request to `service` (S3 by default); its query string, if any, is signed in canonical order. `headers` are signed too. */
+export function sign(t: Pick<S3Location, "region"> & S3Credentials, method: string, rawUrl: string, extra: Record<string, string>, payload: string, now: Date, service = "s3"): Record<string, string> {
   const url = new URL(rawUrl);
   const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   const day = amzDate.slice(0, 8);
@@ -147,9 +147,9 @@ export function sign(t: Pick<S3Location, "region"> & S3Credentials, method: stri
   const names = Object.keys(headers).sort();
   const query = [...url.searchParams].map(([k, v]) => `${encodeStrict(k)}=${encodeStrict(v)}`).sort().join("&");
   const canonical = [method, url.pathname, query, ...names.map((n) => `${n}:${headers[n].trim()}`), "", names.join(";"), payload].join("\n");
-  const scope = `${day}/${t.region}/s3/aws4_request`;
+  const scope = `${day}/${t.region}/${service}/aws4_request`;
   const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonical)].join("\n");
-  const key4 = hmac(hmac(hmac(hmac(`AWS4${t.secretAccessKey}`, day), t.region), "s3"), "aws4_request");
+  const key4 = hmac(hmac(hmac(hmac(`AWS4${t.secretAccessKey}`, day), t.region), service), "aws4_request");
   const signature = createHmac("sha256", key4).update(toSign).digest("hex");
   const { host: _host, ...sent } = headers;
   return { ...sent, authorization: `AWS4-HMAC-SHA256 Credential=${t.accessKeyId}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}` };

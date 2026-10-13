@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "command": "forge check",
+  "exit": 1,
+  "status": "failed",
+  "results": {
+    "schema": "terragucci.forge-check/v1",
+    "file": "terragucci.yml",
+    "forge": "github",
+    "repository": {
+      "host": "github.com",
+      "path": "acme/infra",
+      "default_branch": "main"
+    },
+    "rows": [
+      {
+        "where": "github",
+        "check": "environment",
+        "subject": "production",
+        "expected": "exists",
+        "found": "exists",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "deployment-branches",
+        "subject": "production",
+        "expected": "deploys from main only",
+        "found": "protected branches",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "environment",
+        "subject": "dev",
+        "expected": "exists",
+        "found": "exists",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "deployment-branches",
+        "subject": "dev",
+        "expected": "deploys from main only",
+        "found": "any branch: no deployment branch rule",
+        "status": "mismatch"
+      },
+      {
+        "where": "github",
+        "check": "runner-group",
+        "subject": "deployers",
+        "expected": "limited to selected workflows",
+        "found": "could not read (403); the token needs Self-hosted runners: read on the organization (classic: admin:org)",
+        "status": "unknown"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::222222222222:role/prod-plan",
+        "expected": "sub repo:acme/infra:pull_request aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "found": "not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)",
+        "status": "not-checked"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::222222222222:role/prod-apply",
+        "expected": "sub repo:acme/infra:environment:production aud terragucci-prod-apply",
+        "found": "not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)",
+        "status": "not-checked"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::333333333333:role/dev-plan",
+        "expected": "sub repo:acme/infra:pull_request aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "found": "not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)",
+        "status": "not-checked"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::333333333333:role/dev-apply",
+        "expected": "sub repo:acme/infra:environment:dev aud terragucci-apply",
+        "found": "not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)",
+        "status": "not-checked"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::111111111111:role/shared-plan",
+        "expected": "sub repo:acme/infra:pull_request aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "found": "not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)",
+        "status": "not-checked"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::111111111111:role/shared-apply",
+        "expected": "sub repo:acme/infra:ref:refs/heads/main aud terragucci-apply",
+        "found": "not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)",
+        "status": "not-checked"
+      }
+    ],
+    "counts": {
+      "match": 3,
+      "mismatch": 1,
+      "unknown": 1,
+      "not-checked": 6
+    },
+    "ok": false
+  }
+}
