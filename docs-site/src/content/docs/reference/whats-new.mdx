@@ -1,19 +1,24 @@
 ---
-title: Changes in 0.4.8
-description: "terragucci 0.4.8, released 2026-10-12."
+title: Changes in 0.4.9
+description: "terragucci 0.4.9, released 2026-10-13."
 ---
 
-Release `0.4.8` is on npm as `@intentius/terragucci@0.4.8`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.8) lists every change.
+Release `0.4.9` is on npm as `@intentius/terragucci@0.4.9`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.9) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.8 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.9 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
-## Since 0.4.8
+## In 0.4.9
 
 | What | Where |
 |---|---|
+| `environments` in `terragucci.yml` names each environment's roots, gate, roles, runner, forge environment and audience; each wave applies in one job per environment, holding that environment's identities alone | [Separate environments](/terragucci/guides/separate-environments/) |
+| `oidc.audience` takes a map, `plan`, `apply` and `drift`, so a role that trusts the apply audience refuses a plan job's token | [Trust per environment](/terragucci/reference/environment/#trust-per-environment) |
+| An environment's apply job checks its forge environment, ref and runner before it takes a cloud token, and `config check` tips on shared apply identities | [Separate environments](/terragucci/guides/separate-environments/) |
+| `terragucci config identities --json` prints each stage's identities and the trust each role needs; the provider reads it as `terragucci_environments` and `terragucci_trust_policy` | [Read the environments' trust](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust) |
+| `terragucci forge check` compares that contract with the forge and the cloud, reading only, and the provider returns its rows as `terragucci_forge_check` | [forge check](/terragucci/reference/cli/#forge-check) |
 | The choudoufu image runs choudoufu 0.28.0. In a pull request that plans both, a root that reads another estate's outputs through `terraform_estate_outputs` plans on the outputs the upstream's plan makes; one that reads an output known only after apply is named with the wave that settles it | [Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots) |
 | With `binary: choudoufu`, a pull request plans each root under a `live` block as the cone of its change, the note names each cone's size or why the whole estate was planned, and a cone's addresses are part of its plan digest | [Cone plans](/terragucci/guides/use-a-binary/#cone-plans) |
 
