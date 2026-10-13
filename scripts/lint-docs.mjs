@@ -105,6 +105,27 @@ const missing = (what, expected, found, page) => {
   }
 }
 
+// Every claim a page cites is a claim (terragucci#1002): its `claims:` front matter, and each
+// backticked <area>/<part> whose area is a claim area, against the registries in stack/ and the
+// recorded rows. `modules/...` in backticks is a module path, so only front matter names a modules claim.
+{
+  const known = new Set();
+  for (const m of read("stack/smoke.sh").matchAll(/^([a-z0-9-]+\/[a-z0-9-]+)\|/gm)) known.add(m[1]);
+  for (const reg of ["stack/validation.sh", "stack/sandbox-github.sh"]) for (const m of read(reg).matchAll(/^[a-z.]+\|([a-z0-9-]+\/[a-z0-9-]+)\|/gm)) known.add(m[1]);
+  for (const data of ["smoke.json", "validation.json"]) for (const row of JSON.parse(read(`docs-site/src/data/${data}`)).claims) known.add(row.claim);
+  const areas = new Set([...known].map((c) => c.split("/")[0]));
+  for (const file of collect(DOCS.slice(0, -1))) {
+    const text = read(file);
+    const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const cited = new Set(front.match(/^claims: \[(.*)\]$/m)?.[1].split(",").map((s) => s.trim()).filter(Boolean) ?? []);
+    for (const m of text.matchAll(/`([a-z0-9-]+)\/([a-z0-9*-]+)`/g)) if (areas.has(m[1]) && m[1] !== "modules") cited.add(`${m[1]}/${m[2]}`);
+    for (const claim of cited) {
+      const ok = claim.endsWith("/*") ? areas.has(claim.slice(0, -2)) : known.has(claim);
+      if (!ok) problems.push(`${file}: cites claim ${claim}, which no registry in stack/ and no recorded row names`);
+    }
+  }
+}
+
 // Every page is true as written: no roadmap words, and no mention of Temporal. Held over the site's
 // source, the READMEs and the package's source, whose messages reach a user's terminal.
 {
