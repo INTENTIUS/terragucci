@@ -1,6 +1,6 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan, stage, rollout, respond, config check, config identities and query print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
+description: The envelope that init, reconcile, plan, stage, rollout, respond, config check, config identities, forge check and query print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
 prompt: |
   Read https://intentius.io/terragucci/reference/cli-json/.
   Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
@@ -24,7 +24,7 @@ With `--json`, these commands print only one JSON object on stdout.
 | Field | Holds |
 |---|---|
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities` or `query`. |
+| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check` or `query`. |
 | `exit` | The process exit code. |
 | `status` | `ok` for exit 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |
@@ -218,6 +218,29 @@ On GitLab an apply job with a forge environment also carries `environment`, `env
 The issuer is `https://token.actions.githubusercontent.com` on github.com and `https://<host>/_services/token` on GitHub Enterprise Server, the instance's URL on GitLab, and `https://<host>/api/actions` on Forgejo. The AWS trust policy names the OIDC provider `arn:<partition>:iam::<account>:oidc-provider/<issuer without https://>` in the role's own account, and checks `aud` and `sub` with `StringEquals`, or `sub` with `StringLike` for a pattern.
 
 `placeholders` lists the parts of `subject` written as `<name>` that the command could not know: Forgejo's `owner-id` and `repo-id` without `--owner-id` and `--repo-id`, and `owner` and `repo` when neither `--repo`, a project key nor the origin remote names the repository. A trust policy that holds a placeholder accepts no token.
+
+## forge check
+
+`terragucci forge check --json` prints a row for each setting [`forge check`](/terragucci/reference/cli/#forge-check) compares. `exit` is 1 when a row is a `mismatch`, or with `--require-clouds` when a cloud row is `not-checked`, and 0 otherwise. The [Terraform provider](/terragucci/guides/manage-the-control-repo-with-terraform/#check-the-live-setup) reads this output.
+
+| `results` field | Holds |
+|---|---|
+| `schema` | `terragucci.forge-check/v1`. It changes only when a field is removed or changes meaning. |
+| `file`, `forge`, `repository` | as in [`config identities`](#config-identities); `default_branch` is the forge's, and on Forgejo `owner_id` and `repo_id` are the forge's when the flags give none |
+| `rows` | one per setting: `where` (`github`, `gitlab`, `forgejo`, `aws`, `gcp` or `azure`), `check`, `subject`, `expected`, `found` and `status` |
+| `counts` | the number of rows of each status: `match`, `mismatch`, `unknown` and `not-checked` |
+| `ok` | `true` when `exit` is 0 |
+
+| `check` | `subject` |
+|---|---|
+| `repository` | the repository, when the forge would not answer for it; no other forge row follows |
+| `environment`, `deployment-branches` | a GitHub forge environment |
+| `runner-group` | a GitHub runner group |
+| `protected-environment` | a GitLab forge environment |
+| `protected-runners` | a GitLab apply runner's tags, as `tags <tag>, <tag>` |
+| `variable` | a GitLab variable in an environment, as `<name> in <environment>` |
+| `protected-branch` | a Forgejo branch |
+| `trust` | an AWS role ARN, a GCP provider's resource name, or an Azure app's client id |
 
 ## query
 

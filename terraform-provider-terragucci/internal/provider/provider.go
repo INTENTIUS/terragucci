@@ -172,5 +172,5 @@ func (p *terragucciProvider) Resources(_ context.Context) []func() resource.Reso
 }
 
 func (p *terragucciProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{newEnvironmentsDataSource, newTrustPolicyDataSource}
+	return []func() datasource.DataSource{newEnvironmentsDataSource, newTrustPolicyDataSource, newForgeCheckDataSource}
 }

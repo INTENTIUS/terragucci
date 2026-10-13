@@ -291,6 +291,29 @@ resource "azuread_application_federated_identity_credential" "prod_apply" {
 
 A GitLab plan job's subject is a pattern, since a merge request pipeline's token names its source branch. A federated credential takes no pattern, so for that stage `azure_subject` is null and `azure_claims_matching_expression` holds the expression for a flexible federated credential.
 
+## Check the live setup
+
+The `terragucci_forge_check` data source runs [`terragucci forge check --json`](/terragucci/reference/cli/#forge-check) and returns its rows: each setting the contract expects of the forge and the clouds, what it found, and `status` (`match`, `mismatch`, `unknown` or `not-checked`). It takes the same `path`, `project`, `repository` and `default_branch` as the other data sources, and `require_clouds`. It reads with the forge and cloud credentials in the environment Terraform runs in, and needs only [read-only scopes](/terragucci/reference/cli/#read-only-credentials). A `check` block reports a mismatch as a warning on every plan and apply, without stopping it:
+
+```hcl
+check "forge_setup" {
+  data "terragucci_forge_check" "infra" {
+    project = "github.com/acme/infra"
+  }
+
+  assert {
+    condition = data.terragucci_forge_check.infra.counts["mismatch"] == 0
+    error_message = join("\n", [
+      for r in data.terragucci_forge_check.infra.rows :
+      "${r.where} ${r.check} ${r.subject}: expected ${r.expected}, found ${r.found}"
+      if r.status == "mismatch"
+    ])
+  }
+}
+```
+
+`ok` is false on a mismatch, and with `require_clouds = true` also when a cloud the config configures was not checked for want of credentials. `json` holds the whole result.
+
 ## Next
 
 - [Govern many repos from one place](/terragucci/guides/govern-many-repos/) covers what `reconcile` does with each project.

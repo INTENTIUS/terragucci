@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "command": "forge check",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "schema": "terragucci.forge-check/v1",
+    "file": "terragucci.yml",
+    "forge": "github",
+    "repository": {
+      "host": "github.com",
+      "path": "acme/infra",
+      "default_branch": "main"
+    },
+    "rows": [
+      {
+        "where": "github",
+        "check": "environment",
+        "subject": "production",
+        "expected": "exists",
+        "found": "exists",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "deployment-branches",
+        "subject": "production",
+        "expected": "deploys from main only",
+        "found": "protected branches",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "environment",
+        "subject": "dev",
+        "expected": "exists",
+        "found": "exists",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "deployment-branches",
+        "subject": "dev",
+        "expected": "deploys from main only",
+        "found": "custom: main",
+        "status": "match"
+      },
+      {
+        "where": "github",
+        "check": "runner-group",
+        "subject": "deployers",
+        "expected": "limited to selected workflows",
+        "found": "selected workflows: acme/infra/.github/workflows/terragucci.yml@refs/heads/main",
+        "status": "match"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::222222222222:role/prod-plan",
+        "expected": "sub repo:acme/infra:pull_request aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "found": "token.actions.githubusercontent.com: sub repo:acme/infra:pull_request aud terragucci-plan; token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "status": "match"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::222222222222:role/prod-apply",
+        "expected": "sub repo:acme/infra:environment:production aud terragucci-prod-apply",
+        "found": "token.actions.githubusercontent.com: sub repo:acme/infra:environment:production aud terragucci-prod-apply",
+        "status": "match"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::333333333333:role/dev-plan",
+        "expected": "sub repo:acme/infra:pull_request aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "found": "token.actions.githubusercontent.com: sub repo:acme/infra:pull_request aud terragucci-plan; token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "status": "match"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::333333333333:role/dev-apply",
+        "expected": "sub repo:acme/infra:environment:dev aud terragucci-apply",
+        "found": "token.actions.githubusercontent.com: sub repo:acme/infra:environment:dev aud terragucci-apply",
+        "status": "match"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::111111111111:role/shared-plan",
+        "expected": "sub repo:acme/infra:pull_request aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "found": "token.actions.githubusercontent.com: sub repo:acme/infra:pull_request aud terragucci-plan; token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud terragucci-plan; token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud sts.amazonaws.com",
+        "status": "match"
+      },
+      {
+        "where": "aws",
+        "check": "trust",
+        "subject": "arn:aws:iam::111111111111:role/shared-apply",
+        "expected": "sub repo:acme/infra:ref:refs/heads/main aud terragucci-apply",
+        "found": "token.actions.githubusercontent.com: sub repo:acme/infra:ref:refs/heads/main aud terragucci-apply",
+        "status": "match"
+      }
+    ],
+    "counts": {
+      "match": 11,
+      "mismatch": 0,
+      "unknown": 0,
+      "not-checked": 0
+    },
+    "ok": true
+  }
+}
