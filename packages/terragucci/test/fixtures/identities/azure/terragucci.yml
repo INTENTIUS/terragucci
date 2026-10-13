@@ -1,0 +1,23 @@
+# GitHub, Azure US Government: prod and dev environments with their own clients.
+forge: github
+binary: tofu
+oidc:
+  azure:
+    tenant_id: 00000000-0000-0000-0000-000000000001
+    subscription_id: 00000000-0000-0000-0000-000000000002
+    plan_client_id: 00000000-0000-0000-0000-0000000000a1
+    apply_client_id: 00000000-0000-0000-0000-0000000000a2
+    audience: api://AzureADTokenExchangeUSGov
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    oidc:
+      azure:
+        plan_client_id: 00000000-0000-0000-0000-0000000000b1
+        apply_client_id: 00000000-0000-0000-0000-0000000000b2
+  dev:
+    roots: ["envs/dev/**"]
+    oidc:
+      azure:
+        plan_client_id: 00000000-0000-0000-0000-0000000000c1
+        apply_client_id: 00000000-0000-0000-0000-0000000000c2

@@ -1,0 +1,24 @@
+# GitLab on its own host, GCP: prod and staging environments with their own service accounts.
+forge: gitlab
+url: https://gitlab.example.com
+binary: tofu
+drift: "0 4 * * *"
+runner: [docker, linux]
+oidc:
+  gcp:
+    workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab
+    plan_service_account: plan@infra.iam.gserviceaccount.com
+    apply_service_account: apply@infra.iam.gserviceaccount.com
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    oidc:
+      gcp:
+        plan_service_account: prod-plan@infra.iam.gserviceaccount.com
+        apply_service_account: prod-apply@infra.iam.gserviceaccount.com
+  staging:
+    roots: ["envs/staging/**"]
+    oidc:
+      gcp:
+        plan_service_account: staging-plan@infra.iam.gserviceaccount.com
+        apply_service_account: staging-apply@infra.iam.gserviceaccount.com

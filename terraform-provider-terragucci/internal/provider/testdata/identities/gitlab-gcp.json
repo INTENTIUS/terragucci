@@ -1,0 +1,206 @@
+{
+  "schema": 1,
+  "command": "config identities",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "schema": "terragucci.identities/v1",
+    "file": "terragucci.yml",
+    "forge": "gitlab",
+    "repository": {
+      "host": "gitlab.example.com",
+      "path": "acme/platform/infra",
+      "default_branch": "trunk"
+    },
+    "environments": [
+      {
+        "name": "prod",
+        "environment": true,
+        "root_globs": [
+          "envs/prod/**"
+        ],
+        "roots": [
+          "envs/prod/app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": {
+              "labels": [
+                "docker",
+                "linux"
+              ],
+              "group": null
+            },
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.example.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:*",
+              "subject_pattern": true,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": {
+              "service_account": "prod-plan@infra.iam.gserviceaccount.com",
+              "root_service_accounts": {},
+              "workload_identity_provider": "projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "audience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "attribute_condition": "assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')"
+            },
+            "azure": null
+          },
+          "apply": {
+            "runner": {
+              "labels": [
+                "docker",
+                "linux"
+              ],
+              "group": null
+            },
+            "forge_environment": "prod",
+            "token": {
+              "issuer": "https://gitlab.example.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:trunk",
+              "subject_pattern": false,
+              "claims": {
+                "environment": "prod",
+                "environment_protected": "true",
+                "ref_protected": "true"
+              },
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": {
+              "service_account": "prod-apply@infra.iam.gserviceaccount.com",
+              "root_service_accounts": {},
+              "workload_identity_provider": "projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "audience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "attribute_condition": "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk' && assertion.environment == 'prod' && assertion.environment_protected == 'true'"
+            },
+            "azure": null
+          },
+          "drift": {
+            "runner": {
+              "labels": [
+                "docker",
+                "linux"
+              ],
+              "group": null
+            },
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.example.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:trunk",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": {
+              "service_account": "prod-plan@infra.iam.gserviceaccount.com",
+              "root_service_accounts": {},
+              "workload_identity_provider": "projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "audience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "attribute_condition": "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk'"
+            },
+            "azure": null
+          }
+        }
+      },
+      {
+        "name": "staging",
+        "environment": true,
+        "root_globs": [
+          "envs/staging/**"
+        ],
+        "roots": [
+          "envs/staging/app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": {
+              "labels": [
+                "docker",
+                "linux"
+              ],
+              "group": null
+            },
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.example.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:*",
+              "subject_pattern": true,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": {
+              "service_account": "staging-plan@infra.iam.gserviceaccount.com",
+              "root_service_accounts": {},
+              "workload_identity_provider": "projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "audience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "attribute_condition": "assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')"
+            },
+            "azure": null
+          },
+          "apply": {
+            "runner": {
+              "labels": [
+                "docker",
+                "linux"
+              ],
+              "group": null
+            },
+            "forge_environment": "staging",
+            "token": {
+              "issuer": "https://gitlab.example.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:trunk",
+              "subject_pattern": false,
+              "claims": {
+                "environment": "staging",
+                "environment_protected": "true",
+                "ref_protected": "true"
+              },
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": {
+              "service_account": "staging-apply@infra.iam.gserviceaccount.com",
+              "root_service_accounts": {},
+              "workload_identity_provider": "projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "audience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "attribute_condition": "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk' && assertion.environment == 'staging' && assertion.environment_protected == 'true'"
+            },
+            "azure": null
+          },
+          "drift": {
+            "runner": {
+              "labels": [
+                "docker",
+                "linux"
+              ],
+              "group": null
+            },
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.example.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:trunk",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": {
+              "service_account": "staging-plan@infra.iam.gserviceaccount.com",
+              "root_service_accounts": {},
+              "workload_identity_provider": "projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "audience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/terragucci/providers/gitlab",
+              "attribute_condition": "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk'"
+            },
+            "azure": null
+          }
+        }
+      }
+    ]
+  }
+}

@@ -38,6 +38,8 @@ type providerModel struct {
 	Branch     types.String `tfsdk:"branch"`
 	Path       types.String `tfsdk:"path"`
 	Token      types.String `tfsdk:"token"`
+
+	TerragucciPath types.String `tfsdk:"terragucci_path"`
 }
 
 func (p *terragucciProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -78,6 +80,10 @@ func (p *terragucciProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Sensitive:   true,
 				Description: "A token that can push to the branch. Default: TERRAGUCCI_TOKEN, else GITHUB_TOKEN, GITLAB_TOKEN or FORGEJO_TOKEN by forge.",
 			},
+			"terragucci_path": schema.StringAttribute{
+				Optional:    true,
+				Description: "The terragucci command the data sources run, `terragucci config identities --json`: a path, or a command and its arguments split on spaces, such as \"npx -y @intentius/terragucci\". Default: terragucci on PATH.",
+			},
 		},
 	}
 }
@@ -88,7 +94,7 @@ func (p *terragucciProvider) Configure(ctx context.Context, req provider.Configu
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if m.Forge.IsUnknown() || m.Repository.IsUnknown() || m.URL.IsUnknown() || m.API.IsUnknown() || m.Branch.IsUnknown() || m.Path.IsUnknown() || m.Token.IsUnknown() {
+	if m.Forge.IsUnknown() || m.Repository.IsUnknown() || m.URL.IsUnknown() || m.API.IsUnknown() || m.Branch.IsUnknown() || m.Path.IsUnknown() || m.Token.IsUnknown() || m.TerragucciPath.IsUnknown() {
 		// Known at apply; resources are not called before then.
 		return
 	}
@@ -122,7 +128,7 @@ func (p *terragucciProvider) Configure(ctx context.Context, req provider.Configu
 		path:   file,
 	}
 	resp.ResourceData = c
-	resp.DataSourceData = c
+	resp.DataSourceData = &sources{control: c, command: commandOf(m.TerragucciPath.ValueString())}
 }
 
 func trimSlash(s string) string {
@@ -137,5 +143,5 @@ func (p *terragucciProvider) Resources(_ context.Context) []func() resource.Reso
 }
 
 func (p *terragucciProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{newEnvironmentsDataSource, newTrustPolicyDataSource}
 }

@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "command": "config identities",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "schema": "terragucci.identities/v1",
+    "file": "terragucci.yml",
+    "forge": "github",
+    "repository": {
+      "host": "github.com",
+      "path": "acme/infra",
+      "default_branch": "main"
+    },
+    "environments": [
+      {
+        "name": "prod",
+        "environment": true,
+        "root_globs": [
+          "envs/prod/**"
+        ],
+        "roots": [
+          "envs/prod/app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:pull_request",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": null,
+            "azure": {
+              "client_id": "00000000-0000-0000-0000-0000000000b1",
+              "root_client_ids": {},
+              "tenant_id": "00000000-0000-0000-0000-000000000001",
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:pull_request",
+              "audiences": [
+                "api://AzureADTokenExchangeUSGov"
+              ],
+              "claims_matching_expression": null
+            }
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": "prod",
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:environment:prod",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": null,
+            "azure": {
+              "client_id": "00000000-0000-0000-0000-0000000000b2",
+              "root_client_ids": {},
+              "tenant_id": "00000000-0000-0000-0000-000000000001",
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:environment:prod",
+              "audiences": [
+                "api://AzureADTokenExchangeUSGov"
+              ],
+              "claims_matching_expression": null
+            }
+          },
+          "drift": null
+        }
+      },
+      {
+        "name": "dev",
+        "environment": true,
+        "root_globs": [
+          "envs/dev/**"
+        ],
+        "roots": [
+          "envs/dev/app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:pull_request",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": null,
+            "azure": {
+              "client_id": "00000000-0000-0000-0000-0000000000c1",
+              "root_client_ids": {},
+              "tenant_id": "00000000-0000-0000-0000-000000000001",
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:pull_request",
+              "audiences": [
+                "api://AzureADTokenExchangeUSGov"
+              ],
+              "claims_matching_expression": null
+            }
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": "dev",
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:environment:dev",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": null,
+            "azure": {
+              "client_id": "00000000-0000-0000-0000-0000000000c2",
+              "root_client_ids": {},
+              "tenant_id": "00000000-0000-0000-0000-000000000001",
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:environment:dev",
+              "audiences": [
+                "api://AzureADTokenExchangeUSGov"
+              ],
+              "claims_matching_expression": null
+            }
+          },
+          "drift": null
+        }
+      }
+    ]
+  }
+}

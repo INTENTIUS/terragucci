@@ -1,0 +1,225 @@
+{
+  "schema": 1,
+  "command": "config identities",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "schema": "terragucci.identities/v1",
+    "file": "terragucci.yml",
+    "forge": "gitlab",
+    "repository": {
+      "host": "gitlab.com",
+      "path": "acme/platform/infra",
+      "default_branch": "main"
+    },
+    "environments": [
+      {
+        "name": "prod",
+        "environment": true,
+        "root_globs": [
+          "envs/prod/**"
+        ],
+        "roots": null,
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:*",
+              "subject_pattern": true,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::777777777777:role/prod-plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": "prod",
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {
+                "environment": "prod",
+                "environment_protected": "true",
+                "ref_protected": "true"
+              },
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::777777777777:role/prod-apply",
+              "root_roles": {},
+              "audience": "terragucci-apply",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-apply\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "drift": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::777777777777:role/prod-plan",
+              "root_roles": {},
+              "audience": "terragucci-drift",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          }
+        }
+      },
+      {
+        "name": "dev",
+        "environment": true,
+        "root_globs": [
+          "envs/dev/**"
+        ],
+        "roots": null,
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:*",
+              "subject_pattern": true,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": "dev",
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {
+                "environment": "dev",
+                "environment_protected": "true",
+                "ref_protected": "true"
+              },
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/apply",
+              "root_roles": {},
+              "audience": "terragucci-apply",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-apply\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "drift": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-drift",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          }
+        }
+      },
+      {
+        "name": "default",
+        "environment": false,
+        "root_globs": null,
+        "roots": null,
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:*",
+              "subject_pattern": true,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/apply",
+              "root_roles": {},
+              "audience": "terragucci-apply",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-apply\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "drift": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-drift",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          }
+        }
+      }
+    ]
+  }
+}

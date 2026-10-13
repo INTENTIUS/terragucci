@@ -1,0 +1,122 @@
+{
+  "schema": 1,
+  "command": "config identities",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "schema": "terragucci.identities/v1",
+    "file": "terragucci.yml",
+    "forge": "forgejo",
+    "repository": {
+      "host": "git.example.com",
+      "path": "acme/infra",
+      "default_branch": "main",
+      "owner_id": "3",
+      "repo_id": "17"
+    },
+    "environments": [
+      {
+        "name": "prod",
+        "environment": true,
+        "root_globs": [
+          "envs/prod/**"
+        ],
+        "roots": [
+          "envs/prod/app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://git.example.com/api/actions",
+              "subject": "repo:acme-3/infra-17:pull_request",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::444444444444:role/prod-plan",
+              "root_roles": {},
+              "audience": "sts.amazonaws.com",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::444444444444:oidc-provider/git.example.com/api/actions\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"git.example.com/api/actions:aud\":\"sts.amazonaws.com\",\"git.example.com/api/actions:sub\":\"repo:acme-3/infra-17:pull_request\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://git.example.com/api/actions",
+              "subject": "repo:acme-3/infra-17:ref:refs/heads/main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::444444444444:role/prod-apply",
+              "root_roles": {},
+              "audience": "sts.amazonaws.com",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::444444444444:oidc-provider/git.example.com/api/actions\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"git.example.com/api/actions:aud\":\"sts.amazonaws.com\",\"git.example.com/api/actions:sub\":\"repo:acme-3/infra-17:ref:refs/heads/main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "drift": null
+        }
+      },
+      {
+        "name": "dev",
+        "environment": true,
+        "root_globs": [
+          "envs/dev/**"
+        ],
+        "roots": [
+          "envs/dev/app"
+        ],
+        "stages": {
+          "plan": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://git.example.com/api/actions",
+              "subject": "repo:acme-3/infra-17:pull_request",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::444444444444:role/plan",
+              "root_roles": {},
+              "audience": "sts.amazonaws.com",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::444444444444:oidc-provider/git.example.com/api/actions\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"git.example.com/api/actions:aud\":\"sts.amazonaws.com\",\"git.example.com/api/actions:sub\":\"repo:acme-3/infra-17:pull_request\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "apply": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://git.example.com/api/actions",
+              "subject": "repo:acme-3/infra-17:ref:refs/heads/main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::444444444444:role/apply",
+              "root_roles": {},
+              "audience": "sts.amazonaws.com",
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::444444444444:oidc-provider/git.example.com/api/actions\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"git.example.com/api/actions:aud\":\"sts.amazonaws.com\",\"git.example.com/api/actions:sub\":\"repo:acme-3/infra-17:ref:refs/heads/main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "drift": null
+        }
+      }
+    ]
+  }
+}
