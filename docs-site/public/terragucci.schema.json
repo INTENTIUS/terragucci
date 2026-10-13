@@ -731,7 +731,29 @@
           "minLength": 1
         },
         "audience": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "plan": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "apply": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "drift": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
         },
         "roles": {
           "type": "object",
@@ -2237,7 +2259,29 @@
               "minLength": 1
             },
             "audience": {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "apply": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "drift": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
             },
             "roles": {
               "type": "object",

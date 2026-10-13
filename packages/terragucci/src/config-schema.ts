@@ -23,6 +23,7 @@ import {
   APPLY_WHEN,
   APPROVALS,
   ATMOS_KEYS,
+  AUDIENCE_STAGES,
   BINARIES,
   COST_KEYS,
   DASHBOARD_DURATION_KEYS,
@@ -247,7 +248,7 @@ const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: source
 const oidc = map(OIDC_KEYS, {
   plan_role: { type: "string", minLength: 1 },
   apply_role: { type: "string", minLength: 1 },
-  audience: str,
+  audience: { anyOf: [str, map(AUDIENCE_STAGES, { plan: { type: "string", minLength: 1 }, apply: { type: "string", minLength: 1 }, drift: { type: "string", minLength: 1 } })] },
   roles: { type: "object", minProperties: 1, additionalProperties: rolePair },
   gcp: map(["workload_identity_provider", "plan_service_account", "apply_service_account", "token_url", "roles"], {
     workload_identity_provider: pat(WIF_PROVIDER),
