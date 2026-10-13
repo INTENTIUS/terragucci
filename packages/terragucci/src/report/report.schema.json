@@ -71,6 +71,7 @@
         "required": ["path", "status", "plan_digest", "counts", "plan", "changes", "highlights", "fold", "why"],
         "properties": {
           "path": { "type": "string" },
+          "environment": { "type": "string", "description": "The environment of environments: in terragucci.yml the root is in (minor 33). Absent when the config names no environments or the root is in none." },
           "binary": {
             "description": "The binary the root ran, its version, and where the root pinned that version when it did (minor 18).",
             "type": "object",
@@ -353,7 +354,8 @@
                 }
               }
             }
-          }
+          },
+          "environments": { "type": "array", "items": { "type": "string" }, "description": "The environments of environments: in terragucci.yml its roots are in, sorted (minor 33). Absent when none of its roots is in one." }
         }
       }
     },
