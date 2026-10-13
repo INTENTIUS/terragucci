@@ -171,7 +171,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -360,6 +360,7 @@ export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
  */
 export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
   return [
+    ...stageTokens(forge, oidc, "apply"),
     ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
     'if [ "${TG_ACTION:-}" = closed ]; then',
@@ -388,7 +389,7 @@ export function gitlabEphemeralScript(oidc: OidcSettings | undefined, binary: Bi
 
 /** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
 export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
-  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), `terragucci ephemeral sweep --binary ${binary}`].join("\n");
+  return [...stageTokens(forge, oidc, "apply"), ...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), `terragucci ephemeral sweep --binary ${binary}`].join("\n");
 }
 
 /** The cron for `apply.resume`'s minutes. */
@@ -617,6 +618,25 @@ export function forgeApi(forge: ForgeName): string {
 
 const AUDIENCE = "sts.amazonaws.com";
 
+/** The AWS token's audience for a job of `stage`: `oidc.audience` as a string for every job, or its map's entry for the stage, else `sts.amazonaws.com`. */
+export function stageAudience(oidc: OidcSettings | undefined, stage: AudienceStage): string {
+  const a = oidc?.audience;
+  if (a === undefined) return AUDIENCE;
+  return typeof a === "string" ? a : (a[stage] ?? AUDIENCE);
+}
+
+/** Whether `oidc.audience` is the map, which gives each stage's jobs their own audience. */
+export const audienceByStage = (oidc: OidcSettings | undefined): boolean => oidc?.audience !== undefined && typeof oidc.audience !== "string";
+
+/**
+ * With `oidc.audience` a map, a GitHub or Forgejo step that takes cloud
+ * credentials asks for its tokens before anything else, and restarts without
+ * the token-request variables (ACTIONS_ID_TOKEN_REQUEST_URL and _TOKEN). The
+ * change's code and the binary then cannot ask for a token for another
+ * stage's audience. GitLab declares each job's audience in its `id_tokens`.
+ */
+const fetchesFirst = (forge: ForgeName, oidc: OidcSettings | undefined): boolean => forge !== "gitlab" && audienceByStage(oidc);
+
 /** What a job that got no OIDC token needs, by forge. */
 const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
   github: "the job needs permissions: id-token: write",
@@ -630,8 +650,11 @@ const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
  * plan or apply with whatever credentials the runner happens to hold. On GitLab the token is the job's
  * `id_tokens` entry `gitlabVar`, one per audience.
  */
-export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC", check = true): string {
+export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC", check = true, fetched = false): string {
   if (forge === "gitlab") return `printf '%s' "$${gitlabVar}" >"${file}"`;
+  // Fetched at the top of the step (stageTokens), into the file `${gitlabVar}_FILE` names. Moved, so no copy stays
+  // behind once whatever reads `file` deletes it (a re-plan's trade).
+  if (fetched) return `mv -f "$${gitlabVar}_FILE" "${file}" || exit 1`;
   return [...(check ? [tokenCheck(forge)] : []), `tg oidc "${file}" ${sh(audience)} || exit 1`].join("\n");
 }
 
@@ -646,8 +669,8 @@ export function tokenCheck(forge: ForgeName): string {
   ].join("\n");
 }
 
-export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE, check = true): string {
-  const token = tokenScript(forge, audience, undefined, undefined, check);
+export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE, check = true, fetched = false): string {
+  const token = tokenScript(forge, audience, undefined, undefined, check, fetched);
   return [
     `export AWS_ROLE_ARN=${sh(role)} AWS_ROLE_SESSION_NAME=${sh(session)}`,
     'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"',
@@ -674,11 +697,11 @@ const GITLAB_AZURE_TOKEN = "TERRAGUCCI_OIDC_AZURE";
  * impersonates the stage's service account. The google provider, the gcs
  * backend and the gcloud tools read it through GOOGLE_APPLICATION_CREDENTIALS.
  */
-export function gcpScript(forge: ForgeName, provider: string, serviceAccount: string, tokenUrl = GCP_TOKEN_URL, check = true): string {
+export function gcpScript(forge: ForgeName, provider: string, serviceAccount: string, tokenUrl = GCP_TOKEN_URL, check = true, fetched = false): string {
   const json = (v: string): string => sh(JSON.stringify(v));
   return [
     'export TERRAGUCCI_GCP_TOKEN_FILE="$(mktemp)" GOOGLE_APPLICATION_CREDENTIALS="$(mktemp)"',
-    tokenScript(forge, gcpAudience(provider), "$TERRAGUCCI_GCP_TOKEN_FILE", GITLAB_GCP_TOKEN, check),
+    tokenScript(forge, gcpAudience(provider), "$TERRAGUCCI_GCP_TOKEN_FILE", GITLAB_GCP_TOKEN, check, fetched),
     "printf '" +
       '{"type":"external_account","audience":%s,"subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":%s,' +
       '"service_account_impersonation_url":%s,"credential_source":{"file":"%s"}}\\n' +
@@ -687,11 +710,11 @@ export function gcpScript(forge: ForgeName, provider: string, serviceAccount: st
 }
 
 /** Azure: the job's token for Entra ID in a file, and the ARM_* variables the azurerm provider and backend read for OIDC. */
-export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["azure"]>, clientId: string, check = true): string {
+export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["azure"]>, clientId: string, check = true, fetched = false): string {
   return [
     `export ARM_USE_OIDC=true ARM_CLIENT_ID=${sh(clientId)} ARM_TENANT_ID=${sh(azure.tenant_id)} ARM_SUBSCRIPTION_ID=${sh(azure.subscription_id)}`,
     'export ARM_OIDC_TOKEN_FILE_PATH="$(mktemp)"',
-    tokenScript(forge, azure.audience ?? AZURE_AUDIENCE, "$ARM_OIDC_TOKEN_FILE_PATH", GITLAB_AZURE_TOKEN, check),
+    tokenScript(forge, azure.audience ?? AZURE_AUDIENCE, "$ARM_OIDC_TOKEN_FILE_PATH", GITLAB_AZURE_TOKEN, check, fetched),
   ].join("\n");
 }
 
@@ -706,11 +729,11 @@ const hasRootRoles = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.
  * glob in ROOT_ROLES_ENV, which the stage hands each root's binary
  * (rootRoleEnv in ./roles.ts).
  */
-function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply", session: string, check: boolean): string {
+function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply", session: string, check: boolean, audience: string, fetched: boolean): string {
   const role = stage === "plan" ? oidc.plan_role : oidc.apply_role;
   const roles = hasRootRoles(oidc) ? [`export ${ROOT_ROLES_ENV}=${sh(JSON.stringify(rootRoles(oidc.roles!, stage)))}`] : [];
-  if (role) return [oidcScript(forge, role, session, oidc.audience, check), ...roles].join("\n");
-  return [`export AWS_ROLE_SESSION_NAME=${sh(session)}`, 'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', tokenScript(forge, oidc.audience ?? AUDIENCE, undefined, undefined, check), ...roles].join("\n");
+  if (role) return [oidcScript(forge, role, session, audience, check, fetched), ...roles].join("\n");
+  return [`export AWS_ROLE_SESSION_NAME=${sh(session)}`, 'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', tokenScript(forge, audience, undefined, undefined, check, fetched), ...roles].join("\n");
 }
 
 /** A stage's GCP service accounts or Azure clients by root glob, exported for the stage to hand each root's binary (rootRoleEnv in ./roles.ts). */
@@ -722,17 +745,50 @@ const cloudRoles = (name: string, roles: Record<string, { plan: string; apply: s
  * account and the Azure client `oidc` names for it, each with the forge's
  * token for that cloud's audience, and with `roles` under `gcp` or `azure`
  * the stage's identities by root glob. Drift takes the plan identities.
+ * The AWS token carries the audience of `audienceStage`, the job's stage
+ * (jobStage): drift's for drift, and apply's for confirm, which plans with the
+ * plan identities from an apply job. With `oidc.audience` a map on GitHub and
+ * Forgejo the tokens were fetched at the top of the step (stageTokens), and
+ * are copied from there.
  */
-export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, stage: "plan" | "apply", session: string): string[] {
+export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, stage: "plan" | "apply", session: string, audienceStage: AudienceStage = stage): string[] {
   if (!oidc) return [];
   const plan = stage === "plan";
-  // With GCP or Azure the check runs once, ahead of every token; an AWS-only script keeps it inside the AWS step.
-  const shared = Boolean(oidc.gcp || oidc.azure) && forge !== "gitlab";
+  const fetched = fetchesFirst(forge, oidc);
+  // With GCP or Azure the check runs once, ahead of every token; an AWS-only script keeps it inside the AWS step. Tokens fetched first were checked there.
+  const shared = Boolean(oidc.gcp || oidc.azure) && forge !== "gitlab" && !fetched;
+  const check = !shared && !fetched;
   return [
     ...(shared ? [tokenCheck(forge)] : []),
-    ...(hasAws(oidc) ? [awsScript(forge, oidc, stage, session, !shared)] : []),
-    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, !shared), ...cloudRoles(ROOT_GCP_ENV, oidc.gcp.roles, stage)] : []),
-    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, !shared), ...cloudRoles(ROOT_AZURE_ENV, oidc.azure.roles, stage)] : []),
+    ...(hasAws(oidc) ? [awsScript(forge, oidc, stage, session, check, stageAudience(oidc, audienceStage), fetched)] : []),
+    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, check, fetched), ...cloudRoles(ROOT_GCP_ENV, oidc.gcp.roles, stage)] : []),
+    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, check, fetched), ...cloudRoles(ROOT_AZURE_ENV, oidc.azure.roles, stage)] : []),
+  ];
+}
+
+/**
+ * With `oidc.audience` a map on GitHub or Forgejo (fetchesFirst), the first
+ * lines of a step that takes cloud credentials: the job's tokens, the AWS one
+ * for the stage's audience alone, each in a file TERRAGUCCI_OIDC_FILE (and
+ * TERRAGUCCI_OIDC_GCP_FILE, TERRAGUCCI_OIDC_AZURE_FILE) names, then the
+ * step's restart without the token-request variables, as dropForgeTokens
+ * restarts it without the forge tokens. The restarted step skips the fetch,
+ * and cloudScripts copies the tokens from those files. Without the map,
+ * nothing.
+ */
+export function stageTokens(forge: ForgeName, oidc: OidcSettings | undefined, stage: AudienceStage): string[] {
+  if (!oidc || !fetchesFirst(forge, oidc)) return [];
+  const fetch = (name: string, audience: string): string[] => [`export ${name}_FILE="$(mktemp)"`, tokenScript(forge, audience, `$${name}_FILE`, name, false)];
+  return [
+    `if [ -z "\${${OIDC_RESTART}:-}" ]; then`,
+    forgeApi(forge),
+    tokenCheck(forge),
+    // The AWS token is the Terragrunt auth provider's too, so it is fetched whenever the map is set.
+    ...fetch("TERRAGUCCI_OIDC", stageAudience(oidc, stage)),
+    ...(oidc.gcp ? fetch(GITLAB_GCP_TOKEN, gcpAudience(oidc.gcp.workload_identity_provider)) : []),
+    ...(oidc.azure ? fetch(GITLAB_AZURE_TOKEN, oidc.azure.audience ?? AZURE_AUDIENCE) : []),
+    "fi",
+    restartWithout("bash", OIDC_REQUEST_VARS, OIDC_RESTART),
   ];
 }
 
@@ -989,6 +1045,7 @@ export function applyScript(
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
   return [
+    ...stageTokens(forge, oidc, "apply"),
     READS_EXIT,
     forgeApi(forge),
     ...(input.synth ? [synthScript(input.synth, first ? "terragucci/apply" : undefined)] : []),
@@ -1300,6 +1357,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   const decide = decideWith("");
   const decisionJs = prMode ? PR_DECISION_JS : APPLY_DECISION_JS;
   return [
+    ...stageTokens(forge, oidc, "apply"),
     READS_EXIT,
     forgeApi(forge),
     // Before any credential: the comment, the commenter, the pull request and the merge commit (or, open, the head and its locks).
@@ -1365,6 +1423,7 @@ export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<
   const total = layers.flat().length;
   const count = applyWaves(layers, input.canary).length;
   return [
+    ...stageTokens(forge, oidc, "apply"),
     READS_EXIT,
     forgeApi(forge),
     `terragucci resume --forge ${forge} --out terragucci-resume.env || exit 1`,
@@ -1405,7 +1464,8 @@ export function planLockScript(layers: string[][], forge: Exclude<ForgeName, "gi
 /** Shell for a Terragrunt job's credentials: the auth provider, and the AWS OIDC token when `oidc` did not fetch it. */
 function terragruntCredentials(forge: ForgeName, phase: "plan" | "apply", oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>): string[] {
   if (!credentials || Object.keys(credentials).length === 0) return [];
-  return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, AUDIENCE, undefined, undefined, !(oidc?.gcp || oidc?.azure)))];
+  const fetched = fetchesFirst(forge, oidc);
+  return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, stageAudience(oidc, phase), undefined, undefined, !(oidc?.gcp || oidc?.azure) && !fetched, fetched))];
 }
 
 /** Where a plan job's report is kept, and what the stage needs beyond the roots. */
@@ -1489,6 +1549,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   return [
+    ...stageTokens(forge, oidc, "plan"),
     READS_EXIT,
     forgeApi(forge),
     ...(report.synth ? [synthScript(report.synth, "terragucci/plan")] : []),
@@ -1540,6 +1601,8 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
   ];
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
   return [
+    // A re-plan's plan step that reads traded credentials asks for no token.
+    ...(options.traded ? [] : stageTokens(forge, oidc, "plan")),
     READS_EXIT,
     ...(options.tokenCheck ? [options.tokenCheck] : []),
     // A re-plan that holds no token: what the change's code leaves running dies with the step.
@@ -1613,10 +1676,20 @@ export const TRADED_FILE = '"${RUNNER_TEMP:-/tmp}/terragucci-traded.env"';
  * without them, and the script runs on.
  */
 export function dropForgeTokens(shell: "bash" | "sh" = "bash", oidcRequest = false): string {
+  return restartWithout(shell, oidcRequest ? [...STEP_TOKEN_VARS, ...OIDC_REQUEST_VARS] : STEP_TOKEN_VARS, "TG_NO_FORGE_TOKEN");
+}
+
+/** The marker of a step stageTokens restarted: its tokens are fetched, and the token-request variables gone. */
+const OIDC_RESTART = "TG_NO_OIDC_REQUEST";
+
+/**
+ * Restart the step's shell, once (`marker` says it did), without `vars` in
+ * its process environment, or, when it cannot restart, unset them; see dropForgeTokens.
+ */
+function restartWithout(shell: "bash" | "sh", vars: readonly string[], marker: string): string {
   const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
-  const can = `[ -z "\${TG_NO_FORGE_TOKEN:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
-  const vars: readonly string[] = oidcRequest ? [...STEP_TOKEN_VARS, ...OIDC_REQUEST_VARS] : STEP_TOKEN_VARS;
-  return `if ${can}; then exec env ${vars.map((v) => `-u ${v}`).join(" ")} TG_NO_FORGE_TOKEN=1 ${again}; fi; unset ${vars.join(" ")}`;
+  const can = `[ -z "\${${marker}:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
+  return `if ${can}; then exec env ${vars.map((v) => `-u ${v}`).join(" ")} ${marker}=1 ${again}; fi; unset ${vars.join(" ")}`;
 }
 
 /**
@@ -1634,6 +1707,7 @@ export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: Pip
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
   const refuse = (why: string): string => `echo ${sh(`terragucci: ${why}`)} >&2; mkdir -p ${REPORT_DIR} && echo ${sh(`failure ${why}`)} >${status}; exit 1`;
   return [
+    ...stageTokens(forge, oidc, "plan"),
     forgeApi(forge),
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...terragruntCredentials(forge, "plan", oidc, credentials),
@@ -1808,10 +1882,11 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   return [
+    ...stageTokens(forge, oidc, "drift"),
     READS_EXIT,
     // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
     ...(report.synth ? [synthScript(report.synth)] : []),
-    ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
+    ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift", "drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
@@ -1854,10 +1929,12 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
   ];
   const what = report.terragrunt ? "unit" : "root";
   return [
+    ...stageTokens(forge, oidc, "apply"),
     READS_EXIT,
     forgeApi(forge),
     ...(report.synth ? [synthScript(report.synth, "terragucci/apply")] : []),
-    ...cloudScripts(forge, oidc, "plan", "terragucci-confirm"),
+    // confirm is an apply job (jobStage): the plan identities, with the apply audience.
+    ...cloudScripts(forge, oidc, "plan", "terragucci-confirm", "apply"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "confirming the merge applied"',
     `terragucci stage tf-plan ${args.join(" ")}`,
@@ -1980,7 +2057,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
@@ -2098,10 +2174,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_BRANCH: "$CI_DEFAULT_BRANCH",
     };
     // One id_token per audience: AWS's (which the Terragrunt auth provider uses too), GCP's provider, Entra ID.
-    const idTokens = needsToken
+    // AWS's is the job's stage's (jobStage), which with oidc.audience a map differs by stage.
+    const idTokens = (stage: AudienceStage): Record<string, unknown> => needsToken
       ? {
           id_tokens: {
-            ...(hasAws(oidc) || credentials ? { TERRAGUCCI_OIDC: { aud: audience } } : {}),
+            ...(hasAws(oidc) || credentials ? { TERRAGUCCI_OIDC: { aud: stageAudience(oidc, stage) } } : {}),
             ...(oidc?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(oidc.gcp.workload_identity_provider) } } : {}),
             ...(oidc?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: AZURE_AUDIENCE } } : {}),
           },
@@ -2147,7 +2224,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       image: jobImage,
       variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
-      ...idTokens,
+      ...idTokens("plan"),
       ...(tg ? forgeCache("gitlab") : {}),
       script: [...(costInstall ? [costInstall] : []), ...script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report)))],
       // The report stays with the job; its counts feed the merge request's widget.
@@ -2190,7 +2267,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         // Under a repo-wide scope, one apply at a time per project. With waves.jobs a wave's shares apply side by side, so the jobs hold
         // the run's shared lock tag instead of the resource group, which runs one job at a time (sharedApplyLock).
         ...(repoWide && !split ? { resource_group: "terragucci-apply" } : {}),
-        ...idTokens,
+        ...idTokens("apply"),
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", job.body))],
         // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
@@ -2205,7 +2282,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         variables: gitlabEnv,
         rules: [new Rule({ if: onDefault })],
-        ...idTokens,
+        ...idTokens("apply"),
         ...(tg ? forgeCache("gitlab") : {}),
         script: script(bash("CONFIRM", confirmScript(binary, layers, forge, oidc, report))),
         artifacts: { name: `${REPORT_DIR}-confirm`, when: "always", paths: [`${REPORT_DIR}/`] },
@@ -2218,7 +2295,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: mrApplyRule })],
         ...(repoWide ? { resource_group: "terragucci-apply" } : {}),
-        ...idTokens,
+        ...idTokens("apply"),
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", gitlabApplyScript(binary, layers, oidc, prInput)))],
         artifacts: { name: `${REPORT_DIR}-mr-apply`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
@@ -2282,7 +2359,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: { ...gitlabEnv, ...driftNotifyEnv },
         // The comments, resume and rollouts schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments, resume or rollouts; any other schedule, with or without a variable, is drift's.
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}${ephemeral ? ` && $${SCHEDULE_VAR} != "ephemeral"` : ""}` })],
-        ...idTokens,
+        ...idTokens("drift"),
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify))],
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
@@ -2381,7 +2458,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
         resource_group: "terragucci-ephemeral-$CI_MERGE_REQUEST_IID",
-        ...idTokens,
+        ...idTokens("apply"),
         script: script(bash("EPHEMERAL", gitlabEphemeralScript(oidc, binary, ephemeralPrelude))),
       } as never) as never);
       jobs.set("ephemeral-sweep", new GitLabJob({
@@ -2390,7 +2467,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: { ...gitlabEnv, GIT_DEPTH: "0" },
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "ephemeral"` })],
         resource_group: "terragucci-ephemeral-sweep",
-        ...idTokens,
+        ...idTokens("apply"),
         script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, binary, ephemeralPrelude))),
       } as never) as never);
     }

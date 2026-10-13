@@ -211,8 +211,12 @@ export interface OidcSettings {
    * does this.
    */
   roles?: Record<string, RolePair>;
-  /** The AWS token's audience. Default `sts.amazonaws.com`. */
-  audience?: string;
+  /**
+   * The AWS token's audience. Default `sts.amazonaws.com`. A map gives each
+   * stage its own (`plan`, `apply`, `drift`); a stage it leaves out keeps the
+   * default.
+   */
+  audience?: string | Partial<Record<AudienceStage, string>>;
   /** GCP Workload Identity Federation: the provider's resource name and a service account per stage. */
   gcp?: {
     workload_identity_provider: string;
@@ -1021,6 +1025,9 @@ export const SOURCES_KEYS = ["modules", "providers"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
 export const OIDC_KEYS = ["plan_role", "apply_role", "audience", "roles", "gcp", "azure"];
+/** The stages `oidc.audience` takes as a map: the jobs that plan a change, the jobs that apply (confirm among them), and drift. */
+export const AUDIENCE_STAGES = ["plan", "apply", "drift"] as const;
+export type AudienceStage = (typeof AUDIENCE_STAGES)[number];
 export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
 export const COST_KEYS = ["key_secret", "command", "approve_above"];
@@ -1612,7 +1619,12 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
   const aws = pairSet || o.audience !== undefined || o.roles !== undefined;
   if (!aws && o.gcp === undefined && o.azure === undefined) problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
   if (o.roles !== undefined) checkRoles(o.roles, `${where}.roles`, problems);
-  if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.audience must be a string`);
+  if (isObject(o.audience)) {
+    for (const [k, v] of Object.entries(o.audience)) {
+      if (!(AUDIENCE_STAGES as readonly string[]).includes(k)) problems.push(`${where}.audience.${k} is not a stage (stages: ${AUDIENCE_STAGES.join(", ")})`);
+      else if (typeof v !== "string" || v === "") problems.push(`${where}.audience.${k} must be a non-empty audience`);
+    }
+  } else if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.audience must be a string, or a map of stage (${AUDIENCE_STAGES.join(", ")}) to audience`);
   // With roles, a pair is optional: the roots no glob matches take it, and config check names any root left with no role.
   if (aws && (pairSet || o.roles === undefined)) {
     for (const k of ["plan_role", "apply_role"] as const) {
