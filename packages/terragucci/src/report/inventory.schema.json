@@ -19,6 +19,7 @@
           "finished": { "type": "string", "description": "When the wave that recorded the list finished." },
           "wave": { "type": "integer" },
           "path": { "type": "string", "description": "The wave's run directory, relative to the project's index.json." },
+          "environment": { "type": "string", "description": "The environment of environments: in terragucci.yml the root was in when the wave applied. Absent when it was in none." },
           "resources": {
             "type": "array",
             "items": {

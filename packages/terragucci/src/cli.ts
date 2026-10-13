@@ -74,7 +74,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { environmentRootProblems, withEnvironmentRoles } from "./environments";
+import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -986,8 +987,25 @@ export async function main(argv: string[]): Promise<number> {
           // The shape detection finds in the repo refuses what init would: the same table, worded for that shape.
           const shape = config.projects ? undefined : detectShape(repoDir, resolveRepo(config));
           if (shape) problems.push(...shape.problems("config"));
-          // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients.
-          const oidc = config.oidc;
+          // A root in two environments, or given identities by its environment and by a glob-keyed setting both, read from the roots found.
+          // A control repo's environments are whole once each project's are merged over the defaults': check each project merged.
+          for (const key of Object.keys(config.projects ?? {})) {
+            try {
+              resolveProject(config, key);
+            } catch (e) {
+              if (!(e instanceof ConfigError)) throw e;
+              problems.push(...(e.problems ?? [e.message]));
+            }
+          }
+          if (shape && problems.length === 0 && config.environments) {
+            const found =
+              shape.kind === "terragrunt" ? walkUnits(repoDir, config.terragrunt?.exclude).map((u) => u.path)
+                : shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path)
+                  : findRoots(repoDir, config.roots);
+            problems.push(...environmentRootProblems(found, config));
+          }
+          // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients, and each environment's.
+          const oidc = withEnvironmentRoles(config.oidc, config.environments);
           const clouds = !oidc ? [] : (["aws", "gcp", "azure"] as const).filter((c) => (c === "aws" ? oidc.roles : oidc[c]?.roles));
           if (shape && problems.length === 0 && oidc && clouds.length > 0 && (shape.kind === "atmos" || shape.engine === "per-root")) {
             // An Atmos repo's roots are its instances, <stack>/<component>, so a glob such as prod/* gives a stack its roles.

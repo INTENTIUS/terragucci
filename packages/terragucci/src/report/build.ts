@@ -74,6 +74,13 @@ export interface RootInput {
   unaddressed?: string;
   /** A Terragrunt unit's dependencies, by path. */
   dependencies?: string[];
+  /** The environment of `environments:` the root is in. Absent when it is in none. */
+  environment?: string;
+}
+
+/** A root's input with its environment, when it is in one. */
+export function withEnvironment<T extends { environment?: string }>(input: T, environment: string | undefined): T {
+  return environment ? { ...input, environment } : input;
 }
 
 export interface WaveInput {
@@ -100,6 +107,10 @@ export interface WaveInput {
   replansAfter?: number[];
   /** A `tf-apply` wave of Terragrunt units: its plans against the pull request's preview of them. */
   preview?: ReportWave["preview"];
+  /** The environments its roots are in, with `environments:` set. */
+  environments?: string[];
+  /** A `tf-plan` wave's own gate policy, with `environments:` set (the strictest of its roots'), in place of BuildInput.gate. */
+  policy?: Gate;
 }
 
 export interface BuildInput {
@@ -275,6 +286,7 @@ export function buildReport(input: BuildInput): Report {
     const group = memberGroup.get(m.member);
     return {
       path: m.member,
+      ...(src.environment ? { environment: src.environment } : {}),
       ...(src.binary ? { binary: src.binary } : {}),
       ...(src.terragrunt ? { terragrunt: src.terragrunt } : {}),
       status: m.status,
@@ -341,10 +353,11 @@ export function buildReport(input: BuildInput): Report {
       const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
       const changing = members.filter((m) => changesSomething(plans.get(m.member)));
       const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
+      const gate = w.policy ?? input.gate;
       review = {
         // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
         review_digest: failed || changing.length === 0 || (w.replansAfter?.length ?? 0) > 0 ? null : changeSetDigest([...changing, ...extra]),
-        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
+        waits: changing.length > 0 && (gate === "always" || (gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
       };
     }
     return {
@@ -363,6 +376,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.reads?.length ? { reads: w.reads } : {}),
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
       ...(w.preview ? { preview: w.preview } : {}),
+      ...(w.environments?.length ? { environments: w.environments } : {}),
     };
   });
 

@@ -30,7 +30,8 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
-import { CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
+import { CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
@@ -42,7 +43,7 @@ import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type Un
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { ForgeApiError } from "@intentius/chant/pr-forge";
 import { prForgeOf, type Fetch } from "../forge";
-import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
+import { buildReport, planFiles, withEnvironment, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
 import { sourceChecker, type SourceChecker } from "../sources";
@@ -453,7 +454,22 @@ const GITLAB_STATE = /\/api\/v4\/projects\/[^"\s]*\/terraform\/state\//;
  * GitLab state is an `http` backend whose address, in the root or in
  * `TF_HTTP_ADDRESS`, is a GitLab project's state API.
  */
-export function rootsParallelism(repo: string, roots: readonly string[], settings: { parallelism?: number }, env: NodeJS.ProcessEnv = {}): { value: number; reason: string } {
+export function rootsParallelism(repo: string, roots: readonly string[], settings: { parallelism?: number; environments?: ProjectSettings["environments"] }, env: NodeJS.ProcessEnv = {}): { value: number; reason: string } {
+  // With environments, each root's environment's parallelism, else the top-level one: the roots plan as many at once as the fewest of them allows.
+  if (settings.environments && Object.values(settings.environments).some((e) => e.parallelism !== undefined)) {
+    const each = roots.map((r) => {
+      const name = environmentOf(r, settings);
+      const p = name === undefined ? undefined : settings.environments![name]!.parallelism;
+      return p !== undefined ? { value: p, reason: `environments.${name}.parallelism` } : settings.parallelism !== undefined ? { value: settings.parallelism, reason: "terragucci.yml" } : undefined;
+    });
+    const set = each.filter((x): x is { value: number; reason: string } => x !== undefined);
+    if (set.length > 0) {
+      const fewest = set.reduce((a, b) => (b.value < a.value ? b : a));
+      if (set.length === each.length) return fewest;
+      const backend = rootsParallelism(repo, roots, {}, env);
+      return backend.value < fewest.value ? backend : fewest;
+    }
+  }
   if (settings.parallelism !== undefined) return { value: settings.parallelism, reason: "terragucci.yml" };
   const backends = new Set<string>();
   let gitlab = false;
@@ -1888,10 +1904,20 @@ async function finish(
     ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
     if (governing.policy.override?.length) inputs = await planOverrides(repo, options, env, inputs, policy, log);
   }
+  // With environments, each root names its environment, and each wave its roots' environments and the gate they give it (../environments.ts).
+  // A Terragrunt wave finds its units when it applies, so it takes the strictest gate of every environment, as the apply does.
+  const envs = settings.environments;
+  const terragruntRun = inputs.some((i) => i.terragrunt !== undefined);
+  const envNames = (roots: readonly string[]): string[] => [...new Set(roots.map((r) => environmentOf(r, settings)).filter((e): e is string => e !== undefined))].sort();
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
-    roots: inputs,
-    waves: costWaves,
+    roots: envs ? inputs.map((i) => withEnvironment(i, environmentOf(i.path, settings))) : inputs,
+    waves: envs
+      ? costWaves.map((w) => {
+          const names = envNames(w.roots);
+          return { ...w, ...(drift ? {} : { policy: terragruntRun ? anyRootGate(settings, settings.gate) : rootsGate(w.roots, settings, settings.gate) }), ...(names.length ? { environments: names } : {}) };
+        })
+      : costWaves,
     redacted,
     // The waves of a plan say which the gate will hold, and carry the digest approval: pr-review binds a review to.
     ...(drift ? {} : { gate: settings.gate }),

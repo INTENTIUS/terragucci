@@ -46,6 +46,7 @@ import { ATMOS_VERSION } from "./atmos";
 import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
+import { environmentGates, withEnvironmentRoles } from "./environments";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -304,7 +305,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,
-    oidc: settings.oidc,
+    // Each environment's identities ride the roles by root glob (./environments.ts); with no environments, oidc as it is.
+    oidc: withEnvironmentRoles(settings.oidc, settings.environments),
     tokenEnv: settings.token_env,
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
@@ -325,6 +327,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(!tgInput && !atmos && !terramate && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     ...(settings.waves?.jobs && settings.waves.jobs > 1 ? { waveJobs: settings.waves.jobs } : {}),
     gate: settings.gate,
+    // An environment's gate is read at base by the wave's job; one that can hold a wave needs the jobs that record a waiting one.
+    ...(environmentGates(settings).length ? { environmentGates: environmentGates(settings) } : {}),
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
     ...(options.settings?.approval ? { approval: options.settings.approval } : {}),
     ...(approval.value === "pr-review" ? { prReview: true } : {}),

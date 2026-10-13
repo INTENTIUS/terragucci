@@ -213,7 +213,7 @@ A `tf-apply` wave records the resources held by every root it applied or found n
 |---|---|
 | a count at the top | resources across every project |
 | per project | how many of each type |
-| per root | each resource's address, type and provider, and the wave that recorded them |
+| per root | each resource's address, type and provider, the wave that recorded them, and the root's [environment](/terragucci/reference/config/#environments) when `environments` places it in one |
 
 No attribute value is ever recorded, sensitive or not. A root is listed from the first wave that applies it, and keeps its last list after you remove it from the repo.
 

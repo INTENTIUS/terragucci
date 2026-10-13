@@ -1408,6 +1408,103 @@
       ],
       "description": "Roots each pull request gets a copy of."
     },
+    "environments": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "roots": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[^\\s,;=']+$"
+            }
+          },
+          "gate": {
+            "enum": [
+              "always",
+              "on-destructive",
+              "never",
+              "on-destroy"
+            ]
+          },
+          "oidc": {
+            "type": "object",
+            "properties": {
+              "plan_role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply_role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "gcp": {
+                "type": "object",
+                "properties": {
+                  "plan_service_account": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+$"
+                  },
+                  "apply_service_account": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+$"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan_service_account",
+                  "apply_service_account"
+                ]
+              },
+              "azure": {
+                "type": "object",
+                "properties": {
+                  "plan_client_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apply_client_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan_client_id",
+                  "apply_client_id"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "minProperties": 1,
+            "dependentRequired": {
+              "plan_role": [
+                "apply_role"
+              ],
+              "apply_role": [
+                "plan_role"
+              ]
+            }
+          },
+          "parallelism": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "roots"
+        ]
+      },
+      "description": "Named environments: each one's root globs, and its gate, identities and parallelism."
+    },
     "defaults": {
       "$ref": "#/$defs/project",
       "not": {
@@ -2838,6 +2935,100 @@
             "roots"
           ],
           "description": "Roots each pull request gets a copy of."
+        },
+        "environments": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "roots": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\s,;=']+$"
+                }
+              },
+              "gate": {
+                "enum": [
+                  "always",
+                  "on-destructive",
+                  "never",
+                  "on-destroy"
+                ]
+              },
+              "oidc": {
+                "type": "object",
+                "properties": {
+                  "plan_role": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apply_role": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "gcp": {
+                    "type": "object",
+                    "properties": {
+                      "plan_service_account": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+@[^@\\s]+$"
+                      },
+                      "apply_service_account": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+@[^@\\s]+$"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "plan_service_account",
+                      "apply_service_account"
+                    ]
+                  },
+                  "azure": {
+                    "type": "object",
+                    "properties": {
+                      "plan_client_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "apply_client_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "plan_client_id",
+                      "apply_client_id"
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "minProperties": 1,
+                "dependentRequired": {
+                  "plan_role": [
+                    "apply_role"
+                  ],
+                  "apply_role": [
+                    "plan_role"
+                  ]
+                }
+              },
+              "parallelism": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Named environments: each one's root globs, and its gate, identities and parallelism."
         }
       },
       "additionalProperties": false

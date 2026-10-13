@@ -293,6 +293,7 @@
               "finished": { "type": "string" },
               "wave": { "type": "integer" },
               "report": { "type": "string", "description": "The wave's report.html, when the page can link it." },
+              "environment": { "type": "string", "description": "The environment of environments: in terragucci.yml the root was in when the wave applied. Absent when it was in none." },
               "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" } }
             }
           }

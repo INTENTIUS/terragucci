@@ -289,6 +289,8 @@ export interface PipelineInput {
   waveJobs?: number;
   /** When a wave waits for an approval. Default on-destructive. */
   gate?: Gate;
+  /** The gates `environments` sets, which the wave's job reads at base: one other than never can hold a wave whatever `gate` is, so the jobs record a waiting wave. */
+  environmentGates?: Gate[];
   /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
   approval?: Approval;
   /** `approval: pr-review`: on GitHub and Forgejo the plan job and a review job post `terragucci/approval` on the pull request's head. */
@@ -971,6 +973,8 @@ export interface ApplyWaveInput {
   /** Globs for wave 1, from `waves.canary`. */
   canary?: string[];
   gate?: Gate;
+  /** An environment's gate can hold the wave whatever `gate` is (PipelineInput.environmentGates), so the job records a waiting wave. */
+  environmentWaits?: boolean;
   /** The waves' `--approval`, when the pipeline carries one (PipelineInput.approval). */
   approval?: Approval;
   /** The response to each event; apply-failed and wave-refused are called from the wave's exit code. */
@@ -1061,7 +1065,7 @@ export function applyScript(
     // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
     // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
     // A wave that holds the resources it changes (scope resource) records them there too.
-    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.policy || input.costGate || scope === "resource") ? [gitlabPushRemote] : []),
+    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.environmentWaits || input.policy || input.costGate || scope === "resource") ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -2080,6 +2084,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destructive";
+  // An environment whose gate can hold a wave, which the wave's job reads at base (../environments.ts).
+  const environmentWaits = (input.environmentGates ?? []).some((g) => g !== "never");
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
@@ -2100,7 +2106,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const wave = i + 1;
     const n = sharesOf(i);
     const name = `apply-wave-${wave}`;
-    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
+    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
     applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
     before = [name];
     if (n > 1) {
@@ -2113,7 +2119,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // The last wave's shares end side by side: one job after them all posts the success. In a Terragrunt repo that job
   // also runs, with --rest, any wave Terragrunt's edges cut past the pipeline's, so it applies like a wave's job.
   if (before.length > 1 && tg) {
-    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
+    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
     applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest) });
   } else if (before.length > 1) {
     applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
@@ -2132,7 +2138,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
   // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
-  const writesLedger = gate !== "never" || input.cost?.approveAbove === true || (forge === "github" && input.migrations === true);
+  const writesLedger = gate !== "never" || environmentWaits || input.cost?.approveAbove === true || (forge === "github" && input.migrations === true);
   const what = tg ? "unit" : "root";
   // The fmt commit: the binary's fmt, and in a Terragrunt repo terragrunt hcl fmt too. The drift pull request, for roots and units:
   // respond finds a Terragrunt repo's drifted units in the stage's report. With synth the config refuses respond.drift:

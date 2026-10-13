@@ -35,7 +35,31 @@ projects:
 | `defaults` | the settings every project gets: any key but `url`, which names one repo, and `rollouts` |
 | a project's `forge`, `url`, `token_env` | the forge of a host terragucci cannot name, a clone URL off https or the default port, the variable that holds its token |
 
-A project's settings are terragucci's built-in defaults, then `defaults`, then the project's own keys. The maps `env`, `oidc`, `policy`, `waves`, `apply`, `respond`, `terragrunt` and `generate` merge key by key; every other key is replaced whole. `config check` refuses a top-level key outside `defaults` and `projects`, and `defaults` with no `projects`. [Keys](/terragucci/reference/config/#keys) lists each one, and [Manage the control repo with Terraform](/terragucci/guides/manage-the-control-repo-with-terraform/) writes the file with a provider instead.
+A project's settings are terragucci's built-in defaults, then `defaults`, then the project's own keys. The maps `env`, `oidc`, `policy`, `waves`, `apply`, `respond`, `terragrunt` and `generate` merge key by key; `environments` merges by environment name, a project's keys for an environment over the defaults' for the same one; every other key is replaced whole.
+
+### Environments in the hierarchy
+
+Each level below takes the one above it as its default, and sets only what differs:
+
+| Level | Set in | Holds |
+|---|---|---|
+| every project | `defaults` | what all the repos share |
+| one project | `projects.<host>/<owner>/<name>`, or a repo's own `terragucci.yml` | that repo's settings |
+| one environment | `environments.<name>` in either | the root globs of the environment, and its `gate`, `oidc` and `parallelism` |
+| one root | the root's own files | its backend, providers and version pins |
+
+```yaml
+defaults:
+  environments:
+    prod: { gate: always }
+projects:
+  github.com/acme/infra:
+    environments:
+      prod: { roots: ["envs/prod/**"] }
+      dev: { roots: ["envs/dev/**"], gate: never }
+```
+
+`github.com/acme/infra` gets `prod` with its roots and `gate: always`, and `dev` as written; `config check` names an environment left with no `roots` once a project's block is merged over the defaults'. A root in no environment takes the project's own keys. [Environments](/terragucci/reference/config/#environments) lists the keys and what `config check` refuses. `config check` refuses a top-level key outside `defaults` and `projects`, and `defaults` with no `projects`. [Keys](/terragucci/reference/config/#keys) lists each one, and [Manage the control repo with Terraform](/terragucci/guides/manage-the-control-repo-with-terraform/) writes the file with a provider instead.
 
 ## Reconcile
 

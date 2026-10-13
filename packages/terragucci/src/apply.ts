@@ -108,7 +108,7 @@ import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
 import { comparePreview } from "./tg-preview-gate";
 import { runPath } from "./report/store";
-import { buildReport, planFiles } from "./report/build";
+import { buildReport, planFiles, withEnvironment, type RootInput } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
@@ -150,6 +150,7 @@ import { recordVersions, versionsLine } from "./cdf-history";
 import { planAppliedChanges } from "./report/history";
 import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
+import { anyRootGate, environmentOf, waveGate as rootsGate } from "./environments";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 
 /** The op every wave gate is recorded under. */
@@ -1031,6 +1032,15 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       if (options.gate !== "never") throw e;
     }
     if (rule?.point && rule.mode !== "ledger") throw new ConfigError(`apply.point is set at base and approval is ${rule.mode}; a wave gate that asks a decision point takes its quorum from the point, so set approval to ledger or drop apply.point`);
+    // Each wave's gate: the pipeline's --gate, or with `environments` at base the strictest gate of the wave's roots (./environments.ts).
+    const gates = await environmentWaveGates(repo, base, configPath, options, specWaves);
+    if (typeof specWaves !== "number" && gates[options.wave - 1] !== options.gate) {
+      console.log(`wave ${options.wave}: gate ${gates[options.wave - 1]}, the strictest of its roots' environments at base`);
+      options = { ...options, gate: gates[options.wave - 1]! };
+    } else if (typeof specWaves === "number" && gates[0] !== options.gate) {
+      console.log(`wave ${options.wave}: gate ${gates[0]}, the strictest of the environments at base, since a Terragrunt wave finds its units when it plans`);
+      options = { ...options, gate: gates[0]! };
+    }
     const ctx: WavesContext = { rule, configPath, work };
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
@@ -1039,6 +1049,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
         waves: specWaves,
         ...(options.rest ? { rest: true } : {}),
         gate: options.gate,
+        ...(typeof specWaves !== "number" && gates.some((g) => g !== options.gate) ? { gates } : {}),
         approval: rule?.mode ?? "ledger",
         ...(options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
         call: waveCallArgv,
@@ -1101,6 +1112,32 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     }
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/**
+ * Each wave's gate, read at base like the approval mode: with no
+ * `environments` there, the pipeline's `--gate` for every wave. With them, a
+ * wave of plain roots takes the strictest gate of its roots, each root its
+ * environment's gate or, in none or one that sets no gate, `--gate`
+ * (waveGate in ./environments.ts). A Terragrunt wave finds its units when it
+ * plans, after the spec is written, so it takes the strictest of `--gate`
+ * and every environment's gate (one entry, for every wave this job runs). A
+ * base whose config cannot be read keeps `--gate` when the checkout has no
+ * environments either, as before environments; otherwise the wave fails,
+ * since its gate cannot be decided.
+ */
+async function environmentWaveGates(repo: string, base: string, configPath: string | undefined, options: ApplyWaveOptions, waves: string[][] | number): Promise<Gate[]> {
+  const flat = (): Gate[] => (typeof waves === "number" ? [options.gate] : waves.map(() => options.gate));
+  const read = await configAtBase(repo, base, configPath ? { config: configPath } : {});
+  if ("error" in read) {
+    const checkout = configPath ? await loadConfig(configPath).catch(() => undefined) : undefined;
+    if (!checkout?.environments) return flat();
+    throw new ConfigError(`environments are read from the config at base, and it could not be read (${read.error}), so the wave's gate cannot be decided`);
+  }
+  const at = read.config;
+  if (!at.environments) return flat();
+  if (typeof waves === "number") return [anyRootGate(at, options.gate)];
+  return waves.map((roots) => rootsGate(roots, at, options.gate));
 }
 
 /** What every call of a wave's job reads. */
@@ -1343,23 +1380,27 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   // A Terragrunt unit's dependency and dependencies blocks, from its terragrunt.hcl: the units whose outputs it reads.
   // A plain root's: the roots waves.after puts before it.
   const unitDeps = options.terragrunt ? new Map(walkUnits(repo, settings.terragrunt?.exclude).map((u) => [u.path, u.dependencies])) : plainDependencies(repo, settings, options.layers.flat());
+  // With environments in the settings the wave read, each root names its environment and the wave its roots' environments.
+  const envOf = (root: string): string | undefined => (settings.environments ? environmentOf(root, settings) : undefined);
+  const waveEnvironments = [...new Set(w.roots.map(envOf).filter((e): e is string => e !== undefined))].sort();
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
-    roots: w.planned.map((p) => {
-      const policy = p.policy ? { policy: p.policy } : {};
-      // A root the policy refused keeps its plan, so the report shows what it would have changed.
-      const steps = p.steps?.length ? { steps: p.steps } : {};
-      const deps = unitDeps?.get(p.root)?.length ? { dependencies: unitDeps.get(p.root) } : {};
-      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps, ...deps };
-      const state = w.states?.get(p.root);
-      const versions = w.recordVersions?.get(p.root);
-      const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
-    }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
+    roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
+  function planInput(p: (typeof w.planned)[number]): RootInput {
+    const policy = p.policy ? { policy: p.policy } : {};
+    // A root the policy refused keeps its plan, so the report shows what it would have changed.
+    const steps = p.steps?.length ? { steps: p.steps } : {};
+    const deps = unitDeps?.get(p.root)?.length ? { dependencies: unitDeps.get(p.root) } : {};
+    if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps, ...deps };
+    const state = w.states?.get(p.root);
+    const versions = w.recordVersions?.get(p.root);
+    const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
+    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
+  }
   if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);
   const dir = join(repo, "terragucci-report");

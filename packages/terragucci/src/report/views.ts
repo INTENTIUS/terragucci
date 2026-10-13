@@ -343,23 +343,28 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
+  // With environments, each wave's row names the environments its roots are in; without them the table is as it was.
+  const envs = report.waves.some((w) => w.environments?.length) || report.roots.some((r) => r.environment);
+  const envHead = envs ? " Environments |" : "";
+  const envRule = envs ? "---|" : "";
+  const envCell = (w: ReportWave): string => (envs ? ` ${w.environments?.length ? w.environments.join(", ") : "none"} |` : "");
   if (report.waves.some((w) => w.review_digest !== undefined)) {
     // A plan's waves: the digest of what each changes, which approval: pr-review binds a review to, and whether the gate will hold it.
-    let t = "| Wave | Roots | Digest of its changes | When it applies |\n|---|---|---|---|\n";
+    let t = `| Wave | Roots |${envHead} Digest of its changes | When it applies |\n|---|---|${envRule}---|---|\n`;
     for (const w of report.waves) {
       const again = w.replans_after?.length ? `plans again once wave ${w.replans_after.join(", ")} applies, then ` : "";
       const when = again
         ? `${again}${w.waits ? "waits for an approval of that plan" : "applies"}`
         : w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
       const by = w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
-      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
+      t += `| ${w.number} | ${w.roots.length} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     const previews = notePreviews(report.roots);
     head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })), ...(previews.length ? { previews } : {}) }), "");
   } else if (report.waves.length > 0) {
-    let t = "| Wave | Roots | Set digest | Approval |\n|---|---|---|---|\n";
-    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.replans_after?.length ? `none yet: it plans again once wave ${w.replans_after.join(", ")} applies` : w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
+    let t = `| Wave | Roots |${envHead} Set digest | Approval |\n|---|---|${envRule}---|---|\n`;
+    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} |${envCell(w)} ${w.replans_after?.length ? `none yet: it plans again once wave ${w.replans_after.join(", ")} applies` : w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   // A wave planned at its gate, against the preview the pull request's plan note showed of it.
