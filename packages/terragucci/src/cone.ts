@@ -90,7 +90,7 @@ export function readConeRecord(planFile: string): ConeRecord | undefined {
  * The detail of the last warning with this summary in a plan's output, its
  * lines joined. The binary prints a warning as `Warning: <summary>`, a blank
  * line, and the detail wrapped to the terminal's width up to the next blank
- * line; a box drawn around it with colour on is stripped.
+ * line or the plan's summary; a box drawn around it with colour on is stripped.
  */
 function warningDetail(text: string, summary: string): string | undefined {
   const lines = text.replace(/\r\n/g, "\n").split("\n").map((l) => l.replace(/^[\s│╷╵]*/, "").trimEnd());
@@ -100,7 +100,8 @@ function warningDetail(text: string, summary: string): string | undefined {
     let j = i + 1;
     while (j < lines.length && lines[j] === "") j++;
     const detail: string[] = [];
-    for (; j < lines.length && lines[j] !== ""; j++) detail.push(lines[j]);
+    // A plan's summary may follow the detail with no blank line between them.
+    for (; j < lines.length && lines[j] !== "" && !/^(Plan: |No changes\.|Changes to Outputs:)/.test(lines[j]!); j++) detail.push(lines[j]!);
     found = detail.join(" ").replace(/\s+/g, " ").trim();
   }
   return found;
