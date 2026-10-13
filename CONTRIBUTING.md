@@ -371,7 +371,7 @@ just sandbox prove                 # the github.com claims, from reset to reset;
 just sandbox prove --break         # the locking and report claims, each with its property broken; --record FILE writes their breaks
 ```
 
-`just sandbox prove` runs four phases; `just sandbox prove merge` (or `pull-request`, `modules`, `reports`) runs the ones named. Each phase starts from a reset sandbox whose main it sets up with `[skip ci]` commits, lets `init` of the release rewrite the pipeline, runs its claims, and resets the sandbox. The merge phase takes about 35 minutes and the pull-request and modules phases about 20 together; the reports phase runs two plans and the estate workflow.
+`just sandbox prove` runs four phases; `just sandbox prove merge` (or `pull-request`, `modules`, `reports`, `audience`) runs the ones named. `audience` runs only when named, on a release whose `init` takes `oidc.audience` as a map (from the release after 0.4.8): `TERRAGUCCI_SANDBOX_RELEASE=<version> just sandbox prove audience`, and `--break` for its BREAK. Each phase starts from a reset sandbox whose main it sets up with `[skip ci]` commits, lets `init` of the release rewrite the pipeline, runs its claims, and resets the sandbox. The merge phase takes about 35 minutes and the pull-request and modules phases about 20 together; the reports phase runs two plans and the estate workflow.
 
 | Phase | main gets | Claims |
 |---|---|---|
@@ -379,6 +379,7 @@ just sandbox prove --break         # the locking and report claims, each with it
 | `pull-request` | `apply.when: pull-request`, first with `merge: manual`, then `merge: auto`, then `merge: auto` with `merge_token_env: SANDBOX_MERGE_TOKEN`; and `.github/workflows/sandbox-open.yml`, which opens the phase's pull requests as `github-actions[bot]`, so the account running prove may approve them | `lock/apply`, `pr-apply/stale`, `pr-apply/tofu`, `pr-apply/token` |
 | `modules` | `modules.publish: git-tags` | `publish`, `rollout` |
 | `reports` | `reports` in the bucket `tg-reports` of floci at `http://floci:4566`, prefix `sandbox`, first with keys in the repo secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, then with `reports.role` and `oidc` and no secret; `env` sending every STS request to `http://127.0.0.1:4599`; `.sandbox/stand-in.mjs`; and in the plan job init writes, floci as a service container, a step that starts the stand-ins and steps that keep the bucket's objects and what the recorder found as the `sandbox-stand-in` artifact | `report/keys`, `estate/job`, `report/oidc` |
+| `audience` | `oidc` with a plan and an apply role and `audience` mapping `plan`, `apply` and `drift` to `terragucci-plan`, `terragucci-apply` and `terragucci-drift`; `envs/dev/oidc` with a program that checks the job's token, evaluates the trust of the two roles (`trust-plan.json` and `trust-apply.json`, each admitting its own audience for this repo) on it, and writes what it found to `terragucci-report/audience-<kind>.json` | `oidc/audience-stages` |
 
 | Claim | Steps | Holds when |
 |---|---|---|
@@ -406,6 +407,7 @@ just sandbox prove --break         # the locking and report claims, each with it
 | `report/keys` | the keys in the repo secrets, `change one-root` | the plan job maps the secrets; the index at the top of the prefix lists the head, and its `report.json` is in the bucket |
 | `estate/job` | the GitHub workflow of the see-every-project page, its role moved to floci's account, committed as `.github/workflows/estate.yml` with floci, the recorder and the keep steps added to its job and report-keys' bucket as the seed; `gh workflow run estate.yml` | the workflow maps no secret; the job passes; the recorder saw `configure-aws-credentials` take the page's role with a token that verifies against GitHub's keys and names the repo, run, commit, `workflow_dispatch` and `sts.amazonaws.com`; `estate.html` is in the bucket, `estate.json` shows the project with report-keys' plan, and the log has a presigned link |
 | `report/oidc` | `reports.role` and `oidc`, the secrets deleted, `change one-root` | the pipeline maps no key; the recorder saw the plan job take `reports.role` with a token that verifies as for `estate/job`, for `pull_request`; the index lists the head, and its `report.json` is in the bucket |
+| `oidc/audience-stages` | `change oidc`, `merge oidc` | the plan job's token verifies against GitHub's keys and carries `terragucci-plan` alone, which the plan role's trust admits and the apply role's refuses; the apply job's carries `terragucci-apply`, which only the apply role admits; neither job's probe, a child of the binary, holds `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN` |
 
 No token is traded with AWS: the sandbox has no cloud account (the Forgejo claim `oidc/forgejo` does the trade). The report claims trade theirs with floci's STS, through the recorder, inside the job; floci takes any token, so the recorder's checks stand in for the trust a role's policy would check. One account drives the sandbox, so no claim comments as a non-writer or from a fork; those refusals are Forgejo claims. `--record docs-site/src/data/validation.json` writes each claim the run made as a `github.com` row, in place of that claim's last row and keeping its `break`, after the `github` rows.
 
@@ -421,6 +423,7 @@ No token is traded with AWS: the sandbox has no cloud account (the Forgejo claim
 | `report/keys` | the repo secrets are deleted, so the plan job maps them empty and writes nothing to the bucket |
 | `report/oidc` | `oidc` is cut from main's `terragucci.yml`, so the plan job has no token to take `reports.role` with |
 | `estate/job` | `id-token: write` is cut from the page's workflow, so `configure-aws-credentials` has no token for the role |
+| `oidc/audience-stages` | the line that restarts a step without the token-request variables is cut from every step of the committed pipeline, so the binary and the probe keep them (run with `prove audience --break`) |
 
 `just sandbox prove` runs on the newest published release, a phase at a time; a person runs it, and no workflow does. Each phase keeps `prove.json` and the logs; prove rewrites `prove.json` after every verdict, so a run stopped part way keeps the verdicts it reached. It needs `TERRAGUCCI_SANDBOX_TOKEN` (or `gh auth token`): a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or classic with `repo` and `workflow`.
 

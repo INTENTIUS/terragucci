@@ -116,6 +116,7 @@
     "respond/explain-refusal": "Agents and pull request environments",
     "init/foreign-checkout": "Setup and runtime",
     "oidc/forgejo": "Setup and runtime",
+    "oidc/audience-stages": "Setup and runtime",
     "security/fork": "Locks and safety",
     "linked/fresh": "Plan and review",
     "report/front-door": "Reports and visibility",
