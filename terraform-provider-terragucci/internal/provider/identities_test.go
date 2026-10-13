@@ -156,7 +156,7 @@ func TestEnvironmentsMatchEachGolden(t *testing.T) {
 					t.Fatalf("%s roots %v, golden %v", ge["name"], e.Roots, ge["roots"])
 				}
 				stages := ge["stages"].(map[string]any)
-				for st, got := range map[string]*stageModel{"plan": e.Plan, "apply": e.Apply, "drift": e.Drift} {
+				for st, got := range map[string]*stageModel{"plan": e.Plan, "decide": e.Decide, "apply": e.Apply, "drift": e.Drift} {
 					gs, _ := stages[st].(map[string]any)
 					if gs == nil {
 						if got != nil {
@@ -171,7 +171,7 @@ func TestEnvironmentsMatchEachGolden(t *testing.T) {
 					if fe, _ := gs["forge_environment"].(string); got.ForgeEnvironment.ValueString() != fe {
 						t.Fatalf("%s %s: forge environment %s, golden %s", ge["name"], st, got.ForgeEnvironment, fe)
 					}
-					if a, _ := gs["aws"].(map[string]any); (a == nil) != (got.AWS == nil) || (a != nil && (got.AWS.AssumeRolePolicy != a["assume_role_policy"] || got.AWS.Audience != a["audience"])) {
+					if a, _ := gs["aws"].(map[string]any); (a == nil) != (got.AWS == nil) || (a != nil && (got.AWS.AssumeRolePolicy != a["assume_role_policy"] || got.AWS.Audience != a["audience"] || len(got.AWS.Trusts) != len(a["trusts"].([]any)))) {
 						t.Fatalf("%s %s: aws %+v, golden %v", ge["name"], st, got.AWS, a)
 					}
 					if gc, _ := gs["gcp"].(map[string]any); (gc == nil) != (got.GCP == nil) || (gc != nil && got.GCP.AttributeCondition != gc["attribute_condition"]) {
@@ -197,21 +197,21 @@ func TestTrustPolicyFromGoldens(t *testing.T) {
 		check                     func(t *testing.T, m trustPolicyModel)
 	}{
 		{"github-aws", "prod", "apply", "aws", func(t *testing.T, m trustPolicyModel) {
-			want := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"token.actions.githubusercontent.com:aud":"terragucci-apply","token.actions.githubusercontent.com:sub":"repo:acme/infra:environment:prod"}}}]}`
+			want := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"token.actions.githubusercontent.com:aud":"terragucci-prod-apply","token.actions.githubusercontent.com:sub":"repo:acme/infra:environment:production"}}}]}`
 			if m.AWSAssumeRolePolicy.ValueString() != want {
 				t.Fatalf("policy %s", m.AWSAssumeRolePolicy)
 			}
-			if m.Identity.ValueString() != "arn:aws:iam::222222222222:role/prod-apply" || m.Audience.ValueString() != "terragucci-apply" || !m.GCPAttributeCondition.IsNull() || !m.AzureSubject.IsNull() {
+			if m.Identity.ValueString() != "arn:aws:iam::222222222222:role/prod-apply" || m.Audience.ValueString() != "terragucci-prod-apply" || !m.GCPAttributeCondition.IsNull() || !m.AzureSubject.IsNull() {
 				t.Fatalf("identity %s audience %s gcp %s azure %s", m.Identity, m.Audience, m.GCPAttributeCondition, m.AzureSubject)
 			}
 		}},
 		{"github-aws", "dev", "apply", "aws", func(t *testing.T, m trustPolicyModel) {
-			if !strings.Contains(m.AWSAssumeRolePolicy.ValueString(), `"repo:acme/infra:environment:dev"`) || strings.Contains(m.AWSAssumeRolePolicy.ValueString(), ":environment:prod") {
+			if !strings.Contains(m.AWSAssumeRolePolicy.ValueString(), `"repo:acme/infra:environment:dev"`) || strings.Contains(m.AWSAssumeRolePolicy.ValueString(), ":environment:production") {
 				t.Fatalf("dev's policy %s", m.AWSAssumeRolePolicy)
 			}
 		}},
 		{"gitlab-gcp", "prod", "apply", "gcp", func(t *testing.T, m trustPolicyModel) {
-			want := "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk' && assertion.environment == 'prod' && assertion.environment_protected == 'true'"
+			want := "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk' && assertion.environment == 'production' && assertion.environment_protected == 'true' && assertion.ref_protected == 'true'"
 			if m.GCPAttributeCondition.ValueString() != want {
 				t.Fatalf("condition %s", m.GCPAttributeCondition)
 			}
@@ -220,7 +220,8 @@ func TestTrustPolicyFromGoldens(t *testing.T) {
 			}
 		}},
 		{"gitlab-gcp", "prod", "plan", "gcp", func(t *testing.T, m trustPolicyModel) {
-			if !m.SubjectPattern.ValueBool() || m.GCPAttributeCondition.ValueString() != "assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')" {
+			// The plan service account serves the merge request's plan job, each wave's deciding job and drift.
+			if !m.SubjectPattern.ValueBool() || m.GCPAttributeCondition.ValueString() != "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')" {
 				t.Fatalf("pattern %v condition %s", m.SubjectPattern, m.GCPAttributeCondition)
 			}
 		}},
@@ -234,6 +235,13 @@ func TestTrustPolicyFromGoldens(t *testing.T) {
 		{"forgejo-aws-ids", "prod", "plan", "aws", func(t *testing.T, m trustPolicyModel) {
 			if !strings.Contains(m.AWSAssumeRolePolicy.ValueString(), `"git.example.com/api/actions:sub":"repo:acme-3/infra-17:pull_request"`) {
 				t.Fatalf("policy %s", m.AWSAssumeRolePolicy)
+			}
+		}},
+		{"github-aws", "prod", "decide", "aws", func(t *testing.T, m trustPolicyModel) {
+			var p struct{ Statement []any }
+			json.Unmarshal([]byte(m.AWSAssumeRolePolicy.ValueString()), &p)
+			if m.Subject.ValueString() != "repo:acme/infra:ref:refs/heads/main" || m.Audience.ValueString() != "terragucci-plan" || len(p.Statement) != 3 {
+				t.Fatalf("subject %s audience %s policy %s", m.Subject, m.Audience, m.AWSAssumeRolePolicy)
 			}
 		}},
 		{"no-environments", "default", "apply", "aws", func(t *testing.T, m trustPolicyModel) {
@@ -281,6 +289,22 @@ func TestTrustPolicyRefusesWhatTheConfigLacks(t *testing.T) {
 		if err := trustPolicyState(&m, contract); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%v: %v, want %q", c, err, c.want)
 		}
+	}
+}
+
+func TestNoDecideStageWhenAWaveAppliesInOneJob(t *testing.T) {
+	b, err := os.ReadFile(goldenPath(t, "no-environments"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, _, err := parseIdentities(b, "", nil, "terragucci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract.Environments[0].Stages["decide"] = nil
+	m := trustPolicyModel{Environment: types.StringValue("default"), Stage: types.StringValue("decide"), Cloud: types.StringValue("aws")}
+	if err := trustPolicyState(&m, contract); err == nil || !strings.Contains(err.Error(), "applies in one job") {
+		t.Fatalf("%v", err)
 	}
 }
 

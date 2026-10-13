@@ -35,7 +35,36 @@
               "role": "arn:aws:iam::777777777777:role/prod-plan",
               "root_roles": {},
               "audience": "terragucci-plan",
-              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}}]}"
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "decide": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::777777777777:role/prod-plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
             "azure": null
@@ -58,6 +87,9 @@
               "role": "arn:aws:iam::777777777777:role/prod-apply",
               "root_roles": {},
               "audience": "terragucci-apply",
+              "trusts": [
+                "apply"
+              ],
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-apply\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
@@ -77,7 +109,12 @@
               "role": "arn:aws:iam::777777777777:role/prod-plan",
               "root_roles": {},
               "audience": "terragucci-drift",
-              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::777777777777:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
             "azure": null
@@ -106,7 +143,36 @@
               "role": "arn:aws:iam::666666666666:role/plan",
               "root_roles": {},
               "audience": "terragucci-plan",
-              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}}]}"
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "decide": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
             "azure": null
@@ -129,6 +195,9 @@
               "role": "arn:aws:iam::666666666666:role/apply",
               "root_roles": {},
               "audience": "terragucci-apply",
+              "trusts": [
+                "apply"
+              ],
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-apply\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
@@ -148,7 +217,12 @@
               "role": "arn:aws:iam::666666666666:role/plan",
               "root_roles": {},
               "audience": "terragucci-drift",
-              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
             "azure": null
@@ -175,7 +249,36 @@
               "role": "arn:aws:iam::666666666666:role/plan",
               "root_roles": {},
               "audience": "terragucci-plan",
-              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}}]}"
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+            },
+            "gcp": null,
+            "azure": null
+          },
+          "decide": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://gitlab.com",
+              "subject": "project_path:acme/platform/infra:ref_type:branch:ref:main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": {
+              "role": "arn:aws:iam::666666666666:role/plan",
+              "root_roles": {},
+              "audience": "terragucci-plan",
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
             "azure": null
@@ -194,6 +297,9 @@
               "role": "arn:aws:iam::666666666666:role/apply",
               "root_roles": {},
               "audience": "terragucci-apply",
+              "trusts": [
+                "apply"
+              ],
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-apply\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
@@ -213,7 +319,12 @@
               "role": "arn:aws:iam::666666666666:role/plan",
               "root_roles": {},
               "audience": "terragucci-drift",
-              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
+              "trusts": [
+                "plan",
+                "decide",
+                "drift"
+              ],
+              "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\"},\"StringLike\":{\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:*\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-plan\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::666666666666:oidc-provider/gitlab.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"gitlab.com:aud\":\"terragucci-drift\",\"gitlab.com:sub\":\"project_path:acme/platform/infra:ref_type:branch:ref:main\"}}}]}"
             },
             "gcp": null,
             "azure": null

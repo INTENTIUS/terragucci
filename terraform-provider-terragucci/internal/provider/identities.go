@@ -97,6 +97,7 @@ type contractAWS struct {
 	Role             *string           `json:"role"`
 	RootRoles        map[string]string `json:"root_roles"`
 	Audience         string            `json:"audience"`
+	Trusts           []string          `json:"trusts"`
 	AssumeRolePolicy string            `json:"assume_role_policy"`
 }
 
@@ -105,6 +106,7 @@ type contractGCP struct {
 	RootServiceAccounts      map[string]string `json:"root_service_accounts"`
 	WorkloadIdentityProvider string            `json:"workload_identity_provider"`
 	Audience                 string            `json:"audience"`
+	Trusts                   []string          `json:"trusts"`
 	AttributeCondition       string            `json:"attribute_condition"`
 }
 

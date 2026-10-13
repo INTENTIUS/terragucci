@@ -152,8 +152,8 @@ Two data sources read a `terragucci.yml` and give back what each environment's j
 
 | Data source | Gives |
 |---|---|
-| `terragucci_environments` | `environments`: each environment by name, and `default` for the roots in none, with its `roots` and its `plan`, `apply` and `drift` stages. Each stage has `runner_labels`, `runner_group`, `forge_environment`, `issuer`, `subject`, `claims`, and `aws`, `gcp` and `azure` with each identity and its audience. |
-| `terragucci_trust_policy` | for one `environment`, `stage` and `cloud`: `aws_assume_role_policy` (JSON), `gcp_attribute_condition` (CEL), or `azure_issuer`, `azure_subject` and `azure_audiences` |
+| `terragucci_environments` | `environments`: each environment by name, and `default` for the roots in none, with its `roots` and its `plan`, `decide`, `apply` and `drift` stages. Each stage has `runner_labels`, `runner_group`, `forge_environment`, `issuer`, `subject`, `claims`, and `aws`, `gcp` and `azure` with each identity, its audience and its trust. |
+| `terragucci_trust_policy` | for one `environment`, `stage` and `cloud`: `aws_assume_role_policy` (JSON), `gcp_attribute_condition` (CEL), or `azure_issuer`, `azure_subject` and `azure_audiences`. The AWS policy and the GCP condition accept every job that takes the stage's role or service account, which `trusts` lists: a plan role's accepts the plan, deciding and drift jobs |
 
 Both read the provider's control repo file from the forge, with `project` naming one of its projects. That file's projects keep their roots elsewhere, so `roots` is null. With `path`, they read a local `terragucci.yml` instead, and the roots beside it. `repository` and `default_branch` say which repository the jobs run in when the project key or the origin remote does not; `default_branch` defaults to `main`.
 
@@ -218,7 +218,7 @@ locals {
   prod = data.terragucci_environments.infra.environments["prod"]
 }
 
-# The condition requires environment_protected, so the environment must be protected.
+# The condition requires environment_protected and ref_protected: protect the environment, and keep the default branch protected.
 resource "gitlab_project_protected_environment" "prod" {
   project     = "acme/platform/infra"
   environment = local.prod.apply.forge_environment

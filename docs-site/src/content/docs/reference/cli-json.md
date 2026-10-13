@@ -168,7 +168,7 @@ Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not 
 
 ## config identities
 
-`terragucci config identities --json` prints what each job presents to a cloud, per environment and stage, and the trust that accepts that job alone. The [Terraform provider](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust) reads this output, so the trust it writes is the trust this command prints.
+`terragucci config identities --json` prints what each job presents to a cloud, per environment and stage, and the trust that accepts those jobs and no other. The [Terraform provider](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust) reads this output, so the trust it writes is the trust this command prints.
 
 | `results` field | Holds |
 |---|---|
@@ -186,30 +186,34 @@ Each entry:
 | `environment` | `false` for `default` |
 | `root_globs` | the environment's `roots`; for `default`, the top-level `roots`, or `null` when roots are detected |
 | `roots` | the repo's roots in the entry, found as `config check` finds them; `null` for a [control repo](/terragucci/concepts/control-repo/)'s project, or with `--no-roots` |
-| `stages` | `plan` (the pull request's plan job), `apply` (the default branch's apply jobs) and `drift` (the scheduled drift job, `null` when `drift` is off) |
+| `stages` | `plan` (the pull request's plan job), `decide` (each wave's deciding job, as below), `apply` (the default branch's apply jobs) and `drift` (the scheduled drift job, `null` when `drift` is off) |
 
 Each stage:
 
 | Field | Holds |
 |---|---|
-| `runner` | `labels` and `group` (a GitHub runner group, or `null`); `null` when `runner` gives the stage none |
-| `forge_environment` | for `apply` on GitHub and GitLab, the environment's `forge_environment`, which defaults to its name; `null` for `plan` and `drift`, on Forgejo, and for `default` |
+| `runner` | `labels` and `group` (a GitHub runner group, or `null`); `null` when `runner` gives the stage none. For `apply`, the environment's `runner` (its `apply`) over the top-level one; `decide` runs on the top-level apply runner |
+| `forge_environment` | for `apply` on GitHub and GitLab, the environment's `forge_environment`, which defaults to its name; `null` for the other stages, on Forgejo, for `default`, and in a Terragrunt repo |
 | `token` | `issuer`, `subject` (the `sub` claim), `subject_pattern`, `claims` and `placeholders`, as below |
-| `aws` | `role` (`null` when only `oidc.roles` names roles), `root_roles` (roots whose role is another, by `oidc.roles`), `audience`, and `assume_role_policy`, the role's trust policy as a JSON string; `null` without AWS roles |
-| `gcp` | `service_account`, `root_service_accounts`, `workload_identity_provider`, `audience` (the provider's full name) and `attribute_condition`, a CEL condition for the provider; `null` without `oidc.gcp` |
-| `azure` | `client_id`, `root_client_ids`, `tenant_id`, and a federated credential's `issuer`, `subject` and `audiences`; for a subject pattern, `subject` is `null` and `claims_matching_expression` holds a flexible federated credential's expression; `null` without `oidc.azure` |
+| `aws` | `role` (`null` when only `oidc.roles` names roles), `root_roles` (roots whose role is another, by `oidc.roles`), `audience` (for `apply`, the environment's `oidc.audience` over `oidc.audience`), `trusts`, and `assume_role_policy`, the role's trust policy as a JSON string with a statement for each stage in `trusts`; `null` without AWS roles |
+| `gcp` | `service_account`, `root_service_accounts`, `workload_identity_provider`, `audience` (the provider's full name), `trusts`, and `attribute_condition`, a CEL condition for the provider that holds for each stage in `trusts`; `null` without `oidc.gcp` |
+| `azure` | `client_id`, `root_client_ids`, `tenant_id`, and a federated credential's `issuer`, `subject` and `audiences` (`oidc.azure.audience`, by default `api://AzureADTokenExchange`); for a subject pattern, `subject` is `null` and `claims_matching_expression` holds a flexible federated credential's expression; `null` without `oidc.azure` |
 
-The plan and drift stages take the plan identities, and apply the apply identities. An environment's own `oidc` pair wins over the top-level pair for its roots.
+The plan, decide and drift stages take the plan identities, and apply the apply identities. An environment's own `oidc` pair wins over the top-level pair for its roots.
+
+`decide` is set when each environment's roots apply in jobs of their own, or when roles by glob tell the roots apart: each wave then has a job on the default branch that plans every root with the plan identities, on the plan audience, and decides the wave's gate, before each group's apply job. It is `null` when a wave applies in one job, as in a Terragrunt repo.
+
+A role has one trust policy, so `trusts` lists every stage of the entry whose jobs take the same identity, and `assume_role_policy` and `attribute_condition` accept each of them: the plan role's names the plan, deciding and drift jobs. An Azure client takes a federated credential per subject: give it one for each of those stages' `subject`.
 
 The subject, by forge:
 
-| Forge | `plan` | `apply` | `drift` |
+| Forge | `plan` | `apply` | `decide` and `drift` |
 |---|---|---|---|
 | GitHub | `repo:<owner>/<repo>:pull_request` | `repo:<owner>/<repo>:environment:<forge environment>`; for `default`, `repo:<owner>/<repo>:ref:refs/heads/<default branch>` | `repo:<owner>/<repo>:ref:refs/heads/<default branch>` |
 | GitLab | `project_path:<path>:ref_type:branch:ref:*`, a pattern, since a merge request pipeline's token names its source branch | `project_path:<path>:ref_type:branch:ref:<default branch>` | the same as `apply` |
 | Forgejo | `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` | the same as `apply` |
 
-On GitLab an apply job with a forge environment also carries `environment`, `environment_protected` and `ref_protected`, which `claims` lists with the values the trust expects (`"true"` for both protections). AWS reads no claim of a GitLab token but `sub` and `aud`, so an AWS role on GitLab tells jobs apart by their subject and their audience alone. GCP's `attribute_condition` checks `environment` and `environment_protected` as well as `sub`. Forgejo has no deployment environments: every apply job on the default branch presents the same subject.
+On GitLab an apply job with a forge environment also carries `environment`, `environment_protected` and `ref_protected`, which `claims` lists with the values the trust expects (`"true"` for both protections). AWS reads no claim of a GitLab token but `sub` and `aud`, so an AWS role on GitLab tells jobs apart by their subject and their audience alone. GCP's `attribute_condition` checks `environment`, `environment_protected` and `ref_protected` as well as `sub`. Forgejo has no deployment environments: every apply job on the default branch presents the same subject.
 
 The issuer is `https://token.actions.githubusercontent.com` on github.com and `https://<host>/_services/token` on GitHub Enterprise Server, the instance's URL on GitLab, and `https://<host>/api/actions` on Forgejo. The AWS trust policy names the OIDC provider `arn:<partition>:iam::<account>:oidc-provider/<issuer without https://>` in the role's own account, and checks `aud` and `sub` with `StringEquals`, or `sub` with `StringLike` for a pattern.
 

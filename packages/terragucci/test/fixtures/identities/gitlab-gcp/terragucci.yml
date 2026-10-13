@@ -12,6 +12,8 @@ oidc:
 environments:
   prod:
     roots: ["envs/prod/**"]
+    forge_environment: production
+    runner: [docker, prod]
     oidc:
       gcp:
         plan_service_account: prod-plan@infra.iam.gserviceaccount.com

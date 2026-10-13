@@ -47,6 +47,30 @@
               "claims_matching_expression": null
             }
           },
+          "decide": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:ref:refs/heads/main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": null,
+            "azure": {
+              "client_id": "00000000-0000-0000-0000-0000000000b1",
+              "root_client_ids": {},
+              "tenant_id": "00000000-0000-0000-0000-000000000001",
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:ref:refs/heads/main",
+              "audiences": [
+                "api://AzureADTokenExchangeUSGov"
+              ],
+              "claims_matching_expression": null
+            }
+          },
           "apply": {
             "runner": null,
             "forge_environment": "prod",
@@ -102,6 +126,30 @@
               "tenant_id": "00000000-0000-0000-0000-000000000001",
               "issuer": "https://token.actions.githubusercontent.com",
               "subject": "repo:acme/infra:pull_request",
+              "audiences": [
+                "api://AzureADTokenExchangeUSGov"
+              ],
+              "claims_matching_expression": null
+            }
+          },
+          "decide": {
+            "runner": null,
+            "forge_environment": null,
+            "token": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:ref:refs/heads/main",
+              "subject_pattern": false,
+              "claims": {},
+              "placeholders": []
+            },
+            "aws": null,
+            "gcp": null,
+            "azure": {
+              "client_id": "00000000-0000-0000-0000-0000000000c1",
+              "root_client_ids": {},
+              "tenant_id": "00000000-0000-0000-0000-000000000001",
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subject": "repo:acme/infra:ref:refs/heads/main",
               "audiences": [
                 "api://AzureADTokenExchangeUSGov"
               ],

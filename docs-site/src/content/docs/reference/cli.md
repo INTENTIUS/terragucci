@@ -636,7 +636,7 @@ terragucci.yml: 1 warning(s)
 terragucci config identities [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots]
 ```
 
-Prints, for each environment in `environments` and for the roots in none, what each kind of job presents to a cloud: the plan job of a pull request, the apply jobs on the default branch, and the drift job. Use it to write each role's trust, or read it with the [Terraform provider](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust). `--json` prints [the contract](/terragucci/reference/cli-json/#config-identities).
+Prints, for each environment in `environments` and for the roots in none, what each kind of job presents to a cloud: the plan job of a pull request, each wave's deciding job, the apply jobs on the default branch, and the drift job. Use it to write each role's trust, or read it with the [Terraform provider](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust). `--json` prints [the contract](/terragucci/reference/cli-json/#config-identities).
 
 | Flag | Meaning |
 |---|---|
@@ -653,6 +653,9 @@ terragucci.yml: github github.com/acme/infra (default branch main)
 environment prod: envs/prod/app, envs/prod/net
   plan: sub repo:acme/infra:pull_request
     runner ubuntu-latest
+    aws arn:aws:iam::222222222222:role/prod-plan aud terragucci-plan
+  decide: sub repo:acme/infra:ref:refs/heads/main
+    runner group deployers self-hosted, linux
     aws arn:aws:iam::222222222222:role/prod-plan aud terragucci-plan
   apply: sub repo:acme/infra:environment:prod
     forge environment prod

@@ -10,11 +10,19 @@
  * environment are one more, `default`, when there are any. Each entry has a
  * stage per kind of job:
  *
- *   plan   the pull request's plan job: the plan identities
- *   apply  the default branch's apply jobs: the apply identities, in the
- *          environment's forge environment on GitHub and GitLab
- *   drift  the scheduled drift job, on the default branch: the plan
- *          identities. Null when `drift` is off.
+ *   plan    the pull request's plan job: the plan identities
+ *   decide  each wave's deciding job on the default branch, when the waves
+ *           apply in a job per group (./groups.ts): the plan identities, on
+ *           the plan audience. Null when a wave applies in one job.
+ *   apply   the default branch's apply jobs: the apply identities, in the
+ *           environment's forge environment on GitHub and GitLab, on its
+ *           runner and with its audience when it sets them
+ *   drift   the scheduled drift job, on the default branch: the plan
+ *           identities. Null when `drift` is off.
+ *
+ * A role has one trust policy: each stage's AWS policy (and GCP condition)
+ * accepts every job of the entry that takes the same identity, listed in
+ * `trusts`, so the plan role's names the plan, deciding and drift jobs.
  *
  * Subjects, by forge:
  *
@@ -45,13 +53,14 @@ import { globMatch, findRoots, hostOfRemote } from "./detect";
 import { settingsForRoot, withEnvironmentRoles, type RootSettings } from "./environments";
 import { ConfigError, FORGES, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type EnvironmentSettings, type ForgeName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSettings, type RunnerSpec } from "./config";
 import { AZURE_AUDIENCE, gcpAudience, runnerOf, stageAudience } from "./render";
+import { applyGroups, environmentApplyRunner } from "./groups";
 import { detectShape } from "./shape";
-import { walkUnits } from "./terragrunt";
+import { detectTerragrunt, walkUnits } from "./terragrunt";
 
 /** The contract's name and version, in `results.schema`. It changes only when a field is removed or changes meaning. */
 export const IDENTITIES_SCHEMA = "terragucci.identities/v1";
 
-export const IDENTITY_STAGES = ["plan", "apply", "drift"] as const;
+export const IDENTITY_STAGES = ["plan", "decide", "apply", "drift"] as const;
 export type IdentityStage = (typeof IDENTITY_STAGES)[number];
 export const CLOUDS = ["aws", "gcp", "azure"] as const;
 export type Cloud = (typeof CLOUDS)[number];
@@ -83,7 +92,9 @@ export interface AwsIdentity {
   /** Roots whose role is not `role`, from `oidc.roles`. */
   root_roles: Record<string, string>;
   audience: string;
-  /** The trust policy each of the stage's roles needs, as a JSON string, for `aws_iam_role.assume_role_policy`. */
+  /** The stages whose jobs take the same role, and which `assume_role_policy` accepts. */
+  trusts: IdentityStage[];
+  /** The role's trust policy, as a JSON string, for `aws_iam_role.assume_role_policy`: a statement per job in `trusts`. */
   assume_role_policy: string;
 }
 
@@ -92,7 +103,9 @@ export interface GcpIdentity {
   root_service_accounts: Record<string, string>;
   workload_identity_provider: string;
   audience: string;
-  /** A CEL condition for the provider's `attribute_condition` that holds for this stage's job alone. */
+  /** The stages whose jobs take the same service account, and which `attribute_condition` accepts. */
+  trusts: IdentityStage[];
+  /** A CEL condition for the provider's `attribute_condition` that holds for the jobs of `trusts` alone. */
   attribute_condition: string;
 }
 
@@ -159,6 +172,8 @@ export interface IdentitiesOptions {
   projectKey?: string;
   ownerId?: string;
   repoId?: string;
+  /** A Terragrunt repo: its waves of units apply in one job, with no apply groups. */
+  terragrunt?: boolean;
 }
 
 // ── the repository ───────────────────────────────────────────────────────────
@@ -201,13 +216,13 @@ export function tokenOf(forge: ForgeName, repo: Repository, stage: IdentityStage
   const placeholders = [...repo.path.matchAll(/<([^>]+)>/g)].map((m) => m[1]);
   if (forge === "github") {
     const base = `repo:${repo.path}`;
-    const subject = stage === "plan" ? `${base}:pull_request` : stage === "apply" && forgeEnvironment ? `${base}:environment:${forgeEnvironment}` : `${base}:ref:refs/heads/${branch}`;
+    const subject = stage === "plan" ? `${base}:pull_request` : forgeEnvironment ? `${base}:environment:${forgeEnvironment}` : `${base}:ref:refs/heads/${branch}`;
     return { issuer, subject, subject_pattern: false, claims: {}, placeholders };
   }
   if (forge === "gitlab") {
     const base = `project_path:${repo.path}:ref_type:branch:ref:`;
     if (stage === "plan") return { issuer, subject: `${base}*`, subject_pattern: true, claims: {}, placeholders };
-    const claims: Record<string, string> = stage === "apply" && forgeEnvironment ? { environment: forgeEnvironment, environment_protected: "true", ref_protected: "true" } : {};
+    const claims: Record<string, string> = forgeEnvironment ? { environment: forgeEnvironment, environment_protected: "true", ref_protected: "true" } : {};
     return { issuer, subject: `${base}${branch}`, subject_pattern: false, claims, placeholders };
   }
   // Forgejo 16: repo:<owner>-<owner id>/<repo>-<repo id>.
@@ -234,41 +249,51 @@ function arnParts(arn: string | null): { partition: string; account: string } {
 }
 
 /**
- * An IAM role's trust policy for the job: AssumeRoleWithWebIdentity from the
- * forge's OIDC provider in the role's account, when the token's `aud` and
- * `sub` are the job's (StringLike for a subject pattern). AWS reads no other
- * claim of a GitLab token, so an environment's apply role tells its jobs
- * apart by the audience.
+ * An IAM role's trust policy for the jobs that take it: a statement per job,
+ * AssumeRoleWithWebIdentity from the forge's OIDC provider in the role's
+ * account when the token's `aud` and `sub` are that job's (StringLike for a
+ * subject pattern). AWS reads no other claim of a GitLab token.
  */
-export function awsTrustPolicy(token: Token, audience: string, role: string | null): string {
-  const key = issuerKey(token.issuer);
+export function awsTrustPolicy(jobs: readonly { token: Token; audience: string }[], role: string | null): string {
   const { partition, account } = arnParts(role);
-  const condition: Record<string, Record<string, string>> = token.subject_pattern
-    ? { StringEquals: { [`${key}:aud`]: audience }, StringLike: { [`${key}:sub`]: token.subject } }
-    : { StringEquals: { [`${key}:aud`]: audience, [`${key}:sub`]: token.subject } };
-  return JSON.stringify({
-    Version: "2012-10-17",
-    Statement: [{
+  const seen = new Set<string>();
+  const statements: unknown[] = [];
+  for (const { token, audience } of jobs) {
+    const key = issuerKey(token.issuer);
+    const condition: Record<string, Record<string, string>> = token.subject_pattern
+      ? { StringEquals: { [`${key}:aud`]: audience }, StringLike: { [`${key}:sub`]: token.subject } }
+      : { StringEquals: { [`${key}:aud`]: audience, [`${key}:sub`]: token.subject } };
+    const statement = {
       Effect: "Allow",
       Principal: { Federated: `arn:${partition}:iam::${account}:oidc-provider/${key}` },
       Action: "sts:AssumeRoleWithWebIdentity",
       Condition: condition,
-    }],
-  });
+    };
+    const id = JSON.stringify(statement);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    statements.push(statement);
+  }
+  return JSON.stringify({ Version: "2012-10-17", Statement: statements });
 }
 
 const cel = (s: string): string => `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 
 /**
  * A Workload Identity Federation provider's attribute condition (CEL over
- * `assertion`, the token's claims) for the job: its subject, or the
- * subject's prefix for a pattern, and on GitLab its environment, which must
- * be protected.
+ * `assertion`, the token's claims) for the jobs that take one service
+ * account: each job's subject, or the subject's prefix for a pattern, and on
+ * GitLab its environment, which must be protected, on a protected ref.
+ * Several jobs are joined with ||.
  */
-export function gcpCondition(token: Token): string {
-  const sub = token.subject_pattern ? `assertion.sub.startsWith(${cel(token.subject.replace(/\*$/, ""))})` : `assertion.sub == ${cel(token.subject)}`;
-  const env = token.claims.environment;
-  return env === undefined ? sub : `${sub} && assertion.environment == ${cel(env)} && assertion.environment_protected == 'true'`;
+export function gcpCondition(tokens: readonly Token[]): string {
+  const one = (token: Token): string => {
+    const sub = token.subject_pattern ? `assertion.sub.startsWith(${cel(token.subject.replace(/\*$/, ""))})` : `assertion.sub == ${cel(token.subject)}`;
+    const env = token.claims.environment;
+    return env === undefined ? sub : `${sub} && assertion.environment == ${cel(env)} && assertion.environment_protected == 'true' && assertion.ref_protected == 'true'`;
+  };
+  const each = [...new Set(tokens.map(one))];
+  return each.length === 1 ? each[0]! : each.map((c) => `(${c})`).join(" || ");
 }
 
 /** An Entra flexible federated credential's expression for a subject pattern. */
@@ -298,12 +323,12 @@ const runnerValue = (spec: RunnerSpec | undefined): Runner | null => {
  * for apply an environment's `runner.apply` (or its one runner) over it.
  */
 function runnerFor(stage: IdentityStage, top: RunnerSettings | undefined, e: EnvironmentSettings | undefined): RunnerSpec | undefined {
-  if (stage === "apply" && e?.runner !== undefined) {
-    const r = e.runner;
-    const own = typeof r === "object" && !Array.isArray(r) && !("group" in r) ? (r as { apply?: RunnerSpec }).apply : (r as RunnerSpec);
+  if (stage === "apply") {
+    const own = e ? environmentApplyRunner(e.runner) : undefined;
     if (own !== undefined) return own;
   }
-  return runnerOf(top, stage);
+  // The deciding job is an apply job (jobStage): it takes the apply runner.
+  return runnerOf(top, stage === "decide" ? "apply" : stage);
 }
 
 /** The roots that take an identity other than `own` for `stage`, by the first glob of `roles` each matches. */
@@ -353,25 +378,35 @@ export function repositoryOf(settings: ProjectSettings, opts: IdentitiesOptions)
   };
 }
 
-/** One stage of one entry. */
-function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository, settings: ProjectSettings & { drift?: string | false }, name: string | undefined, roots: string[] | null): StageIdentities | null {
+/** The identities a job of `stage` takes: the apply jobs the apply identities, every other job the plan identities. */
+const identityStage = (stage: IdentityStage): "plan" | "apply" => (stage === "apply" ? "apply" : "plan");
+
+/**
+ * One stage of one entry. The trust fields hold this job alone; trustAcross
+ * widens them to every job of the entry that takes the same identity.
+ * `grouped`: the waves apply in a job per environment or identity group
+ * (./groups.ts), so each wave has a deciding job.
+ */
+function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository, settings: ProjectSettings & { drift?: string | false }, name: string | undefined, roots: string[] | null, grouped: boolean): StageIdentities | null {
   if (stage === "drift" && !settings.drift) return null;
+  if (stage === "decide" && !grouped) return null;
   const e = name === undefined ? undefined : settings.environments![name]!;
   const own = environmentSettings(name, settings);
   const oidc: OidcSettings | undefined = own.oidc;
   const folded = withEnvironmentRoles(settings.oidc, settings.environments);
-  const forgeEnvironment = stage === "apply" && forge !== "forgejo" ? (own.forge_environment ?? null) : null;
+  // An environment's apply jobs run in its forge environment (groups.ts), when the waves apply by group; Forgejo has none.
+  const forgeEnvironment = stage === "apply" && grouped && forge !== "forgejo" ? (own.forge_environment ?? null) : null;
   const token = tokenOf(forge, repository, stage, forgeEnvironment);
-  const idStage: "plan" | "apply" = stage === "apply" ? "apply" : "plan";
+  const idStage = identityStage(stage);
 
   let aws: AwsIdentity | null = null;
   const roles = folded?.roles;
   if ((oidc?.plan_role && oidc.apply_role) || (roles && Object.keys(roles).length > 0)) {
     const role = (idStage === "plan" ? oidc?.plan_role : oidc?.apply_role) ?? null;
-    // An environment's own audience wins over the stage map for its plan and apply jobs.
-    const audience = stage !== "drift" && e?.oidc?.audience ? e.oidc.audience : stageAudience(settings.oidc, stage);
+    // An environment's own audience is its apply jobs' (groups.ts); the deciding job plans on the plan audience.
+    const audience = stage === "apply" && grouped && e?.oidc?.audience ? e.oidc.audience : stageAudience(settings.oidc, stage === "decide" ? "plan" : stage);
     const root_roles = rootIdentities(roots, roles, idStage, role);
-    aws = { role, root_roles, audience, assume_role_policy: awsTrustPolicy(token, audience, role ?? Object.values(root_roles)[0] ?? null) };
+    aws = { role, root_roles, audience, trusts: [stage], assume_role_policy: awsTrustPolicy([{ token, audience }], role ?? Object.values(root_roles)[0] ?? null) };
   }
 
   let gcp: GcpIdentity | null = null;
@@ -382,15 +417,15 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
       root_service_accounts: rootIdentities(roots, folded?.gcp?.roles, idStage, sa),
       workload_identity_provider: oidc.gcp.workload_identity_provider,
       audience: gcpAudience(oidc.gcp.workload_identity_provider),
-      attribute_condition: gcpCondition(token),
+      trusts: [stage],
+      attribute_condition: gcpCondition([token]),
     };
   }
 
   let azure: AzureIdentity | null = null;
   if (oidc?.azure) {
     const id = idStage === "plan" ? oidc.azure.plan_client_id : oidc.azure.apply_client_id;
-    // GitLab's id_tokens declare the public cloud's audience for Azure (render.ts); GitHub and Forgejo ask for oidc.azure.audience.
-    const audience = forge === "gitlab" ? AZURE_AUDIENCE : (oidc.azure.audience ?? AZURE_AUDIENCE);
+    const audience = oidc.azure.audience ?? AZURE_AUDIENCE;
     azure = {
       client_id: id,
       root_client_ids: rootIdentities(roots, folded?.azure?.roles, idStage, id),
@@ -402,13 +437,42 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
     };
   }
 
-  return { runner: runnerValue(runnerFor(stage, settings.runner, e)), forge_environment: forgeEnvironment, token, aws, gcp, azure };
+  return { runner: runnerValue(runnerFor(stage, settings.runner, grouped ? e : undefined)), forge_environment: forgeEnvironment, token, aws, gcp, azure };
+}
+
+/**
+ * One role has one trust policy, and one service account one provider: each
+ * stage's AWS policy and GCP condition accept every job of the entry that
+ * takes the same identity. The plan identities serve the pull request's plan
+ * job, each wave's deciding job and the drift job, so their trust names each
+ * of those jobs' subject and audience.
+ */
+function trustAcross(stages: Record<IdentityStage, StageIdentities | null>): void {
+  const present = IDENTITY_STAGES.filter((s) => stages[s] !== null);
+  for (const s of present) {
+    const st = stages[s]!;
+    if (st.aws) {
+      const aws = st.aws;
+      const same = present.filter((o) => identityStage(o) === identityStage(s) && stages[o]!.aws?.role === aws.role);
+      aws.trusts = same;
+      aws.assume_role_policy = awsTrustPolicy(same.map((o) => ({ token: stages[o]!.token, audience: stages[o]!.aws!.audience })), aws.role ?? Object.values(aws.root_roles)[0] ?? null);
+    }
+    if (st.gcp) {
+      const sa = st.gcp.service_account;
+      const same = present.filter((o) => identityStage(o) === identityStage(s) && stages[o]!.gcp?.service_account === sa);
+      st.gcp.trusts = same;
+      st.gcp.attribute_condition = gcpCondition(same.map((o) => stages[o]!.token));
+    }
+  }
 }
 
 /** The contract for one repo's (or one control-repo project's) settings. `roots` null when the repo's roots were not read. */
 export function identities(settings: ProjectSettings & { drift?: string | false }, roots: string[] | null, opts: IdentitiesOptions): Identities {
   const { forge, repository } = repositoryOf(settings, opts);
   const names = Object.keys(settings.environments ?? {});
+  // The waves apply in a job per group, each wave decided by a job of its own, as init renders them (groups.ts). Not in a Terragrunt
+  // repo, whose waves of units apply in one job. With the roots unread, environments are taken to hold roots.
+  const grouped = !opts.terragrunt && (roots === null ? names.length > 0 : applyGroups(settings, roots) !== undefined);
   const inEnv = (r: string, name: string): boolean => (settings.environments![name]!.roots ?? []).some((g) => globMatch(g, r));
   const entries: EnvironmentIdentities[] = names.map((name) => {
     // A root belongs to the first environment whose glob it matches (environmentOf).
@@ -421,7 +485,8 @@ export function identities(settings: ProjectSettings & { drift?: string | false 
 
   function entry(name: string, environment: boolean, root_globs: string[] | null, mine: string[] | null): EnvironmentIdentities {
     const env = environment ? name : undefined;
-    const stages = Object.fromEntries(IDENTITY_STAGES.map((s) => [s, stageOf(s, forge, repository, settings, env, mine)])) as Record<IdentityStage, StageIdentities | null>;
+    const stages = Object.fromEntries(IDENTITY_STAGES.map((s) => [s, stageOf(s, forge, repository, settings, env, mine, grouped)])) as Record<IdentityStage, StageIdentities | null>;
+    trustAcross(stages);
     return { name, environment, root_globs, roots: mine, stages };
   }
 }
@@ -483,5 +548,6 @@ export async function configIdentities(path: string, file: string, flags: Config
   if (flags.project) throw new ConfigError("--project names a control repo's project, and this config lists none");
   const settings = resolveRepo(config);
   const roots = flags.noRoots ? null : await foundRoots(dirname(path), settings);
-  return identities(settings, roots, { ...opts, repoDir: dirname(path) });
+  const terragrunt = settings.terragrunt !== undefined || (!flags.noRoots && detectTerragrunt(dirname(path)) !== undefined);
+  return identities(settings, roots, { ...opts, repoDir: dirname(path), ...(terragrunt ? { terragrunt } : {}) });
 }

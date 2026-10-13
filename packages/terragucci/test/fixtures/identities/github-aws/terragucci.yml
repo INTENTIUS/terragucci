@@ -1,4 +1,5 @@
-# GitHub, AWS: prod and dev environments with their own roles, an audience per stage, and a root in no environment.
+# GitHub, AWS: prod and dev environments with their own roles, an audience per stage, prod's own forge environment,
+# apply runner and apply audience, and a root in no environment.
 forge: github
 binary: tofu
 drift: "0 4 * * *"
@@ -13,9 +14,12 @@ environments:
   prod:
     roots: ["envs/prod/**"]
     gate: always
+    forge_environment: production
+    runner: { apply: [self-hosted, prod] }
     oidc:
       plan_role: arn:aws:iam::222222222222:role/prod-plan
       apply_role: arn:aws:iam::222222222222:role/prod-apply
+      audience: terragucci-prod-apply
   dev:
     roots: ["envs/dev/**"]
     oidc:

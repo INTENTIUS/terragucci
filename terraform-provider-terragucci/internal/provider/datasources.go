@@ -125,6 +125,7 @@ type envModel struct {
 	RootGlobs   []string    `tfsdk:"root_globs"`
 	Roots       []string    `tfsdk:"roots"`
 	Plan        *stageModel `tfsdk:"plan"`
+	Decide      *stageModel `tfsdk:"decide"`
 	Apply       *stageModel `tfsdk:"apply"`
 	Drift       *stageModel `tfsdk:"drift"`
 }
@@ -147,6 +148,7 @@ type awsModel struct {
 	Role             types.String      `tfsdk:"role"`
 	RootRoles        map[string]string `tfsdk:"root_roles"`
 	Audience         string            `tfsdk:"audience"`
+	Trusts           []string          `tfsdk:"trusts"`
 	AssumeRolePolicy string            `tfsdk:"assume_role_policy"`
 }
 
@@ -155,6 +157,7 @@ type gcpModel struct {
 	RootServiceAccounts      map[string]string `tfsdk:"root_service_accounts"`
 	WorkloadIdentityProvider string            `tfsdk:"workload_identity_provider"`
 	Audience                 string            `tfsdk:"audience"`
+	Trusts                   []string          `tfsdk:"trusts"`
 	AttributeCondition       string            `tfsdk:"attribute_condition"`
 }
 
@@ -200,7 +203,8 @@ func stageAttribute(desc string) schema.SingleNestedAttribute {
 					"role":               computedString("The role the stage's jobs take for these roots; null when only oidc.roles names roles."),
 					"root_roles":         computedMap("Roots whose role is not role, from oidc.roles."),
 					"audience":           computedString("The token's aud."),
-					"assume_role_policy": computedString("The trust policy, as JSON for aws_iam_role.assume_role_policy."),
+					"trusts":             computedStrings("The stages whose jobs take the same role, each of which assume_role_policy accepts."),
+					"assume_role_policy": computedString("The role's trust policy, as JSON for aws_iam_role.assume_role_policy: a statement per stage in trusts."),
 				},
 			},
 			"gcp": schema.SingleNestedAttribute{
@@ -211,6 +215,7 @@ func stageAttribute(desc string) schema.SingleNestedAttribute {
 					"root_service_accounts":      computedMap("Roots whose service account is not service_account, from oidc.gcp.roles."),
 					"workload_identity_provider": computedString("The Workload Identity Federation provider's resource name."),
 					"audience":                   computedString("The token's aud."),
+					"trusts":                     computedStrings("The stages whose jobs take the same service account, each of which attribute_condition accepts."),
 					"attribute_condition":        computedString("A CEL condition for google_iam_workload_identity_pool_provider.attribute_condition."),
 				},
 			},
@@ -247,6 +252,7 @@ func (d *environmentsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			"root_globs":  computedStrings("The environment's roots globs; for default, the top-level roots, or null when they are detected."),
 			"roots":       computedStrings("The repo's roots in the environment; null when they were not read."),
 			"plan":        stageAttribute("The pull request's plan job."),
+			"decide":      stageAttribute("Each wave's deciding job on the default branch, when the waves apply in a job per environment or identity group; null otherwise."),
 			"apply":       stageAttribute("The default branch's apply jobs."),
 			"drift":       stageAttribute("The scheduled drift job; null when drift is off."),
 		}},
@@ -288,6 +294,7 @@ func environmentsState(m *environmentsModel, c *identitiesContract, raw []byte) 
 			RootGlobs:   e.RootGlobs,
 			Roots:       e.Roots,
 			Plan:        stageState(e.Stages["plan"]),
+			Decide:      stageState(e.Stages["decide"]),
 			Apply:       stageState(e.Stages["apply"]),
 			Drift:       stageState(e.Stages["drift"]),
 		}
@@ -312,10 +319,10 @@ func stageState(s *contractStage) *stageModel {
 		out.RunnerGroup = strPtr(s.Runner.Group)
 	}
 	if a := s.AWS; a != nil {
-		out.AWS = &awsModel{Role: strPtr(a.Role), RootRoles: nonNilMap(a.RootRoles), Audience: a.Audience, AssumeRolePolicy: a.AssumeRolePolicy}
+		out.AWS = &awsModel{Role: strPtr(a.Role), RootRoles: nonNilMap(a.RootRoles), Audience: a.Audience, Trusts: nonNilList(a.Trusts), AssumeRolePolicy: a.AssumeRolePolicy}
 	}
 	if g := s.GCP; g != nil {
-		out.GCP = &gcpModel{ServiceAccount: g.ServiceAccount, RootServiceAccounts: nonNilMap(g.RootServiceAccounts), WorkloadIdentityProvider: g.WorkloadIdentityProvider, Audience: g.Audience, AttributeCondition: g.AttributeCondition}
+		out.GCP = &gcpModel{ServiceAccount: g.ServiceAccount, RootServiceAccounts: nonNilMap(g.RootServiceAccounts), WorkloadIdentityProvider: g.WorkloadIdentityProvider, Audience: g.Audience, Trusts: nonNilList(g.Trusts), AttributeCondition: g.AttributeCondition}
 	}
 	if z := s.Azure; z != nil {
 		out.Azure = &azureModel{ClientID: z.ClientID, RootClientIDs: nonNilMap(z.RootClientIDs), TenantID: z.TenantID, Issuer: z.Issuer, Subject: strPtr(z.Subject), Audiences: nonNilList(z.Audiences), ClaimsMatchingExpression: strPtr(z.ClaimsMatchingExpression)}
@@ -341,7 +348,7 @@ func nonNilList(l []string) []string {
 // ── terragucci_trust_policy ────────────────────────────────────────────────
 
 var (
-	stages = []string{"plan", "apply", "drift"}
+	stages = []string{"plan", "decide", "apply", "drift"}
 	clouds = []string{"aws", "gcp", "azure"}
 )
 
@@ -379,7 +386,7 @@ func (d *trustPolicyDataSource) Metadata(_ context.Context, req datasource.Metad
 func (d *trustPolicyDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	attrs := sourceAttributes()
 	attrs["environment"] = schema.StringAttribute{Required: true, Description: "An environment of terragucci.yml, or default for the roots in none."}
-	attrs["stage"] = schema.StringAttribute{Required: true, Description: "plan, apply or drift."}
+	attrs["stage"] = schema.StringAttribute{Required: true, Description: "plan, decide, apply or drift."}
 	attrs["cloud"] = schema.StringAttribute{Required: true, Description: "aws, gcp or azure."}
 	attrs["issuer"] = computedString("The OIDC token's issuer.")
 	attrs["subject"] = computedString("The token's sub claim; with subject_pattern, * stands for any text.")
@@ -439,7 +446,11 @@ func trustPolicyState(m *trustPolicyModel, c *identitiesContract) error {
 	}
 	s := e.Stages[stage]
 	if s == nil {
-		return fmt.Errorf("%s has no %s job: drift is off in %s", env, stage, c.File)
+		why := "drift is off"
+		if stage == "decide" {
+			why = "each wave applies in one job, which decides it"
+		}
+		return fmt.Errorf("%s has no %s job in %s: %s", env, stage, c.File, why)
 	}
 	m.fill(c)
 	m.Issuer = types.StringValue(s.Token.Issuer)
