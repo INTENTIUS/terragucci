@@ -37,11 +37,11 @@
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
 #                                     the docs show, recorded as text into
 #                                     docs-site as step `github`, then reset
-#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports|audience|groups|check-job|trust-policy] [--break] [--record FILE]
+#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports|audience|groups|check-job|trust-policy|forge-check] [--break] [--record FILE]
 #                                     from a reset sandbox, each phase (the
 #                                     first four when none is named; audience,
-#                                     groups, check-job and trust-policy only
-#                                     when named) sets main up
+#                                     groups, check-job, trust-policy and
+#                                     forge-check only when named) sets main up
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
@@ -55,8 +55,9 @@
 #   stack/sandbox-github.sh reset          close the pull requests and issues,
 #                                     delete every other branch, every tag,
 #                                     every secret and the environments prod
-#                                     and dev (groups, check-job and
-#                                     trust-policy make them), and put main
+#                                     and dev (groups, check-job,
+#                                     trust-policy and forge-check make
+#                                     them), and put main
 #                                     back to its first commit
 #   stack/sandbox-github.sh minutes [ISO-time]
 #                                     the sandbox's Actions run time since then
@@ -523,7 +524,8 @@ github.com|estate/job|the estate workflow of the see-every-project page, committ
 github.com|oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job on main each hold a GitHub-signed token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable; with no cloud account the trust is evaluated, not checked by STS
 github.com|apply/groups|with environments prod and dev, each with its own roles and a deployment environment that main alone may deploy to, the apply job of each environment runs in it, so its GitHub-signed token names the environment as its subject; the prod apply role, trusting the prod environment subject alone, admits the prod job and refuses the dev job; each job carries its own apply role alone; with no cloud account the trust is evaluated, not checked by STS
 github.com|apply/check-job|with environments prod and dev, each a deployment environment that main alone may deploy to, the prod apply job checks the environment its GitHub-signed token names and its ref before it fetches a token for its role; moved into the environment dev by a hand edit to the workflow, it fails naming the expected prod and the found dev, and the code it runs never sees a token
-github.com|identities/trust-policy|the trust of the prod and dev apply roles, as terragucci config identities prints it for terragucci_trust_policy, admits the GitHub-signed token of the prod apply job, whose subject names the environment prod, and refuses that of the dev apply job; with no cloud account the trust is evaluated, not checked by STS'
+github.com|identities/trust-policy|the trust of the prod and dev apply roles, as terragucci config identities prints it for terragucci_trust_policy, admits the GitHub-signed token of the prod apply job, whose subject names the environment prod, and refuses that of the dev apply job; with no cloud account the trust is evaluated, not checked by STS
+github.com|forge/check|terragucci forge check, run on the host, exits 0 when the environment prod lets main alone deploy to it, and exits 1 with a row expecting deploys from main only and finding any branch once its deployment branch rule is removed; the token is the sandbox admin token, so the run does not show the command needs no write scope'
 
 OVERRIDE_LOCAL='# The sandbox keeps this root'"'"'s state in the repo, beside its code.
 terraform {
@@ -2801,6 +2803,84 @@ break_check_job() { claim_check_job; }
 prove_trust_policy() { claim_trust_policy; }
 break_trust_policy() { claim_trust_policy; }
 
+# ── the forge check claim ────────────────────────────────────────────────────
+
+# terragucci forge check compares what config identities expects with the
+# forge's live setup, reading only. The forge-check phase runs no workflow:
+# it makes the deployment environment prod through the API, writes a config
+# that names prod as an environment's forge_environment, and runs forge check
+# of the release on this machine with the sandbox's token. It runs only when
+# named (`prove forge-check`): it needs a release with forge check, which
+# 0.4.8 is not, so TERRAGUCCI_SANDBOX_RELEASE names one that has it. Under
+# BREAK the command is instead a bundle built from this tree
+# (break_bundle above) with the deployment branch comparison cut.
+FC_ENV=prod
+
+
+# One run of forge check: $WORK/fc-<name>.json; prints its exit code.
+fc_run() { # name
+  local code=0
+  if [ -n "$BREAK" ]; then
+    (cd "$WORK/fc" && env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE GITHUB_TOKEN="$GH_TOKEN" \
+      node "$WORK/fc-break.mjs" forge check --json --no-roots --repo "$REPO") >"$WORK/fc-$1.json" 2>"$DIR/logs/prove-fc-$1.err" || code=$?
+  else
+    (cd "$WORK/fc" && env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE GITHUB_TOKEN="$GH_TOKEN" \
+      npx -y "@intentius/terragucci@$RELEASE" forge check --json --no-roots --repo "$REPO") >"$WORK/fc-$1.json" 2>"$DIR/logs/prove-fc-$1.err" || code=$?
+  fi
+  cp "$WORK/fc-$1.json" "$DIR/logs/prove-fc-$1.json" 2>/dev/null || true
+  log "forge check ($1): exit $code; $(jq -c '[.results.rows[]? | {check, subject, found, status}]' "$WORK/fc-$1.json" 2>/dev/null || head -c 300 "$DIR/logs/prove-fc-$1.err")"
+  echo "$code"
+}
+
+fc_row() { # name, check -> the row for the environment
+  jq -c --arg c "$2" --arg e "$FC_ENV" '[.results.rows[]? | select(.where == "github" and .check == $c and .subject == $e)] | first // empty' "$WORK/fc-$1.json" 2>/dev/null
+}
+
+# forge/check: prod lets main alone deploy, so forge check exits 0 with its
+# environment and deployment-branches rows a match; then the rule is removed
+# (any branch may deploy), and it must exit 1 with the deployment-branches row
+# a mismatch expecting deploys from main only and finding any branch.
+# BREAK: the bundle takes any deployment branch rule as the default branch
+# alone, so the widened environment reports a match.
+claim_forge_check() {
+  local code row wrong=""
+  if [ -n "$BREAK" ]; then
+    break_bundle "$WORK/fc-break.mjs" \
+      forge-check.ts '"any branch: no deployment branch rule", "mismatch"' '"any branch: no deployment branch rule", "match"' \
+      forge-check.ts '      const ok = list.length === 1 && list[0]!.name === branch && list[0]!.type !== "tag";' '      const ok = true;' \
+      || { unrun forge/check "the BREAK bundle did not build"; return 0; }
+  fi
+  jq -n '{deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}}' \
+    | gh api -X PUT "repos/$REPO/environments/$FC_ENV" --input - >/dev/null \
+    || { unrun forge/check "could not make the environment $FC_ENV; a fine-grained token needs Administration read and write on $REPO"; return 0; }
+  gh api "repos/$REPO/environments/$FC_ENV/deployment-branch-policies" -q '.branch_policies[] | select(.type == "branch") | .name' | grep -qx main \
+    || gh api -X POST "repos/$REPO/environments/$FC_ENV/deployment-branch-policies" -f name=main -f type=branch >/dev/null \
+    || { unrun forge/check "could not limit the environment $FC_ENV to main"; return 0; }
+  mkdir -p "$WORK/fc"
+  printf 'forge: github\nbinary: tofu\nenvironments:\n  %s:\n    roots: ["envs/%s/**"]\n    forge_environment: %s\n' "$FC_ENV" "$FC_ENV" "$FC_ENV" > "$WORK/fc/terragucci.yml"
+  code="$(fc_run match)"
+  [ "$code" = 0 ] || wrong="$wrong / the matching setup exited $code, not 0"
+  jq -e '.status == "match"' <<<"$(fc_row match environment)" >/dev/null 2>&1 || wrong="$wrong / the environment row is not a match"
+  row="$(fc_row match deployment-branches)"
+  jq -e '.status == "match" and .found == "custom: main"' <<<"${row:-null}" >/dev/null 2>&1 || wrong="$wrong / the deployment-branches row is $(jq -c '{found, status}' <<<"${row:-null}" 2>/dev/null)"
+  # Any branch may deploy: the rule is removed.
+  jq -n '{deployment_branch_policy: null}' | gh api -X PUT "repos/$REPO/environments/$FC_ENV" --input - >/dev/null \
+    || { unrun forge/check "could not remove the deployment branch rule of $FC_ENV"; return 0; }
+  code="$(fc_run widened)"
+  row="$(fc_row widened deployment-branches)"
+  [ "$code" = 1 ] || wrong="$wrong / with any branch allowed it exited $code, not 1"
+  jq -e '.status == "mismatch" and (.expected | contains("deploys from main only")) and (.found | contains("any branch"))' <<<"${row:-null}" >/dev/null 2>&1 \
+    || wrong="$wrong / with any branch allowed the deployment-branches row is $(jq -c '{expected, found, status}' <<<"${row:-null}" 2>/dev/null)"
+  if [ -z "$wrong" ]; then
+    verdict forge/check pass "prod deploying from main alone: exit 0, found custom: main; with no rule: exit 1, expected '$(jq -r .expected <<<"$row")', found '$(jq -r .found <<<"$row")'"
+  else
+    verdict forge/check fail "${wrong# / }"
+  fi
+}
+
+prove_forge_check() { claim_forge_check; }
+break_forge_check() { claim_forge_check; }
+
 # ── commands ─────────────────────────────────────────────────────────────────
 
 close_and_prune() {
@@ -3090,8 +3170,8 @@ EOF
       case "$1" in
         --record) record="${2:?--record needs a file}"; shift 2 ;;
         --break) BREAK=1; shift ;;
-        merge|pull-request|modules|reports|audience|groups|check-job|trust-policy) phases="$phases $1"; shift ;;
-        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, audience, groups, check-job, trust-policy, --break, --record FILE)" ;;
+        merge|pull-request|modules|reports|audience|groups|check-job|trust-policy|forge-check) phases="$phases $1"; shift ;;
+        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, audience, groups, check-job, trust-policy, forge-check, --break, --record FILE)" ;;
       esac
     done
     # Under BREAK only the phases with locking or report claims run.

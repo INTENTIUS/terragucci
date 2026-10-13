@@ -76,9 +76,10 @@ packages/terragucci/src/relay.ts          chat/lambda chat/slack chat/teams
 packages/terragucci/src/unlock.ts         state/unlock state/gcs-unlock state/azurerm-unlock
 packages/terragucci/src/roles.ts          oidc/state-roles oidc/atmos-roles oidc/cloud-roles security/replan-apply-role apply/groups
 packages/terragucci/src/check-job.ts      apply/check-job
-packages/terragucci/src/identities.ts     identities/trust-policy
+packages/terragucci/src/identities.ts     identities/trust-policy forge/check
 packages/terragucci/src/groups.ts         apply/groups apply/check-job identities/trust-policy
 packages/terragucci/src/environments.ts   apply/groups apply/check-job identities/trust-policy
+packages/terragucci/src/forge-check.ts    forge/check
 packages/terragucci/src/oidc-trade.ts     security/replan-apply-role oidc/forgejo oidc/state-roles oidc/cloud-roles oidc/terragrunt
 packages/terragucci/src/traded.ts         security/replan-apply-role oidc/state-roles oidc/cloud-roles oidc/terragrunt
 packages/terragucci/src/export.ts         state/export state/terragrunt-export state/gcs state/azurerm
