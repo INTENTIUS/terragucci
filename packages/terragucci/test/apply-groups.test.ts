@@ -4,11 +4,12 @@
 // audience. With neither, a wave applies in one job, as it always has.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, validateConfig, type ForgeName, type ProjectSettings } from "../src/config";
 import { configSchemaProblems } from "../src/config-schema";
-import { applyGroups, groupOidc, groupsArg, rootsByGroup } from "../src/groups";
+import { applyGroups, groupOidc, groupsArg, rootsByGroup, SHARED_SUBJECT_TIP, sharedSubjectTip } from "../src/groups";
+import { main } from "../src/cli";
 import { parseGroups } from "../src/apply";
 import { wavesSpec, waveCallArgv } from "../src/chant-waves";
 import { renderPipeline, RenderError, type PipelineInput } from "../src/render";
@@ -16,7 +17,7 @@ import { withEnvironmentRoles } from "../src/environments";
 import { shapeProblems } from "../src/refusals";
 import { groupedPipeline, runMigrations } from "../src/migrate";
 import { PIPELINE_PATHS } from "../src/render";
-import { tmp, write } from "./helpers";
+import { backend, tmp, write } from "./helpers";
 
 const PROD = { plan_role: "arn:aws:iam::222222222222:role/prod-plan", apply_role: "arn:aws:iam::222222222222:role/prod-apply" };
 const DEV = { plan_role: "arn:aws:iam::111111111111:role/dev-plan", apply_role: "arn:aws:iam::111111111111:role/dev-apply" };
@@ -251,5 +252,53 @@ describe("apply groups: state migrations", () => {
   it("a pipeline with one apply job per wave is not grouped", () => {
     const dir = write(tmp(), { [PIPELINE_PATHS.gitlab]: renderPipeline(input("gitlab", { oidc: TOP })).content });
     expect(groupedPipeline(dir)).toBeUndefined();
+  });
+});
+
+describe("apply groups: the shared-subject tip", () => {
+  const ROLES = { ...TOP, roles: { "envs/prod/**": { plan: PROD.plan_role, apply: PROD.apply_role }, "envs/dev/**": { plan: DEV.plan_role, apply: DEV.apply_role } } };
+
+  it("identity groups share the job's subject on every forge; environments only on Forgejo", () => {
+    const identity = applyGroups({ oidc: ROLES }, layers.flat());
+    expect(sharedSubjectTip(identity, "github")).toBe("the apply jobs of the groups envs-dev, envs-prod and default carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's; on GitHub or GitLab, name each group's roots in environments, each with a forge_environment, and have each apply role trust its environment alone");
+    expect(sharedSubjectTip(identity, undefined)).toContain("name each group's roots in environments");
+    expect(sharedSubjectTip(identity, "forgejo")).toContain("Forgejo has no deployment environments");
+    const envs = applyGroups(ENVS, layers.flat());
+    expect(sharedSubjectTip(envs, "github")).toBeUndefined();
+    expect(sharedSubjectTip(envs, "gitlab")).toBeUndefined();
+    expect(sharedSubjectTip(envs, "forgejo")).toMatch(/^the apply jobs of the groups prod, dev and default carry the same OIDC token subject/);
+    expect(sharedSubjectTip(applyGroups({ oidc: TOP }, layers.flat()), "github")).toBeUndefined();
+  });
+
+  async function check(dir: string): Promise<{ code: number; out: string; err: string }> {
+    const cwd = process.cwd();
+    const out: string[] = [];
+    const err: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
+    const error = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void err.push(a.join(" ")));
+    process.chdir(dir);
+    try {
+      return { code: await main(["config", "check", "--json"]), out: out.join("\n"), err: err.join("\n") };
+    } finally {
+      process.chdir(cwd);
+      log.mockRestore();
+      error.mockRestore();
+    }
+  }
+  const roots = Object.fromEntries(layers.flat().map((r) => [`${r}/main.tf`, backend(`${r}.tfstate`)]));
+
+  it("config check gives it as a tip, never a warning, and exits 0", async () => {
+    const yml = `oidc:\n  roles:\n    "envs/prod/**": { plan: ${PROD.plan_role}, apply: ${PROD.apply_role} }\n    "envs/dev/**": { plan: ${DEV.plan_role}, apply: ${DEV.apply_role} }\n  plan_role: ${TOP.plan_role}\n  apply_role: ${TOP.apply_role}\n`;
+    const r = await check(write(tmp(), { ...roots, "terragucci.yml": `forge: github\n${yml}` }));
+    expect(r.code).toBe(0);
+    const results = JSON.parse(r.out).results;
+    expect(results.tips).toEqual([{ rule: SHARED_SUBJECT_TIP, message: expect.stringContaining("the groups envs-dev, envs-prod and default") }]);
+    expect(JSON.stringify(results.warnings ?? [])).not.toContain("subject");
+    const forgejo = await check(write(tmp(), { ...roots, "terragucci.yml": "forge: forgejo\nenvironments:\n  prod: { roots: [\"envs/prod/**\"] }\n  dev: { roots: [\"envs/dev/**\"] }\n" }));
+    expect(forgejo.code).toBe(0);
+    expect(JSON.parse(forgejo.out).results.tips).toEqual([{ rule: SHARED_SUBJECT_TIP, message: expect.stringContaining("Forgejo has no deployment environments") }]);
+    expect(JSON.parse(forgejo.out).results.warnings).toBeUndefined();
+    const github = await check(write(tmp(), { ...roots, "terragucci.yml": "forge: github\nenvironments:\n  prod: { roots: [\"envs/prod/**\"] }\n" }));
+    expect(JSON.parse(github.out).results.tips).toBeUndefined();
   });
 });

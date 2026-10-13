@@ -75,7 +75,8 @@ import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } fro
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
-import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, ONE_SUBJECT_ON_FORGEJO, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
+import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -977,6 +978,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!path) throw new ConfigError("no terragucci config here; pass --config <file>");
         let problems: string[] = [];
         let warnings: string[] = [];
+        const tips: { rule: string; message: string }[] = [];
         let access: StateAccess | undefined;
         let approval: ApprovalMode | undefined;
         try {
@@ -1021,8 +1023,12 @@ export async function main(argv: string[]): Promise<number> {
           // A state the roots' code does not address can't order a reader after its writer: say which.
           if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
-          // Forgejo's token names the ref alone, so each environment's apply jobs hold a token every environment's role on that ref trusts.
-          if (!config.projects && config.environments && (config.forge ?? detectForge(dirname(resolve(path)))?.value) === "forgejo") warnings.push(`environments: ${ONE_SUBJECT_ON_FORGEJO}`);
+          // One apply job per identity: groups whose jobs carry the same token subject get a tip, never a warning.
+          if (shape && problems.length === 0 && shape.kind !== "terragrunt") {
+            const roots = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
+            const tip = sharedSubjectTip(applyGroups(config, roots), config.forge ?? detectForge(repoDir)?.value);
+            if (tip) tips.push({ rule: SHARED_SUBJECT_TIP, message: tip });
+          }
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
@@ -1036,7 +1042,7 @@ export async function main(argv: string[]): Promise<number> {
           problems = e.problems ?? [e.message];
         }
         const file = relative(cwd, resolve(path)) || path;
-        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
+        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(tips.length && problems.length === 0 ? { tips } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
         if (problems.length === 0) {
           console.log(`${file}: ok`);
           if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
@@ -1044,6 +1050,7 @@ export async function main(argv: string[]): Promise<number> {
             console.log("state access:");
             for (const r of access.roles) console.log(`  ${r.role} (${r.cloud ? `${r.cloud}, ` : ""}${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
           }
+          for (const t of tips) console.log(`tip (${t.rule}): ${t.message}`);
         } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
         if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);
         return problems.length ? 2 : 0;

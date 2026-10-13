@@ -377,7 +377,7 @@ An environment names its roots by glob, and sets only the keys below for them. A
 - an environment with no `roots`, a glob listed by two environments, and a root of the repo that two environments' globs match, naming both environments and the root
 - a root given identities both by its environment and by `oidc.roles`, `oidc.gcp.roles` or `oidc.azure.roles`, naming the root, so each root's identities are set in one place
 
-On Forgejo, `config check` also warns that one ref's jobs carry the same token subject, so a role's trust cannot tell one environment's apply job from another's.
+On Forgejo, `config check` gives the tip [`terragucci-shared-subject`](/terragucci/reference/tips/#terragucci-shared-subject): one ref's jobs carry the same token subject, so a role's trust cannot tell one environment's apply job from another's.
 
 Each environment's roots apply in jobs of their own ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)). With `environments` the `apply-comment` job applies nothing: it answers the comment, and a push's run is re-run to apply again.
 

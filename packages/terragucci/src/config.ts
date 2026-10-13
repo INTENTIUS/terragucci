@@ -1751,8 +1751,6 @@ export const ENVIRONMENTS_PR_APPLY = "with environments each environment's roots
 export const ENVIRONMENTS_RESUME = "with environments each environment's roots apply in jobs of their own, and on GitHub and Forgejo the resume job applies every wave in one job; leave apply.resume unset and re-run the waiting wave's job once it is approved";
 /** Why `environments` refuses `ephemeral`: a pull request's copies apply in one job with the apply identities. */
 export const ENVIRONMENTS_EPHEMERAL = "with environments each environment's roots apply in jobs of their own, and an ephemeral copy applies in the pull request's one job; leave ephemeral unset";
-/** config check's warning for environments on Forgejo: the jobs' tokens cannot tell environments apart. */
-export const ONE_SUBJECT_ON_FORGEJO = "each environment applies in jobs of its own, and on Forgejo every job's OIDC token carries the same subject for one ref, so a role's trust cannot tell one environment's apply job from another's; keep each environment's roles apart with a protected branch per environment or a repo per environment";
 /** Why an environment's `forge_environment` is refused on Forgejo. */
 export const FORGE_ENVIRONMENT_NOT_FORGEJO = "Forgejo Actions has no deployment environments, so a job cannot run in one; leave forge_environment out of each environment";
 

@@ -23,8 +23,9 @@
  * (`OpWave.jobs`), each with the wave's roots it holds.
  */
 import { globMatch } from "./detect";
+import { SHARED_SUBJECT_TIP } from "./tips";
 import { environmentOf, withEnvironmentRoles } from "./environments";
-import { DEFAULT_GROUP, reservedGroupName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSpec } from "./config";
+import { DEFAULT_GROUP, reservedGroupName, type ForgeName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSpec } from "./config";
 
 export { DEFAULT_GROUP, reservedGroupName };
 
@@ -170,6 +171,27 @@ export function applyGroups(settings: Pick<ProjectSettings, "environments" | "oi
   }
   rest(left);
   return groups;
+}
+
+export { SHARED_SUBJECT_TIP };
+
+/** `a`, `a and b`, `a, b and c`. */
+const listed = (names: readonly string[]): string => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/**
+ * config check's tip when the groups' apply jobs carry the same OIDC token
+ * subject, so a role's trust cannot tell one group's jobs from another's:
+ * identity groups from roles by glob, which run in no forge environment, and
+ * environments on Forgejo, which has none. Undefined otherwise, and with
+ * fewer than two groups.
+ */
+export function sharedSubjectTip(groups: readonly ApplyGroup[] | undefined, forge: ForgeName | undefined): string | undefined {
+  if (!groups || groups.length < 2) return undefined;
+  const environments = groups.some((g) => g.environment !== undefined);
+  if (environments && forge !== "forgejo") return undefined;
+  const which = `the apply jobs of the groups ${listed(groups.map((g) => g.name))} carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's`;
+  if (forge === "forgejo") return `${which}; Forgejo has no deployment environments, so keep the groups' roles apart with a repo or a protected branch each`;
+  return `${which}; on GitHub or GitLab, name each group's roots in environments, each with a forge_environment, and have each apply role trust its environment alone`;
 }
 
 /** The group `root` is in: the first group whose selector it matches, else `default`. */
