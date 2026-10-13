@@ -50,6 +50,8 @@ export interface WavesSpecInput {
   approval: "ledger" | "pr-review" | "sealed";
   /** `waves.jobs` on wave `wave`. */
   shares?: { wave: number; shares: number };
+  /** One apply job per identity (./groups.ts): wave `wave`'s job groups, each with the wave's roots it holds and, with `waves.jobs`, its shares. */
+  jobs?: { wave: number; groups: { name: string; runs: string[]; shares?: number }[] };
   /** The argv that calls back into the wave's process with one call. */
   call: (what: WaveCall, ...args: string[]) => string[];
   /** Wave 1 runs the repo's state migrations first. */
@@ -74,6 +76,8 @@ export function wavesSpec(input: WavesSpecInput): OpWavesSpec {
       gate: input.gates?.[k - 1] ?? input.gate,
       approval: input.approval === "sealed" ? "sealed" : "ledger",
       ...(input.shares?.wave === k ? { shares: input.shares.shares } : {}),
+      // A deciding job plans every run and decides the gate; each group's job applies its runs (chant#3914).
+      ...(input.jobs?.wave === k ? { jobs: input.jobs.groups.map((g) => ({ name: g.name, runs: g.runs, ...(g.shares !== undefined && g.shares > 1 ? { shares: g.shares } : {}) })) } : {}),
       // A state migration in the change runs before wave 1 plans, behind its own gate: proved first, then held on that gate.
       ...(k === 1 && input.migrations ? { hooks: { before: { plan: [hook("migrations", "migrate-check"), hook("migration gate", "migrate", "approve")] } } } : {}),
     });
@@ -241,9 +245,9 @@ export async function serveWave(repo: string, dir: string, handle: (r: WaveReque
  */
 export function runChantWave(
   repo: string,
-  o: { wave: number; base: string; decide?: boolean; share?: number; env: NodeJS.ProcessEnv; chant?: string },
+  o: { wave: number; base: string; decide?: boolean; share?: number; group?: string; env: NodeJS.ProcessEnv; chant?: string },
 ): Promise<{ code: number; result?: RunOpWaveResult }> {
-  const args = ["run", "wave", "--spec", WAVES_SPEC, "--wave", String(o.wave), "--base", o.base, "--json", ...(o.decide ? ["--decide"] : []), ...(o.share !== undefined ? ["--share", String(o.share)] : [])];
+  const args = ["run", "wave", "--spec", WAVES_SPEC, "--wave", String(o.wave), "--base", o.base, "--json", ...(o.decide ? ["--decide"] : []), ...(o.group !== undefined ? ["--group", o.group] : []), ...(o.share !== undefined ? ["--share", String(o.share)] : [])];
   const env = { ...o.env, PATH: [join(repo, "node_modules", ".bin"), o.env.PATH ?? ""].join(delimiter) };
   return new Promise((resolve) => {
     const child = spawn(chantCommand(repo, o.chant ? { chant: o.chant } : {}), args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });

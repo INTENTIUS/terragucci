@@ -149,9 +149,19 @@ With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt
 
 | Guard | Covers | Does not cover |
 |---|---|---|
-| a pair per environment, scoped to its state keys | a root reading or writing another environment's state with the identity it runs as | code that reads the job's token file and assumes another environment's role itself: one job's token is good for every role whose trust names the job's subject, so the subject separates plan from apply, not environments |
+| a pair per environment, scoped to its state keys | a root reading or writing another environment's state with the identity it runs as | code that reads the job's token file and assumes another role itself: one job's token is good for every role whose trust names the job's subject and audience |
+| one apply job per pair ([per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)), each carrying only its own roles | a role's ARN reaching another environment's job through `TERRAGUCCI_ROOT_ROLES` | a role whose trust names only the default branch's subject, which every apply job carries |
+| with `environments`, each apply role trusting its environment's claims (below) | a root's code in one environment's apply job assuming another environment's apply role with its job's token | Forgejo, whose token cannot tell environments apart on one ref; the wave's deciding job, which plans every root with every environment's plan role (never an apply role, and on the plan audience), so a root's code planned there can read every state a plan role reaches |
 | `config check` | warns when one role is two environments' role, when a root reads another environment's state through `terraform_remote_state` (its roles must reach that state), and when a root is left with no role; lists each role's roots and the state keys it needs | the IAM policy itself: `config check` reads the roots' code, never the cloud, so a policy wider than the keys it lists goes unseen |
 | state contents never in the reports bucket | reports, `states.json`, `edges.json` and the estate page hold version ids and root paths only | a provider or step that prints state values into a job log |
+
+The environment condition each forge and cloud can check:
+
+| Forge | AWS | GCP | Azure |
+|---|---|---|---|
+| GitHub | `sub` = `repo:<owner>/<repo>:environment:<name>`; the environment's deployment branch rule keeps other branches out | the same `sub` in the attribute condition | a federated credential for the environment's subject |
+| GitLab | the environment's `oidc.audience` in `aud`, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | a condition on `environment`, `environment_protected` and `ref_protected` | a claims expression on the same claims |
+| Forgejo | none: one ref's jobs share a subject; use a repo or a protected branch per environment | none | none |
 
 ### Exporting a state
 

@@ -50,6 +50,14 @@ A project has more than five roots and no `waves.canary`.
 
 A hundred or more roots are planned on every change. Publish and pin shared modules.
 
+## config check tips
+
+`terragucci config check` prints these after `ok`, as `tip (<rule>): <text>`, and under `tips` with `--json`. They never change its exit code.
+
+### terragucci-shared-subject
+
+The repo applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), and the groups' jobs carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's. It names the groups. Roles by glob without `environments` run in no forge environment: on GitHub or GitLab, name each group's roots in [`environments`](/terragucci/reference/config/#environments), each with a `forge_environment`, and have each apply role trust its environment alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Forgejo has no deployment environments, with or without `environments`: keep the roles apart with a repo or a protected branch each.
+
 ## Plan tips
 
 Plan tips read a root's plan and show only in the plan report and its note.
