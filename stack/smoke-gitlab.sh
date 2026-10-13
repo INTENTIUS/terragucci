@@ -52,7 +52,8 @@ linked/gitlab-state|a root that reads the GitLab-managed state of another throug
 policy/tofu|a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial|
 affected/tofu|a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone|
 oidc/gitlab|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|
-oidc/audience-stages|with oidc.audience a map, the merge request plan job holds an id_token for the plan audience alone and the apply job on main one for the apply audience, and a role whose trust names the apply audience refuses the plan token|'
+oidc/audience-stages|with oidc.audience a map, the merge request plan job holds an id_token for the plan audience alone and the apply job on main one for the apply audience, and a role whose trust names the apply audience refuses the plan token|
+apply/groups|with environments prod and dev, each with its own roles and audience, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment that runs in that GitLab environment; each token names its environment and audience, which a condition on the environment of the other refuses; GitLab CE cannot protect an environment, so environment_protected is not shown|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
@@ -92,6 +93,7 @@ policy/tofu           runner weight=150
 affected/tofu         runner weight=150
 oidc/gitlab             runner weight=250
 oidc/audience-stages    runner weight=250
+apply/groups            runner weight=250
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -2712,5 +2714,237 @@ JS
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the plan job's token carried $(jq -r .aud <<<"$planned"), which the apply role's trust refuses, and apply-wave-1's $(jq -r .aud <<<"$applied"), each verified against the lab's keys"
+  return $rc
+}
+
+gitlab_claim_apply/groups() {
+  # One apply job per environment, each in its GitLab environment. environments
+  # prod (envs/prod/**, forge_environment: prod) and dev (envs/dev/**, its
+  # forge environment its name), each with its own plan and apply roles and
+  # its own oidc.audience: terragucci-prod and terragucci-dev. envs/prod/app
+  # and envs/dev/app, on local backends, read nothing of each other, so wave 1
+  # holds both: init renders apply-wave-1, which plans both with the plan
+  # roles and decides the gate, then apply-wave-1-prod (environment: prod)
+  # and apply-wave-1-dev (environment: dev), each declaring its own
+  # TERRAGUCCI_OIDC audience. Each root reads a data source whose program
+  # (probe.mjs) reads the job's TERRAGUCCI_OIDC id_token, checks it is the one
+  # in AWS_WEB_IDENTITY_TOKEN_FILE, verifies it against the lab's keys, and
+  # evaluates two trusts per environment on it, both kept beside it in the
+  # tree: an AWS trust (trust-<env>.json) on aud, the environment's audience,
+  # and sub, main of this project, which is what AWS can read of a GitLab
+  # token; and a GCP-style attribute condition (condition-<env>.json),
+  # assertion.environment == '<env>'. Nothing in the lab checks either, and
+  # nothing trades the token, so the probe's evaluation stands in for the
+  # check AWS or GCP makes. The push to main must render and run both group
+  # jobs; each job's token must carry its own environment and audience, which
+  # its own environment's trust and condition admit and the other's refuse;
+  # each job must carry its own environment's apply role alone; and the
+  # deciding job no apply role at all.
+  # What this cannot show: the lab is GitLab CE, and protected environments
+  # are a GitLab Premium feature. CE cannot protect prod, so nothing here
+  # limits who may run apply-wave-1-prod, and every token carries
+  # environment_protected false; a condition on environment_protected would
+  # refuse every job here. The claim tries to protect prod through the API
+  # and logs the answer, and logs the environment_protected each token held.
+  # BREAK: apply-wave-1-prod's environment in the pipeline init wrote is
+  # renamed dev, so its token names dev, which prod's condition refuses.
+  log() { echo "[smoke gitlab apply-groups] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project sha job wf rc=0 env found decided code
+  local prefix=arn:aws:iam::000000000000:role/terragucci-grp
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project apply-groups)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  for env in prod dev; do
+    mkdir -p "$work/tree/envs/$env/app"
+    echo "$env" > "$work/tree/envs/$env/app/env.txt"
+    echo 1 > "$work/tree/envs/$env/app/rev.txt"
+    cat > "$work/tree/envs/$env/app/main.tf" <<'TF'
+terraform {
+  backend "local" {}
+
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.5"
+    }
+  }
+}
+
+# The probe's result is the same in every job, so the deciding job's plan of
+# this root and its group job's plan match.
+data "external" "groups" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+TF
+  done
+  # Each environment's trusts, in each root: AWS's on aud and sub, and a GCP
+  # attribute condition on the environment claim.
+  for env in prod dev; do
+    for d in prod dev; do
+      jq -n --arg sub "project_path:$GL_USER/$project:ref_type:branch:ref:main" --arg aud "terragucci-$env" '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+        Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/gitlab:8929"},
+        Condition: {StringEquals: {"gitlab:8929:aud": $aud}, StringLike: {"gitlab:8929:sub": $sub}}}]}' > "$work/tree/envs/$d/app/trust-$env.json"
+      jq -n --arg c "assertion.environment == '$env'" '{attribute_condition: $c}' > "$work/tree/envs/$d/app/condition-$env.json"
+    done
+  done
+  for env in prod dev; do
+    cat > "$work/tree/envs/$env/app/probe.mjs" <<'JS'
+// In a GitLab job: the TERRAGUCCI_OIDC id_token, the same token in
+// AWS_WEB_IDENTITY_TOKEN_FILE, verified against the instance's keys; its
+// environment claims; the roles by root glob the job handed the binary and
+// this root's role; and, for prod and dev, the verdict of the AWS trust
+// (trust-<env>.json, on aud and sub) and of the GCP attribute condition
+// (condition-<env>.json) on the token. What it found goes to
+// terragucci-report/groups-<job>--<env>.json, which the job keeps as an
+// artifact. In an apply job it fails the job when its own environment's
+// trust or condition refuses the token, as the cloud would. It prints the
+// same result in every job.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+import { resolve } from "node:path";
+const e = process.env;
+const env = readFileSync(new URL("./env.txt", import.meta.url), "utf8").trim();
+if (e.GITLAB_CI !== "true") { console.log(JSON.stringify({ env })); process.exit(0); }
+const out = resolve(e.CI_PROJECT_DIR || "../../..", "terragucci-report");
+const found = { job: e.CI_JOB_NAME, env, problems: [] };
+const done = (code) => {
+  mkdirSync(out, { recursive: true });
+  writeFileSync(resolve(out, `groups-${found.job}--${env}.json`), JSON.stringify(found, null, 2) + "\n");
+  if (code) { console.error("groups probe: " + found.problems.join("; ")); process.exit(code); }
+  console.log(JSON.stringify({ env }));
+  process.exit(0);
+};
+try { found.roles = JSON.parse(e.TERRAGUCCI_ROOT_ROLES || "[]"); } catch { found.problems.push("TERRAGUCCI_ROOT_ROLES is not JSON"); done(1); }
+found.role = (e.AWS_ROLE_ARN || "").split("/").pop();
+const jwt = (e.TERRAGUCCI_OIDC || "").trim();
+if (!jwt) { found.problems.push("no TERRAGUCCI_OIDC in the job's environment"); done(1); }
+found.same_file = !!e.AWS_WEB_IDENTITY_TOKEN_FILE && readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim() === jwt;
+if (!found.same_file) found.problems.push("AWS_WEB_IDENTITY_TOKEN_FILE does not hold the TERRAGUCCI_OIDC token");
+const [h, p, s] = jwt.split(".");
+if (!s) { found.problems.push("TERRAGUCCI_OIDC holds no JWT"); done(1); }
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const head = dec(h), c = dec(p);
+const ISS = e.CI_SERVER_URL;
+try {
+  const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
+  // The lab advertises https endpoints but serves http, so the keys are read from the issuer's origin.
+  const jwks = new URL(new URL(conf.jwks_uri).pathname, ISS).href;
+  const jwk = (await (await fetch(jwks)).json()).keys.find((k) => k.kid === head.kid);
+  found.verified = head.alg === "RS256" && !!jwk
+    && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
+  if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${jwks}`);
+} catch (err) {
+  found.verified = false;
+  found.problems.push(`the keys of ${ISS} could not be read: ${err.message}`);
+}
+Object.assign(found, { iss: c.iss, aud: c.aud, sub: c.sub, environment: c.environment ?? null, environment_protected: c.environment_protected ?? null, deployment_tier: c.deployment_tier ?? null });
+// AWS's conditions on aud and sub, StringEquals and StringLike, as AWS reads them.
+const glob = (pat, v) => new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$").test(v);
+const admits = (doc) => [doc.Statement].flat().some((st) => st.Effect === "Allow"
+  && Object.entries(st.Condition ?? {}).every(([op, conds]) => Object.entries(conds).every(([k, want]) => {
+    const have = [c[k.slice(k.lastIndexOf(":") + 1)]].flat().filter((v) => v !== undefined).map(String);
+    const wants = [want].flat().map(String);
+    if (op === "StringEquals") return have.some((v) => wants.includes(v));
+    if (op === "StringLike") return have.some((v) => wants.some((w) => glob(w, v)));
+    return false;
+  })));
+// A GCP attribute condition of the form assertion.<claim> == '<value>' [&& ...].
+const holds = (cond) => cond.split("&&").every((term) => {
+  const m = /^\s*assertion\.([A-Za-z_]+)\s*==\s*'([^']*)'\s*$/.exec(term);
+  if (!m) throw new Error("the probe reads no condition but assertion.<claim> == '<value>': " + term);
+  return c[m[1]] !== undefined && String(c[m[1]]) === m[2];
+});
+const read = (f) => JSON.parse(readFileSync(new URL(f, import.meta.url), "utf8"));
+found.trust = { prod: admits(read("./trust-prod.json")), dev: admits(read("./trust-dev.json")) };
+found.condition = { prod: holds(read("./condition-prod.json").attribute_condition), dev: holds(read("./condition-dev.json").attribute_condition) };
+if (found.role.endsWith("-apply")) {
+  if (found.trust[env] !== true) found.problems.push(`the AWS trust of ${env} refuses this token (aud ${JSON.stringify(c.aud)})`);
+  if (found.condition[env] !== true) found.problems.push(`the attribute condition of ${env} refuses this token (environment ${JSON.stringify(c.environment)})`);
+}
+done(found.problems.length ? 1 : 0);
+JS
+  done
+  {
+    printf 'forge: gitlab\nbinary: tofu\ngate: never\noidc:\n  plan_role: %s-plan\n  apply_role: %s-apply\nenvironments:\n' "$prefix" "$prefix"
+    printf '  prod:\n    roots: ["envs/prod/**"]\n    forge_environment: prod\n    oidc:\n      plan_role: %s-prod-plan\n      apply_role: %s-prod-apply\n      audience: terragucci-prod\n' "$prefix" "$prefix"
+    printf '  dev:\n    roots: ["envs/dev/**"]\n    oidc:\n      plan_role: %s-dev-plan\n      apply_role: %s-dev-apply\n      audience: terragucci-dev\n' "$prefix" "$prefix"
+  } > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.gitlab/terragucci.yml"
+  # A job's environment name and TERRAGUCCI_OIDC audience, as init wrote them.
+  job_env() { # job
+    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^  environment:$/ { want = 1; next } inside && want && /^    name: / { print $2; exit }' "$wf"
+  }
+  job_aud() { # job
+    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    TERRAGUCCI_OIDC:$/ { want = 1; next } inside && want && /^      aud: / { print $2; exit }' "$wf"
+  }
+  for job in apply-wave-1 apply-wave-1-prod apply-wave-1-dev; do
+    grep -q "^$job:\$" "$wf" || { log "init wrote no $job job"; drop_work "$work"; return 1; }
+  done
+  log "apply-wave-1-prod: environment $(job_env apply-wave-1-prod), aud $(job_aud apply-wave-1-prod); apply-wave-1-dev: environment $(job_env apply-wave-1-dev), aud $(job_aud apply-wave-1-dev); apply-wave-1: environment $(job_env apply-wave-1), aud $(job_aud apply-wave-1)"
+  [ "$(job_env apply-wave-1-prod)" = prod ] && [ "$(job_aud apply-wave-1-prod)" = terragucci-prod ] \
+    && [ "$(job_env apply-wave-1-dev)" = dev ] && [ "$(job_aud apply-wave-1-dev)" = terragucci-dev ] && [ -z "$(job_env apply-wave-1)" ] \
+    || { log "the group jobs do not each declare their own environment and audience, or the deciding job declares an environment"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^[^ #][^:]*:$/ { inside = ($0 == "apply-wave-1-prod:") } inside && $0 == "    name: prod" { $0 = "    name: dev" } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    [ "$(job_env apply-wave-1-prod)" = dev ] || { break_setup_failed "apply-wave-1-prod still runs in $(job_env apply-wave-1-prod)"; drop_work "$work"; return 1; }
+    log "BREAK: apply-wave-1-prod runs in environment dev"
+  fi
+  probe_found() { # job, job name, env
+    gl_artifact "$project" "$1" "terragucci-report/groups-$2--$3.json" 2>/dev/null | jq -c . 2>/dev/null || true
+  }
+  # A group job's record: a verified token, the one in the token file, for
+  # ENV's environment and audience, which ENV's trust and condition admit and
+  # the other's refuse, and ENV's apply role alone in the job's variables.
+  group_ok() { # json env
+    local other=dev
+    [ "$2" = dev ] && other=prod
+    [ -n "$1" ] || { log "apply-wave-1-$2's probe wrote nothing"; return 1; }
+    jq -e '.verified == true and .same_file == true' <<<"$1" >/dev/null || { log "apply-wave-1-$2's token does not verify, or is not the one in the token file: $(jq -c .problems <<<"$1")"; return 1; }
+    jq -e --arg e "$2" '.environment == $e' <<<"$1" >/dev/null || { log "apply-wave-1-$2's token names environment $(jq -c .environment <<<"$1"), not $2"; return 1; }
+    jq -e --arg aud "terragucci-$2" '[.aud] | flatten == [$aud]' <<<"$1" >/dev/null || { log "apply-wave-1-$2's token carries aud $(jq -c .aud <<<"$1"), not terragucci-$2"; return 1; }
+    jq -e --arg e "$2" '.condition[$e] == true and .trust[$e] == true' <<<"$1" >/dev/null || { log "the trust or the condition of $2 refuses apply-wave-1-$2's token: $(jq -c '{trust, condition}' <<<"$1")"; return 1; }
+    jq -e --arg o "$other" '.condition[$o] == false' <<<"$1" >/dev/null || { log "the condition of $other admits apply-wave-1-$2's token"; return 1; }
+    jq -e --arg o "$other" '.trust[$o] == false' <<<"$1" >/dev/null || { log "the AWS trust of $other admits apply-wave-1-$2's token"; return 1; }
+    jq -e --arg r "terragucci-grp-$2-apply" '.role == $r' <<<"$1" >/dev/null || { log "envs/$2/app took $(jq -r .role <<<"$1") in apply-wave-1-$2"; return 1; }
+    jq -e --arg g "envs/$2/**" --arg r "$prefix-$2-apply" '.roles == [[$g, $r]]' <<<"$1" >/dev/null || { log "apply-wave-1-$2's TERRAGUCCI_ROOT_ROLES is $(jq -c .roles <<<"$1"), not $2's apply role alone"; return 1; }
+    jq -e '.problems == []' <<<"$1" >/dev/null || { log "apply-wave-1-$2's probe: $(jq -c .problems <<<"$1")"; return 1; }
+  }
+  # The deciding job's record: ENV's plan role, no apply role in the job's
+  # variables, and no environment on its token.
+  decide_ok() { # json env
+    [ -n "$1" ] || { log "apply-wave-1's probe in envs/$2/app wrote nothing"; return 1; }
+    jq -e --arg r "terragucci-grp-$2-plan" '.role == $r' <<<"$1" >/dev/null || { log "envs/$2/app took $(jq -r .role <<<"$1") in apply-wave-1, not $2's plan role"; return 1; }
+    jq -e '[.roles[][1] | select(endswith("-apply"))] == []' <<<"$1" >/dev/null || { log "apply-wave-1, which decides and applies nothing, carries an apply role: $(jq -c .roles <<<"$1")"; return 1; }
+    jq -e '.environment == null' <<<"$1" >/dev/null || { log "apply-wave-1's token names environment $(jq -c .environment <<<"$1")"; return 1; }
+  }
+  sha="$(gl_push "$work/tree" "$project" main "apply-groups: apply")" || { drop_work "$work"; return 1; }
+  gl_wait "$project" "$sha" push || { drop_work "$work"; return 1; }
+  [ "$PIPE_STATUS" = success ] || { log "main's pipeline ended $PIPE_STATUS"; rc=1; }
+  job="$(gl_job apply-wave-1)"
+  for env in prod dev; do
+    decided="$(probe_found "$job" apply-wave-1 "$env")"
+    log "apply-wave-1 (job ${job:-none}) in envs/$env/app: ${decided:-the probe wrote nothing}"
+    decide_ok "$decided" "$env" || rc=1
+  done
+  for env in prod dev; do
+    job="$(gl_job "apply-wave-1-$env")"
+    found="$(probe_found "$job" "apply-wave-1-$env" "$env")"
+    log "apply-wave-1-$env (job ${job:-none}): ${found:-the probe wrote nothing}"
+    group_ok "$found" "$env" || rc=1
+    log "apply-wave-1-$env's token: environment_protected $(jq -c .environment_protected <<<"${found:-null}" 2>/dev/null)"
+  done
+  # CE has no protected environments: the API answers, and the claim logs it.
+  code="$(curl -s -o /dev/null -w '%{http_code}' -H "PRIVATE-TOKEN: $GL_TOKEN" -X POST "$(gl_p "$project")/protected_environments" \
+    --data-urlencode "name=prod" --data-urlencode "deploy_access_levels[][access_level]=40" 2>/dev/null || true)"
+  log "protecting environment prod through the API answered ${code:-nothing} (GitLab CE has no protected environments; Premium does)"
+  drop_work "$work"
+  [ $rc = 0 ] && log "apply-wave-1 decided with the plan roles alone; apply-wave-1-prod's token named environment prod with terragucci-prod, which the condition of dev refuses, and apply-wave-1-dev's environment dev with terragucci-dev, which the condition of prod refuses; each job carried its own environment's apply role alone"
   return $rc
 }
