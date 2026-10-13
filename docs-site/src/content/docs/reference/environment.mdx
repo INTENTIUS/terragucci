@@ -270,6 +270,20 @@ A role's trust tells one environment's apply job from another's on the default b
 
 On GitHub the environment's subject no longer names the ref, so set the environment's deployment branch rule to the default branch alone; it is what keeps another branch's job out. A job in no environment (the wave's deciding job, and the `default` group's job) keeps the ref's subject, so the plan roles and the top-level apply role keep trusting it. On GitLab, protect the environment so that only those who may deploy to it can run its jobs. With an environment's `audience`, every group's job and the deciding job on GitHub and Forgejo fetch their tokens first and drop the token-request variables, as with the audience map.
 
+### The apply job's own check
+
+Each environment's apply job starts with `terragucci check-job`, before it fetches or trades any token. It compares what the forge tells the job with the environment's settings and stops the job, naming the expected and the found value, when one differs:
+
+| Forge | Forge environment | Ref | Runner |
+|---|---|---|---|
+| GitHub | the `environment` claim of an OIDC token the check requests for the audience `terragucci-check-job` and then drops; only in a job with `oidc`, which may request one | `GITHUB_REF` is the default branch, or a branch of `apply.branches` | with `self-hosted` among the runner's labels, the token's `runner_environment` (else `RUNNER_ENVIRONMENT`) is `self-hosted`; GitHub does not expose the labels |
+| GitLab | `CI_ENVIRONMENT_NAME` | `CI_COMMIT_REF_NAME` is the default branch, or a branch of `apply.branches`, and `CI_COMMIT_REF_PROTECTED` is `true` | `CI_RUNNER_TAGS` holds each of the job's tags |
+| Forgejo | not checked: Forgejo has no environments | `GITHUB_REF`, as on GitHub | with `self-hosted` among the labels, `RUNNER_ENVIRONMENT` is `self-hosted` when the runner sets it; not checked when it does not |
+
+The expected values are written into the job when `init` renders it, so the check does not read `terragucci.yml` from the commit the job runs. Jobs outside an environment (the deciding job, the `default` group's) run no check, and a repo without `environments` renders none.
+
+The check catches a mistake: a hand edit to the workflow, a renamed job, a dropped `environment:` or a mistyped runner label. It does not stop someone who can edit the workflow, since they can delete the check too. What keeps such a job out is the forge's settings (the environment's protection rules and deployment branches, protected runners and runner groups) and each role's trust (above).
+
 ## Agent integrations
 
 `agent.token_env` holds the agent's forge token; the agent's jobs hold no cloud role. See [Responses](/terragucci/reference/responses/#runtime).
@@ -327,6 +341,7 @@ A local run needs none of these.
 |---|---|
 | GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
+| An environment's apply job ([its check](#the-apply-jobs-own-check)) | GitHub and Forgejo: `GITHUB_REF`, `RUNNER_ENVIRONMENT`; GitLab: `CI_ENVIRONMENT_NAME`, `CI_COMMIT_REF_NAME`, `CI_COMMIT_REF_PROTECTED`, `CI_RUNNER_TAGS` |
 | GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Generated job variables

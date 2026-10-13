@@ -56,7 +56,25 @@ A hundred or more roots are planned on every change. Publish and pin shared modu
 
 ### terragucci-shared-subject
 
-The repo applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), and the groups' jobs carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's. It names the groups. Roles by glob without `environments` run in no forge environment: on GitHub or GitLab, name each group's roots in [`environments`](/terragucci/reference/config/#environments), each with a `forge_environment`, and have each apply role trust its environment alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Forgejo has no deployment environments, with or without `environments`: keep the roles apart with a repo or a protected branch each.
+The repo applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), and the groups' jobs carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's. It names the groups. Roles by glob without `environments` run in no forge environment: on GitHub or GitLab, name each group's roots in [`environments`](/terragucci/reference/config/#environments), each with a `forge_environment`, and have each apply role trust its environment alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Forgejo has no deployment environments, with or without `environments`, so the jobs of one ref carry one subject: keep the roles apart with a repo or a protected branch each.
+
+On GitHub and GitLab it also fires for environments that set the same `forge_environment`, whose tokens then name the same environment.
+
+The tips below read `environments` and stay silent without it.
+
+### terragucci-persistent-runner
+
+A runner that takes an environment's apply jobs could also take the plan jobs, or another environment's apply jobs. That holds when every label of one runner spec is among the other's, in the same GitHub runner group or in none. A runner kept between jobs can then carry a pull request's files or processes into an apply. The tip names both stages and the labels. Give each environment's apply runners a label of their own, and use runners that start clean for each job.
+
+An environment with no `runner` counts with the top-level `runner.apply`. Runners the config does not name are left out, and so are GitHub's hosted runners (labels without `self-hosted`, and no group).
+
+### terragucci-environment-role
+
+Two or more groups apply as the project's own `oidc.apply_role` (or `oidc.gcp.apply_service_account`, or `oidc.azure.apply_client_id`), and one of them is an environment with no identity of its own. That role's trust has to accept each of those jobs, so no environment condition can hold one environment's job back from it. Give each environment its own apply identity in its `oidc`. `config check` already warns about an identity that two environments or globs name themselves; this tip leaves that case out.
+
+### terragucci-gitlab-audience
+
+This tip is for GitLab with AWS. Two or more groups' apply jobs carry the same AWS token audience, and one of them is an environment with no `oidc.audience`. AWS cannot read GitLab's environment claims, so a different audience per environment is what lets each apply role accept its own jobs alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Set each environment's `oidc.audience`.
 
 ## Plan tips
 
