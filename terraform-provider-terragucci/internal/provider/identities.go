@@ -153,65 +153,66 @@ func (in identityInputs) args() []string {
 // reads the repo's roots, or from the control repo's file on the forge,
 // whose roots it does not read.
 func (s *sources) identities(ctx context.Context, in identityInputs) (*identitiesContract, []byte, error) {
-	command := []string{"terragucci"}
-	if s != nil && len(s.command) > 0 {
-		command = s.command
-	}
-	file := in.path
-	extra := in.args()
-	if file == "" {
-		if s == nil || s.control == nil {
-			return nil, nil, errors.New("set path, or configure the provider's forge and repository to read terragucci.yml from the control repo")
-		}
-		_, f, err := s.control.load(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !f.exists {
-			return nil, nil, fmt.Errorf("%s is not on %s of %s", s.control.path, s.control.branch, s.control.forge.repo)
-		}
-		dir, err := os.MkdirTemp("", "terragucci-identities-")
-		if err != nil {
-			return nil, nil, err
-		}
-		defer os.RemoveAll(dir)
-		file = filepath.Join(dir, filepath.Base(s.control.path))
-		if err := os.WriteFile(file, f.content, 0o600); err != nil {
-			return nil, nil, err
-		}
-		extra = append(extra, "--no-roots")
-	}
-	abs, err := filepath.Abs(file)
+	stdout, stderr, runErr, command, err := s.run(ctx, in, []string{"config", "identities"}, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	argv := append(append(append([]string{}, command[1:]...), "config", "identities", "--json", "--config", abs), extra...)
-	cmd := exec.CommandContext(ctx, command[0], argv...)
+	return parseIdentities(stdout, stderr, runErr, command)
+}
+
+// run runs `terragucci <sub> --json --config <file> <flags> <extra>` over in's
+// config: a local file, or the control repo's file on the forge, written to a
+// temporary directory and read with --no-roots. It returns the command's
+// stdout and stderr, the error it exited with, and the command as text; err
+// is set when the config could not be had.
+func (s *sources) run(ctx context.Context, in identityInputs, sub []string, extra []string) (stdout []byte, stderr string, runErr error, command string, err error) {
+	cmdline := []string{"terragucci"}
+	if s != nil && len(s.command) > 0 {
+		cmdline = s.command
+	}
+	file := in.path
+	flags := append(in.args(), extra...)
+	if file == "" {
+		if s == nil || s.control == nil {
+			return nil, "", nil, "", errors.New("set path, or configure the provider's forge and repository to read terragucci.yml from the control repo")
+		}
+		_, f, lerr := s.control.load(ctx)
+		if lerr != nil {
+			return nil, "", nil, "", lerr
+		}
+		if !f.exists {
+			return nil, "", nil, "", fmt.Errorf("%s is not on %s of %s", s.control.path, s.control.branch, s.control.forge.repo)
+		}
+		dir, terr := os.MkdirTemp("", "terragucci-identities-")
+		if terr != nil {
+			return nil, "", nil, "", terr
+		}
+		defer os.RemoveAll(dir)
+		file = filepath.Join(dir, filepath.Base(s.control.path))
+		if werr := os.WriteFile(file, f.content, 0o600); werr != nil {
+			return nil, "", nil, "", werr
+		}
+		flags = append(flags, "--no-roots")
+	}
+	abs, aerr := filepath.Abs(file)
+	if aerr != nil {
+		return nil, "", nil, "", aerr
+	}
+	argv := append(append(append(append([]string{}, cmdline[1:]...), sub...), "--json", "--config", abs), flags...)
+	cmd := exec.CommandContext(ctx, cmdline[0], argv...)
 	cmd.Dir = filepath.Dir(abs)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	return parseIdentities(stdout.Bytes(), stderr.String(), runErr, strings.Join(command, " "))
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	runErr = cmd.Run()
+	return out.Bytes(), errb.String(), runErr, strings.Join(cmdline, " "), nil
 }
 
 // parseIdentities reads `config identities --json`'s envelope: the contract, or why the command could not give one.
 func parseIdentities(stdout []byte, stderr string, runErr error, command string) (*identitiesContract, []byte, error) {
-	var e envelope
-	if err := json.Unmarshal(stdout, &e); err != nil {
-		// Not run at all, rather than run and failed: no such file, or not executable.
-		var xe *exec.ExitError
-		if runErr != nil && !errors.As(runErr, &xe) {
-			return nil, nil, fmt.Errorf("cannot run %s: %v; install terragucci, or set terragucci_path in the provider block", command, runErr)
-		}
-		msg := strings.TrimSpace(stderr)
-		if msg == "" && runErr != nil {
-			msg = runErr.Error()
-		}
-		return nil, nil, fmt.Errorf("%s config identities printed no JSON envelope: %s", command, msg)
-	}
-	if e.Command != "config identities" {
-		return nil, nil, fmt.Errorf("%s answered for %q, not config identities; it may be older than the data sources need", command, e.Command)
+	e, err := readEnvelope(stdout, stderr, runErr, command, "config identities")
+	if err != nil {
+		return nil, nil, err
 	}
 	if e.Exit != 0 || len(e.Results) == 0 || string(e.Results) == "null" {
 		return nil, nil, fmt.Errorf("terragucci config identities: %s", e.Error)
@@ -224,6 +225,27 @@ func parseIdentities(stdout []byte, stderr string, runErr error, command string)
 		return nil, nil, fmt.Errorf("terragucci config identities printed schema %q; the provider reads %s", c.Schema, identitiesSchema)
 	}
 	return &c, e.Results, nil
+}
+
+// readEnvelope reads a --json envelope for `want` (such as "config identities"), or says why there is none.
+func readEnvelope(stdout []byte, stderr string, runErr error, command, want string) (*envelope, error) {
+	var e envelope
+	if err := json.Unmarshal(stdout, &e); err != nil {
+		// Not run at all, rather than run and failed: no such file, or not executable.
+		var xe *exec.ExitError
+		if runErr != nil && !errors.As(runErr, &xe) {
+			return nil, fmt.Errorf("cannot run %s: %v; install terragucci, or set terragucci_path in the provider block", command, runErr)
+		}
+		msg := strings.TrimSpace(stderr)
+		if msg == "" && runErr != nil {
+			msg = runErr.Error()
+		}
+		return nil, fmt.Errorf("%s %s printed no JSON envelope: %s", command, want, msg)
+	}
+	if e.Command != want {
+		return nil, fmt.Errorf("%s answered for %q, not %s; it may be older than the data sources need", command, e.Command, want)
+	}
+	return &e, nil
 }
 
 // entry is one environment of the contract, by name.
