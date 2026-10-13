@@ -23,9 +23,17 @@ const layers = [["network"], ["app", "cache"]];
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
 const input = (forge: PipelineInput["forge"], oidc: PipelineInput["oidc"], extra: Partial<PipelineInput> = {}): PipelineInput =>
   ({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, drift: "0 6 * * *", ...extra }) as PipelineInput;
+/** The pipeline and its extra files as one text. */
 const render = (forge: PipelineInput["forge"], oidc: PipelineInput["oidc"], extra: Partial<PipelineInput> = {}): string => {
   const r = renderPipeline(input(forge, oidc, extra));
   return [r.content, ...(r.extra ?? []).map((e) => e.content)].join("\n");
+};
+/** The pipeline and its extra files, each parsed on its own, with their jobs (GitHub, Forgejo) or entries (GitLab) in one document. */
+const rendered = (forge: PipelineInput["forge"], oidc: PipelineInput["oidc"], extra: Partial<PipelineInput> = {}): Record<string, any> => {
+  const r = renderPipeline(input(forge, oidc, extra));
+  const docs = [r.content, ...(r.extra ?? []).map((e) => e.content)].map(body);
+  if (forge === "gitlab") return Object.assign({}, ...docs);
+  return { ...docs[0], jobs: Object.assign({}, ...docs.map((d) => d.jobs ?? {})) };
 };
 
 /** Every problem config.ts finds in `oidc`, or none. */
@@ -69,7 +77,7 @@ describe("oidc.audience as a map: config", () => {
 
 describe("oidc.audience as a map: GitLab", () => {
   it("each job's id_tokens declares its stage's audience alone", () => {
-    const doc = body(render("gitlab", MAP, { ephemeral: { roots: ["app"] } as never }));
+    const doc = rendered("gitlab", MAP, { ephemeral: { roots: ["app"] } as never });
     const aud = (job: string): unknown => doc[job].id_tokens;
     expect(aud("plan")).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.plan } });
     for (const j of ["apply-wave-1", "apply-wave-2", "ephemeral", "ephemeral-sweep"]) expect(aud(j), j).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.apply } });
@@ -80,7 +88,7 @@ describe("oidc.audience as a map: GitLab", () => {
   });
 
   it("confirm and mr-apply, apply jobs, declare the apply audience", () => {
-    const doc = body(render("gitlab", MAP, { applyWhen: "pull-request", applyMerge: "manual", comments: "*/5 * * * *", applyMergeTokenEnv: "MERGE_TOKEN" } as never));
+    const doc = rendered("gitlab", MAP, { applyWhen: "pull-request", applyMerge: "manual", comments: "*/5 * * * *", applyMergeTokenEnv: "MERGE_TOKEN" } as never);
     for (const j of ["confirm", "mr-apply"]) expect(doc[j].id_tokens, j).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.apply } });
     expect(doc.plan.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.plan } });
   });
@@ -91,7 +99,7 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
   const runs = (doc: Record<string, any>, job: string): string[] => (doc.jobs[job].steps as Step[]).map((s) => s.run ?? "").filter((r) => r.includes("TG_NO_OIDC_REQUEST"));
 
   it("each job's step asks for its stage's audience, first, and restarts without the token-request variables", () => {
-    const doc = body(render(forge, MAP, { ephemeral: { roots: ["app"] } as never }));
+    const doc = rendered(forge, MAP, { ephemeral: { roots: ["app"] } as never });
     const want: Record<string, string> = { plan: AUD.plan, replan: AUD.plan, "apply-wave-1": AUD.apply, "apply-wave-2": AUD.apply, "apply-comment": AUD.apply, ephemeral: AUD.apply, drift: AUD.drift };
     for (const [job, aud] of Object.entries(want)) {
       const steps = runs(doc, job);
@@ -114,7 +122,7 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
   });
 
   it("confirm, the resume and the sweep take the apply audience", () => {
-    const pr = body(render(forge, MAP, { applyWhen: "pull-request", applyMerge: "manual" } as never));
+    const pr = rendered(forge, MAP, { applyWhen: "pull-request", applyMerge: "manual" } as never);
     expect(runs(pr, "confirm").join("\n")).toContain(`tg oidc "$TERRAGUCCI_OIDC_FILE" '${AUD.apply}'`);
     expect(runs(pr, "confirm").join("\n")).toContain(PLAN);
     const r = renderPipeline(input(forge, MAP, { resume: 15, ephemeral: { roots: ["app"] } as never }));
@@ -124,7 +132,7 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
   });
 
   it("the re-plan's plan step, which reads traded credentials, asks for no token", () => {
-    const doc = body(render(forge, MAP));
+    const doc = rendered(forge, MAP);
     const plan = (doc.jobs.replan.steps as Step[]).find((s) => s.run?.includes("terragucci stage tf-plan"))!.run!;
     expect(plan).not.toMatch(/tg oidc|TERRAGUCCI_OIDC_FILE/);
   });
