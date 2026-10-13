@@ -594,11 +594,11 @@ export interface EnvironmentSettings {
   gate?: GateName;
   /** The environment's identities: its roots plan and apply with them, as `oidc.roles` gives a root glob a pair. */
   oidc?: EnvironmentOidc;
-  /** The runner the environment's jobs run on. config check refuses it while one apply job applies the roots of several environments. */
-  runner?: RunnerSpec | { apply?: RunnerSpec; plan?: RunnerSpec };
+  /** The runner the environment's apply jobs run on: a runner, or `{ apply: <runner> }`. A plan job plans every environment's roots, so it keeps the top-level runner. */
+  runner?: RunnerSpec | { apply?: RunnerSpec };
   /** How many of the environment's roots of one dependency layer plan at once. */
   parallelism?: number;
-  /** The forge environment its apply jobs run in. Default: the environment's name. config check refuses it while apply jobs run in no forge environment. */
+  /** The forge environment its apply jobs run in, on GitHub and GitLab. Default: the environment's name. Forgejo has none. */
   forge_environment?: string;
 }
 
@@ -606,7 +606,7 @@ export interface EnvironmentSettings {
 export interface EnvironmentOidc {
   plan_role?: string;
   apply_role?: string;
-  /** The token's audience. config check refuses it while one job's token serves the roots of every environment. */
+  /** The AWS token audience of the environment's apply jobs, over `oidc.audience`. */
   audience?: string;
   gcp?: { plan_service_account: string; apply_service_account: string };
   azure?: { plan_client_id: string; apply_client_id: string };
@@ -1733,14 +1733,26 @@ function checkRoles(r: unknown, where: string, problems: string[], what = "role"
   }
 }
 
+/** The apply group of the roots in no environment, or that no glob gives an identity (./groups.ts). */
+export const DEFAULT_GROUP = "default";
+/** Names an apply group cannot take: the rest group's, and chant's own job names (decide, share-<i>). */
+export const reservedGroupName = (name: string): boolean => name === DEFAULT_GROUP || name === "decide" || /^share-\d+$/.test(name);
 /** The per-environment keys config check accepts, as its problems list them. */
-const ENVIRONMENT_ACCEPTED = ["roots", "gate", "oidc", "parallelism"];
-/** Why an environment's `runner` is refused: a wave's apply job applies the roots of every environment in the wave. */
-export const ENVIRONMENT_RUNNER = "one apply job applies the roots of every environment in its wave, so a runner cannot be chosen per environment; set runner at the top level";
-/** Why an environment's `forge_environment` is refused: the apply jobs run in no forge environment. */
-export const ENVIRONMENT_FORGE_ENVIRONMENT = "the apply jobs run in no forge environment, so there is none to name; leave it unset";
-/** Why an environment's `oidc.audience` is refused: a job's token serves every root the job runs. */
-export const ENVIRONMENT_AUDIENCE = "a job takes one OIDC token for every root it runs, whatever their environments, so its audience is oidc.audience; set it there";
+const ENVIRONMENT_ACCEPTED = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"];
+/** Why an environment's `runner.plan` is refused: a plan job plans the roots of every environment. */
+export const ENVIRONMENT_PLAN_RUNNER = "a plan job plans the roots of every environment, so an environment's runner is its apply jobs' alone; set runner: { apply: <runner> }, and runner.plan at the top level";
+/** A forge environment's name, as GitHub and GitLab both take it. */
+export const FORGE_ENVIRONMENT_NAME = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
+/** Why an environment cannot take a name the apply jobs use for their own. */
+export const ENVIRONMENT_RESERVED = "names the apply jobs use for their own (default holds the roots in no environment; decide and share-<n> are a wave's own jobs)";
+/** Why `environments` refuses `apply.when: pull-request`: a comment's one job applies every environment's roots. */
+export const ENVIRONMENTS_PR_APPLY = "with environments each environment's roots apply in jobs of their own, with their own identities, and apply.when: pull-request applies every wave in the one job a comment starts; leave apply.when at merge";
+/** Why `environments` refuses `apply.resume` on GitHub and Forgejo: the resume job applies every wave in one job. */
+export const ENVIRONMENTS_RESUME = "with environments each environment's roots apply in jobs of their own, and on GitHub and Forgejo the resume job applies every wave in one job; leave apply.resume unset and re-run the waiting wave's job once it is approved";
+/** Why `environments` refuses `ephemeral`: a pull request's copies apply in one job with the apply identities. */
+export const ENVIRONMENTS_EPHEMERAL = "with environments each environment's roots apply in jobs of their own, and an ephemeral copy applies in the pull request's one job; leave ephemeral unset";
+/** Why an environment's `forge_environment` is refused on Forgejo. */
+export const FORGE_ENVIRONMENT_NOT_FORGEJO = "Forgejo Actions has no deployment environments, so a job cannot run in one; leave forge_environment out of each environment";
 
 const isGlob = (g: unknown): boolean => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g);
 
@@ -1761,14 +1773,28 @@ function checkEnvironments(v: unknown, where: string, problems: string[], s: Rec
   for (const [name, e] of Object.entries(v)) {
     const at = `${where}.${name}`;
     if (!ENVIRONMENT_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not an environment name; use lower-case letters, digits, "-" and "_"`);
+    else if (reservedGroupName(name)) problems.push(`${where}: ${name} is one of the ${ENVIRONMENT_RESERVED}; name the environment another way`);
     if (!isObject(e)) {
       problems.push(`${at} must be a map (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
       continue;
     }
     for (const k of Object.keys(e)) {
-      if (k === "runner") problems.push(`${at}.runner: ${ENVIRONMENT_RUNNER}`);
-      else if (k === "forge_environment") problems.push(`${at}.forge_environment: ${ENVIRONMENT_FORGE_ENVIRONMENT}`);
-      else if (!(ENVIRONMENT_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a per-environment setting (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
+      if (!(ENVIRONMENT_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a per-environment setting (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
+    }
+    if (e.runner !== undefined) {
+      // A runner for the environment's apply jobs: one runner, or { apply: <runner> }.
+      if (isObject(e.runner) && !("group" in e.runner)) {
+        for (const k of Object.keys(e.runner)) {
+          if (k === "plan") problems.push(`${at}.runner.plan: ${ENVIRONMENT_PLAN_RUNNER}`);
+          else if (k !== "apply") problems.push(`${at}.runner.${k} is not a setting (settings: apply)`);
+        }
+        if (e.runner.apply === undefined) problems.push(`${at}.runner must name the apply jobs' runner, such as { apply: [self-hosted, ${name}] }`);
+        else problems.push(...runnerProblems(e.runner.apply, `${at}.runner.apply`, s.forge));
+      } else problems.push(...runnerProblems(e.runner, `${at}.runner`, s.forge));
+    }
+    if (e.forge_environment !== undefined) {
+      if (typeof e.forge_environment !== "string" || !FORGE_ENVIRONMENT_NAME.test(e.forge_environment)) problems.push(`${at}.forge_environment must be a forge environment's name: letters, digits, "_", ".", "/" and "-"`);
+      else if (s.forge === "forgejo") problems.push(`${at}.forge_environment: ${FORGE_ENVIRONMENT_NOT_FORGEJO}`);
     }
     // A missing roots is environmentNeeds': required once the environment is whole.
     if (e.roots !== undefined && (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every(isGlob))) {
@@ -1805,9 +1831,9 @@ function checkEnvironmentOidc(o: unknown, where: string, problems: string[]): vo
     return;
   }
   for (const k of Object.keys(o)) {
-    if (k === "audience") problems.push(`${where}.audience: ${ENVIRONMENT_AUDIENCE}`);
-    else if (!(ENVIRONMENT_OIDC_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: plan_role, apply_role, gcp, azure)`);
+    if (!(ENVIRONMENT_OIDC_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${ENVIRONMENT_OIDC_KEYS.join(", ")})`);
   }
+  if (o.audience !== undefined && (typeof o.audience !== "string" || o.audience.trim() === "")) problems.push(`${where}.audience must be the audience of the environment's apply jobs' AWS token, such as sts.amazonaws.com/prod`);
   if (o.plan_role !== undefined || o.apply_role !== undefined) {
     for (const k of ["plan_role", "apply_role"] as const) if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
     if (typeof o.plan_role === "string" && o.plan_role !== "" && o.plan_role === o.apply_role) problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
@@ -1836,6 +1862,12 @@ function checkEnvironmentOidc(o: unknown, where: string, problems: string[]): vo
  */
 export function environmentNeeds(s: ProjectSettings, where: string): string[] {
   const out: string[] = [];
+  // Each environment's roots apply in jobs of their own (./groups.ts): what applies every wave in one job is refused beside them.
+  if (s.environments && isObject(s.environments) && Object.keys(s.environments).length > 0) {
+    if (s.apply?.when === "pull-request") out.push(`${where}.apply.when: ${ENVIRONMENTS_PR_APPLY}`);
+    if (s.apply?.resume !== undefined && s.forge !== undefined && s.forge !== "gitlab") out.push(`${where}.apply.resume: ${ENVIRONMENTS_RESUME}`);
+    if (s.ephemeral !== undefined) out.push(`${where}.ephemeral: ${ENVIRONMENTS_EPHEMERAL}`);
+  }
   for (const [name, e] of Object.entries(s.environments ?? {})) {
     if (!isObject(e)) continue;
     const at = `${where}.environments.${name}`;

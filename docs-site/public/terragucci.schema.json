@@ -1413,7 +1413,20 @@
       "minProperties": 1,
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z0-9_-]+$"
+        "pattern": "^[a-z0-9_-]+$",
+        "not": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "decide"
+              ]
+            },
+            {
+              "pattern": "^share-[0-9]+$"
+            }
+          ]
+        }
       },
       "additionalProperties": {
         "type": "object",
@@ -1444,6 +1457,11 @@
               "apply_role": {
                 "type": "string",
                 "minLength": 1
+              },
+              "audience": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "gcp": {
                 "type": "object",
@@ -1493,9 +1511,104 @@
               ]
             }
           },
+          "runner": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\s,]+$"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\s,]+$"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "group": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      "labels": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[^\\s,]+$"
+                        }
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "group"
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "apply": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[^\\s,]+$"
+                      },
+                      {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[^\\s,]+$"
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "group": {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          "labels": {
+                            "type": "array",
+                            "minItems": 1,
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[^\\s,]+$"
+                            }
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "group"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "apply"
+                ]
+              }
+            ]
+          },
           "parallelism": {
             "type": "integer",
             "minimum": 1
+          },
+          "forge_environment": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$"
           }
         },
         "additionalProperties": false,
@@ -1503,7 +1616,7 @@
           "roots"
         ]
       },
-      "description": "Named environments: each one's root globs, and its gate, identities and parallelism."
+      "description": "Named environments: each one's root globs, and its gate, identities, apply runner, parallelism and forge environment."
     },
     "defaults": {
       "$ref": "#/$defs/project",
@@ -2941,7 +3054,20 @@
           "minProperties": 1,
           "propertyNames": {
             "type": "string",
-            "pattern": "^[a-z0-9_-]+$"
+            "pattern": "^[a-z0-9_-]+$",
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "default",
+                    "decide"
+                  ]
+                },
+                {
+                  "pattern": "^share-[0-9]+$"
+                }
+              ]
+            }
           },
           "additionalProperties": {
             "type": "object",
@@ -2972,6 +3098,11 @@
                   "apply_role": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "audience": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "gcp": {
                     "type": "object",
@@ -3021,14 +3152,109 @@
                   ]
                 }
               },
+              "runner": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[^\\s,]+$"
+                      },
+                      {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[^\\s,]+$"
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "group": {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          "labels": {
+                            "type": "array",
+                            "minItems": 1,
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[^\\s,]+$"
+                            }
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "group"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "apply": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[^\\s,]+$"
+                          },
+                          {
+                            "type": "array",
+                            "minItems": 1,
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[^\\s,]+$"
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "group": {
+                                "type": "string",
+                                "pattern": "\\S"
+                              },
+                              "labels": {
+                                "type": "array",
+                                "minItems": 1,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[^\\s,]+$"
+                                }
+                              }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                              "group"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "apply"
+                    ]
+                  }
+                ]
+              },
               "parallelism": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "forge_environment": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$"
               }
             },
             "additionalProperties": false
           },
-          "description": "Named environments: each one's root globs, and its gate, identities and parallelism."
+          "description": "Named environments: each one's root globs, and its gate, identities, apply runner, parallelism and forge environment."
         }
       },
       "additionalProperties": false

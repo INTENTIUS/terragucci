@@ -117,10 +117,11 @@ export function runnerOf(runner: RunnerSettings | undefined, stage: RunnerStage 
  * by its stage. A job `runner` gives nothing keeps what it has, so a pipeline
  * without the key is the one it always was.
  */
-export function placeJobs(jobs: Map<string, unknown>, runner: RunnerSettings | undefined, forge: ForgeName): void {
-  if (runner === undefined) return;
+export function placeJobs(jobs: Map<string, unknown>, runner: RunnerSettings | undefined, forge: ForgeName, own?: ReadonlyMap<string, RunnerSpec>): void {
+  if (runner === undefined && !own?.size) return;
   for (const [name, job] of jobs) {
-    const spec = name === "workflow" ? undefined : runnerOf(runner, jobStage(name));
+    // A group's apply jobs run on its environment's runner (./groups.ts), over the pipeline's.
+    const spec = name === "workflow" ? undefined : (own?.get(name) ?? runnerOf(runner, jobStage(name)));
     const props = (job as { props?: Record<string, unknown> }).props;
     if (spec === undefined || !props) continue;
     if (forge === "gitlab") props.tags = typeof spec === "string" ? [spec] : Array.isArray(spec) ? [...spec] : [...(spec.labels ?? [])];
@@ -171,7 +172,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -184,6 +185,7 @@ import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
+import { groupsArg, type ApplyGroup } from "./groups";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
@@ -333,6 +335,13 @@ export interface PipelineInput {
   runner?: RunnerSettings;
   /** `pass`: secret and variable names the jobs that plan, apply and check drift get as environment variables (GitHub and Forgejo). */
   pass?: PassSettings;
+  /**
+   * One apply job per identity (./groups.ts): each wave of plain roots gets a
+   * job that plans every root with the plan identities and decides the gate,
+   * and a job per group with roots in the wave, with the group's identities,
+   * runner, forge environment and audience. Unset, a wave applies in one job.
+   */
+  applyGroups?: ApplyGroup[];
 }
 
 export interface RenderedPipeline {
@@ -964,6 +973,14 @@ interface ApplyJob {
   share?: number;
   /** The job after the last wave's shares. */
   done?: boolean;
+  /** One apply job per identity: the group whose roots it applies (./groups.ts). */
+  group?: string;
+  /** Its own identities, in place of the pipeline's: a group's, or the deciding job's with the audience map it fetches by. */
+  oidc?: OidcSettings;
+  /** A group's runner, over `runner`. */
+  runner?: RunnerSpec;
+  /** A group's forge environment (GitHub and GitLab). */
+  environment?: string;
 }
 
 /** Which wave an apply job runs, and how the waves are cut and gated. */
@@ -997,6 +1014,10 @@ export interface ApplyWaveInput {
   sharedLock?: string;
   /** `apply.branches`: the job passes the map and the branch it runs on, and the stage applies that branch's roots alone (branchLayers). */
   branches?: Record<string, string[]>;
+  /** One apply job per identity: the groups' selectors as `--groups` takes them (groupsArg). Without `group`, the job decides the wave with the plan identities. */
+  groups?: string;
+  /** With `groups`: the group this job applies. */
+  group?: string;
 }
 
 /**
@@ -1021,17 +1042,21 @@ export function applyScript(
   const gate = input.gate ?? "on-destructive";
   const count = applyWaves(layers, input.canary).length;
   const tg = input.terragrunt;
-  // A wave split across jobs: its own job decides (first, as wave 1's always is), and its shares apply; the done job posts the last success.
+  // A wave split across jobs: its own job decides (first, as wave 1's always is), and its shares or groups apply; the done job posts the last success.
   const share = input.shares !== undefined ? input.share : undefined;
-  const first = input.wave === 1 && share === undefined;
+  const piece = share !== undefined || input.group !== undefined;
+  const first = input.wave === 1 && !piece;
   // A Terragrunt pipeline whose last wave splits ends with a job past it, which runs any later wave with --rest.
-  const last = input.wave >= count && input.shares === undefined;
+  const last = input.wave >= count && input.shares === undefined && input.groups === undefined;
+  // The job that decides a wave split by identity plans every root with the plan identities, and the plan audience: it applies nothing.
+  const deciding = input.groups !== undefined && input.group === undefined;
+  const stage: "plan" | "apply" = deciding ? "plan" : "apply";
   const triage = responds(input.respond, "apply-failed");
   // shape: a repo-wide scope serializes the waves under a lock; otherwise a push's wave stands down for a newer push once it may apply.
   const scope = applyScope(binary);
   const repoWide = scope === "repo";
   // A share refused for plans that moved since its wave decided has no approved report for respond to compare.
-  const refused = responds(input.respond, "wave-refused") && share === undefined;
+  const refused = responds(input.respond, "wave-refused") && !piece;
   const args = [
     "--wave", String(input.wave),
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
@@ -1045,15 +1070,17 @@ export function applyScript(
     ...(input.shares !== undefined ? ["--shares", String(input.shares)] : []),
     ...(share !== undefined ? ["--share", String(share)] : []),
     ...(input.branches ? ["--branches", sh(branchesArg(input.branches)), "--branch", forge === "gitlab" ? '"$CI_COMMIT_BRANCH"' : '"$GITHUB_REF_NAME"'] : []),
+    ...(input.groups !== undefined ? ["--groups", sh(input.groups)] : []),
+    ...(input.group !== undefined ? ["--group", input.group] : []),
   ];
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
   return [
-    ...stageTokens(forge, oidc, "apply"),
+    ...stageTokens(forge, oidc, stage),
     READS_EXIT,
     forgeApi(forge),
     ...(input.synth ? [synthScript(input.synth, first ? "terragucci/apply" : undefined)] : []),
-    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
+    ...cloudScripts(forge, oidc, stage, "terragucci-apply", stage),
     ...(tg ? [tg.prelude] : []),
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
@@ -1085,7 +1112,15 @@ export function applyScript(
       ? tg
         ? ['tg status terragucci/apply success "every wave of units applied"', 'echo "all units applied"']
         : [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
-      : [share !== undefined ? `echo "wave ${input.wave} of ${count}, share ${share}, applied"` : input.shares !== undefined ? `echo "wave ${input.wave} of ${count} decided; its shares apply"` : `echo "wave ${input.wave} of ${count} applied"`]),
+      : [
+          input.group !== undefined
+            ? `echo "wave ${input.wave} of ${count}, group ${input.group}${share !== undefined ? `, share ${share}` : ""}, applied"`
+            : share !== undefined
+              ? `echo "wave ${input.wave} of ${count}, share ${share}, applied"`
+              : deciding
+                ? `echo "wave ${input.wave} of ${count} decided; its groups apply"`
+                : input.shares !== undefined ? `echo "wave ${input.wave} of ${count} decided; its shares apply"` : `echo "wave ${input.wave} of ${count} applied"`,
+        ]),
   ].join("\n");
 }
 
@@ -1409,6 +1444,28 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     ...(prMode
       ? ['if [ "$TG_OPEN" = 1 ]; then', ...openReply(count, input.merge).map((l) => `  ${l}`), "else", '  tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"', "fi"]
       : ['tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"']),
+  ].join("\n");
+}
+
+/**
+ * The apply-comment job's script with `environments` (./groups.ts): each
+ * environment's roots apply in jobs of their own, with their own identities,
+ * which one comment job cannot be. It decides who asked, as the apply would,
+ * and answers how to apply again, holding no credential.
+ */
+export function groupedCommentScript(layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", canary?: string[]): string {
+  const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
+  const canaryArg = canary?.length ? ` --canary ${sh(canary.join(","))}` : "";
+  return [
+    READS_EXIT,
+    forgeApi(forge),
+    `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-comment.json || exit 1`,
+    "read -r TG_PR TG_SHA TG_WAVE <<EOF",
+    `$(node -e '${APPLY_DECISION_JS}' terragucci-comment.json)`,
+    "EOF",
+    '[ -n "$TG_PR" ] || exit 0',
+    "export TG_PR TG_SHA",
+    'tg reply "each environment applies in jobs of its own, with its own identities, so a comment applies nothing in this repo. To apply ${TG_SHA:0:8} again, re-run the apply jobs of the run its push started."',
   ].join("\n");
 }
 
@@ -2093,8 +2150,23 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A Terragrunt repo's layers are its waves already; the stage splits a wave's units across its share jobs as it cuts them.
   const cut = tg ? layers : applyWaves(layers, input.canary);
   const sharesOf = (i: number): number => (waveJobs && cut[i] ? shareCount(cut[i], waveJobs) : 1);
+  // One apply job per identity, for plain roots: the groups' jobs of a wave apply side by side, as shares do.
+  const groups = !tg && input.applyGroups && input.applyGroups.length > 0 ? input.applyGroups : undefined;
+  const environmentGroups = groups?.some((g) => g.environment !== undefined) === true;
+  if (environmentGroups) {
+    // These apply every wave in one job with every group's identities, so environments refuse them (config check says so first).
+    if (input.applyWhen === "pull-request") throw new RenderError(`apply.when: ${ENVIRONMENTS_PR_APPLY}`);
+    if (input.resume && forge !== "gitlab") throw new RenderError(`apply.resume: ${ENVIRONMENTS_RESUME}`);
+    if (input.ephemeral) throw new RenderError(`ephemeral: ${ENVIRONMENTS_EPHEMERAL}`);
+  }
+  // An environment's audience: every group's job, and the deciding job, fetch their tokens first and drop the token-request variables
+  // (GitHub and Forgejo), so a job's code cannot ask for another environment's audience. GitLab declares each job's in id_tokens.
+  const groupAudience = groups?.some((g) => g.audience !== undefined) === true;
+  const audienceMap = (o: OidcSettings | undefined, apply?: string): OidcSettings | undefined =>
+    o && groupAudience ? { ...o, audience: { plan: stageAudience(o, "plan"), apply: apply ?? stageAudience(o, "apply"), drift: stageAudience(o, "drift") } } : o;
+  const groupsFlag = groups ? groupsArg(groups) : undefined;
   // Once one wave splits, every apply job holds the run's shared lock, so the shares apply side by side and no other run applies meanwhile.
-  const split = cut.some((_, i) => sharesOf(i) > 1);
+  const split = groups !== undefined || cut.some((_, i) => sharesOf(i) > 1);
   // shape: how the binary keeps applies apart (./apply-rows.ts). Only a repo-wide scope serializes the repo's apply jobs.
   const scope = applyScope(binary);
   const repoWide = scope === "repo";
@@ -2104,8 +2176,28 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   let before: string[] = [];
   for (let i = 0; i < waveCount; i++) {
     const wave = i + 1;
-    const n = sharesOf(i);
     const name = `apply-wave-${wave}`;
+    if (groups) {
+      // The wave's job plans every root with the plan identities and decides; then a job per group with roots in the wave.
+      const waveInput: ApplyWaveInput = { wave, canary: input.canary, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(waveJobs ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), groups: groupsFlag! };
+      const decider = audienceMap(oidc);
+      applyJobs.push({ name, wave, needs: before, step: `Plan wave ${wave} of ${waveCount} and decide its gate`, body: applyScript(binary, layers, forge, decider, { ...waveInput, sharedLock: name }), decides: true, ...(decider !== oidc ? { oidc: decider } : {}) });
+      before = [];
+      for (const g of groups) {
+        const mine = cut[i]!.filter((r) => g.roots.includes(r));
+        if (mine.length === 0) continue;
+        const n = waveJobs ? shareCount(mine, waveJobs) : 1;
+        const jobOidc = audienceMap(g.oidc, g.audience);
+        const own: Partial<ApplyJob> = { group: g.name, ...(jobOidc ? { oidc: jobOidc } : {}), ...(g.runner !== undefined ? { runner: g.runner } : {}), ...(g.forgeEnvironment !== undefined && forge !== "forgejo" ? { environment: g.forgeEnvironment } : {}) };
+        for (let s = 1; s <= n; s++) {
+          const job = n > 1 ? `${name}-${g.name}-share-${s}` : `${name}-${g.name}`;
+          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job }), ...(n > 1 ? { share: s } : {}) });
+          before.push(job);
+        }
+      }
+      continue;
+    }
+    const n = sharesOf(i);
     const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
     applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
     before = [name];
@@ -2121,7 +2213,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (before.length > 1 && tg) {
     const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
     applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest) });
-  } else if (before.length > 1) {
+  } else if (before.length > 1 || (groups && before.length > 0)) {
     applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
   }
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
@@ -2132,6 +2224,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const locksPlan = input.locksPlan === true;
   if (locksPlan && forge === "gitlab") throw new RenderError(`locks: ${NO_GITLAB_PLAN_LOCKS}`);
   const pushApplyJobs = prApply ? [] : applyJobs;
+  const groupRunners = new Map(pushApplyJobs.filter((j) => j.runner !== undefined).map((j) => [j.name, j.runner!]));
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
@@ -2181,12 +2274,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     };
     // One id_token per audience: AWS's (which the Terragrunt auth provider uses too), GCP's provider, Entra ID.
     // AWS's is the job's stage's (jobStage), which with oidc.audience a map differs by stage.
-    const idTokens = (stage: AudienceStage): Record<string, unknown> => needsToken
+    // A group's job (./groups.ts) declares its own identities' tokens, with its environment's audience.
+    const idTokens = (stage: AudienceStage, o: OidcSettings | undefined = oidc): Record<string, unknown> => needsToken
       ? {
           id_tokens: {
-            ...(hasAws(oidc) || credentials ? { TERRAGUCCI_OIDC: { aud: stageAudience(oidc, stage) } } : {}),
-            ...(oidc?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(oidc.gcp.workload_identity_provider) } } : {}),
-            ...(oidc?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: AZURE_AUDIENCE } } : {}),
+            ...(hasAws(o) || credentials ? { TERRAGUCCI_OIDC: { aud: stageAudience(o, stage) } } : {}),
+            ...(o?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(o.gcp.workload_identity_provider) } } : {}),
+            ...(o?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: AZURE_AUDIENCE } } : {}),
           },
         }
       : {};
@@ -2273,7 +2367,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         // Under a repo-wide scope, one apply at a time per project. With waves.jobs a wave's shares apply side by side, so the jobs hold
         // the run's shared lock tag instead of the resource group, which runs one job at a time (sharedApplyLock).
         ...(repoWide && !split ? { resource_group: "terragucci-apply" } : {}),
-        ...idTokens("apply"),
+        // The job that decides a wave split by identity plans with the plan identities, on the plan audience; a group's job takes its own.
+        ...idTokens(groups && job.decides ? "plan" : "apply", job.oidc ?? oidc),
+        // A group's forge environment, which the project can protect, and whose claims its token carries (environment, environment_protected).
+        ...(job.environment !== undefined ? { environment: { name: job.environment } } : {}),
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", job.body))],
         // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
@@ -2477,7 +2574,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: script(bash("SWEEP", ephemeralSweepScript(forge, oidc, binary, ephemeralPrelude))),
       } as never) as never);
     }
-    placeJobs(jobs, input.runner, forge);
+    placeJobs(jobs, input.runner, forge, groupRunners);
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
@@ -2714,7 +2811,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // apply role, beside any other apply: its waves refuse what another run is applying. The workflow is the default branch's, as for
   // every comment; commentApplyScript decides before it asks for any credential. A Terragrunt repo's
   // job runs its waves of units with --terragrunt, after the apply jobs' prelude.
-  entities.set("apply-comment", new Job({
+  if (environmentGroups) {
+    // Each environment's roots apply in jobs of their own, which a comment's one job cannot be: it answers, holding no credential.
+    entities.set("apply-comment", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
+      permissions: { contents: "read", "pull-requests": "write" },
+      env: { TG_TOKEN: "${{ github.token }}" },
+      steps: steps(new Step({ name: "Answer that a comment applies nothing here", shell: "bash", run: groupedCommentScript(layers, forge, input.canary) }), true, true, undefined, true),
+    } as never) as never);
+  } else entities.set("apply-comment", new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
@@ -2823,8 +2930,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // contents: write only to record a waiting wave's plan on the chant/lifecycle branch, and with a wave split across jobs to hold the shared lock's tags.
       permissions: { contents: writesLedger || sharedLock || scope === "resource" ? "write" : "read", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      // Under a repo-wide scope, one apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares apply side by side, under the run's shared lock.
-      ...(job.share === undefined && repoWide ? { concurrency: applyConcurrency(forge) } : {}),
+      // A group's forge environment: its token's subject names it, and its protection rules decide which refs may run the job (GitHub).
+      ...(job.environment !== undefined ? { environment: job.environment } : {}),
+      // Under a repo-wide scope, one apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares and groups apply side by side, under the run's shared lock.
+      ...(job.share === undefined && job.group === undefined && repoWide ? { concurrency: applyConcurrency(forge) } : {}),
       env: {
         ...passed,
         TG_TOKEN: "${{ github.token }}",
@@ -2836,8 +2945,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...costEnv,
       },
       steps: [
-        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, true, job.share !== undefined ? new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never) : undefined),
-        ...(job.decides ? [new Step({ name: "Hand the decision to the wave's shares", uses: upload, with: { name: `${DECIDED_DIR}-${job.wave}`, path: `${DECIDED_DIR}/`, "if-no-files-found": "error" } })] : []),
+        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, true, job.share !== undefined || job.group !== undefined ? new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never) : undefined),
+        ...(job.decides ? [new Step({ name: groups ? "Hand the decision to the wave's groups" : "Hand the decision to the wave's shares", uses: upload, with: { name: `${DECIDED_DIR}-${job.wave}`, path: `${DECIDED_DIR}/`, "if-no-files-found": "error" } })] : []),
         new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-${job.name}`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ...(agentApply
           ? [new Step({ name: "Keep the agent input", if: "failure()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${RESPOND_DIR}-${job.name}`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]
@@ -2956,7 +3065,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (forge === "forgejo") deferDeepSkips(entities);
   // Every workflow file goes through here, so its jobs run where runner places them.
   const serialize = (jobs: Map<string, never>): string => {
-    placeJobs(jobs, input.runner, forge);
+    placeJobs(jobs, input.runner, forge, groupRunners);
     return text((forge === "forgejo" ? forgejoSerializer : githubSerializer).serialize(jobs));
   };
   const extra: { path: string; content: string }[] = [];

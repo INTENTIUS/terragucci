@@ -15,6 +15,7 @@ import {
   ConfigError,
   COST_KEY_SECRET,
   EPHEMERAL_SWEEP,
+  FORGE_ENVIRONMENT_NOT_FORGEJO,
   gitlabPrApplyProblems,
   findConfig,
   ownJobsProblems,
@@ -47,6 +48,7 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { environmentGates, withEnvironmentRoles } from "./environments";
+import { applyGroups } from "./groups";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -287,6 +289,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   } else {
     ref = imageFor(binary.value);
   }
+  // One apply job per identity (./groups.ts), for plain roots: environments, or roles by glob that tell roots apart.
+  const groups = tgInput ? undefined : applyGroups(settings, layers.flat());
+  if (groups && forgeChoice.value === "forgejo") {
+    const named = Object.entries(settings.environments ?? {}).filter(([, e]) => e.forge_environment !== undefined).map(([n]) => n);
+    if (named.length) throw new ConfigError(named.map((n) => `environments.${n}.forge_environment: ${FORGE_ENVIRONMENT_NOT_FORGEJO}`).join("; "));
+  }
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   // The rollout job: when rollouts names a schedule and respond.rollout is not off.
   const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
@@ -307,6 +315,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     env: settings.env,
     // Each environment's identities ride the roles by root glob (./environments.ts); with no environments, oidc as it is.
     oidc: withEnvironmentRoles(settings.oidc, settings.environments),
+    ...(groups ? { applyGroups: groups } : {}),
     tokenEnv: settings.token_env,
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),

@@ -234,7 +234,7 @@ oidc:
 | Key | Jobs whose AWS token carries it |
 |---|---|
 | `plan` | `plan`, `replan` |
-| `apply` | the apply waves and their share jobs, `apply-comment`, `mr-apply`, `confirm`, `resume`, `ephemeral` and the ephemeral sweep |
+| `apply` | the apply waves and their share and group jobs (an environment's `oidc.audience` replaces it for its group's jobs), `apply-comment`, `mr-apply`, `confirm`, `resume`, `ephemeral` and the ephemeral sweep. A wave split into a job per identity decides in a job that carries the plan audience |
 | `drift` | `drift` |
 
 A stage the map leaves out keeps `sts.amazonaws.com`. `config check` refuses any other key and an empty audience.
@@ -242,6 +242,33 @@ A stage the map leaves out keeps `sts.amazonaws.com`. `config check` refuses any
 Each role's trust condition on `aud` lists the audiences of the jobs that assume it. The apply role lists the apply audience alone. The plan role lists the plan audience, the drift audience when `drift` is set, and the apply audience when `apply.when: pull-request` is set: `confirm` is an apply job that plans with the plan role. GCP and Azure tokens keep their audiences.
 
 With the map, a GitHub or Forgejo step that takes the job's cloud identity fetches its tokens first, then starts again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`. On GitLab, each job's `id_tokens` declares its stage's audience alone ([Token audiences per stage](/terragucci/reference/threat-model/#token-audiences-per-stage)).
+
+### Trust per environment
+
+With [`environments`](/terragucci/reference/config/#environments) each environment's roots apply in jobs of their own ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)), which carry the environment's forge environment and its `oidc.audience`:
+
+```yaml
+oidc:
+  plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+  apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    oidc:
+      plan_role: arn:aws:iam::444455556666:role/prod-plan
+      apply_role: arn:aws:iam::444455556666:role/prod-apply
+      audience: terragucci-prod
+```
+
+A role's trust tells one environment's apply job from another's on the default branch by the claims each forge gives it:
+
+| Forge | AWS | GCP | Azure |
+|---|---|---|---|
+| GitHub | the apply role trusts `sub` = `repo:<owner>/<repo>:environment:<name>` alone | the same `sub` in the provider's attribute condition, or the service account's binding | a federated credential whose subject is `repo:<owner>/<repo>:environment:<name>` |
+| GitLab | the environment's `oidc.audience` in the role's `aud` condition, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | an attribute condition on `assertion.environment`, `assertion.environment_protected` and `assertion.ref_protected` | a federated credential that matches on the same claims with a claims expression |
+| Forgejo | one ref's jobs carry the same subject, so a role cannot tell environments apart: keep them apart with a repo per environment, or a protected branch per environment | the same | the same |
+
+On GitHub the environment's subject no longer names the ref, so set the environment's deployment branch rule to the default branch alone; it is what keeps another branch's job out. A job in no environment (the wave's deciding job, and the `default` group's job) keeps the ref's subject, so the plan roles and the top-level apply role keep trusting it. On GitLab, protect the environment so that only those who may deploy to it can run its jobs. With an environment's `audience`, every group's job and the deciding job on GitHub and Forgejo fetch their tokens first and drop the token-request variables, as with the audience map.
 
 ## Agent integrations
 
