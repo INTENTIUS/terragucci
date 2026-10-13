@@ -2611,6 +2611,11 @@ describe("GCP and Azure credentials", () => {
     expect(JSON.stringify(all.plan)).toContain(OIDC.plan_role);
   });
 
+  it("gitlab: the Azure id_token carries oidc.azure.audience, as GitHub's and Forgejo's token request does", () => {
+    const doc = body(renderWith("gitlab", { azure: { ...AZURE, audience: "api://AzureADTokenExchangeUSGov" } }, { drift: "0 6 * * *" }));
+    for (const j of ["plan", "apply-wave-1", "drift"]) expect(doc[j].id_tokens).toEqual({ TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
+  });
+
   it.each(FORGES)("%s: drift takes the plan identities", (forge) => {
     const run = driftScript("tofu", layers, forge, CLOUDS);
     expect(run).toContain(GCP.plan_service_account);
