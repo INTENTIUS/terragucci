@@ -33,6 +33,7 @@ import {
   DEPENDENTS,
   DURATION,
   ENVIRONMENT_NAME,
+  FORGE_ENVIRONMENT_NAME,
   EPHEMERAL_KEYS,
   FORGES,
   GATE_NAMES,
@@ -304,20 +305,24 @@ const ephemeral = map(EPHEMERAL_KEYS as (keyof EphemeralSettings)[], {
   sweep: whole(5, 60),
 } satisfies Record<keyof EphemeralSettings, JsonSchema>, { required: ["roots"] });
 
-const environmentOidc = map(["plan_role", "apply_role", "gcp", "azure"], {
+const environmentOidc = map(["plan_role", "apply_role", "audience", "gcp", "azure"], {
   plan_role: { type: "string", minLength: 1 },
   apply_role: { type: "string", minLength: 1 },
+  audience: { type: "string", minLength: 1, pattern: "\\S" },
   gcp: map(["plan_service_account", "apply_service_account"], { plan_service_account: serviceAccount, apply_service_account: serviceAccount }, { required: ["plan_service_account", "apply_service_account"] }),
   azure: map(["plan_client_id", "apply_client_id"], { plan_client_id: { type: "string", minLength: 1 }, apply_client_id: { type: "string", minLength: 1 } }, { required: ["plan_client_id", "apply_client_id"] }),
 }, { minProperties: 1, dependentRequired: { plan_role: ["apply_role"], apply_role: ["plan_role"] } });
 
 /** One environment of `environments`. A repo's own file names its roots; a control repo's defaults and projects may hold part of one, merged by name. */
 function environment(top: boolean): JsonSchema {
-  return map(["roots", "gate", "oidc", "parallelism"], {
+  return map(["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"], {
     roots: { type: "array", minItems: 1, items: glob },
     gate: enumOf(GATE_NAMES),
     oidc: environmentOidc,
+    // The environment's apply jobs' runner: one runner, or { apply: <runner> }.
+    runner: { anyOf: [runnerSpec, map(["apply"], { apply: runnerSpec }, { required: ["apply"] })] },
     parallelism: whole(1),
+    forge_environment: pat(FORGE_ENVIRONMENT_NAME),
   }, top ? { required: ["roots"] } : {});
 }
 
@@ -449,9 +454,9 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     environments: {
       type: "object",
       minProperties: 1,
-      propertyNames: pat(ENVIRONMENT_NAME),
+      propertyNames: { ...pat(ENVIRONMENT_NAME), not: { anyOf: [{ enum: ["default", "decide"] }, { pattern: "^share-[0-9]+$" }] } },
       additionalProperties: environment(top),
-      description: "Named environments: each one's root globs, and its gate, identities and parallelism.",
+      description: "Named environments: each one's root globs, and its gate, identities, apply runner, parallelism and forge environment.",
     },
   };
 }

@@ -13,7 +13,7 @@ import type { ProjectSettings } from "./config";
 export type ShapeKind = "roots" | "synth" | "atmos" | "terragrunt" | "terramate";
 
 /** What a setting asks the pipeline to do, which a shape may refuse. */
-export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "oidc-gcp-roles" | "oidc-azure-roles" | "steps" | "ephemeral" | "waves-after" | "environment-oidc" | "environment-parallelism";
+export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "oidc-gcp-roles" | "oidc-azure-roles" | "steps" | "ephemeral" | "waves-after" | "environment-oidc" | "environment-parallelism" | "environment-jobs";
 
 /** The key each feature is set by, as a problem names it. */
 export const FEATURE_KEY: Record<Feature, string> = {
@@ -30,6 +30,7 @@ export const FEATURE_KEY: Record<Feature, string> = {
   "waves-after": "waves.after",
   "environment-oidc": "environments",
   "environment-parallelism": "environments",
+  "environment-jobs": "environments",
 };
 
 export const ROOTS_NOT_ATMOS = "an Atmos repo's roots are the instances atmos describe stacks lists, so remove roots and leave an instance out with metadata.enabled: false";
@@ -78,6 +79,8 @@ export const OIDC_ROLES_NOT_TERRAGRUNT = "roles by root glob are for plain roots
 export const ENVIRONMENT_OIDC_NOT_TERRAGRUNT = "an environment's oidc gives plain roots their identities; in a Terragrunt repo, set terragrunt.credentials by unit glob and leave oidc out of each environment";
 /** A Terragrunt wave runs its units in one run --all, whose parallelism is terragrunt.parallelism. */
 export const ENVIRONMENT_PARALLELISM_NOT_TERRAGRUNT = "Terragrunt runs a wave's units in one run --all, so set terragrunt.parallelism and leave parallelism out of each environment";
+/** A Terragrunt wave applies its units in one job, so no environment has apply jobs of its own to place or name. */
+export const ENVIRONMENT_JOBS_NOT_TERRAGRUNT = "Terragrunt applies a wave's units in one job, so no environment has apply jobs of its own; leave runner and forge_environment out of each environment";
 /** A Terragrunt repo runs its units in one Terragrunt run, so no unit takes a GCP or Azure identity of its own. */
 export const OIDC_CLOUD_ROLES_NOT_TERRAGRUNT = "identities by root glob are for plain roots, and Terragrunt runs a repo's units together with the job's identity; remove it";
 
@@ -87,7 +90,7 @@ const TABLE: Record<ShapeKind, Partial<Record<Feature, string>>> = {
   synth: { generate: SYNTH_GENERATE, "drift-pr": SYNTH_DRIFT_PR, rollouts: SYNTH_ROLLOUTS },
   atmos: { roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL, "waves-after": WAVES_AFTER_NOT_ATMOS },
   terramate: { roots: ROOTS_NOT_TERRAMATE, synth: SYNTH_NOT_TERRAMATE, generate: TERRAMATE_GENERATE, "drift-pr": TERRAMATE_DRIFT_PR, rollouts: TERRAMATE_ROLLOUTS, "waves-after": WAVES_AFTER_NOT_TERRAMATE },
-  terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT, "oidc-gcp-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "oidc-azure-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "waves-after": WAVES_AFTER_NOT_TERRAGRUNT, "environment-oidc": ENVIRONMENT_OIDC_NOT_TERRAGRUNT, "environment-parallelism": ENVIRONMENT_PARALLELISM_NOT_TERRAGRUNT },
+  terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT, "oidc-gcp-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "oidc-azure-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "waves-after": WAVES_AFTER_NOT_TERRAGRUNT, "environment-oidc": ENVIRONMENT_OIDC_NOT_TERRAGRUNT, "environment-parallelism": ENVIRONMENT_PARALLELISM_NOT_TERRAGRUNT, "environment-jobs": ENVIRONMENT_JOBS_NOT_TERRAGRUNT },
 };
 
 /** Why `kind` refuses `feature`, or undefined when it does not. */
@@ -122,10 +125,11 @@ export function wants(s: ProjectSettings, feature: Feature): boolean {
     case "waves-after":
       return typeof s.waves === "object" && s.waves !== null && s.waves.after !== undefined && Object.keys(s.waves.after).length > 0;
     case "environment-oidc":
-    case "environment-parallelism": {
-      const key = feature === "environment-oidc" ? "oidc" : "parallelism";
+    case "environment-parallelism":
+    case "environment-jobs": {
+      const keys = feature === "environment-oidc" ? ["oidc"] : feature === "environment-parallelism" ? ["parallelism"] : ["runner", "forge_environment"];
       const envs = s.environments;
-      return typeof envs === "object" && envs !== null && Object.values(envs).some((e) => typeof e === "object" && e !== null && (e as unknown as Record<string, unknown>)[key] !== undefined);
+      return typeof envs === "object" && envs !== null && Object.values(envs).some((e) => typeof e === "object" && e !== null && keys.some((k) => (e as unknown as Record<string, unknown>)[k] !== undefined));
     }
   }
 }
