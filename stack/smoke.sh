@@ -218,6 +218,7 @@ linked/fresh|on a fresh estate the plan job holds back a root whose upstream is 
 oidc/forgejo|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
 oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job of main each hold a token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable in its environment|
 apply/groups|with environments prod and dev, each with its own roles, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment, each carrying the apply role of its own environment alone, under one approval; on Forgejo both jobs present the same token subject, so the roles each job is handed are all that keeps them apart|
+apply/check-job|with environments prod and dev and the condition of the apply jobs widened by hand to any push, the apply job of each environment on a branch it does not apply from fails before it trades a token, naming the expected and the found ref, and on main passes its check and trades its token; Forgejo has no deployment environments and names no runner labels to a job, so the ref is what is checked here|
 apply/steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy/tofu|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment/plan|a pull request comment re-plans on request and never applies; apply on an open pull request, a root outside the configured ones, and approve, merge, destroy, import, state or force-unlock are each answered with a refusal, and nothing plans or applies|
@@ -4883,6 +4884,188 @@ JS
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "apply-wave-1 decided with the plan roles alone, then under one approval apply-wave-1-prod and apply-wave-1-dev each applied their own root, each job carrying its own environment's apply role alone"
+  return $rc
+}
+
+claim_apply/check_job() {
+  # An environment's apply job that runs on a ref its environment does not
+  # apply from stops before it takes a token. environments prod (envs/prod/**)
+  # and dev (envs/dev/**), each with its own plan and apply roles, made in
+  # floci, and gate: never. Wave 1 holds envs/prod/app and envs/dev/app, so
+  # init renders apply-wave-1, which decides, and apply-wave-1-prod and
+  # apply-wave-1-dev, whose first line is `terragucci check-job --forge
+  # forgejo --environment <env> --branches "$TG_BRANCH"`. Each root reads a
+  # data source whose program, a child of the binary, trades the job's token
+  # with floci's STS for the root's role and writes a mark to floci under the
+  # commit and the job's name: the probe runs only once the job has fetched
+  # its token and handed the binary its role.
+  # The hand edit: the condition each apply job of wave 1 runs on, `if:
+  # github.ref == ... default_branch`, is widened to any push, as someone
+  # testing the pipeline on a branch might. The first push, to main, applies:
+  # each group job's check names its ref and lets the job go on, and both
+  # group jobs leave a mark. The second, to the branch hotfix, runs the same
+  # jobs there: apply-wave-1 decides, and each group job must fail, its log
+  # naming the expected ref refs/heads/main and the found refs/heads/hotfix,
+  # with no mark from it, so it took no token to STS.
+  # What this cannot show: Forgejo has no deployment environments, so the
+  # forge environment is not checked here (GitLab and github.com check it),
+  # and its runner names no labels to a job; the ref is what a Forgejo job
+  # can be checked on. The check is a line of the job: whoever widened the
+  # condition could cut it too, as the BREAK does.
+  # BREAK: init runs a bundle whose apply jobs lose their check-job line
+  # (render.ts), so the group jobs on hotfix go on to trade their tokens.
+  log() { echo "[smoke check-job] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/check-job" sha first second rc=0 env role wf m line TERRAGUCCI="$TERRAGUCCI"
+  local marks=shop-terraform-state/check-job-marks prefix=arn:aws:iam::000000000000:role/terragucci-cj
+  local cond="    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      render.ts '    ...(input.checkJob ? [input.checkJob] : []),' '' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  fresh_repo check-job || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  # The job's own pair and each environment's, each trusting Forgejo's issuer.
+  # floci checks no condition, so the trust only lets its STS answer.
+  iam() { curl -sS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$1" --data-urlencode Version=2010-05-08 "${@:2}"; }
+  for role in plan apply prod-plan prod-apply dev-plan dev-apply; do
+    role="terragucci-cj-$role"
+    iam DeleteRole --data-urlencode "RoleName=$role" >/dev/null 2>&1 || true
+    iam CreateRole --data-urlencode "RoleName=$role" --data-urlencode "AssumeRolePolicyDocument=$(jq -cn '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/forgejo:3000/api/actions"}}]}')" >/dev/null || true
+    iam GetRole --data-urlencode "RoleName=$role" | grep -q "<RoleName>$role</RoleName>" || { log "floci has no role $role"; drop_work "$work"; return 1; }
+  done
+  for env in prod dev; do
+    mkdir -p "$work/tree/envs/$env/app"
+    echo 1 > "$work/tree/envs/$env/app/rev.txt"
+    jq -n --arg env "$env" --arg marks "$marks" '{env: $env, marks: $marks}' > "$work/tree/envs/$env/app/probe.json"
+    cat > "$work/tree/envs/$env/app/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+# The probe's result is the same in every job, so the deciding job's plan of
+# this root and its group job's plan match.
+data "external" "check" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+TF
+    cat > "$work/tree/envs/$env/app/probe.mjs" <<'JS'
+// In a job, as a child of the binary: the job's name and ref, this root's
+// role, and the role floci's STS gave for the job's token, written to floci
+// as <marks>/<commit>/<job>--<environment>.json. A mark means the job got
+// past its first lines, fetched its token and traded it.
+import { readFileSync } from "node:fs";
+const e = process.env;
+const fail = (m) => { console.error("check-job probe: " + m); process.exit(1); };
+const cfg = JSON.parse(readFileSync(new URL("./probe.json", import.meta.url), "utf8"));
+if (!e.GITHUB_JOB || !e.GITHUB_SHA) fail("no GITHUB_JOB or GITHUB_SHA, so the probe cannot say which job it ran in");
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) fail("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the root took no role");
+const jwt = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim();
+const claims = JSON.parse(Buffer.from(jwt.split(".")[1] || "", "base64url").toString() || "{}");
+const body = new URLSearchParams({ Action: "AssumeRoleWithWebIdentity", Version: "2011-06-15", RoleArn: e.AWS_ROLE_ARN, RoleSessionName: e.AWS_ROLE_SESSION_NAME || "terragucci", WebIdentityToken: jwt });
+const r = await fetch(e.AWS_ENDPOINT_URL + "/", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+const xml = await r.text();
+const assumed = xml.match(/<AssumedRoleUser>[\s\S]*?<Arn>([^<]+)<\/Arn>/)?.[1] ?? null;
+const mark = { job: e.GITHUB_JOB, ref: e.GITHUB_REF, env: cfg.env, role: e.AWS_ROLE_ARN, sub: claims.sub, assumed };
+await fetch(`${e.AWS_ENDPOINT_URL}/${cfg.marks}/${e.GITHUB_SHA}/${e.GITHUB_JOB}--${cfg.env}.json`, { method: "PUT", body: JSON.stringify(mark) });
+if (!assumed) fail("STS answered " + r.status + ": " + xml.slice(0, 300));
+console.log(JSON.stringify({ env: cfg.env }));
+JS
+  done
+  {
+    printf 'forge: forgejo\nbinary: tofu\ngate: never\noidc:\n  plan_role: %s-plan\n  apply_role: %s-apply\nenvironments:\n' "$prefix" "$prefix"
+    for env in prod dev; do
+      printf '  %s:\n    roots: ["envs/%s/**"]\n    oidc:\n      plan_role: %s-%s-plan\n      apply_role: %s-%s-apply\n' "$env" "$env" "$prefix" "$env" "$prefix" "$env"
+    done
+  } > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  # A job's lines, as init wrote them.
+  cj_job() { # job
+    awk -v j="  $1:" '/^  [^ #][^:]*:$/ { inside = ($0 == j) } inside { print }' "$wf"
+  }
+  for m in apply-wave-1 apply-wave-1-prod apply-wave-1-dev; do
+    grep -q "^  $m:\$" "$wf" || { log "init wrote no $m job"; drop_work "$work"; return 1; }
+    cj_job "$m" | grep -qxF "$cond" || { log "$m does not run on the default branch alone"; drop_work "$work"; return 1; }
+  done
+  for env in prod dev; do
+    line="$(cj_job "apply-wave-1-$env" | grep -F 'terragucci check-job' || true)"
+    if [ -n "${BREAK:-}" ]; then
+      [ -z "$line" ] || { break_setup_failed "the BREAK pipeline's apply-wave-1-$env still checks: $line"; drop_work "$work"; return 1; }
+    else
+      log "apply-wave-1-$env: ${line:-no check}"
+      grep -qF "terragucci check-job --forge forgejo --environment '$env' --branches \"\$TG_BRANCH\"" <<<"$line" \
+        || { log "apply-wave-1-$env checks no ref before it takes a token"; drop_work "$work"; return 1; }
+    fi
+  done
+  # The hand edit: wave 1's apply jobs run on any push.
+  awk -v c="$cond" '/^  [^ #][^:]*:$/ { inside = ($0 ~ /^  apply-wave-1(-prod|-dev)?:$/) } inside && $0 == c { print "    if: github.event_name == '"'"'push'"'"'"; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  for m in apply-wave-1 apply-wave-1-prod apply-wave-1-dev; do
+    cj_job "$m" | grep -qxF "    if: github.event_name == 'push'" || { log "the hand edit left $m on the default branch alone"; drop_work "$work"; return 1; }
+  done
+  log "hand edit: apply-wave-1, apply-wave-1-prod and apply-wave-1-dev run on any push"
+  cj_log() { # run id, job name
+    local id
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '.[] | select(.name == $n) | .id' | head -1)"
+    [ -n "$id" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null
+  }
+  cj_status() { # run id, job name
+    api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '[.[] | select(.name == $n)][0].status // "missing"'
+  }
+  cj_mark() { curl -fsS "$FLOCI/$marks/$1/$2.json" 2>/dev/null || true; } # sha, <job>--<env>
+  # On main: each group job's check passes and the job trades its token.
+  first="$(push_tree "$work/tree" "$repo" main "check-job: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$first" || { drop_work "$work"; return 1; }
+  log "main: run $RUN_STATUS; apply-wave-1-prod $(cj_status "$RUN_ID" apply-wave-1-prod), apply-wave-1-dev $(cj_status "$RUN_ID" apply-wave-1-dev)"
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" | grep -E 'check-job|probe' >&2 || true; log "the push to main ended $RUN_STATUS"; rc=1; }
+  for env in prod dev; do
+    m="$(cj_mark "$first" "apply-wave-1-$env--$env")"
+    log "apply-wave-1-$env on main: ${m:-no mark}"
+    jq -e --arg r "terragucci-cj-$env-apply/" '.ref == "refs/heads/main" and (.assumed // "" | contains(":assumed-role/" + $r))' <<<"${m:-null}" >/dev/null \
+      || { log "apply-wave-1-$env on main did not trade its token for $env's apply role"; rc=1; }
+    if [ -z "${BREAK:-}" ]; then
+      cj_log "$RUN_ID" "apply-wave-1-$env" | grep -F "terragucci check-job: environment $env: ref refs/heads/main" >&2 \
+        || { log "apply-wave-1-$env's check did not name its ref refs/heads/main"; rc=1; }
+    fi
+  done
+  # On hotfix: the same jobs, on a ref their environments do not apply from.
+  echo 2 > "$work/tree/envs/prod/app/rev.txt"
+  echo 2 > "$work/tree/envs/dev/app/rev.txt"
+  second="$(push_tree "$work/tree" "$repo" hotfix "check-job: hotfix")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$second" push || { drop_work "$work"; return 1; }
+  log "hotfix: run $RUN_STATUS; apply-wave-1 $(cj_status "$RUN_ID" apply-wave-1), apply-wave-1-prod $(cj_status "$RUN_ID" apply-wave-1-prod), apply-wave-1-dev $(cj_status "$RUN_ID" apply-wave-1-dev)"
+  [ "$(cj_status "$RUN_ID" apply-wave-1)" = success ] || { log "apply-wave-1 did not decide wave 1 on hotfix, so no group job ran there"; rc=1; }
+  for env in prod dev; do
+    [ "$(cj_status "$RUN_ID" "apply-wave-1-$env")" = failure ] || { log "apply-wave-1-$env on hotfix did not fail"; rc=1; }
+    cj_log "$RUN_ID" "apply-wave-1-$env" | grep -E 'terragucci check-job|probe' >&2 || true
+    cj_log "$RUN_ID" "apply-wave-1-$env" | grep -qF "terragucci check-job: environment $env: ref: expected refs/heads/main, found refs/heads/hotfix" \
+      || { log "apply-wave-1-$env on hotfix named no expected refs/heads/main and found refs/heads/hotfix"; rc=1; }
+    cj_log "$RUN_ID" "apply-wave-1-$env" | grep -qF "terragucci check-job: environment $env: this job does not run where $env's apply is set to run, so it stops before any cloud credential is taken" \
+      || { log "apply-wave-1-$env on hotfix did not stop before taking a credential"; rc=1; }
+    m="$(cj_mark "$second" "apply-wave-1-$env--$env")"
+    [ -z "$m" ] || { log "apply-wave-1-$env on hotfix traded its token: $m"; rc=1; }
+  done
+  log "apply-wave-1 on hotfix, which holds the plan roles and checks nothing: $(cj_mark "$second" apply-wave-1--prod | jq -c '{ref, role}' 2>/dev/null || echo 'no mark')"
+  drop_work "$work"
+  [ $rc = 0 ] && log "on main each group job's check named refs/heads/main and the job traded its token; on hotfix each refused, naming refs/heads/main and refs/heads/hotfix, and traded none"
   return $rc
 }
 
@@ -22179,6 +22362,7 @@ modules/registry self! weight=120
 oidc/forgejo    runner self! weight=200
 oidc/audience-stages    runner self! weight=200
 apply/groups            runner self! weight=250
+apply/check-job         runner self! weight=250
 note/grouped         ex runner self! after=boot/tofu weight=200
 check/tofu           ex runner self! after=boot/tofu weight=200
 affected/tofu        ex after=boot/tofu weight=150

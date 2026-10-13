@@ -1,6 +1,6 @@
 // Checks every BREAK cut the smoke claims make without running a claim: each
-// `break_bundle <out> <file> <find> <replace>...` call in stack/smoke.sh and
-// stack/smoke-gitlab.sh names a file under packages/terragucci/src that holds
+// `break_bundle <out> <file> <find> <replace>...` call in stack/smoke.sh,
+// stack/smoke-gitlab.sh and stack/sandbox-github.sh names a file under packages/terragucci/src that holds
 // its <find> exactly once, as stack/break-bundle.mjs requires when the claim
 // runs. A refactor that moves the text fails here, instead of a BREAK run that
 // fails to build its bundle and breaks nothing.
@@ -10,7 +10,7 @@
 // are then read again by bash itself, through a break_bundle that prints its
 // arguments, so a call this reader gets wrong fails the check too.
 //
-//   node scripts/check-breaks.mjs [script...]   default: the two smoke scripts
+//   node scripts/check-breaks.mjs [script...]   default: the two smoke scripts and the sandbox's
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { relative, resolve } from "node:path";
@@ -151,7 +151,7 @@ function checkScript(path) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const scripts = process.argv.slice(2);
-  const paths = scripts.length ? scripts.map((s) => resolve(s)) : ["stack/smoke.sh", "stack/smoke-gitlab.sh"].map((s) => resolve(root, s));
+  const paths = scripts.length ? scripts.map((s) => resolve(s)) : ["stack/smoke.sh", "stack/smoke-gitlab.sh", "stack/sandbox-github.sh"].map((s) => resolve(root, s));
   let errors = [], calls = 0, cuts = 0;
   for (const p of paths) {
     const r = checkScript(p);

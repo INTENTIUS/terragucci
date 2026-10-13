@@ -53,7 +53,8 @@ policy/tofu|a merge request whose plan the policy on main denies fails its plan 
 affected/tofu|a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone|
 oidc/gitlab|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|
 oidc/audience-stages|with oidc.audience a map, the merge request plan job holds an id_token for the plan audience alone and the apply job on main one for the apply audience, and a role whose trust names the apply audience refuses the plan token|
-apply/groups|with environments prod and dev, each with its own roles and audience, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment that runs in that GitLab environment; each token names its environment and audience, which a condition on the environment of the other refuses; GitLab CE cannot protect an environment, so environment_protected is not shown|'
+apply/groups|with environments prod and dev, each with its own roles and audience, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment that runs in that GitLab environment; each token names its environment and audience, which a condition on the environment of the other refuses; GitLab CE cannot protect an environment, so environment_protected is not shown|
+apply/check-job|with environments prod and dev, each apply job in its GitLab environment checks its forge environment, ref and that the ref is protected before it takes a token: on a protected main each passes and takes its role, and once the protection of main is removed each fails before it takes a token, naming the protected ref it expected and false; the lab runner carries no tags, so the runner check is not shown|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
@@ -94,6 +95,7 @@ affected/tofu         runner weight=150
 oidc/gitlab             runner weight=250
 oidc/audience-stages    runner weight=250
 apply/groups            runner weight=250
+apply/check-job         runner weight=250
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -2946,5 +2948,164 @@ JS
   log "protecting environment prod through the API answered ${code:-nothing} (GitLab CE has no protected environments; Premium does)"
   drop_work "$work"
   [ $rc = 0 ] && log "apply-wave-1 decided with the plan roles alone; apply-wave-1-prod's token named environment prod with terragucci-prod, which the condition of dev refuses, and apply-wave-1-dev's environment dev with terragucci-dev, which the condition of prod refuses; each job carried its own environment's apply role alone"
+  return $rc
+}
+
+gitlab_claim_apply/check_job() {
+  # An environment's apply job on a ref that is not protected stops before it
+  # takes a token. environments prod (envs/prod/**, forge_environment: prod)
+  # and dev (envs/dev/**, forge_environment: dev), each with its own plan and
+  # apply roles, and gate: never. Wave 1 holds envs/prod/app and envs/dev/app,
+  # so init renders apply-wave-1, which decides, and apply-wave-1-prod and
+  # apply-wave-1-dev, each in its GitLab environment, whose first line is
+  # `terragucci check-job --forge gitlab --environment <env> --branches
+  # "$CI_DEFAULT_BRANCH" --forge-environment <env>`. Each root reads a data
+  # source whose program, a child of the binary, writes what its job handed
+  # it to terragucci-report/cj-<job>--<env>.json, which the job keeps: the
+  # probe runs only once the job has written its token file and handed the
+  # binary its role.
+  # The first push goes to main while main is protected: each group job's
+  # check names its forge environment, ref main and the protected ref, and
+  # the job goes on to take its role. Then main's protection is removed
+  # through the API, as a maintainer tidying branch rules might, and a second
+  # push runs the same jobs on an unprotected main, where CI_COMMIT_REF_PROTECTED
+  # is false and any developer could have pushed the commit: apply-wave-1
+  # decides, and each group job must fail, its log naming the expected
+  # protected ref and the found false, with no probe record from it.
+  # What this cannot show: the lab's runner carries no tags, so the runner
+  # check is not shown (the job's tags would keep it off any runner without
+  # them). The lab is GitLab CE, which cannot protect an environment; the
+  # check reads the environment the job declares, not who may deploy to it.
+  # Nothing in the lab trades a token with a cloud, so before any token
+  # exchange is shown as before the job wrote its token file and handed the
+  # binary its role.
+  # BREAK: init runs a bundle whose apply jobs lose their check-job line
+  # (render.ts), so the group jobs on the unprotected main take their roles.
+  log() { echo "[smoke gitlab check-job] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project sha job wf rc=0 env line found TERRAGUCCI="$TERRAGUCCI"
+  local prefix=arn:aws:iam::000000000000:role/terragucci-cj
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      render.ts '    ...(input.checkJob ? [input.checkJob] : []),' '' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  project="$(gl_project check-job)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_protect_main "$project" || { drop_work "$work"; return 1; }
+  for env in prod dev; do
+    mkdir -p "$work/tree/envs/$env/app"
+    echo "$env" > "$work/tree/envs/$env/app/env.txt"
+    echo 1 > "$work/tree/envs/$env/app/rev.txt"
+    cat > "$work/tree/envs/$env/app/main.tf" <<'TF'
+terraform {
+  backend "local" {}
+
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.5"
+    }
+  }
+}
+
+# The probe's result is the same in every job, so the deciding job's plan of
+# this root and its group job's plan match.
+data "external" "check" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+TF
+    cat > "$work/tree/envs/$env/app/probe.mjs" <<'JS'
+// In a GitLab job, as a child of the binary: the job's name, ref and whether
+// the ref is protected, this root's role, and whether the job wrote its
+// token file, to terragucci-report/cj-<job>--<env>.json, which the job keeps
+// as an artifact. A record means the job got past its first lines and
+// handed the binary its role. It prints the same result in every job.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+const e = process.env;
+const env = readFileSync(new URL("./env.txt", import.meta.url), "utf8").trim();
+if (e.GITLAB_CI !== "true") { console.log(JSON.stringify({ env })); process.exit(0); }
+const out = resolve(e.CI_PROJECT_DIR || "../../..", "terragucci-report");
+const found = { job: e.CI_JOB_NAME, env, ref: e.CI_COMMIT_REF_NAME, ref_protected: e.CI_COMMIT_REF_PROTECTED, environment: e.CI_ENVIRONMENT_NAME ?? null,
+  role: e.AWS_ROLE_ARN ?? null, token_file: !!e.AWS_WEB_IDENTITY_TOKEN_FILE && existsSync(e.AWS_WEB_IDENTITY_TOKEN_FILE) };
+mkdirSync(out, { recursive: true });
+writeFileSync(resolve(out, `cj-${found.job}--${env}.json`), JSON.stringify(found, null, 2) + "\n");
+console.log(JSON.stringify({ env }));
+JS
+  done
+  {
+    printf 'forge: gitlab\nbinary: tofu\ngate: never\noidc:\n  plan_role: %s-plan\n  apply_role: %s-apply\nenvironments:\n' "$prefix" "$prefix"
+    for env in prod dev; do
+      printf '  %s:\n    roots: ["envs/%s/**"]\n    forge_environment: %s\n    oidc:\n      plan_role: %s-%s-plan\n      apply_role: %s-%s-apply\n' "$env" "$env" "$env" "$prefix" "$env" "$prefix" "$env"
+    done
+  } > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.gitlab/terragucci.yml"
+  for job in apply-wave-1 apply-wave-1-prod apply-wave-1-dev; do
+    grep -q "^$job:\$" "$wf" || { log "init wrote no $job job"; drop_work "$work"; return 1; }
+  done
+  for env in prod dev; do
+    line="$(awk -v j="apply-wave-1-$env:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /terragucci check-job/ { print; exit }' "$wf")"
+    if [ -n "${BREAK:-}" ]; then
+      [ -z "$line" ] || { break_setup_failed "the BREAK pipeline's apply-wave-1-$env still checks: $line"; drop_work "$work"; return 1; }
+    else
+      log "apply-wave-1-$env:${line:- no check}"
+      grep -qF "terragucci check-job --forge gitlab --environment '$env' --branches \"\$CI_DEFAULT_BRANCH\" --forge-environment '$env'" <<<"$line" \
+        || { log "apply-wave-1-$env checks no forge environment and ref before it takes a token"; drop_work "$work"; return 1; }
+    fi
+  done
+  cj_found() { # job id, job name, env
+    [ -n "$1" ] || return 0
+    gl_artifact "$project" "$1" "terragucci-report/cj-$2--$3.json" 2>/dev/null | jq -c . 2>/dev/null || true
+  }
+  # main protected: each group job's check passes and the job takes its role.
+  sha="$(gl_push "$work/tree" "$project" main "check-job: protected main")" || { drop_work "$work"; return 1; }
+  gl_wait "$project" "$sha" push || { drop_work "$work"; return 1; }
+  [ "$PIPE_STATUS" = success ] || { log "the pipeline on the protected main ended $PIPE_STATUS"; rc=1; }
+  for env in prod dev; do
+    job="$(gl_job "apply-wave-1-$env")"
+    found="$(cj_found "$job" "apply-wave-1-$env" "$env")"
+    log "apply-wave-1-$env (job ${job:-none}) on the protected main: ${found:-the probe wrote nothing}"
+    jq -e --arg e "$env" --arg r "$prefix-$env-apply" '.ref_protected == "true" and .environment == $e and .role == $r and .token_file == true' <<<"${found:-null}" >/dev/null \
+      || { log "apply-wave-1-$env on the protected main did not take $env's apply role in the environment $env"; rc=1; }
+    if [ -z "${BREAK:-}" ]; then
+      gl_trace "$project" "$job" | grep -F "terragucci check-job: environment $env: forge environment $env, ref main, protected ref" >&2 \
+        || { log "apply-wave-1-$env's check did not name its forge environment, ref and protected ref"; rc=1; }
+    fi
+  done
+  # main unprotected: the same jobs, on a ref any developer could push to.
+  glapi -o /dev/null -X DELETE "$(gl_p "$project")/protected_branches/main" || { log "main's protection could not be removed"; drop_work "$work"; return 1; }
+  ! glapi "$(gl_p "$project")/protected_branches/main" >/dev/null 2>&1 || { log "main is still protected"; drop_work "$work"; return 1; }
+  log "removed main's protection"
+  echo 2 > "$work/tree/envs/prod/app/rev.txt"
+  echo 2 > "$work/tree/envs/dev/app/rev.txt"
+  sha="$(gl_push "$work/tree" "$project" main "check-job: unprotected main")" || { drop_work "$work"; return 1; }
+  gl_wait "$project" "$sha" push || { drop_work "$work"; return 1; }
+  log "apply-wave-1 on the unprotected main: $(jq -r '[.[] | select(.name == "apply-wave-1")] | max_by(.id) | .status // "none"' <<<"$PIPE_JOBS")"
+  [ "$(jq -r '[.[] | select(.name == "apply-wave-1")] | max_by(.id) | .status // "none"' <<<"$PIPE_JOBS")" = success ] \
+    || { log "apply-wave-1 did not decide wave 1 on the unprotected main, so no group job ran there"; rc=1; }
+  for env in prod dev; do
+    job="$(gl_job "apply-wave-1-$env")"
+    log "apply-wave-1-$env (job ${job:-none}) on the unprotected main: $(jq -r --arg n "apply-wave-1-$env" '[.[] | select(.name == $n)] | max_by(.id) | .status // "none"' <<<"$PIPE_JOBS")"
+    [ "$(jq -r --arg n "apply-wave-1-$env" '[.[] | select(.name == $n)] | max_by(.id) | .status // "none"' <<<"$PIPE_JOBS")" = failed ] \
+      || { log "apply-wave-1-$env on the unprotected main did not fail"; rc=1; }
+    gl_trace "$project" "$job" | grep -F 'terragucci check-job' >&2 || true
+    gl_trace "$project" "$job" | grep -qF "terragucci check-job: environment $env: ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found false" \
+      || { log "apply-wave-1-$env on the unprotected main named no expected protected ref and found false"; rc=1; }
+    gl_trace "$project" "$job" | grep -qF "terragucci check-job: environment $env: this job does not run where $env's apply is set to run, so it stops before any cloud credential is taken" \
+      || { log "apply-wave-1-$env on the unprotected main did not stop before taking a credential"; rc=1; }
+    found="$(cj_found "$job" "apply-wave-1-$env" "$env")"
+    [ -z "$found" ] || { log "apply-wave-1-$env on the unprotected main took its role: $found"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "on the protected main each group job checked its environment, ref and protection and took its role; on the unprotected main each refused, naming the protected ref it expected and false, and took none"
   return $rc
 }
