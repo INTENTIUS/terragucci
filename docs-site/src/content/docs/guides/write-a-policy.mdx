@@ -126,6 +126,7 @@ sources:
 | `terraform { source }` | a Terragrunt unit's `terragrunt.hcl` | before `init` |
 | each module call inside a module `init` fetched | `.terraform/modules/modules.json`, matched as written in the module that makes the call | after `init`, before `plan` |
 | each provider `init` installed | `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
+| the same two files for a Terragrunt unit | the unit's working directory, where Terragrunt inited it | after Terragrunt's `init`, before its `plan` |
 
 | Matching | |
 |---|---|
@@ -143,7 +144,13 @@ refused: envs/dev/app: module.vpc (envs/dev/app/main.tf) uses module source git:
 refused: envs/dev/app: module.net > module.subnets (envs/dev/app/.terraform/modules/net/main.tf) uses module source git::https://git.unlisted.example/acme/subnets.git, which no entry of sources.modules matches (sources.modules: ./**, ../modules/**, ...)
 ```
 
-Run `terragucci init` after you add the key. The check job it writes then runs `terragucci check-sources` on each root, and refuses the root before its `init`.
+A Terragrunt unit's refusal names the unit and the module path from the unit's source, with the file in its working directory:
+
+```text
+refused: live/dev/app: module.subnets (live/dev/app/.terragrunt-cache/sources/k1/k2/main.tf) uses module source git::https://git.unlisted.example/acme/subnets.git, which no entry of sources.modules matches (sources.modules: ./**, ../**, ...)
+```
+
+Run `terragucci init` after you add the key. The check job it writes then runs `terragucci check-sources` on each root, and refuses the root before its `init`. In a Terragrunt repo it runs `terragucci check-sources --units`, which checks every unit before `terragrunt hcl validate` fetches any unit's source.
 
 The list is read at base, as `policy` is. A pull request that adds an entry, or deletes the key, is checked against the base's list; the entry counts for the changes after it merges. A base with no `sources` key leaves the pull request's own in force. The [threat model](/terragucci/reference/threat-model/#module-and-provider-sources) lists what the check reads and what it does not.
 

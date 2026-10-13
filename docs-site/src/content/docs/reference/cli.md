@@ -789,7 +789,7 @@ envs/prod/app: its plan jcs1-sha256:4c1e09d2... was denied by main.deny_public_b
 terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
 terragucci check-pins [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
-terragucci check-sources <dir> [--config <file>] [--base <ref>]
+terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
 ```
 
 | Command | Does |
@@ -797,7 +797,7 @@ terragucci check-sources <dir> [--config <file>] [--base <ref>]
 | `check-root` | runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu`, also `choudoufu live-check -json`. Under `modules.require: attested` (read at `--base`) it first checks the root's module pins |
 | `check-pins` | the same pin check on each Terragrunt unit's `terraform { source }`; prints nothing without `modules.require: attested` |
 | `check-policy` | runs the policy's tests when `policy` is set |
-| `check-sources` | checks a root's module sources and providers against [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), read at `--base`, before its `init`; prints nothing without the key |
+| `check-sources` | checks a root's module sources and providers against [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), read at `--base`, before its `init`; `--units` checks every Terragrunt unit instead; prints nothing without the key |
 
 Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs them, `check-sources` only when `sources` is set. See [Stages](/terragucci/reference/stages/#check).
 

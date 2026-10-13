@@ -44,7 +44,7 @@
  * the terraform lexicon for it, and this file keeps only the list and the
  * refusal once it lands.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { dataDir } from "./backend";
@@ -413,12 +413,27 @@ export function waveSourcesBase(repo: string, given: string | undefined): string
   }
 }
 
+/** A directory's real path, or the path as given when it has none. */
+function realPath(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
 /** What a stage checks each root with: the refusal lines, empty when the root passes. */
 export interface SourceChecker {
   /** Before `init`: the root's own files and the local modules it calls. `dir` is the checkout it is read from, when not `repo`. */
   before(root: string, dir?: string): Promise<string[]>;
   /** After `init`, before `plan`: the modules `init` fetched and the providers it locked. `env` gives `TF_DATA_DIR` when set. */
   afterInit(root: string, dir?: string, env?: NodeJS.ProcessEnv): Promise<string[]>;
+  /**
+   * After `init`, before `plan`, for a Terragrunt unit: the same check in the
+   * working directory Terragrunt inited it in (`workDir`, absolute, often
+   * under `.terragrunt-cache`), its lines naming the unit.
+   */
+  unitAfterInit(unit: string, workDir: string, env?: NodeJS.ProcessEnv): Promise<string[]>;
 }
 
 /**
@@ -444,5 +459,10 @@ export async function sourceChecker(
   return {
     before: async (root, dir) => sourceRefusalLines(root, await checkRootSources(dir ?? repo, root, lists, parser)),
     afterInit: async (root, dir, env) => sourceRefusalLines(root, await checkLockedSources(dir ?? repo, root, lists, parser, env)),
+    unitAfterInit: async (unit, workDir, env) => {
+      // The working directory as a path from the repo, so each file the lines name reads from the repo's root.
+      const from = realPath(repo);
+      return sourceRefusalLines(unit, await checkLockedSources(from, relative(from, realPath(workDir)).split(sep).join("/") || ".", lists, parser, env));
+    },
   };
 }
