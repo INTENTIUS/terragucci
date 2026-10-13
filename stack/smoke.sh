@@ -15974,7 +15974,7 @@ claim_lock/plan_none() {
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
     # shellcheck disable=SC2016 # TypeScript, not shell
-    break_bundle "$bundle" report/stage.ts '"-input=false", "-no-color", "-lock=false", `-out=${planFile}`' '"-input=false", "-no-color", `-out=${planFile}`' \
+    break_bundle "$bundle" report/stage.ts '"-no-color", "-lock=false", ...estate.args' '"-no-color", ...estate.args' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   key="plan-no-lock/$STAMP${BREAK:+-break}/terraform.tfstate"
