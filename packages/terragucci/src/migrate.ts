@@ -317,13 +317,36 @@ export function migrationPipelineProblems(repo: string): string[] {
   } catch {
     return [];
   }
-  const jobs = (doc as { jobs?: Record<string, { permissions?: { contents?: string } }> } | undefined)?.jobs ?? {};
+  const jobs = (doc as { jobs?: Record<string, { permissions?: { contents?: string }; steps?: { run?: string }[] }> } | undefined)?.jobs ?? {};
+  // Only a job that runs a wave can run a migration: not apply-done, nor an apply-comment that applies nothing.
+  const runsWaves = (job: { steps?: { run?: string }[] } | undefined): boolean => (job?.steps ?? []).some((st) => typeof st.run === "string" && st.run.includes("terragucci stage tf-apply"));
   const readOnly = Object.entries(jobs)
-    .filter(([name, job]) => /^apply/.test(name) && job?.permissions?.contents !== "write")
+    .filter(([name, job]) => /^apply/.test(name) && runsWaves(job) && job?.permissions?.contents !== "write")
     .map(([name]) => name)
     .sort();
   if (readOnly.length === 0) return [];
   return [`${MIGRATIONS_DIR}/ holds ${files.length === 1 ? "a migration" : `${files.length} migrations`} (${files.join(", ")}), and in ${PIPELINE_PATHS.github} ${readOnly.join(", ")} may not write chant/lifecycle, where a migration waits for its approval; run terragucci init to write the pipeline again`];
+}
+
+/**
+ * The generated pipeline that applies each wave in a job per identity
+ * (./groups.ts), or undefined: its apply jobs pass `--groups`. Wave 1's
+ * deciding job runs the state migrations, and in such a pipeline it holds
+ * the plan identities alone, which cannot write a state.
+ */
+export function groupedPipeline(repo: string): string | undefined {
+  for (const rel of Object.values(PIPELINE_PATHS)) {
+    const path = join(repo, rel);
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, "utf-8");
+    if (text.startsWith(MARKER) && /terragucci stage tf-apply [^\n]* --groups /.test(text)) return rel;
+  }
+  return undefined;
+}
+
+/** Why a pull request's plan refuses `files`, the migrations no run applied yet, in a repo whose pipeline is `grouped` (groupedPipeline). */
+export function groupedMigrationProblem(files: readonly string[], grouped: string): string {
+  return `${files.join(", ")} ${files.length === 1 ? "is a state migration" : "are state migrations"}, and ${grouped} applies each wave in a job per identity: wave 1's deciding job runs a migration, and it holds the plan roles alone, which cannot write a state, so a grouped repo cannot run state migrations; leave ${files.length === 1 ? "the file" : "the files"} out of this change`;
 }
 
 /** The repo's migration files, read, by name. */
@@ -1316,6 +1339,12 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
   }
   const records: MigrationRecord[] = [];
   const pending = migrations.filter((m) => done.get(m.name)?.status !== "applied");
+  // One apply job per identity: wave 1's deciding job holds the plan roles alone, so a migration cannot run there. Refused before merge.
+  const grouped = options.planOnly && pending.length > 0 ? groupedPipeline(repo) : undefined;
+  if (grouped) {
+    log(`migrations: ${groupedMigrationProblem(pending.map((m) => m.file), grouped)}`);
+    return { code: EXIT.failed, records: [] };
+  }
   for (const m of migrations) {
     const was = done.get(m.name);
     if (was?.status === "applied") {

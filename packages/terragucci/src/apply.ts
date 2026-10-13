@@ -151,6 +151,7 @@ import { planAppliedChanges } from "./report/history";
 import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "./environments";
+import { rootsByGroup } from "./groups";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 
 /** The op every wave gate is recorded under. */
@@ -195,6 +196,18 @@ export function parseBranches(spec: string): Record<string, string[]> {
 }
 
 /** `apply.branches` for `--branches`. */
+/** `--groups`: `<group>=<glob or root>[,...][;...]`, each apply group's selector but `default`'s (./groups.ts). */
+export function parseGroups(spec: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const part of spec.split(";").filter(Boolean)) {
+    const eq = part.indexOf("=");
+    const globs = eq > 0 ? part.slice(eq + 1).split(",").filter(Boolean) : [];
+    if (eq <= 0 || globs.length === 0) throw new ConfigError(`--groups takes <group>=<glob>[,<glob>...][;...], not ${JSON.stringify(part)}`);
+    out[part.slice(0, eq)] = globs;
+  }
+  return out;
+}
+
 export const branchesArg = (branches: Record<string, string[]>): string =>
   Object.entries(branches).map(([b, globs]) => `${b}=${globs.join(",")}`).join(";");
 
@@ -881,6 +894,15 @@ export interface ApplyWaveOptions {
   share?: number;
   /** The decision file the wave's job writes and its shares read. Default: terragucci-wave/wave-<k>.json in the checkout. */
   decided?: string;
+  /**
+   * Plain roots only: one apply job per identity (./groups.ts). Each group's
+   * selector, by name: root globs or roots; a root no selector matches is in
+   * `default`. Without `group`, this job plans every root of the wave with the
+   * plan identities and decides it, and the groups' jobs apply.
+   */
+  groups?: Record<string, string[]>;
+  /** With `groups`: this job applies group `group` of the wave (with `share`, that share of the group), the plans the wave's job decided on. */
+  group?: string;
   /** How a version a root pins is installed. Default: the release, checked against its SHA256SUMS. */
   installer?: Installer;
   /** Runs the cost estimator, with `cost` set; tests pass one. */
@@ -914,6 +936,8 @@ export async function applyWave(repo: string, input: Omit<ApplyWaveOptions, "gat
     throw new ConfigError("--share must be a share number from 1 to --shares");
   }
   if (options.rest && !options.terragrunt) throw new ConfigError("--rest runs the waves of a Terragrunt repo, so it needs --terragrunt");
+  if (options.groups && options.terragrunt) throw new ConfigError("--groups splits a wave of plain roots by identity; a Terragrunt repo's units apply with terragrunt.credentials in one job");
+  if (options.group !== undefined && !options.groups) throw new ConfigError("--group names one of --groups, so it needs --groups");
   if (options.branches && Object.keys(options.branches).length > 0) {
     // A Terragrunt repo's units map to branches by the same globs: the waves are then cut from the units this branch applies.
     const cut = branchLayers(options.layers, options.branches, options.branch || undefined);
@@ -998,6 +1022,9 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
   };
   let code: number = EXIT.failed;
   let last = options.wave;
+  // One apply job per identity: the wave's roots by group, and this job's part of the wave (the run view counts parts across groups).
+  let grouped: { name: string; roots: string[]; shares: number }[] | undefined;
+  let part: number | undefined;
   try {
     let specWaves: string[][] | number;
     if (options.terragrunt) {
@@ -1011,8 +1038,24 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
         return (code = EXIT.applied);
       }
       specWaves = waves;
-      // A wave of one root, or one job, applies in its own job; a share past the wave's roots has nothing to apply.
-      if (options.shares !== undefined) {
+      if (options.groups) {
+        // Each group's roots spread across its own shares with waves.jobs, as a wave's do.
+        const jobs = options.shares;
+        grouped = rootsByGroup(waves[options.wave - 1]!, options.groups).map((g) => ({ ...g, shares: jobs !== undefined ? shareCount(g.roots, jobs) : 1 }));
+        if (options.group !== undefined) {
+          const at = grouped.findIndex((g) => g.name === options.group);
+          const mine = grouped[at];
+          if (!mine || (options.share ?? 1) > mine.shares) {
+            jobOf(options.wave).facts.nothing = true;
+            console.log(`wave ${options.wave} of ${waves.length}: group ${options.group} has ${mine ? `${mine.roots.length} roots in ${mine.shares} share${mine.shares === 1 ? "" : "s"}` : "no root in this wave"}, so this job has nothing to apply`);
+            return (code = EXIT.applied);
+          }
+          if (mine.shares > 1 && options.share === undefined) throw new ConfigError(`group ${mine.name} of wave ${options.wave} spreads across ${mine.shares} share jobs, so its job needs --share`);
+          part = grouped.slice(0, at).reduce((n, g) => n + g.shares, 0) + (options.share ?? 1);
+          options = { ...options, shares: mine.shares > 1 ? mine.shares : undefined, share: mine.shares > 1 ? options.share : undefined };
+        }
+      } else if (options.shares !== undefined) {
+        // A wave of one root, or one job, applies in its own job; a share past the wave's roots has nothing to apply.
         const count = shareCount(waves[options.wave - 1]!, options.shares);
         if (options.share !== undefined && options.share > count) {
           jobOf(options.wave).facts.nothing = true;
@@ -1041,7 +1084,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       console.log(`wave ${options.wave}: gate ${gates[0]}, the strictest of the environments at base, since a Terragrunt wave finds its units when it plans`);
       options = { ...options, gate: gates[0]! };
     }
-    const ctx: WavesContext = { rule, configPath, work };
+    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}) };
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
@@ -1051,14 +1094,16 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
         gate: options.gate,
         ...(typeof specWaves !== "number" && gates.some((g) => g !== options.gate) ? { gates } : {}),
         approval: rule?.mode ?? "ledger",
-        ...(options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
+        ...(grouped
+          ? { jobs: { wave: options.wave, groups: grouped.map((g) => ({ name: g.name, runs: g.roots, shares: g.shares })) } }
+          : options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
         call: waveCallArgv,
         migrations: existsSync(join(repo, MIGRATIONS_DIR)),
         ...(rule?.point ? { point: rule.point } : {}),
       });
       const at = specAtBase(repo, base, writeSpec(repo, spec));
-      // A share job applies the plans its wave's job decided on: chant's record, which the pipeline hands over in the decision file.
-      if (options.share !== undefined) {
+      // A share or group job applies the plans its wave's job decided on: chant's record, which the pipeline hands over in the decision file.
+      if (options.share !== undefined || options.group !== undefined) {
         const file = options.decided ?? join(repo, decidedPath(options.wave));
         if (!existsSync(file)) throw new ConfigError(`the wave's decision ${file} cannot be read; the wave's own job writes it before its shares run`);
         mkdirSync(dirname(join(repo, waveRecordPath(options.wave))), { recursive: true });
@@ -1067,7 +1112,8 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       ran = await runChantWave(repo, {
         wave: options.wave,
         base: at,
-        ...(options.shares !== undefined && options.share === undefined ? { decide: true } : {}),
+        ...((grouped || options.shares !== undefined) && options.share === undefined && options.group === undefined ? { decide: true } : {}),
+        ...(options.group !== undefined ? { group: options.group } : {}),
         ...(options.share !== undefined ? { share: options.share } : {}),
         env: { ...process.env, ...env },
         ...(options.chant ? { chant: options.chant } : {}),
@@ -1079,24 +1125,28 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     if (rest?.length) last = rest[rest.length - 1]!.wave;
     const j = jobOf(last);
     code = waveExit(ran.code, j.code);
-    if (options.share !== undefined && ran.result?.decision) {
-      // A share reports the gate its wave's job decided.
+    const piece = options.group !== undefined || options.share !== undefined;
+    const pieceName = `${options.group !== undefined ? `group ${options.group}` : ""}${options.group !== undefined && options.share !== undefined ? " " : ""}${options.share !== undefined ? `share ${options.share}` : ""}`;
+    if (piece && ran.result?.decision) {
+      // A share or group job reports the gate its wave's job decided.
       j.w.digest = ran.result.decision.digest;
       if (ran.result.decision.status === "approved" || ran.result.decision.status === "not-required") j.w.approval = ran.result.decision.status;
     }
-    if (options.share !== undefined && ran.code === EXIT.refused && ran.result?.moved.length) {
+    if (piece && ran.code === EXIT.refused && ran.result?.moved.length) {
       const moved = [...ran.result.moved].sort();
       if (ran.result.decision?.status === "approved") j.w.refused = { reason: "approval", approved: ran.result.decision.digest, roots: moved };
-      writeOutcome(options.env, `wave ${last} share ${options.share} changed since the wave decided: ${moved.join(", ")}`, j.w);
+      writeOutcome(options.env, `wave ${last} ${pieceName} changed since the wave decided: ${moved.join(", ")}`, j.w);
     }
-    if (options.shares !== undefined && options.share === undefined && code === EXIT.applied) {
-      // The share jobs apply: chant's decision goes to the decision file the pipeline hands them.
+    if ((grouped || options.shares !== undefined) && !piece && code === EXIT.applied) {
+      // The share or group jobs apply: chant's decision goes to the decision file the pipeline hands them.
       const file = options.decided ?? join(repo, decidedPath(options.wave));
       mkdirSync(dirname(file), { recursive: true });
       copyFileSync(join(repo, waveRecordPath(options.wave)), file);
       j.w.decided = true;
-      j.w.shareCount = options.shares;
-      console.log(`${j.label}: ${ran.result?.decision?.status === "approved" ? "approved" : "no approval needed"}; its ${options.shares} share job${options.shares === 1 ? "" : "s"} apply these plans`);
+      const parts = grouped ? grouped.reduce((n, g) => n + g.shares, 0) : options.shares!;
+      j.w.shareCount = parts;
+      const how = grouped ? `its ${grouped.length} group job${grouped.length === 1 ? "" : "s"} (${grouped.map((g) => g.name).join(", ")})` : `its ${parts} share job${parts === 1 ? "" : "s"}`;
+      console.log(`${j.label}: ${ran.result?.decision?.status === "approved" ? "approved" : "no approval needed"}; ${how} apply these plans`);
     }
     return code;
   } finally {
@@ -1146,6 +1196,8 @@ interface WavesContext {
   rule?: ApprovalRule;
   configPath?: string;
   work: string;
+  /** A group's job: its part of the wave from 1, counted across the wave's groups and their shares, as the run view counts shares. */
+  part?: number;
 }
 
 /** One call chant makes back into the wave's job. Returns the call's exit code. */
@@ -1523,8 +1575,10 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const waves = applyWaves(options.layers, options.canary);
   const roots = runs.runs.map((r) => r.target);
   const share = options.share;
-  const label = (j.label = share !== undefined ? `wave ${wave} of ${waves.length}, share ${share} of ${options.shares}` : `wave ${wave} of ${waves.length}`);
-  if (share !== undefined) w.share = share;
+  const group = options.group !== undefined ? `, group ${options.group}` : "";
+  const label = (j.label = share !== undefined ? `wave ${wave} of ${waves.length}${group}, share ${share} of ${options.shares}` : `wave ${wave} of ${waves.length}${group}`);
+  if (ctx.part !== undefined) w.share = ctx.part;
+  else if (share !== undefined) w.share = share;
   if (roots.length === 0) {
     facts.nothing = true;
     console.log(`${label}: the wave's roots make fewer shares than ${options.shares}, so this one has nothing to apply`);
@@ -1585,7 +1639,9 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
     return EXIT.failed;
   }
-  const deciding = share === undefined;
+  const deciding = share === undefined && options.group === undefined;
+  // A wave split across jobs (waves.jobs, or a job per identity) is applied by those jobs, not by the one that decides it.
+  const whole = options.shares === undefined && !options.groups;
   const denied = new Map<string, { rules: string[]; reason?: string }>();
   if (deciding) {
     const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, planned, w);
@@ -1620,11 +1676,11 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   if (deciding) {
     const gated = changes > 0 && (byGate || byCost);
     if (gated) {
-      const stop = await beforeGate(repo, options, ctx, j, { label, digest, planned, plans, resume: options.shares === undefined, members, roots });
+      const stop = await beforeGate(repo, options, ctx, j, { label, digest, planned, plans, resume: whole, members, roots });
       if (stop !== undefined) return stop;
     }
-    if (changes === 0 && options.shares === undefined && (gate !== "never" || w.waveCost)) closeStopped(repo, label, wave, options.now);
-    j.changes = options.shares === undefined ? approvedChanges(plans) : undefined;
+    if (changes === 0 && whole && (gate !== "never" || w.waveCost)) closeStopped(repo, label, wave, options.now);
+    j.changes = whole ? approvedChanges(plans) : undefined;
     j.stored = () => storedWaveReport(repo, options, wave, digest, roots, planned);
   }
   const env = options.env ?? process.env;
@@ -2312,7 +2368,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
 async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob, hold: Record<string, string> | undefined, cwd: string): Promise<number> {
   delete j.code;
   delete j.migration;
-  if (j.k !== 1 || options.share !== undefined || !existsSync(join(repo, MIGRATIONS_DIR))) return EXIT.applied;
+  if (j.k !== 1 || options.share !== undefined || options.group !== undefined || !existsSync(join(repo, MIGRATIONS_DIR))) return EXIT.applied;
   const env = options.env ?? process.env;
   let approved: MigrationHold["approved"];
   try {
@@ -2339,6 +2395,8 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
   const what = last ? `migration ${last.name}` : "a migration";
   writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, j.w);
   if (run.code !== EXIT.waiting) console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
+  // One apply job per identity: wave 1's deciding job runs the migrations, and it holds the plan identities alone.
+  if (options.groups && run.code === EXIT.failed) console.log(`wave 1: with one apply job per identity, the wave's deciding job runs ${what} with the plan identities alone, which cannot write a state`);
   // A hold, also one made after an approved migration applied in this run (the next migration's, chant#3847), waits on chant's decision of its gate.
   // A hold waits on chant's decision of the migration's gate (gateCall); anything else is this wave's own code.
   if (run.code !== EXIT.waiting) j.code = run.code;

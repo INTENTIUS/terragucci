@@ -77,7 +77,7 @@ Each root runs every command, steps included, with its environment's roles. In d
    | a root reads the state of another environment's root | the reading root's roles need that state key too; move the output it needs, or grant that one key read-only and accept the reach |
    | a root matches no glob and `oidc` names no pair | add a glob for it, or set `plan_role` and `apply_role` |
 
-5. Run `terragucci init` and merge the new pipeline. The plan and apply jobs fetch the token as before and carry the stage's roles; the stage sets `AWS_ROLE_ARN` for each root. A state migration's reads and writes, and the state version an apply records, use the root's role too.
+5. Run `terragucci init` and merge the new pipeline. The plan jobs fetch the token as before and carry the plan roles; the stage sets `AWS_ROLE_ARN` for each root. Each wave applies in one job per pair of roles, each job carrying only its own pair ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)). A state migration's reads and writes, and the state version an apply records, use the root's role too.
 
 </Steps>
 
@@ -109,9 +109,21 @@ oidc:
 
 `config check` lists each service account with the `gcs` states its roots keep, and each client with the `azurerm` ones, and warns as it does for AWS roles. Grant each identity its environment's bucket prefix or container alone.
 
+## Trust each environment's apply role to its own jobs
+
+Each pair's apply role applies in jobs of its own, but those jobs carry the default branch's subject, as every apply job does, so a role that trusts the subject alone also trusts the other environments' apply jobs. Name the roots' environments in [`environments`](/terragucci/reference/config/#environments) instead of `oidc.roles`: their apply jobs then carry what a role's trust can require.
+
+| Forge | AWS | GCP | Azure |
+|---|---|---|---|
+| GitHub | the apply role trusts `sub` = `repo:<owner>/<repo>:environment:<name>` alone | the same `sub` in the provider's attribute condition, or the service account's binding | a federated credential whose subject is `repo:<owner>/<repo>:environment:<name>` |
+| GitLab | the environment's `oidc.audience` in the role's `aud` condition, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | an attribute condition on `assertion.environment`, `assertion.environment_protected` and `assertion.ref_protected` | a federated credential that matches on the same claims with a claims expression |
+| Forgejo | one ref's jobs carry the same subject, so a role cannot tell environments apart: keep them apart with a repo per environment, or a protected branch per environment | the same | the same |
+
+On GitHub, set the environment's deployment branch rule to the default branch alone, since the environment's subject does not name the ref.
+
 ## Limits
 
-A job's token can be exchanged for every role whose trust names the job's subject, so code in a root that reads the token file can assume another environment's role itself. The roles keep each root's own runs to its environment's state, and keep a backend pointed at the wrong key from reading it; they do not separate two environments' code planned in one job. The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) has the full table.
+A job's token can be exchanged for every role whose trust names the job's subject and audience. Each wave's deciding job plans every root with every environment's plan role, so code in a root it plans can read any state a plan role reaches; it holds no apply role, and its token carries the plan audience. The roles keep each root's own runs to its environment's state, and keep a backend pointed at the wrong key from reading it. The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) has the full table.
 
 ## Next
 

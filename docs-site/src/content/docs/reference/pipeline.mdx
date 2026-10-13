@@ -182,7 +182,7 @@ When the default branch changes a root that a pull request's plan note covers, t
 | Stage | Jobs |
 |---|---|
 | `plan` | plan, re-plan |
-| `apply` | every `apply-` job (the waves, their shares, `apply-comment`), `confirm`, `resume`, `ephemeral`, the ephemeral sweep, and on GitLab `mr-apply` |
+| `apply` | every `apply-` job (the waves, their shares and groups, `apply-comment`), `confirm`, `resume`, `ephemeral`, the ephemeral sweep, and on GitLab `mr-apply`. An environment's `runner` replaces it for its group's jobs |
 | `drift` | drift |
 | `default` | every other job: check, the note jobs, `fmt`, `tips`, `version-bump`, `publish`, the rollout, comments, agent and review jobs |
 

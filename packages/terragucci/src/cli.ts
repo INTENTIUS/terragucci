@@ -14,7 +14,7 @@
   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
@@ -76,6 +76,7 @@ import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } fro
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
+import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
 import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
@@ -110,7 +111,7 @@ import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
-import { applyWave, parseBranches, readLedger } from "./apply";
+import { applyWave, parseBranches, parseGroups, readLedger } from "./apply";
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
@@ -149,7 +150,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
@@ -435,6 +436,8 @@ export async function main(argv: string[]): Promise<number> {
             ...(str(flags, "decided") ? { decided: str(flags, "decided") } : {}),
             ...(str(flags, "branches") ? { branches: parseBranches(str(flags, "branches")!) } : {}),
             ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
+            ...(str(flags, "groups") ? { groups: parseGroups(str(flags, "groups")!) } : {}),
+            ...(str(flags, "group") ? { group: str(flags, "group") } : {}),
             ...(str(flags, "on-held") ? { onHeld: onHeldFlag(str(flags, "on-held")!) } : {}),
             ...(flags["stand-down"] === true ? { standDown: true } : {}),
           });
@@ -994,6 +997,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!path) throw new ConfigError("no terragucci config here; pass --config <file>");
         let problems: string[] = [];
         let warnings: string[] = [];
+        const tips: { rule: string; message: string }[] = [];
         let access: StateAccess | undefined;
         let approval: ApprovalMode | undefined;
         try {
@@ -1038,6 +1042,18 @@ export async function main(argv: string[]): Promise<number> {
           // A state the roots' code does not address can't order a reader after its writer: say which.
           if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
+          // One apply job per identity: groups whose jobs carry the same token subject get a tip, never a warning.
+          // Only a config that can split into groups looks for its roots, and a tip never fails the check.
+          const groupable = Boolean(config.environments || config.oidc?.roles || config.oidc?.gcp?.roles || config.oidc?.azure?.roles);
+          if (shape && problems.length === 0 && shape.kind !== "terragrunt" && groupable) {
+            try {
+              const roots = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
+              const tip = sharedSubjectTip(applyGroups(config, roots), config.forge ?? detectForge(repoDir)?.value);
+              if (tip) tips.push({ rule: SHARED_SUBJECT_TIP, message: tip });
+            } catch {
+              // The roots could not be listed (no Atmos on the path): no tip.
+            }
+          }
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
@@ -1051,7 +1067,7 @@ export async function main(argv: string[]): Promise<number> {
           problems = e.problems ?? [e.message];
         }
         const file = relative(cwd, resolve(path)) || path;
-        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
+        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(tips.length && problems.length === 0 ? { tips } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
         if (problems.length === 0) {
           console.log(`${file}: ok`);
           if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
@@ -1059,6 +1075,7 @@ export async function main(argv: string[]): Promise<number> {
             console.log("state access:");
             for (const r of access.roles) console.log(`  ${r.role} (${r.cloud ? `${r.cloud}, ` : ""}${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
           }
+          for (const t of tips) console.log(`tip (${t.rule}): ${t.message}`);
         } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
         if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);
         return problems.length ? 2 : 0;

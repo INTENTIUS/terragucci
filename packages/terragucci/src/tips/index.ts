@@ -45,6 +45,9 @@ export const CHANT_RULES_URL = "https://intentius.io/chant/lexicons/terraform/li
 /** Where terragucci documents its own tips; each rule is a heading. */
 export const TIPS_URL = "https://intentius.io/terragucci/reference/tips/";
 
+/** config check's tip when apply groups' jobs carry the same token subject (../groups.ts sharedSubjectTip). */
+export const SHARED_SUBJECT_TIP = "terragucci-shared-subject";
+
 /** A local module is shared widely at this many roots. */
 export const SHARED_MODULE_ROOTS = 10;
 /** A project has more than a few roots above this many. */

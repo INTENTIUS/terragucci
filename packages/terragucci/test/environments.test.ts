@@ -40,15 +40,12 @@ describe("environments in config check", () => {
 
   it("names the environment and the key it does not take", () => {
     const p = problems({ environments: { prod: { roots: ["envs/prod/**"], drift: "0 * * * *" } } });
-    expect(p).toEqual([expect.stringMatching(/^config\.environments\.prod\.drift is not a per-environment setting \(settings: roots, gate, oidc, parallelism\)$/)]);
+    expect(p).toEqual([expect.stringMatching(/^config\.environments\.prod\.drift is not a per-environment setting \(settings: roots, gate, oidc, runner, parallelism, forge_environment\)$/)]);
     expect(configSchemaProblems({ environments: { prod: { roots: ["envs/prod/**"], drift: "0 * * * *" } } }).length).toBeGreaterThan(0);
   });
 
-  it("refuses runner, forge_environment and oidc.audience per environment, saying why", () => {
-    const p = problems({ environments: { prod: { roots: ["envs/prod/**"], runner: { apply: ["self-hosted", "prod"] }, forge_environment: "production", oidc: { ...PROD_ROLES, audience: "sts.amazonaws.com" } } } });
-    expect(p).toContain("config.environments.prod.runner: one apply job applies the roots of every environment in its wave, so a runner cannot be chosen per environment; set runner at the top level");
-    expect(p.some((x) => x.startsWith("config.environments.prod.forge_environment: "))).toBe(true);
-    expect(p.some((x) => x.startsWith("config.environments.prod.oidc.audience: "))).toBe(true);
+  it("takes runner, forge_environment and oidc.audience per environment (./apply-groups.test.ts)", () => {
+    expect(problems({ environments: { prod: { roots: ["envs/prod/**"], runner: { apply: ["self-hosted", "prod"] }, forge_environment: "production", oidc: { ...PROD_ROLES, audience: "sts.amazonaws.com" } } } })).toEqual([]);
   });
 
   it("refuses an environment with no roots or empty roots, and a bad name", () => {

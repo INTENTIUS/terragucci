@@ -5,6 +5,8 @@ description: The files that move resources from one root's state to another's, m
 
 A migration file is `migrations/<name>.yml` at the top of the repo, and holds one kind of change: `moves`, `backends`, or a `revert`. [Move resources between roots](/terragucci/guides/move-resources-between-roots/) walks through each.
 
+A repo whose pipeline applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity) cannot run migrations: wave 1's deciding job runs them, and it holds the plan roles alone, which cannot write a state. A pull request's plan fails on a migration that has not applied, naming the file.
+
 ## Moves
 
 ```yaml
