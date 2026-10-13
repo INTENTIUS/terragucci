@@ -32,12 +32,13 @@ import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
 import { CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
-import { applyLayers, detectBinary, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
 import { discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
-import { detectShape, fullDriftPlans, type Shape } from "../shape";
+import { detectShape, fullDriftPlans, plansOnPlannedEstates, type Shape } from "../shape";
 import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
@@ -1105,6 +1106,22 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // The states the code does not address: their edges are unknown, and the report says so.
   const unaddressedOf = new Map(drift ? [] : unaddressedStates(repo, all).map((u) => [u.root, { ...(u.reads.length ? { unknownReads: u.reads.map((r) => ({ data: r.name, why: r.why })) } : {}), ...(u.own ? { unaddressed: u.own } : {}) }] as const));
   const upstreamPlans = new Map<string, unknown>();
+  // choudoufu: each root's terraform_estate_outputs reads and the root that owns each estate, so a reader plans on its
+  // upstream's plan in this run (plan -estate-outputs-from, ../estate-planned.ts). An upstream whose estate a root of the
+  // run reads keeps its show -json in a file for that flag.
+  const estatePlans = !drift && plansOnPlannedEstates(binary);
+  const estateReadsOf = new Map(estatePlans ? roots.map((r) => [r, estateOutputReads(join(repo, r))] as const) : []);
+  const estateOwner = new Map<string, string>();
+  for (const r of estatePlans ? all : []) {
+    const e = estateOf(join(repo, r)).estate;
+    if (e) estateOwner.set(e, r);
+  }
+  const readEstates = new Set([...estateReadsOf.values()].flat().map((b) => b.estate));
+  const upstreamPlanFiles = new Map<string, string>();
+  // The apply's waves (canary layers first, one dependency layer each), cut from every root so the numbers match its wave-<k> gates.
+  // Drift is not applied, so there are no waves to gate.
+  const applyOrder = drift ? [] : applyWaves(full, options.canary ?? settings.waves?.canary);
+  const waveOf = new Map(applyOrder.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
   // An Atmos instance's reads (../atmos.ts): each upstream's outputs, read once, in its own workspace and with its own role.
   const outputsRead = new Map<string, Promise<UpstreamOutputs>>();
   const outputsOf = (up: string): Promise<UpstreamOutputs> => {
@@ -1148,6 +1165,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const lines: string[] = [];
     const dir = join(checkoutOf(root), root);
     const { links, reads } = linksFor(root);
+    const estate = estateLinks(root, estateReadsOf.get(root) ?? [], estateOwner, (r) => roots.includes(r), (r) => (upstreamPlanFiles.has(r) ? { plan: upstreamPlans.get(r), file: upstreamPlanFiles.get(r)! } : undefined));
+    reads.push(...estate.reads);
     for (const r of unaddressedOf.get(root)?.unknownReads ?? []) lines.push(`${root}: reads state through terraform_remote_state "${r.data}" where the code does not say (${r.why}), so it is not ordered after the root that writes it`);
     // A root that reads the state of a root nothing has applied cannot plan: its terraform_remote_state block reads that
     // state even when its references point at the upstream's plan. Hold it back. An upstream that has applied and has a
@@ -1237,7 +1256,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
-      const planOnce = () => run("plan", ...(drift && !live.has(root) ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
+      // choudoufu: -estate-outputs-from for each estate it reads whose root planned in this run. Never with -cone, which
+      // choudoufu would drop for a full plan anyway.
+      const planOnce = () => run("plan", ...(drift && !live.has(root) ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", ...estate.args, `-out=${planFile}`);
       // Linked: the root plans on the planned outputs of the upstreams this run planned, its files put back once the plan is made.
       let linked: Linked | undefined;
       const unlink = (why: string): void => {
@@ -1268,6 +1289,24 @@ export async function runStage(stage: string, repo: string, options: StageOption
         reads.push(...linked.reads);
         for (const r of linked.reads) lines.push(plannedReadLine(root, r));
       }
+      if (estate.args.length > 0 && p.status !== 0) {
+        // choudoufu refused a read of the upstreams' planned outputs. An unknown one is known once the upstream's wave
+        // applies, and the root plans then; a sensitive one never crosses to another estate, so the root fails.
+        const refused = estateRefusals(`${p.stderr}\n${p.stdout}`);
+        const sensitive = refused.filter((r) => r.kind === "sensitive");
+        if (sensitive.length > 0) {
+          const why = sensitiveWhy(sensitive, estate.upstreamOf);
+          return failed(`${why}:\n${tail(p.stderr || p.stdout)}`, `${root}: not planned, ${why}`);
+        }
+        const unknown = refused.filter((r) => r.kind === "unknown");
+        if (unknown.length > 0) {
+          const after = [...new Set(unknown.map((r) => estate.upstreamOf.get(r.estate)).filter((u): u is string => u !== undefined))].sort();
+          const why = unknownWhy(unknown, estate.upstreamOf, wavesOf(waveOf, after, waveOf.get(root) ?? 0));
+          lines.push(`${root}: not planned: ${why}`);
+          return { root, lines, deferred: { unit: root, after, why, previewed: false }, unknownFrom: after };
+        }
+      }
+      if (p.status === 0) for (const r of estate.reads) if (r.outputs === "planned") lines.push(plannedReadLine(root, r));
       reads.sort((a, b) => (a.upstream < b.upstream ? -1 : a.upstream > b.upstream ? 1 : a.data < b.data ? -1 : 1));
       if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
       stepError = await step(`after-${planStep}`, planFile);
@@ -1282,6 +1321,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
       }
       if (live.has(root)) plan = liveDrift(plan);
       if (!drift) upstreamPlans.set(root, plan);
+      if ([...estateOwner].some(([e, r]) => r === root && readEstates.has(e))) {
+        const file = join(work, `${index}.tfplan.json`);
+        writeFileSync(file, json.stdout);
+        upstreamPlanFiles.set(root, file);
+      }
       const unknownFrom = unknownUpstreams(reads);
       const safe = redactPlan(plan);
       let attributed: Attributed | undefined;
@@ -1348,17 +1392,14 @@ export async function runStage(stage: string, repo: string, options: StageOption
     rmSync(work, { recursive: true, force: true });
   }
 
-  // The apply's waves (canary layers first, one dependency layer each), cut from every root so the numbers match its wave-<k> gates.
-  // Drift is not applied, so there are no waves to gate.
-  const applyOrder = drift ? [] : applyWaves(full, options.canary ?? settings.waves?.canary);
-  const waveOf = new Map(applyOrder.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
   const waves: WaveInput[] = applyOrder
     .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
     .filter((w) => w.roots.length > 0)
     .map((w) => {
       const holding = w.roots.filter((r) => heldBySteps.has(r));
       const reads = wavesOf(waveOf, w.roots.flatMap((r) => [...(orderOf.get(r) ?? [])]), w.number);
-      const replansAfter = wavesOf(waveOf, w.roots.flatMap((r) => unknownFrom.get(r) ?? []), w.number);
+      // A root whose upstream's output is unknown until that upstream applies replans after it, planned in the run or not.
+      const replansAfter = wavesOf(waveOf, applyOrder[w.number - 1]!.flatMap((r) => unknownFrom.get(r) ?? []), w.number);
       return {
         ...w,
         state: "planned" as const,
