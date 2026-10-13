@@ -1018,6 +1018,8 @@ export interface ApplyWaveInput {
   groups?: string;
   /** With `groups`: the group this job applies. */
   group?: string;
+  /** An environment's group: the `terragucci check-job` line that stops the job, before any token is fetched or traded, unless it runs where the environment's apply is set to run (checkJobLine). */
+  checkJob?: string;
 }
 
 /**
@@ -1076,6 +1078,7 @@ export function applyScript(
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
   return [
+    ...(input.checkJob ? [input.checkJob] : []),
     ...stageTokens(forge, oidc, stage),
     READS_EXIT,
     forgeApi(forge),
@@ -1467,6 +1470,34 @@ export function groupedCommentScript(layers: string[][], forge: Exclude<ForgeNam
     "export TG_PR TG_SHA",
     'tg reply "each environment applies in jobs of its own, with its own identities, so a comment applies nothing in this repo. To apply ${TG_SHA:0:8} again, re-run the apply jobs of the run its push started."',
   ].join("\n");
+}
+
+/**
+ * The first line of an environment's apply job (./groups.ts): `terragucci
+ * check-job` with what the job is expected to see, which stops the job before
+ * any token is fetched or traded unless it runs in the environment's forge
+ * environment, on a branch it applies from, and on its runner
+ * (./check-job.ts). The expected values are rendered here, from the config
+ * init read, so the check reads nothing from the commit the job runs. The
+ * default branch comes from the forge: GitLab's CI_DEFAULT_BRANCH, and on
+ * GitHub and Forgejo the push event's default branch (TG_BRANCH). On GitHub
+ * the forge environment is read from an OIDC token's claims, so it is checked
+ * only in a job that may request one. On GitHub and Forgejo the step restarts
+ * once its tokens are fetched (stageTokens), and the check runs before that,
+ * once.
+ */
+export function checkJobLine(forge: ForgeName, group: ApplyGroup, runner: RunnerSpec | undefined, branches: readonly string[], tokens: boolean): string {
+  const labels = runner === undefined ? [] : typeof runner === "string" ? [runner] : Array.isArray(runner) ? runner : (runner.labels ?? []);
+  const args = [
+    "--forge", forge,
+    "--environment", sh(group.environment ?? group.name),
+    "--branches", `"${[forge === "gitlab" ? "$CI_DEFAULT_BRANCH" : "$TG_BRANCH", ...branches].join(",")}"`,
+    ...(group.forgeEnvironment !== undefined && (forge === "gitlab" || (forge === "github" && tokens)) ? ["--forge-environment", sh(group.forgeEnvironment)] : []),
+    ...(forge === "gitlab" && labels.length > 0 ? ["--runner-tags", sh(labels.join(","))] : []),
+    ...(forge !== "gitlab" && labels.includes("self-hosted") ? ["--self-hosted"] : []),
+  ];
+  const line = `terragucci check-job ${args.join(" ")} || exit 1`;
+  return forge === "gitlab" ? line : `if [ -z "\${${OIDC_RESTART}:-}" ]; then ${line}; fi`;
 }
 
 const RESUME_AGAIN = "Approve the plans with \\`$cmd\\`; the resume job applies them on its next run";
@@ -2188,10 +2219,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         if (mine.length === 0) continue;
         const n = waveJobs ? shareCount(mine, waveJobs) : 1;
         const jobOidc = audienceMap(g.oidc, g.audience);
+        // An environment's job checks first that it runs where the environment's apply is set to run (./check-job.ts).
+        const checkJob = g.environment !== undefined ? checkJobLine(forge, g, g.runner ?? runnerOf(input.runner, "apply"), branchNames, needsToken) : undefined;
         const own: Partial<ApplyJob> = { group: g.name, ...(jobOidc ? { oidc: jobOidc } : {}), ...(g.runner !== undefined ? { runner: g.runner } : {}), ...(g.forgeEnvironment !== undefined && forge !== "forgejo" ? { environment: g.forgeEnvironment } : {}) };
         for (let s = 1; s <= n; s++) {
           const job = n > 1 ? `${name}-${g.name}-share-${s}` : `${name}-${g.name}`;
-          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job }), ...(n > 1 ? { share: s } : {}) });
+          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job, ...(checkJob ? { checkJob } : {}) }), ...(n > 1 ? { share: s } : {}) });
           before.push(job);
         }
       }
@@ -2280,7 +2313,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
           id_tokens: {
             ...(hasAws(o) || credentials ? { TERRAGUCCI_OIDC: { aud: stageAudience(o, stage) } } : {}),
             ...(o?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(o.gcp.workload_identity_provider) } } : {}),
-            ...(o?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: AZURE_AUDIENCE } } : {}),
+            ...(o?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: o.azure.audience ?? AZURE_AUDIENCE } } : {}),
           },
         }
       : {};

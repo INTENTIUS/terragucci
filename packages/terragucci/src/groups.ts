@@ -181,16 +181,26 @@ const listed = (names: readonly string[]): string => (names.length < 2 ? names.j
 /**
  * config check's tip when the groups' apply jobs carry the same OIDC token
  * subject, so a role's trust cannot tell one group's jobs from another's:
- * identity groups from roles by glob, which run in no forge environment, and
- * environments on Forgejo, which has none. Undefined otherwise, and with
- * fewer than two groups.
+ * identity groups from roles by glob, which run in no forge environment;
+ * environments on Forgejo, which has none, so every apply job of one ref
+ * carries one subject; and on GitHub and GitLab, environments that name the
+ * same forge_environment. Undefined otherwise, and with fewer than two groups.
  */
 export function sharedSubjectTip(groups: readonly ApplyGroup[] | undefined, forge: ForgeName | undefined): string | undefined {
   if (!groups || groups.length < 2) return undefined;
   const environments = groups.some((g) => g.environment !== undefined);
-  if (environments && forge !== "forgejo") return undefined;
+  if (environments && forge !== "forgejo") {
+    // Environments that name one forge environment: one subject on GitHub, one environment claim on GitLab.
+    const byForgeEnvironment = new Map<string, string[]>();
+    for (const g of groups) if (g.environment !== undefined && g.forgeEnvironment !== undefined) byForgeEnvironment.set(g.forgeEnvironment, [...(byForgeEnvironment.get(g.forgeEnvironment) ?? []), g.name]);
+    const shared = [...byForgeEnvironment].filter(([, names]) => names.length > 1);
+    if (shared.length === 0) return undefined;
+    return shared
+      .map(([fe, names]) => `the apply jobs of the environments ${listed(names)} run in the same forge environment ${fe}, so their tokens carry the same environment and a role's trust cannot tell one environment's jobs from another's; give each environment a forge_environment of its own`)
+      .join("; ");
+  }
   const which = `the apply jobs of the groups ${listed(groups.map((g) => g.name))} carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's`;
-  if (forge === "forgejo") return `${which}; Forgejo has no deployment environments, so keep the groups' roles apart with a repo or a protected branch each`;
+  if (forge === "forgejo") return `${which}; they apply from the same ref, and Forgejo has no deployment environments, so its token names the ref alone: keep the groups' roles apart with a repo or a protected branch each`;
   return `${which}; on GitHub or GitLab, name each group's roots in environments, each with a forge_environment, and have each apply role trust its environment alone`;
 }
 

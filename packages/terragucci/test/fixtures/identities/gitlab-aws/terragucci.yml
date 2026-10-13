@@ -1,0 +1,22 @@
+# GitLab, AWS: an audience per environment's apply jobs, which AWS can check where it cannot read GitLab's environment claims.
+forge: gitlab
+binary: tofu
+drift: "0 4 * * *"
+oidc:
+  plan_role: arn:aws:iam::888888888888:role/plan
+  apply_role: arn:aws:iam::888888888888:role/apply
+  audience: { plan: terragucci-plan, apply: terragucci-apply, drift: terragucci-drift }
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    runner: { apply: [prod-runner] }
+    oidc:
+      plan_role: arn:aws:iam::999999999999:role/prod-plan
+      apply_role: arn:aws:iam::999999999999:role/prod-apply
+      audience: terragucci-prod-apply
+  dev:
+    roots: ["envs/dev/**"]
+    oidc:
+      plan_role: arn:aws:iam::777777777777:role/dev-plan
+      apply_role: arn:aws:iam::777777777777:role/dev-apply
+      audience: terragucci-dev-apply

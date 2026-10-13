@@ -39,8 +39,10 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state; [config check tips](/terragucci/reference/tips/#config-check-tips) after `ok` |
+| `config identities` | per environment and stage, prints the roots, the runner, the forge environment, the cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs to accept that job |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
@@ -629,6 +631,39 @@ terragucci.yml: 1 warning(s)
   oidc: envs/prod/app (envs/prod/**) reads the state of envs/dev/app (envs/dev/**) through terraform_remote_state, so arn:aws:iam::111122223333:role/prod-plan and arn:aws:iam::111122223333:role/prod-apply reach s3://acme-state/dev/app.tfstate, another environment's state
 ```
 
+## config identities
+
+```bash
+terragucci config identities [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots]
+```
+
+Prints, for each environment in `environments` and for the roots in none, what each kind of job presents to a cloud: the plan job of a pull request, each wave's deciding job, the apply jobs on the default branch, and the drift job. Use it to write each role's trust, or read it with the [Terraform provider](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust). `--json` prints [the contract](/terragucci/reference/cli-json/#config-identities).
+
+| Flag | Meaning |
+|---|---|
+| `--project` | a control repo's project, by its key; its roots are elsewhere, so none are listed |
+| `--forge` | the forge, when neither the config, the project key nor the origin remote names it |
+| `--repo` | the repository the jobs run in, as `owner/name` or a GitLab project's full path; default: the project key's, or the origin remote's |
+| `--default-branch` | the branch the apply and drift jobs run on; default `main` |
+| `--owner-id`, `--repo-id` | Forgejo: the owner's and the repository's numeric ids, which Forgejo puts in the subject; without them the subject holds `<owner-id>` and `<repo-id>` |
+| `--no-roots` | does not read the repo's roots, for a config read away from its repo |
+
+```text
+terragucci.yml: github github.com/acme/infra (default branch main)
+
+environment prod: envs/prod/app, envs/prod/net
+  plan: sub repo:acme/infra:pull_request
+    runner ubuntu-latest
+    aws arn:aws:iam::222222222222:role/prod-plan aud terragucci-plan
+  decide: sub repo:acme/infra:ref:refs/heads/main
+    runner group deployers self-hosted, linux
+    aws arn:aws:iam::222222222222:role/prod-plan aud terragucci-plan
+  apply: sub repo:acme/infra:environment:prod
+    forge environment prod
+    runner group deployers self-hosted, linux
+    aws arn:aws:iam::222222222222:role/prod-apply aud terragucci-apply
+```
+
 ## approve
 
 ```bash
@@ -803,6 +838,14 @@ terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
 
 Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs them, `check-sources` only when `sources` is set. See [Stages](/terragucci/reference/stages/#check).
 
+## check-job
+
+```bash
+terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]
+```
+
+The first line of each [environment's](/terragucci/reference/config/#environments) apply job, before any token is fetched or traded. `init` writes the expected values into the job: the forge environment, the branches the job applies from (the default branch from the forge, and those of `apply.branches`), GitLab's runner tags, and `--self-hosted` when the runner's labels include `self-hosted`. It prints what it checked, or one line per value that differs, naming the expected and the found value, and exits 1. What it reads on each forge: [The apply job's own check](/terragucci/reference/environment/#the-apply-jobs-own-check).
+
 ## install
 
 ```bash
@@ -813,7 +856,7 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check` and `query` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities` and `query` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -841,8 +884,10 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok`, with or without warnings | | problems found | | |
+| `config identities` | printed | | no config, an unknown project, or no forge to name | | |
 | `state export` | the version written and recorded | | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | | |
+| `check-job` | the job runs where its environment's apply is set to run | a forge environment, ref or runner differs | a flag missing | | |
 | `install` | done | | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
