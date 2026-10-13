@@ -128,6 +128,7 @@ import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf
 import { gitlabReviewCalls, gitlabReviewOf } from "./gitlab-agent";
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
+import { coneArgs, coneLogLine, conePlanDigest, coneRoot, readPlanCone, type PlanCone } from "./cone";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
@@ -603,6 +604,8 @@ interface PlannedRoot {
   steps: ReportStep[];
   /** Its `on_failure: approve` steps that failed: the wave waits for an approval. */
   holds: string[];
+  /** A choudoufu plan of an open pull request's root with `-cone` (./cone.ts): its targets are in the member's plan digest. */
+  cone?: PlanCone;
 }
 
 /** The steps a wave runs, and the context its roots run them in. */
@@ -656,16 +659,16 @@ interface RootSources {
   check?: SourceChecker;
 }
 
-async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps, sources?: RootSources): Promise<PlannedRoot> {
+async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
-    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws, sources);
+    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws, sources, coneBase);
   } finally {
     observer.endRoot(timing);
   }
 }
 
-async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, sources?: RootSources): Promise<PlannedRoot> {
+async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string): Promise<PlannedRoot> {
   const dir = join(repo, root);
   // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
   // An Atmos instance names its workspace (./atmos.ts): it plans and applies there, not in default.
@@ -722,8 +725,13 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   for (const v of filled.filled) console.log(`${root}: ${v} read from the state its stacks name`);
   stepError = (await rootSteps(repo, base, stepEnv, "after-init")) ?? (await rootSteps(repo, base, stepEnv, "before-plan"));
   if (stepError) return { ...base, error: stepError };
-  const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
+  const planArgs = ["-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`];
+  // An open pull request's wave plans a choudoufu live root as the cone of its change since base, as its plan note did (./cone.ts).
+  const coneArg = coneArgs(binary, coneBase, planArgs, coneRoot(repo, root));
+  const plan = await timed(observer, timing, binary, ["plan", ...coneArg, ...planArgs], env, dir);
   if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
+  const cone = coneArg.length && coneBase ? readPlanCone(plan.out, planFile, coneBase) : undefined;
+  if (cone) console.log(coneLogLine(root, cone));
   stepError = await rootSteps(repo, base, stepEnv, "after-plan", planFile);
   if (stepError) return { ...base, error: stepError };
   const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 512 * 1024 * 1024 });
@@ -737,8 +745,10 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const changed = part.entries.filter((e) => e.action !== "no-op" && e.action !== "read");
   return {
     ...base,
-    member: { member: root, planDigest: part.member.planDigest ?? "" },
+    // The cone's targets join the digest, so an approval of this cone counts for no other.
+    member: { member: root, planDigest: part.member.planDigest ? conePlanDigest(part.member.planDigest, cone) : "" },
     plan: json,
+    ...(cone ? { cone } : {}),
     changes: changed.length,
     destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
     summary: plan.out.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned",
@@ -1451,7 +1461,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     const state = w.states?.get(p.root);
     const versions = w.recordVersions?.get(p.root);
     const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
+    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
   }
   if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);
@@ -1627,7 +1637,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     return EXIT.failed;
   }
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined);
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined, options.base);
   });
   w.plannedAt = new Date().toISOString();
   w.planned = planned;
@@ -1788,7 +1798,7 @@ function storedWaveReport(repo: string, options: ApplyWaveOptions, wave: number,
   const now = new Date().toISOString();
   return JSON.stringify(buildReport({
     run: { ...runFacts(repo, env), stage: "tf-apply", wave, binary: options.binary, runtime: "forge", started: now, finished: now },
-    roots: planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(options.binary) })),
+    roots: planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(options.binary), ...(p.cone ? { cone: p.cone } : {}) })),
     waves: [{ number: wave, roots, setDigest: digest }],
   }));
 }
@@ -1914,7 +1924,7 @@ async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, r
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
 
 /**
  * Price a wave's plans, with `cost` set (at the checkout or at base): the

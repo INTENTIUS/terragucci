@@ -9,6 +9,7 @@ import { changeSetDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetP
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import type { Gate } from "../config";
+import { conePlanDigest, reportCone, type PlanCone } from "../cone";
 import { changesSomething, destroysSomething } from "./changing";
 import { costMember } from "./cost";
 import { changeKind, foldChange } from "./highlight";
@@ -76,6 +77,8 @@ export interface RootInput {
   dependencies?: string[];
   /** The environment of `environments:` the root is in. Absent when it is in none. */
   environment?: string;
+  /** A choudoufu plan run with `-cone`: the cone it planned, whose targets join its plan digest, or why it planned in full (../cone.ts). */
+  cone?: PlanCone;
 }
 
 /** A root's input with its environment, when it is in one. */
@@ -220,7 +223,9 @@ function varies(roots: ReportRoot[]): ReportGroup["varies"] {
 const policyRefused = (r: RootInput): boolean => r.plan !== undefined && r.error !== undefined && r.policy !== undefined && r.policy.result !== "passed";
 
 function plannedPart(r: RootInput): ChangeSetPart {
-  const part = terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) });
+  const planned = terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) });
+  const digest = planned.member.planDigest;
+  const part = r.cone?.record && digest ? { ...planned, member: { ...planned.member, planDigest: conePlanDigest(digest, r.cone) } } : planned;
   if (!policyRefused(r)) return part;
   return { ...part, member: { ...part.member, status: "failed", error: r.error, planDigest: null } };
 }
@@ -309,6 +314,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.unknownReads?.length ? { unknown_reads: src.unknownReads } : {}),
       ...(src.unaddressed ? { unaddressed: src.unaddressed } : {}),
       ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
+      ...(src.cone ? { cone: reportCone(src.cone) } : {}),
     };
   });
 
