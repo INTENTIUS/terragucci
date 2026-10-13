@@ -25,8 +25,8 @@ const status = (n: number, body: unknown = { message: "nope" }): Answer => ({ st
 function recorded(answers: Record<string, Answer>): { fetch: Fetch; calls: string[] } {
   const calls: string[] = [];
   const fetch: Fetch = async (url, init) => {
-    calls.push(`${init?.method ?? "GET"} ${url}`);
-    const role = /Action=GetRole&RoleName=([^&]+)/.exec(url)?.[1];
+    calls.push(`${init?.method ?? "GET"} ${url}${init?.body ? ` ${init.body}` : ""}`);
+    const role = /Action=GetRole&RoleName=([^&]+)/.exec(`${url}?${init?.body ?? ""}`)?.[1];
     const a = answers[role ? `role:${decodeURIComponent(role)}` : url] ?? status(404, { message: "Not Found" });
     const text = typeof a.body === "string" ? a.body : JSON.stringify(a.body);
     return { ok: a.status >= 200 && a.status < 300, status: a.status, json: async () => JSON.parse(text), text: async () => text };
@@ -105,12 +105,13 @@ describe("read-only", () => {
     expect(inner).not.toHaveBeenCalled();
   });
 
-  it("checks a whole setup with GET requests alone", async () => {
+  it("checks a whole setup with GET requests to the forge and a GetRole form POST to IAM alone", async () => {
     const dir = fixture("github-aws");
     const { fetch, calls } = recorded(await githubSetup(dir));
     await forgeCheck(join(dir, "terragucci.yml"), "terragucci.yml", { repo: "acme/infra" }, deps(fetch, { GITHUB_TOKEN: "t", ...AWS_ENV }));
     expect(calls.length).toBeGreaterThan(5);
-    expect(calls.every((c) => c.startsWith("GET "))).toBe(true);
+    expect(calls.some((c) => c.startsWith("POST "))).toBe(true);
+    expect(calls.every((c) => c.startsWith("GET ") || /^POST https:\/\/iam\.amazonaws\.com\/ Action=GetRole&RoleName=[^&]+&Version=2010-05-08$/.test(c))).toBe(true);
   });
 });
 

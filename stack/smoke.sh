@@ -4918,7 +4918,7 @@ claim_apply/check_job() {
   log() { echo "[smoke check-job] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/check-job" sha first second rc=0 env role wf m line TERRAGUCCI="$TERRAGUCCI"
+  local work repo="$USER/check-job" sha first second rc=0 env role wf m line i done_jobs TERRAGUCCI="$TERRAGUCCI"
   local marks=shop-terraform-state/check-job-marks prefix=arn:aws:iam::000000000000:role/terragucci-cj
   local cond="    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
@@ -5052,6 +5052,16 @@ JS
   echo 2 > "$work/tree/envs/dev/app/rev.txt"
   second="$(push_tree "$work/tree" "$repo" hotfix "check-job: hotfix")" || { drop_work "$work"; return 1; }
   wait_run "$repo" "$second" push || { drop_work "$work"; return 1; }
+  # Forgejo ends the run at the first failed job, while the other group job
+  # may still be running: wait for both to finish before reading them.
+  for i in $(seq 1 60); do
+    done_jobs=0
+    for env in prod dev; do
+      case "$(cj_status "$RUN_ID" "apply-wave-1-$env")" in success|failure|cancelled|skipped) done_jobs=$((done_jobs + 1)) ;; esac
+    done
+    [ $done_jobs = 2 ] && break
+    sleep 2
+  done
   log "hotfix: run $RUN_STATUS; apply-wave-1 $(cj_status "$RUN_ID" apply-wave-1), apply-wave-1-prod $(cj_status "$RUN_ID" apply-wave-1-prod), apply-wave-1-dev $(cj_status "$RUN_ID" apply-wave-1-dev)"
   [ "$(cj_status "$RUN_ID" apply-wave-1)" = success ] || { log "apply-wave-1 did not decide wave 1 on hotfix, so no group job ran there"; rc=1; }
   for env in prod dev; do
@@ -5092,8 +5102,8 @@ claim_forge/check() {
   # are the test account's in effect, and only the command's own guard keeps
   # it to reads. Either way forge check reaches Forgejo and floci through a
   # recorder of the claim's own (the config's url and AWS_ENDPOINT_URL_IAM
-  # point at it), and every request it recorded must be a GET or HEAD, and
-  # to floci a GetRole.
+  # point at it), and every request it recorded must be a GET or HEAD to
+  # Forgejo, and a GetRole to floci, which forge check sends as a form POST.
   # BREAK: forge check runs a bundle whose trust comparison takes a live
   # wildcard sub as within a literal one whenever it matches it, so the role
   # that trusts repo:* reports a match.
@@ -5324,7 +5334,7 @@ JS
   # What the recorders saw of every run: reads alone.
   if [ -f "$work/fc-match.json" ]; then
     reads="$(jq -s 'length' "$work/forgejo.log") to Forgejo, $(jq -s '[.[] | select(.action == "GetRole")] | length' "$work/floci.log") GetRole to floci"
-    bad="$(cat "$work/forgejo.log" "$work/floci.log" | jq -c 'select(((.method == "GET" or .method == "HEAD") and (.action == null or .action == "GetRole")) | not)')"
+    bad="$(cat "$work/forgejo.log" "$work/floci.log" | jq -c 'select(((.method == "GET" or .method == "HEAD") and .action == null) or ((.method == "GET" or .method == "POST") and .action == "GetRole") | not)')"
     log "the recorders saw ${reads}${bad:+, and these other requests: $bad}"
     [ -z "$bad" ] || { log "forge check sent a request that is not a read"; rc=1; }
     [ "$(jq -s '[.[] | select(.action == "GetRole")] | length' "$work/floci.log")" -gt 0 ] && [ -s "$work/forgejo.log" ] \
