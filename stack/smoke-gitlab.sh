@@ -54,7 +54,8 @@ affected/tofu|a merge request that changes one of two roots plans that root alon
 oidc/gitlab|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|
 oidc/audience-stages|with oidc.audience a map, the merge request plan job holds an id_token for the plan audience alone and the apply job on main one for the apply audience, and a role whose trust names the apply audience refuses the plan token|
 apply/groups|with environments prod and dev, each with its own roles and audience, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment that runs in that GitLab environment; each token names its environment and audience, which a condition on the environment of the other refuses; GitLab CE cannot protect an environment, so environment_protected is not shown|
-apply/check-job|with environments prod and dev, each apply job in its GitLab environment checks its forge environment, ref and that the ref is protected before it takes a token: on a protected main each passes and takes its role, and once the protection of main is removed each fails before it takes a token, naming the protected ref it expected and false; the lab runner carries no tags, so the runner check is not shown|'
+apply/check-job|with environments prod and dev, each apply job in its GitLab environment checks its forge environment, ref and that the ref is protected before it takes a token: on a protected main each passes and takes its role, and once the protection of main is removed each fails before it takes a token, naming the protected ref it expected and false; the lab runner carries no tags, so the runner check is not shown|
+forge/check|terragucci forge check exits 0 when the apply runner takes protected refs only and the variable the apply jobs read is scoped to the environment and protected, and shows the protected environment as unknown on GitLab CE, naming Premium; it exits 1 with a row naming the expected and found value when the runner takes any ref, the variable is not protected, or the variable is scoped to every environment; it runs with a read_api token|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
@@ -96,6 +97,7 @@ oidc/gitlab             runner weight=250
 oidc/audience-stages    runner weight=250
 apply/groups            runner weight=250
 apply/check-job         runner weight=250
+forge/check             weight=60
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -3107,5 +3109,141 @@ JS
   done
   drop_work "$work"
   [ $rc = 0 ] && log "on the protected main each group job checked its environment, ref and protection and took its role; on the unprotected main each refused, naming the protected ref it expected and false, and took none"
+  return $rc
+}
+
+gitlab_claim_forge/check() {
+  # terragucci forge check on a GitLab project, run from the host; no
+  # pipeline runs. The config's environment prod (forge_environment: prod)
+  # applies on a runner tagged tg-forge-check, and pass.secrets names
+  # TF_VAR_forge_check, which its apply job reads. The project gets a runner
+  # of its own carrying that tag and taking protected refs only
+  # (access_level ref_protected; it is registered through the API and never
+  # connects, so nothing runs on it), and the variable once, scoped to prod
+  # and protected. Then forge check must exit 0: the runner and the variable
+  # rows match, and the protected environment row is unknown and names
+  # Premium, since the lab is GitLab CE, which has no protected environments.
+  # Each mismatch in turn, put back after its run, must exit 1 with its one
+  # row a mismatch whose expected and found name the values: the runner
+  # taking any ref (found not_protected), the variable not protected (found
+  # scope prod, not protected), and the variable scoped to every environment
+  # (found scope *, protected).
+  # Read-only: forge check runs with an impersonation token of a lab user
+  # who is Maintainer on the project (runners and variables need it), scoped
+  # read_api alone, and GitLab must refuse that token a write.
+  # What this cannot show: a protected environment on Premium, and a match
+  # or mismatch for it; the row is unknown here by design.
+  # BREAK: forge check runs a bundle that takes every runner's access level
+  # as protected, so the runner that takes any ref reports a match.
+  log() { echo "[smoke gitlab forge-check] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project pid rc=0 TERRAGUCCI="$TERRAGUCCI" reader=forge-check-reader uid rtoken code runner="" expires
+  local tag=tg-forge-check key=TF_VAR_forge_check scoped r
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      forge-check.ts '      else if (d.value.access_level !== "ref_protected") open.push(' '      else if (false && d.value.access_level !== "ref_protected") open.push(' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  project="$(gl_project forge-check)" || { drop_work "$work"; return 1; }
+  pid="$(glapi "$(gl_p "$project")" | jq -r .id)"
+  log "project $GL_URL/$GL_USER/$project ($pid)"
+  # The variable's definition for one scope, as the API names it.
+  scoped="$(gl_p "$project")/variables/$key?filter%5Benvironment_scope%5D="
+  # The reader: a lab user, made once and kept, Maintainer on this project, with a read_api token.
+  uid="$(glapi "$GL_URL/api/v4/users?username=$reader" | jq -r '.[0].id // empty')"
+  if [ -z "$uid" ]; then
+    uid="$(glapi -X POST "$GL_URL/api/v4/users" --data-urlencode "username=$reader" --data-urlencode "name=$reader" \
+      --data-urlencode "email=$reader@terragucci.local" --data-urlencode "password=Zq7$(openssl rand -hex 12)!Kx" --data-urlencode "skip_confirmation=true" 2>/dev/null | jq -r '.id // empty')" || true
+    [ -n "$uid" ] || uid="$(glapi "$GL_URL/api/v4/users?username=$reader" | jq -r '.[0].id // empty')"
+  fi
+  [ -n "$uid" ] || { log "could not make the user $reader"; rc=1; }
+  if [ $rc = 0 ]; then
+    expires="$(date -u -v+2d +%Y-%m-%d 2>/dev/null || date -u -d '+2 days' +%Y-%m-%d)"
+    rtoken="$(glapi -X POST "$GL_URL/api/v4/users/$uid/impersonation_tokens" --data-urlencode "name=forge-check" --data-urlencode "scopes[]=read_api" \
+      --data-urlencode "expires_at=$expires" | jq -r '.token // empty')"
+    [ -n "$rtoken" ] || { log "could not mint a read_api token for $reader"; rc=1; }
+    glapi -o /dev/null -X POST "$(gl_p "$project")/members" --data-urlencode "user_id=$uid" --data-urlencode "access_level=40" \
+      || { log "could not make $reader a Maintainer of $project"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' -H "PRIVATE-TOKEN: $rtoken" -X POST "$(gl_p "$project")/variables" \
+      --data-urlencode "key=FORGE_CHECK_PROBE" --data-urlencode "value=probe")"
+    log "a variable posted with the reader's token: $code"
+    case "$code" in
+      2*) log "the read_api token could write to $project"; glapi -o /dev/null -X DELETE "$(gl_p "$project")/variables/FORGE_CHECK_PROBE" || true; rc=1 ;;
+      401|403) ;;
+      *) log "GitLab answered $code to a write with the reader's token, not 403"; rc=1 ;;
+    esac
+  fi
+  if [ $rc = 0 ]; then
+    runner="$(glapi -X POST "$GL_URL/api/v4/user/runners" --data-urlencode "runner_type=project_type" --data-urlencode "project_id=$pid" \
+      --data-urlencode "description=forge-check $project" --data-urlencode "tag_list=$tag" --data-urlencode "run_untagged=false" \
+      --data-urlencode "access_level=ref_protected" | jq -r '.id // empty')"
+    [ -n "$runner" ] || { log "could not register a runner tagged $tag"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    glapi -o /dev/null -X POST "$(gl_p "$project")/variables" --data-urlencode "key=$key" --data-urlencode "value=forge-check" \
+      --data-urlencode "protected=true" --data-urlencode "masked=false" --data-urlencode "environment_scope=prod" \
+      || { log "could not add $key scoped to prod"; rc=1; }
+  fi
+  mkdir -p "$work/tree"
+  printf 'forge: gitlab\nbinary: tofu\nurl: %s\npass:\n  secrets: [%s]\nenvironments:\n  prod:\n    roots: ["envs/prod/**"]\n    forge_environment: prod\n    runner:\n      apply: [%s]\n' \
+    "$GL_URL" "$key" "$tag" > "$work/tree/terragucci.yml"
+
+  # One run of forge check as the reader: $work/fc-<name>.json, FC_EXIT.
+  fc_run() { # name
+    FC_EXIT=0
+    (cd "$work/tree" && env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE -u GOOGLE_OAUTH_ACCESS_TOKEN -u AZURE_GRAPH_TOKEN \
+      GITLAB_TOKEN="$rtoken" "$TERRAGUCCI" forge check --json --no-roots --repo "$GL_USER/$project") > "$work/fc-$1.json" 2> "$work/fc-$1.err" || FC_EXIT=$?
+    log "$1: exit $FC_EXIT; $(jq -c '[.results.rows[]? | {check, subject, status}]' "$work/fc-$1.json" 2>/dev/null || head -c 400 "$work/fc-$1.err")"
+  }
+  fc_row() { # name, check, subject -> that row
+    jq -c --arg c "$2" --arg s "$3" '[.results.rows[]? | select(.where == "gitlab" and .check == $c and .subject == $s)] | first // empty' "$work/fc-$1.json" 2>/dev/null
+  }
+  # The run exited 1 with that row its one mismatch, its expected and found naming the values.
+  fc_mismatch() { # name, check, subject, text in expected, text in found
+    local r
+    r="$(fc_row "$1" "$2" "$3")"
+    [ -n "$r" ] || { log "$1: no $2 row for $3"; return 1; }
+    log "$1: $2 $3 expected '$(jq -r .expected <<<"$r")', found '$(jq -r .found <<<"$r")', $(jq -r .status <<<"$r")"
+    [ "$FC_EXIT" = 1 ] || { log "$1: forge check exited $FC_EXIT, not 1"; return 1; }
+    jq -e '.status == "mismatch"' <<<"$r" >/dev/null || { log "$1: the $2 row for $3 is not a mismatch"; return 1; }
+    jq -e --arg e "$4" '.expected | contains($e)' <<<"$r" >/dev/null || { log "$1: its expected does not name $4"; return 1; }
+    jq -e --arg f "$5" '.found | contains($f)' <<<"$r" >/dev/null || { log "$1: its found does not name $5"; return 1; }
+    jq -e '.results.counts.mismatch == 1' "$work/fc-$1.json" >/dev/null || { log "$1: other rows are mismatches too"; return 1; }
+  }
+
+  if [ $rc = 0 ]; then
+    fc_run match
+    [ "$FC_EXIT" = 0 ] || { log "the matching setup: forge check exited $FC_EXIT, not 0"; rc=1; }
+    r="$(fc_row match protected-environment prod)"
+    log "protected environment prod: $(jq -r '"\(.status): \(.found)"' <<<"${r:-null}" 2>/dev/null)"
+    jq -e '.status == "unknown" and (.found | contains("Premium"))' <<<"${r:-null}" >/dev/null 2>&1 \
+      || { log "the protected environment row is not unknown naming Premium, as GitLab CE has no protected environments"; rc=1; }
+    jq -e '.status == "match"' <<<"$(fc_row match protected-runners "tags $tag")" >/dev/null 2>&1 || { log "the runner row is not a match"; rc=1; }
+    jq -e '.status == "match"' <<<"$(fc_row match variable "$key in prod")" >/dev/null 2>&1 || { log "the variable row is not a match"; rc=1; }
+    jq -e '.results.counts.mismatch == 0' "$work/fc-match.json" >/dev/null || { log "the matching setup has a mismatch"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    glapi -o /dev/null -X PUT "$GL_URL/api/v4/runners/$runner" --data-urlencode "access_level=not_protected" || { log "could not open the runner to every ref"; rc=1; }
+    [ $rc = 0 ] && { fc_run runner-open; fc_mismatch runner-open protected-runners "tags $tag" ref_protected not_protected || rc=1; }
+    glapi -o /dev/null -X PUT "$GL_URL/api/v4/runners/$runner" --data-urlencode "access_level=ref_protected" || { log "could not protect the runner again"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    glapi -o /dev/null -X PUT "${scoped}prod" --data-urlencode "protected=false" || { log "could not unprotect $key"; rc=1; }
+    [ $rc = 0 ] && { fc_run variable-open; fc_mismatch variable-open variable "$key in prod" "scoped to prod, protected" "scope prod, not protected" || rc=1; }
+    glapi -o /dev/null -X PUT "${scoped}prod" --data-urlencode "protected=true" || { log "could not protect $key again"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    glapi -o /dev/null -X PUT "${scoped}prod" --data-urlencode "environment_scope=*" || { log "could not scope $key to every environment"; rc=1; }
+    [ $rc = 0 ] && { fc_run variable-unscoped; fc_mismatch variable-unscoped variable "$key in prod" "scoped to prod, protected" "scope *, protected" || rc=1; }
+    glapi -o /dev/null -X PUT "${scoped}%2A" --data-urlencode "environment_scope=prod" || { log "could not scope $key to prod again"; rc=1; }
+  fi
+  [ -z "$runner" ] || glapi -o /dev/null -X DELETE "$GL_URL/api/v4/runners/$runner" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "forge check exited 0 with the runner protected and the variable scoped and protected, the protected environment unknown on CE, and 1 on a runner taking any ref, an unprotected variable and a variable scoped to every environment, each row naming what it expected and found; it read with a read_api token"
   return $rc
 }

@@ -219,6 +219,7 @@ oidc/forgejo|a Forgejo job gets an OIDC token Forgejo signed for its repo and re
 oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job of main each hold a token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable in its environment|
 apply/groups|with environments prod and dev, each with its own roles, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment, each carrying the apply role of its own environment alone, under one approval; on Forgejo both jobs present the same token subject, so the roles each job is handed are all that keeps them apart|
 apply/check-job|with environments prod and dev and the condition of the apply jobs widened by hand to any push, the apply job of each environment on a branch it does not apply from fails before it trades a token, naming the expected and the found ref, and on main passes its check and trades its token; Forgejo has no deployment environments and names no runner labels to a job, so the ref is what is checked here|
+forge/check|terragucci forge check exits 0 when main is protected and each role in floci trusts exactly what config identities prints, and exits 1 with a row naming the expected and found value when main is unprotected, a role trusts any subject, or a role trusts an extra audience; it runs with a Forgejo token scoped read:repository and AWS keys granted iam:GetRole alone, and sends no request but GET and GetRole|
 apply/steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy/tofu|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment/plan|a pull request comment re-plans on request and never applies; apply on an open pull request, a root outside the configured ones, and approve, merge, destroy, import, state or force-unlock are each answered with a refusal, and nothing plans or applies|
@@ -5066,6 +5067,274 @@ JS
   log "apply-wave-1 on hotfix, which holds the plan roles and checks nothing: $(cj_mark "$second" apply-wave-1--prod | jq -c '{ref, role}' 2>/dev/null || echo 'no mark')"
   drop_work "$work"
   [ $rc = 0 ] && log "on main each group job's check named refs/heads/main and the job traded its token; on hotfix each refused, naming refs/heads/main and refs/heads/hotfix, and traded none"
+  return $rc
+}
+
+claim_forge/check() {
+  # terragucci forge check on a Forgejo repo and AWS roles, run from the host;
+  # no pipeline runs. The repo $USER/forge-check, and a floci of the claim's
+  # own with IAM enforcement on (the stack's floci runs with it off), which
+  # holds the roles. The config names a plan and an apply role; config
+  # identities --json, given the repo's numeric ids, prints the trust each
+  # role needs, and the claim creates both roles with exactly that trust and
+  # protects main. Then forge check must exit 0 with every row a match. Each
+  # mismatch in turn, put back after its run, must exit 1 with its one row a
+  # mismatch whose expected and found name the values: main unprotected
+  # (expected protected, found not protected); the apply role's sub moved to
+  # StringLike repo:* (expected the apply job's sub, found repo:*); and the
+  # plan role's aud a list with an extra audience (found that audience).
+  # Read-only: forge check runs with the token of a user who is admin on the
+  # repo (branch protections need it) but whose token is scoped
+  # read:repository alone, and Forgejo must refuse that token a write; and
+  # with the keys of a role floci grants iam:GetRole alone. The claim tries a
+  # CreateRole with those keys and logs whether floci refused it: when floci
+  # enforces the grant, the keys can only read; when it does not, the keys
+  # are the test account's in effect, and only the command's own guard keeps
+  # it to reads. Either way forge check reaches Forgejo and floci through a
+  # recorder of the claim's own (the config's url and AWS_ENDPOINT_URL_IAM
+  # point at it), and every request it recorded must be a GET or HEAD, and
+  # to floci a GetRole.
+  # BREAK: forge check runs a bundle whose trust comparison takes a live
+  # wildcard sub as within a literal one whenever it matches it, so the role
+  # that trusts repo:* reports a match.
+  log() { echo "[smoke forge-check] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/forge-check" rc=0 TERRAGUCCI="$TERRAGUCCI" fimg name="terragucci-smoke-floci-forge-check" floci port i
+  local reader=forge-check-reader rpass rtoken code ids owner_id repo_id prefix=arn:aws:iam::000000000000:role/terragucci-fc
+  local roles role policy creds ak="" sk="" st="" probe enforced="" pids="" fport aport plan_aud apply_aud apply_sub widened extra bad reads
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      forge-check.ts '  if (!expectedLike) return false;' '  if (!expectedLike) return likeMatch(v.value, expected);' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  fimg="$(awk '/^  floci:/ { f = 1 } f && /image:/ { print $2; exit }' "$HERE/docker-compose.yml")"
+  [ -n "$fimg" ] || { log "no floci image in docker-compose.yml"; drop_work "$work"; return 1; }
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker run -d --name "$name" --label "terragucci.run-copied=$$" -p 127.0.0.1::4566 \
+    -e FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED=true "$fimg" >/dev/null || { log "could not start floci with IAM enforcement"; drop_work "$work"; return 1; }
+  port="$(docker port "$name" 4566/tcp | head -1 | sed 's/.*://')"
+  floci="http://127.0.0.1:$port"
+  for i in $(seq 1 60); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$floci/" 2>/dev/null)" != 000 ] && break
+    sleep 1
+  done
+  # IAM and STS calls on this floci: as the test key, or with KEYS="ak sk st".
+  fq() { # service version action [curl args...]
+    local svc="$1" ver="$2" act="$3" k
+    shift 3
+    if [ -n "${KEYS:-}" ]; then
+      read -r -a k <<<"$KEYS"
+      curl -sS --aws-sigv4 "aws:amz:us-east-1:$svc" --user "${k[0]}:${k[1]}" -H "x-amz-security-token: ${k[2]}" -X POST "$floci/" \
+        -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$act" --data-urlencode "Version=$ver" "$@"
+    else
+      curl -sS --aws-sigv4 "aws:amz:us-east-1:$svc" --user test:test -X POST "$floci/" \
+        -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$act" --data-urlencode "Version=$ver" "$@"
+    fi
+  }
+  fiam() { fq iam 2010-05-08 "$@"; }
+  # A role's trust as floci answers GetRole to the test key, compact with sorted keys.
+  trust_of() { # role name
+    fiam GetRole --data-urlencode "RoleName=$1" | node -e '
+let x = "";
+process.stdin.on("data", (c) => (x += c)).on("end", () => {
+  const m = /<AssumeRolePolicyDocument>([^<]*)<\/AssumeRolePolicyDocument>/.exec(x);
+  if (!m) process.exit(1);
+  let t = m[1].replace(/&quot;/g, "\"").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&apos;/g, String.fromCharCode(39)).replace(/&amp;/g, "&").trim();
+  try { t = decodeURIComponent(t); } catch {}
+  process.stdout.write(t);
+});' | jq -cS . 2>/dev/null
+  }
+  # The role's trust set to POLICY, made when it is missing; floci must answer it back.
+  set_trust() { # role name, policy
+    if [ -z "$(trust_of "$1")" ]; then
+      fiam CreateRole --data-urlencode "RoleName=$1" --data-urlencode "AssumeRolePolicyDocument=$2" >/dev/null
+    else
+      fiam UpdateAssumeRolePolicy --data-urlencode "RoleName=$1" --data-urlencode "PolicyDocument=$2" >/dev/null
+    fi
+    [ "$(trust_of "$1")" = "$(jq -cS . <<<"$2")" ] || { log "floci holds $(trust_of "$1" || echo nothing) as the trust of $1, not $(jq -c . <<<"$2")"; return 1; }
+  }
+
+  fresh_repo forge-check || { docker rm -f "$name" >/dev/null 2>&1; drop_work "$work"; return 1; }
+  ids="$(api "$URL/api/v1/repos/$repo" | jq -r '"\(.owner.id) \(.id)"')"
+  read -r owner_id repo_id <<<"$ids"
+  # The reader: admin on the repo, with a token scoped read:repository alone.
+  rpass="smoke-$RANDOM-$RANDOM-Aa1"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$reader" --arg p "$rpass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" \
+    || { log "could not create $reader"; rc=1; }
+  [ $rc = 0 ] && { api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"admin"}' "$URL/api/v1/repos/$repo/collaborators/$reader" || { log "could not make $reader admin on $repo"; rc=1; }; }
+  if [ $rc = 0 ]; then
+    rtoken="$(curl -fsS -u "$reader:$rpass" -H 'content-type: application/json' -X POST -d '{"name":"forge-check","scopes":["read:repository"]}' "$URL/api/v1/users/$reader/tokens" | jq -r '.sha1 // empty')"
+    [ -n "$rtoken" ] || { log "no read:repository token for $reader"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $rtoken" -H 'content-type: application/json' -X POST \
+      -d '{"rule_name":"forge-check-probe","branch_name":"forge-check-probe"}' "$URL/api/v1/repos/$repo/branch_protections")"
+    log "a branch protection posted with the reader's token: $code"
+    case "$code" in
+      2*) log "the read:repository token could write to $repo"; api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branch_protections/forge-check-probe" || true; rc=1 ;;
+      401|403) ;;
+      *) log "Forgejo answered $code to a write with the reader's token, not 403"; rc=1 ;;
+    esac
+  fi
+
+  # The recorder: one per upstream, each logging every request it passes on
+  # (method, path, AWS Query action) as a JSON line. The Host header is passed
+  # on as sent, so floci checks the signature forge check made.
+  cat > "$work/record.mjs" <<'JS'
+import http from "node:http";
+import { appendFileSync, writeFileSync } from "node:fs";
+const [upstream, logFile, portFile] = process.argv.slice(2);
+const up = new URL(upstream);
+const server = http.createServer((req, res) => {
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    const body = Buffer.concat(chunks);
+    const url = new URL(req.url, "http://recorder");
+    const form = String(req.headers["content-type"] || "").includes("x-www-form-urlencoded") ? new URLSearchParams(body.toString()).get("Action") : null;
+    appendFileSync(logFile, JSON.stringify({ method: req.method, path: url.pathname, action: url.searchParams.get("Action") ?? form }) + "\n");
+    const p = http.request({ hostname: up.hostname, port: up.port, method: req.method, path: req.url, headers: req.headers }, (r) => {
+      res.writeHead(r.statusCode, r.headers);
+      r.pipe(res);
+    });
+    p.on("error", (e) => {
+      res.writeHead(502);
+      res.end(String(e));
+    });
+    p.end(body);
+  });
+});
+server.listen(0, "127.0.0.1", () => writeFileSync(portFile, String(server.address().port)));
+JS
+  : > "$work/forgejo.log"; : > "$work/floci.log"
+  node "$work/record.mjs" "$URL" "$work/forgejo.log" "$work/forgejo.port" & pids="$pids $!"
+  node "$work/record.mjs" "$floci" "$work/floci.log" "$work/floci.port" & pids="$pids $!"
+  for i in $(seq 1 20); do [ -s "$work/forgejo.port" ] && [ -s "$work/floci.port" ] && break; sleep 0.5; done
+  fport="$(cat "$work/forgejo.port" 2>/dev/null)"; aport="$(cat "$work/floci.port" 2>/dev/null)"
+  [ -n "$fport" ] && [ -n "$aport" ] || { log "the recorders did not start"; rc=1; }
+
+  mkdir -p "$work/tree"
+  printf 'forge: forgejo\nbinary: tofu\nurl: http://127.0.0.1:%s\noidc:\n  plan_role: %s-plan\n  apply_role: %s-apply\n' "$fport" "$prefix" "$prefix" > "$work/tree/terragucci.yml"
+  if [ $rc = 0 ]; then
+    (cd "$work/tree" && "$TERRAGUCCI" config identities --json --no-roots --repo "$repo" --owner-id "$owner_id" --repo-id "$repo_id") > "$work/identities.json" \
+      || { log "config identities failed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    ! grep -q '<owner-id>\|<repo-id>' "$work/identities.json" || { log "config identities left the numeric ids as placeholders"; rc=1; }
+    roles="$(jq -c '[.results.environments[].stages[] | select(. != null) | .aws | select(. != null) | {role, policy: .assume_role_policy}] | unique_by(.role) | .[]' "$work/identities.json")"
+    plan_aud="$(jq -r '[.results.environments[].stages.plan.aws.audience // empty] | first // empty' "$work/identities.json")"
+    apply_aud="$(jq -r '[.results.environments[].stages.apply.aws.audience // empty] | first // empty' "$work/identities.json")"
+    apply_sub="$(jq -r '[.results.environments[].stages.apply.token.subject // empty] | first // empty' "$work/identities.json")"
+    log "the contract: plan aud $plan_aud, apply aud $apply_aud, apply sub $apply_sub"
+    [ "$(grep -c . <<<"$roles")" = 2 ] && [ -n "$plan_aud" ] && [ -n "$apply_sub" ] || { log "config identities named no plan and apply role: $roles"; rc=1; }
+  fi
+  # Each role with exactly the trust the contract prints.
+  if [ $rc = 0 ]; then
+    while read -r role; do
+      set_trust "$(jq -r '.role | sub(".*:role/"; "")' <<<"$role")" "$(jq -r .policy <<<"$role")" || rc=1
+    done <<<"$roles"
+  fi
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"rule_name":"main","branch_name":"main"}' "$URL/api/v1/repos/$repo/branch_protections" \
+      || { log "could not protect main"; rc=1; }
+  fi
+  # The reader's keys: a role floci grants iam:GetRole alone, assumed with the test key.
+  if [ $rc = 0 ]; then
+    fiam CreateRole --data-urlencode "RoleName=terragucci-fc-reader" \
+      --data-urlencode 'AssumeRolePolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::000000000000:root"},"Action":"sts:AssumeRole"}]}' >/dev/null || true
+    fiam PutRolePolicy -f --data-urlencode "RoleName=terragucci-fc-reader" --data-urlencode PolicyName=read-trust \
+      --data-urlencode 'PolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"iam:GetRole","Resource":"*"}]}' >/dev/null \
+      || { log "could not grant terragucci-fc-reader iam:GetRole"; rc=1; }
+    creds="$(fq sts 2011-06-15 AssumeRole --data-urlencode "RoleArn=arn:aws:iam::000000000000:role/terragucci-fc-reader" --data-urlencode RoleSessionName=forge-check | tr -d '\n\t ')"
+    ak="$(sed -n 's#.*<AccessKeyId>\([^<]*\)</AccessKeyId>.*#\1#p' <<<"$creds")"
+    sk="$(sed -n 's#.*<SecretAccessKey>\([^<]*\)</SecretAccessKey>.*#\1#p' <<<"$creds")"
+    st="$(sed -n 's#.*<SessionToken>\([^<]*\)</SessionToken>.*#\1#p' <<<"$creds")"
+    [ -n "$ak" ] && [ -n "$sk" ] || { log "could not assume terragucci-fc-reader: $creds"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    probe="$(KEYS="$ak $sk $st" fiam CreateRole --data-urlencode "RoleName=terragucci-fc-probe" \
+      --data-urlencode 'AssumeRolePolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::000000000000:root"},"Action":"sts:AssumeRole"}]}')"
+    if grep -q '<RoleName>terragucci-fc-probe</RoleName>' <<<"$probe"; then
+      log "floci let the reader's keys create a role: it does not enforce IAM policies on IAM, so only forge check's own guard keeps it to reads, which the recorder checks"
+      fiam DeleteRole --data-urlencode "RoleName=terragucci-fc-probe" >/dev/null || true
+    else
+      enforced=1
+      log "floci refused the reader's keys a CreateRole: $(grep -o '<Code>[^<]*' <<<"$probe" | head -1 | sed 's/<Code>//')"
+    fi
+  fi
+
+  # One run of forge check as the reader, through the recorders: $work/fc-<name>.json, FC_EXIT.
+  fc_run() { # name
+    FC_EXIT=0
+    (cd "$work/tree" && env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE -u AWS_ENDPOINT_URL -u GOOGLE_OAUTH_ACCESS_TOKEN -u AZURE_GRAPH_TOKEN \
+      FORGEJO_TOKEN="$rtoken" AWS_ACCESS_KEY_ID="$ak" AWS_SECRET_ACCESS_KEY="$sk" AWS_SESSION_TOKEN="$st" \
+      AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_ENDPOINT_URL_IAM="http://127.0.0.1:$aport" \
+      "$TERRAGUCCI" forge check --json --no-roots --repo "$repo") > "$work/fc-$1.json" 2> "$work/fc-$1.err" || FC_EXIT=$?
+    log "$1: exit $FC_EXIT; $(jq -c '[.results.rows[]? | {where, subject, status}]' "$work/fc-$1.json" 2>/dev/null || head -c 400 "$work/fc-$1.err")"
+  }
+  fc_row() { # name, where, text in the subject -> the first such row
+    jq -c --arg w "$2" --arg s "$3" '[.results.rows[]? | select(.where == $w and (.subject | contains($s)))] | first // empty' "$work/fc-$1.json" 2>/dev/null
+  }
+  # The run exited 1 with that row its one mismatch, its expected and found naming the values.
+  fc_mismatch() { # name, where, text in the subject, text in expected, text in found
+    local r
+    r="$(fc_row "$1" "$2" "$3")"
+    [ -n "$r" ] || { log "$1: no $2 row for $3"; return 1; }
+    log "$1: $2 $3 expected '$(jq -r .expected <<<"$r")', found '$(jq -r .found <<<"$r")', $(jq -r .status <<<"$r")"
+    [ "$FC_EXIT" = 1 ] || { log "$1: forge check exited $FC_EXIT, not 1"; return 1; }
+    jq -e '.status == "mismatch"' <<<"$r" >/dev/null || { log "$1: the $2 row for $3 is not a mismatch"; return 1; }
+    jq -e --arg e "$4" '.expected | contains($e)' <<<"$r" >/dev/null || { log "$1: its expected does not name $4"; return 1; }
+    jq -e --arg f "$5" '.found | contains($f)' <<<"$r" >/dev/null || { log "$1: its found does not name $5"; return 1; }
+    jq -e '.results.counts.mismatch == 1' "$work/fc-$1.json" >/dev/null || { log "$1: other rows are mismatches too"; return 1; }
+  }
+
+  if [ $rc = 0 ]; then
+    fc_run match
+    [ "$FC_EXIT" = 0 ] || { log "the matching setup: forge check exited $FC_EXIT, not 0"; rc=1; }
+    jq -e '.results.rows | length > 0 and all(.status == "match")' "$work/fc-match.json" >/dev/null || { log "the matching setup has a row that is not a match"; rc=1; }
+    [ "$(jq -r '[.results.rows[]? | select(.where == "aws")] | length' "$work/fc-match.json")" = 2 ] || { log "the matching setup has no row for each of the two roles"; rc=1; }
+    jq -e '[.results.rows[]? | select(.where == "forgejo" and .check == "protected-branch" and .subject == "main" and .status == "match")] | length == 1' "$work/fc-match.json" >/dev/null \
+      || { log "the matching setup has no matching row for main"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branch_protections/main" || { log "could not unprotect main"; rc=1; }
+    [ $rc = 0 ] && { fc_run unprotected; fc_mismatch unprotected forgejo main protected "not protected" || rc=1; }
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"rule_name":"main","branch_name":"main"}' "$URL/api/v1/repos/$repo/branch_protections" || { log "could not protect main again"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    policy="$(jq -r --arg r "$prefix-apply" 'select(.role == $r) | .policy' <<<"$roles")"
+    widened="$(jq -c '.Statement |= map(.Condition as $c | ($c.StringEquals | keys[] | select(endswith(":sub"))) as $k | .Condition = {StringEquals: ($c.StringEquals | del(.[$k])), StringLike: {($k): "repo:*"}})' <<<"$policy")"
+    set_trust terragucci-fc-apply "$widened" || rc=1
+    [ $rc = 0 ] && { fc_run widened; fc_mismatch widened aws terragucci-fc-apply "$apply_sub" "repo:*" || rc=1; }
+    set_trust terragucci-fc-apply "$policy" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    policy="$(jq -r --arg r "$prefix-plan" 'select(.role == $r) | .policy' <<<"$roles")"
+    extra="$(jq -c '.Statement |= map(.Condition.StringEquals |= with_entries(if (.key | endswith(":aud")) then .value = [.value, "forge-check-extra"] else . end))' <<<"$policy")"
+    set_trust terragucci-fc-plan "$extra" || rc=1
+    [ $rc = 0 ] && { fc_run extra-aud; fc_mismatch extra-aud aws terragucci-fc-plan "aud $plan_aud" forge-check-extra || rc=1; }
+    set_trust terragucci-fc-plan "$policy" || rc=1
+  fi
+  # What the recorders saw of every run: reads alone.
+  if [ -f "$work/fc-match.json" ]; then
+    reads="$(jq -s 'length' "$work/forgejo.log") to Forgejo, $(jq -s '[.[] | select(.action == "GetRole")] | length' "$work/floci.log") GetRole to floci"
+    bad="$(cat "$work/forgejo.log" "$work/floci.log" | jq -c 'select(((.method == "GET" or .method == "HEAD") and (.action == null or .action == "GetRole")) | not)')"
+    log "the recorders saw ${reads}${bad:+, and these other requests: $bad}"
+    [ -z "$bad" ] || { log "forge check sent a request that is not a read"; rc=1; }
+    [ "$(jq -s '[.[] | select(.action == "GetRole")] | length' "$work/floci.log")" -gt 0 ] && [ -s "$work/forgejo.log" ] \
+      || { log "forge check did not reach Forgejo and floci through the recorders"; rc=1; }
+  fi
+  # shellcheck disable=SC2086 # one pid per word
+  [ -z "$pids" ] || kill $pids 2>/dev/null || true
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "forge check exited 0 on the matching setup, and 1 on an unprotected main, a role trusting repo:* and a role trusting an extra audience, each row naming what it expected and found; it read with a read:repository token and keys granted iam:GetRole alone${enforced:+, which floci enforced}, and sent nothing but reads"
   return $rc
 }
 
@@ -22363,6 +22632,7 @@ oidc/forgejo    runner self! weight=200
 oidc/audience-stages    runner self! weight=200
 apply/groups            runner self! weight=250
 apply/check-job         runner self! weight=250
+forge/check             self! weight=120
 note/grouped         ex runner self! after=boot/tofu weight=200
 check/tofu           ex runner self! after=boot/tofu weight=200
 affected/tofu        ex after=boot/tofu weight=150
