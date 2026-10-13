@@ -216,6 +216,7 @@ respond/fmt|fmt on request commits to the pull request branch and nowhere else|
 respond/notes|release notes come from the conventional commits that touched the module|
 linked/fresh|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
 oidc/forgejo|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
+oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job of main each hold a token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable in its environment|
 apply/steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy/tofu|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment/plan|a pull request comment re-plans on request and never applies; apply on an open pull request, a root outside the configured ones, and approve, merge, destroy, import, state or force-unlock are each answered with a refusal, and nothing plans or applies|
@@ -4483,6 +4484,220 @@ JS
   [ -n "$plan_mark" ] || { log "the plan job wrote no mark"; return 1; }
   checked terragucci-plan "repo:$subrepo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
   [ $rc = 0 ] && log "plan and apply jobs each got a token Forgejo signed and took their own role"
+  return $rc
+}
+
+claim_oidc/audience_stages() {
+  # oidc.audience as a map: plan terragucci-plan, apply terragucci-apply,
+  # drift terragucci-drift. Two roles in floci, each trusting Forgejo's issuer
+  # for this repo and its own stage's audience alone. A scratch repo whose one
+  # root reads a data source that runs a probe in the job, a child of the
+  # binary: it reads the token the job wrote to $AWS_WEB_IDENTITY_TOKEN_FILE,
+  # verifies it against Forgejo's published keys, records its aud and whether
+  # ACTIONS_ID_TOKEN_REQUEST_URL or ACTIONS_ID_TOKEN_REQUEST_TOKEN is in its
+  # own environment (when one is, it asks for a token for the apply audience,
+  # as a change's code could), reads both roles' trust from floci and
+  # evaluates their aud and sub conditions on the token itself, trades it with
+  # floci's STS for the job's role when that role's trust admits it, and
+  # writes what it saw to floci. floci does not enforce a trust policy's
+  # conditions (it grants any role a token names), so the probe's evaluation
+  # stands in for the check AWS makes. The push to main runs the apply job; a
+  # pull request runs the plan job. Each job's token must carry its stage's
+  # audience, the apply role's trust must refuse the plan job's token, and
+  # neither probe may see a token-request variable.
+  # BREAK: init runs a bundle whose stageTokens fetches the tokens but leaves
+  # out the restart without the token-request variables, so the step, the
+  # binary and the probe keep them.
+  log() { echo "[smoke audience-stages] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/audience-stages" sha pr mark plan_mark apply_mark rc=0 role trust subrepo stage wf TERRAGUCCI="$TERRAGUCCI"
+  local plan_role=terragucci-aud-plan apply_role=terragucci-aud-apply marks=shop-terraform-state/audience-marks
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      render.ts '    restartWithout("bash", OIDC_REQUEST_VARS, OIDC_RESTART),' '' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  fresh_repo audience-stages || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  # Forgejo 16 names a repo in the subject as owner-<id>/repo-<id>.
+  subrepo="$(api "$URL/api/v1/repos/$repo" | jq -r '"\(.owner.login)-\(.owner.id)/\(.name)-\(.id)"')"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for mark in terragucci-plan terragucci-apply; do curl -s -o /dev/null -X DELETE "$FLOCI/$marks/$mark.json" || true; done
+  # Each role trusts its own stage's audience, for this repo. A role left
+  # from an earlier run is deleted first, so its trust is this run's.
+  iam() { curl -sS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$1" --data-urlencode Version=2010-05-08 "${@:2}"; }
+  for stage in plan apply; do
+    role="terragucci-aud-$stage"
+    trust="$(jq -cn --arg sub "repo:$subrepo:*" --arg aud "terragucci-$stage" '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/forgejo:3000/api/actions"},
+      Condition: {StringEquals: {"forgejo:3000/api/actions:aud": $aud}, StringLike: {"forgejo:3000/api/actions:sub": $sub}}}]}')"
+    iam DeleteRole --data-urlencode "RoleName=$role" >/dev/null 2>&1 || true
+    iam CreateRole --data-urlencode "RoleName=$role" --data-urlencode "AssumeRolePolicyDocument=$trust" >/dev/null || true
+    iam GetRole --data-urlencode "RoleName=$role" | grep -q "<RoleName>$role</RoleName>" || { log "floci has no role $role"; drop_work "$work"; return 1; }
+  done
+  mkdir -p "$work/tree/app"
+  echo 1 > "$work/tree/app/rev.txt"
+  cat > "$work/tree/app/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+data "external" "audience" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+
+output "assumed" {
+  value = data.external.audience.result.assumed
+}
+TF
+  jq -n --arg plan "$plan_role" --arg apply "$apply_role" --arg marks "$marks" \
+    '{plan: $plan, apply: $apply, apply_audience: "terragucci-apply", marks: $marks}' > "$work/tree/app/roles.json"
+  cat > "$work/tree/app/probe.mjs" <<'JS'
+// In a job, as a child of the binary: the job's token, the token-request
+// variables in this process's environment, and the verdict of each role's
+// trust on the token, evaluated here, since floci grants any role a token
+// names. What it saw goes to floci under the job's session name.
+import { readFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+const e = process.env;
+const fail = (m) => { console.error("audience probe: " + m); process.exit(1); };
+const cfg = JSON.parse(readFileSync(new URL("./roles.json", import.meta.url), "utf8"));
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) fail("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the job took no role");
+const jwt = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim();
+const [h, p, s] = jwt.split(".");
+if (!s) fail("the token file holds no JWT");
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const head = dec(h), claims = dec(p);
+const server = (e.GITHUB_SERVER_URL || "").replace(/\/$/, "");
+const conf = await (await fetch(server + "/api/actions/.well-known/openid-configuration")).json();
+const jwks = await (await fetch(conf.jwks_uri)).json();
+const jwk = jwks.keys.find((k) => !head.kid || k.kid === head.kid);
+if (!jwk) fail("no published key matches kid " + head.kid);
+const key = createPublicKey({ key: jwk, format: "jwk" });
+const data = Buffer.from(h + "." + p), sig = Buffer.from(s, "base64url");
+const hash = { 256: "sha256", 384: "sha384", 512: "sha512" }[head.alg.slice(2)];
+const verified = head.alg === "EdDSA" ? verify(null, data, key, sig)
+  : verify(hash, data, head.alg.startsWith("ES") ? { key, dsaEncoding: "ieee-p1363" } : key, sig);
+// The token-request variables, as this process holds them. With them a
+// change's code could ask for a token for any audience; the probe asks for
+// the apply role's, to show what they would give.
+const request = { url: "ACTIONS_ID_TOKEN_REQUEST_URL" in e, token: "ACTIONS_ID_TOKEN_REQUEST_TOKEN" in e };
+let asked = null;
+if (e.ACTIONS_ID_TOKEN_REQUEST_URL) {
+  try {
+    const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(cfg.apply_audience), { headers: { authorization: "bearer " + (e.ACTIONS_ID_TOKEN_REQUEST_TOKEN || "") } });
+    asked = r.ok ? { aud: dec((await r.json()).value.split(".")[1]).aud } : { refused: r.status };
+  } catch (err) {
+    asked = { failed: err.message };
+  }
+}
+// Each role's trust as floci holds it, and its conditions on aud and sub
+// evaluated on this token: StringEquals and StringLike, as AWS reads them.
+const iam = async (Action, extra) => (await fetch(e.AWS_ENDPOINT_URL + "/", {
+  method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({ Action, Version: "2010-05-08", ...extra }),
+})).text();
+const unxml = (t) => t.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+const trustOf = async (name) => {
+  const raw = unxml(/<AssumeRolePolicyDocument>([\s\S]*?)<\/AssumeRolePolicyDocument>/.exec(await iam("GetRole", { RoleName: name }))?.[1] ?? "").trim();
+  if (!raw) fail("floci returned no trust policy for " + name);
+  return JSON.parse(raw.startsWith("{") ? raw : decodeURIComponent(raw));
+};
+const glob = (pat, v) => new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$").test(v);
+const admits = (doc) => [doc.Statement].flat().some((st) => st.Effect === "Allow"
+  && Object.entries(st.Condition ?? {}).every(([op, conds]) => Object.entries(conds).every(([k, want]) => {
+    const have = [claims[k.slice(k.lastIndexOf(":") + 1)]].flat().filter((v) => v !== undefined).map(String);
+    const wants = [want].flat().map(String);
+    if (op === "StringEquals") return have.some((v) => wants.includes(v));
+    if (op === "StringLike") return have.some((v) => wants.some((w) => glob(w, v)));
+    return false;
+  })));
+const trust = { plan: admits(await trustOf(cfg.plan)), apply: admits(await trustOf(cfg.apply)) };
+const role = e.AWS_ROLE_ARN.split("/").pop();
+const stage = role === cfg.plan ? "plan" : role === cfg.apply ? "apply" : null;
+let assumed = null;
+if (stage && trust[stage]) {
+  const body = new URLSearchParams({ Action: "AssumeRoleWithWebIdentity", Version: "2011-06-15", RoleArn: e.AWS_ROLE_ARN, RoleSessionName: e.AWS_ROLE_SESSION_NAME, WebIdentityToken: jwt });
+  const r = await fetch(e.AWS_ENDPOINT_URL + "/", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+  const xml = await r.text();
+  assumed = xml.match(/<AssumedRoleUser>[\s\S]*?<Arn>([^<]+)<\/Arn>/)?.[1] ?? null;
+  if (!r.ok || !assumed) fail("STS answered " + r.status + ": " + xml.slice(0, 300));
+}
+const mark = { iss: claims.iss, sub: claims.sub, aud: claims.aud, issuer: conf.issuer, verified, role, trust, request, asked, assumed };
+await fetch(e.AWS_ENDPOINT_URL + "/" + cfg.marks + "/" + e.AWS_ROLE_SESSION_NAME + ".json", { method: "PUT", body: JSON.stringify(mark) });
+if (!assumed) fail(`the trust of ${role} refuses this token (aud ${JSON.stringify(claims.aud)}), as AWS would`);
+console.log(JSON.stringify({ assumed }));
+JS
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/%s\n  apply_role: arn:aws:iam::000000000000:role/%s\n  audience:\n    plan: terragucci-plan\n    apply: terragucci-apply\n    drift: terragucci-drift\n' \
+    "$plan_role" "$apply_role" > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "tg oidc \"\$TERRAGUCCI_OIDC_FILE\" 'terragucci-plan'" "$wf" && grep -q "tg oidc \"\$TERRAGUCCI_OIDC_FILE\" 'terragucci-apply'" "$wf" \
+    || { log "the pipeline asks for no token for the plan or the apply audience"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    ! grep -q 'TG_NO_OIDC_REQUEST=1' "$wf" || { break_setup_failed "the BREAK pipeline still restarts without the token-request variables"; drop_work "$work"; return 1; }
+  else
+    grep -q 'exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN TG_NO_OIDC_REQUEST=1' "$wf" \
+      || { log "the pipeline does not restart without the token-request variables"; drop_work "$work"; return 1; }
+  fi
+  # A mark from a job of STAGE: a verified token for SUB with that stage's
+  # audience alone, admitted by that stage's role, refused by the other one's,
+  # traded for that stage's role, and no token-request variable in reach.
+  checked() { # stage, sub (mark on stdin)
+    local m other
+    m="$(cat)"
+    other=apply; [ "$1" = apply ] && other=plan
+    jq -e '.verified == true and .iss == .issuer' <<<"$m" >/dev/null || { log "the $1 job's token does not verify against Forgejo's keys"; return 1; }
+    jq -e --arg sub "$2" '.sub == $sub' <<<"$m" >/dev/null || { log "the $1 job's token names $(jq -r .sub <<<"$m"), not $2"; return 1; }
+    jq -e --arg aud "terragucci-$1" '[.aud] | flatten == [$aud]' <<<"$m" >/dev/null || { log "the $1 job's token carries aud $(jq -c .aud <<<"$m"), not terragucci-$1"; return 1; }
+    jq -e --arg s "$1" '.trust[$s] == true' <<<"$m" >/dev/null || { log "the $1 role's trust refuses the $1 job's token"; return 1; }
+    jq -e --arg o "$other" '.trust[$o] == false' <<<"$m" >/dev/null || { log "the $other role's trust admits the $1 job's token"; return 1; }
+    jq -e --arg role "terragucci-aud-$1/terragucci-$1" '.assumed // "" | contains(":assumed-role/" + $role)' <<<"$m" >/dev/null \
+      || { log "the $1 job's token was not traded for terragucci-aud-$1: $(jq -c .assumed <<<"$m")"; return 1; }
+    jq -e '.request.url == false and .request.token == false and .asked == null' <<<"$m" >/dev/null \
+      || { log "the $1 job's probe, a child of the binary, holds the token-request variables $(jq -c .request <<<"$m") and asked for the apply audience: $(jq -c .asked <<<"$m")"; return 1; }
+  }
+  sha="$(push_tree "$work/tree" "$repo" main "audience-stages: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  apply_mark="$(curl -fsS "$FLOCI/$marks/terragucci-apply.json" 2>/dev/null || true)"
+  log "apply job: run $RUN_STATUS, mark ${apply_mark:-none}"
+  if [ -z "$apply_mark" ]; then
+    print_logs "$repo" "$RUN_ID" | grep -E 'OIDC|audience probe|ACTIONS_ID_TOKEN' >&2 || true
+    log "the apply job's probe wrote no mark"
+    drop_work "$work"; return 1
+  fi
+  checked apply "repo:$subrepo:ref:refs/heads/main" <<<"$apply_mark" || rc=1
+  [ "$RUN_STATUS" = success ] || { log "the push to main ended '$RUN_STATUS'"; rc=1; }
+  echo 2 > "$work/tree/app/rev.txt"
+  sha="$(push_tree "$work/tree" "$repo" audience-change "audience-stages: change")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" audience-change "audience-stages: plan")" || { drop_work "$work"; return 1; }
+  log "pull request $pr for ${sha:0:8}"
+  wait_run "$repo" "$sha" pull_request || { drop_work "$work"; return 1; }
+  plan_mark="$(curl -fsS "$FLOCI/$marks/terragucci-plan.json" 2>/dev/null || true)"
+  log "plan job: run $RUN_STATUS, mark ${plan_mark:-none}"
+  if [ -z "$plan_mark" ]; then
+    print_logs "$repo" "$RUN_ID" | grep -E 'OIDC|audience probe|ACTIONS_ID_TOKEN' >&2 || true
+    log "the plan job's probe wrote no mark"
+    drop_work "$work"; return 1
+  fi
+  checked plan "repo:$subrepo:pull_request" <<<"$plan_mark" || rc=1
+  drop_work "$work"
+  [ $rc = 0 ] && log "the plan job's token carried terragucci-plan, which the apply role refuses, the apply job's terragucci-apply, and neither job's code held a token-request variable"
   return $rc
 }
 
@@ -21777,6 +21992,7 @@ modules/recorded runner self! weight=200
 modules/terragrunt-require runner self! weight=220
 modules/registry self! weight=120
 oidc/forgejo    runner self! weight=200
+oidc/audience-stages    runner self! weight=200
 note/grouped         ex runner self! after=boot/tofu weight=200
 check/tofu           ex runner self! after=boot/tofu weight=200
 affected/tofu        ex after=boot/tofu weight=150

@@ -36,9 +36,10 @@
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
 #                                     the docs show, recorded as text into
 #                                     docs-site as step `github`, then reset
-#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports] [--break] [--record FILE]
-#                                     from a reset sandbox, each phase (all
-#                                     four when none is named) sets main up
+#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports|audience] [--break] [--record FILE]
+#                                     from a reset sandbox, each phase (the
+#                                     first four when none is named; audience
+#                                     only when named) sets main up
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
@@ -512,7 +513,8 @@ github.com|rollout/tofu|once the roots pin that tag and the next version is publ
 github.com|drift/issue|the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it
 github.com|report/keys|with the bucket keys in repo secrets, which the pipeline maps, the plan job writes report.json to the bucket and the index lists the run; the bucket is floci, run in the job
 github.com|report/oidc|with no static keys, the plan job takes reports.role with its GitHub-signed OIDC token, writes report.json to the bucket, and the index lists the run; floci in the job stands in for STS and the bucket
-github.com|estate/job|the estate workflow of the see-every-project page, committed with its role in the account floci serves and the stand-ins added to its job, and run by workflow_dispatch with only its OIDC token, writes estate.html showing the project to the bucket and prints a presigned link; floci in the job stands in for STS and the bucket'
+github.com|estate/job|the estate workflow of the see-every-project page, committed with its role in the account floci serves and the stand-ins added to its job, and run by workflow_dispatch with only its OIDC token, writes estate.html showing the project to the bucket and prints a presigned link; floci in the job stands in for STS and the bucket
+github.com|oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job on main each hold a GitHub-signed token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable; with no cloud account the trust is evaluated, not checked by STS'
 
 OVERRIDE_LOCAL='# The sandbox keeps this root'"'"'s state in the repo, beside its code.
 terraform {
@@ -780,11 +782,11 @@ wait_status() { # sha, context, state
 }
 
 # What the probe found in a run, from the report artifacts its jobs keep.
-probe_found() { # run id, plan|apply -> the probe's JSON, empty when it wrote none
+probe_found() { # run id, plan|apply, [file prefix: oidc] -> the probe's JSON, empty when it wrote none
   local d="$WORK/probe-$1" f
   [ -n "$1" ] || return 0
   gh run download "$1" -R "$REPO" -D "$d" >/dev/null 2>&1 || true
-  f="$(find "$d" -name "oidc-$2.json" 2>/dev/null | head -1)"
+  f="$(find "$d" -name "${3:-oidc}-$2.json" 2>/dev/null | head -1)"
   [ -z "$f" ] || jq -c . "$f"
 }
 
@@ -2046,6 +2048,179 @@ break_reports() {
   claim_report_oidc
 }
 
+# ── the stage audience claim ─────────────────────────────────────────────────
+
+# oidc.audience as a map gives each stage's jobs a token for their own
+# audience, and on GitHub restarts the step that takes credentials without
+# the token-request variables. The audience phase runs only when named
+# (`prove audience`): it needs a release whose init renders the map, which
+# 0.4.8 does not, so TERRAGUCCI_SANDBOX_RELEASE names one that does.
+AUD_PLAN=terragucci-plan
+AUD_APPLY=terragucci-apply
+AUD_DRIFT=terragucci-drift
+
+# The probe root's program for this claim, in place of the oidc probe: in a
+# job it reads the token terragucci requested for the job's AWS role,
+# verifies it against GitHub's keys, records its aud and whether
+# ACTIONS_ID_TOKEN_REQUEST_URL or ACTIONS_ID_TOKEN_REQUEST_TOKEN is in its own
+# environment, a child of the binary's (when one is, it asks for a token for
+# the apply audience, as a change's code could), and evaluates the trust of
+# the plan and apply roles (trust-plan.json, trust-apply.json beside it) on
+# the token's aud and sub. The sandbox has no cloud account, so the trust is
+# evaluated here, not checked by STS. What it found goes to
+# terragucci-report/audience-<plan|apply>.json, which the job keeps.
+audience_probe() { # dir
+  local stage owner="${REPO%%/*}" name="${REPO#*/}"
+  for stage in plan apply; do
+    jq -n --arg aud "terragucci-$stage" --arg byname "repo:$REPO:*" --arg byid "repo:$owner@*/$name@*:*" \
+      '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+        Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"},
+        Condition: {StringEquals: {"token.actions.githubusercontent.com:aud": $aud}, StringLike: {"token.actions.githubusercontent.com:sub": [$byname, $byid]}}}]}' \
+      > "$1/$PROBE/trust-$stage.json"
+  done
+  cat > "$1/$PROBE/probe.mjs" <<'JS'
+// In a GitHub job: the token in AWS_WEB_IDENTITY_TOKEN_FILE, verified against
+// GitHub's published keys; its aud; the token-request variables as this
+// process holds them; and the verdict of the plan and apply roles' trust on
+// its aud and sub. What it found goes to
+// terragucci-report/audience-<plan|apply>.json, which the job keeps as an
+// artifact. Outside a job (the script's own state apply) it checks nothing.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+import { resolve } from "node:path";
+const e = process.env;
+if (e.GITHUB_ACTIONS !== "true") { console.log(JSON.stringify({ job: "none" })); process.exit(0); }
+const kind = (e.AWS_ROLE_SESSION_NAME || "none").replace(/^terragucci-/, "");
+const out = resolve(e.GITHUB_WORKSPACE || "../../..", "terragucci-report");
+const found = { kind, event: e.GITHUB_EVENT_NAME, run_id: e.GITHUB_RUN_ID, problems: [] };
+const done = (code) => {
+  mkdirSync(out, { recursive: true });
+  writeFileSync(resolve(out, `audience-${kind}.json`), JSON.stringify(found, null, 2) + "\n");
+  if (code) { console.error("audience probe: " + found.problems.join("; ")); process.exit(code); }
+  console.log(JSON.stringify({ aud: String(found.aud), role: found.role }));
+  process.exit(0);
+};
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+found.request = { url: "ACTIONS_ID_TOKEN_REQUEST_URL" in e, token: "ACTIONS_ID_TOKEN_REQUEST_TOKEN" in e };
+found.asked = null;
+if (e.ACTIONS_ID_TOKEN_REQUEST_URL) {
+  try {
+    const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=terragucci-apply", { headers: { authorization: "bearer " + (e.ACTIONS_ID_TOKEN_REQUEST_TOKEN || "") } });
+    found.asked = r.ok ? { aud: dec((await r.json()).value.split(".")[1]).aud } : { refused: r.status };
+  } catch (err) {
+    found.asked = { failed: err.message };
+  }
+}
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) { found.problems.push("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the job took no role"); done(1); }
+const [h, p, s] = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim().split(".");
+if (!s) { found.problems.push("the token file holds no JWT"); done(1); }
+const head = dec(h), c = dec(p);
+const ISS = "https://token.actions.githubusercontent.com";
+const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
+const jwk = (await (await fetch(conf.jwks_uri)).json()).keys.find((k) => k.kid === head.kid);
+found.verified = head.alg === "RS256" && !!jwk
+  && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
+if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${conf.jwks_uri}`);
+// The conditions on aud and sub, StringEquals and StringLike, as AWS reads them.
+const glob = (pat, v) => new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$").test(v);
+const admits = (doc) => [doc.Statement].flat().some((st) => st.Effect === "Allow"
+  && Object.entries(st.Condition ?? {}).every(([op, conds]) => Object.entries(conds).every(([k, want]) => {
+    const have = [c[k.slice(k.lastIndexOf(":") + 1)]].flat().filter((v) => v !== undefined).map(String);
+    const wants = [want].flat().map(String);
+    if (op === "StringEquals") return have.some((v) => wants.includes(v));
+    if (op === "StringLike") return have.some((v) => wants.some((w) => glob(w, v)));
+    return false;
+  })));
+const trust = (stage) => JSON.parse(readFileSync(new URL(`./trust-${stage}.json`, import.meta.url), "utf8"));
+found.trust = { plan: admits(trust("plan")), apply: admits(trust("apply")) };
+found.role = e.AWS_ROLE_ARN.split("/").pop();
+Object.assign(found, { iss: c.iss, aud: c.aud, sub: c.sub });
+if (found.role !== "terragucci-sandbox-" + kind) found.problems.push(`a ${kind} job holds ${found.role}`);
+if (found.trust[kind] !== true) found.problems.push(`the trust of the ${kind} role refuses this token (aud ${JSON.stringify(c.aud)})`);
+done(found.problems.length ? 1 : 0);
+JS
+}
+
+# main as the audience phase needs it: oidc with the plan and apply roles and
+# the audience map, the probe root with the audience probe, the pipeline init
+# writes, and the state. BREAK: the restart without the token-request
+# variables is cut from every step of the pipeline, so the binary and the
+# probe keep them. The commit skips CI. Run it in a subshell: fail and push
+# end the shell they are in.
+audience_main() {
+  local tree="$WORK/audience-main" wf sha
+  clone_main "$tree"
+  cat >> "$tree/terragucci.yml" <<YML
+# Set by stack/sandbox-github.sh prove audience; reset takes it away.
+oidc:
+  plan_role: $PLAN_ROLE
+  apply_role: $APPLY_ROLE
+  audience:
+    plan: $AUD_PLAN
+    apply: $AUD_APPLY
+    drift: $AUD_DRIFT
+YML
+  probe_root "$tree"
+  audience_probe "$tree"
+  (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-audience-init.log" 2>&1) \
+    || { cat "$DIR/logs/prove-audience-init.log" >&2; fail "terragucci init of $RELEASE failed; it takes oidc.audience as a map from the release after 0.4.8 (TERRAGUCCI_SANDBOX_RELEASE)"; }
+  wf="$tree/.github/workflows/terragucci.yml"
+  grep -q 'id-token: write' "$wf" || fail "init asked for no OIDC token"
+  grep -q 'exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN TG_NO_OIDC_REQUEST=1' "$wf" \
+    || fail "init of $RELEASE renders no restart without the token-request variables; set TERRAGUCCI_SANDBOX_RELEASE to a release with oidc.audience as a map"
+  if [ -n "$BREAK" ]; then
+    grep -v 'exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN TG_NO_OIDC_REQUEST=1' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    ! grep -q 'TG_NO_OIDC_REQUEST=1' "$wf" || fail "BREAK left a restart without the token-request variables in the pipeline"
+    log "BREAK: cut the restart without the token-request variables from every step"
+  fi
+  apply_state "$tree"
+  commit "$tree" "Give each stage its own OIDC audience, with a root that checks each job's token${BREAK:+, and cut the restart without the token-request variables} [skip ci]"
+  sha="$(push "$tree" main)"
+  log "main at ${sha:0:8}: oidc with audiences $AUD_PLAN, $AUD_APPLY and $AUD_DRIFT, and $PROBE${BREAK:+ (BREAK)}"
+}
+
+# A probe record from a job of STAGE: a verified token for STAGE's audience
+# alone, admitted by STAGE's role and refused by the other one's, with no
+# token-request variable in the probe's environment. Prints what is wrong.
+audience_wrong() { # json, stage
+  local other=apply
+  [ "$2" = apply ] && other=plan
+  [ -n "$1" ] || { echo "the $2 job's probe wrote nothing"; return 0; }
+  jq -r --arg s "$2" --arg o "$other" --arg aud "terragucci-$2" '[
+      (if .verified != true then "the token does not verify against GitHub keys" else empty end),
+      (if ([.aud] | flatten) != [$aud] then "aud is \(.aud | tostring), not \($aud)" else empty end),
+      (if .trust[$s] != true then "the \($s) role refuses it" else empty end),
+      (if .trust[$o] != false then "the \($o) role admits it" else empty end),
+      (if .request.url or .request.token then "the probe holds the token-request variables \(.request | tostring) and asked for the apply audience: \(.asked | tostring)" else empty end),
+      (.problems[]?)
+    ] | if length == 0 then empty else "the \($s) job: " + join("; ") end' <<<"$1" 2>/dev/null || echo "the $2 job's probe wrote no JSON"
+}
+
+# audience-stages: the probe root's plan on a pull request, then its apply on
+# main. The plan job's token carries terragucci-plan, which the apply role's
+# trust refuses; the apply job's carries terragucci-apply; neither job's
+# probe finds a token-request variable.
+# BREAK: the restart is cut from the pipeline, so both probes hold them.
+claim_audience_stages() {
+  local o run planned applied wrong
+  ( audience_main ) || { unrun oidc/audience-stages "main could not be set up (see $DIR/logs/prove-audience-init.log)"; return 0; }
+  step change oidc || { unrun oidc/audience-stages "change oidc failed"; return 0; }
+  o="$(pr_for oidc open)"
+  run="$(gh run list -R "$REPO" --commit "$(head_of "$o")" --event pull_request -L 1 --json databaseId -q '.[0].databaseId // empty')"
+  planned="$(probe_found "$run" plan audience)"
+  applied=""
+  if step merge oidc; then applied="$(probe_found "$(cat "$DIR/last-run")" apply audience)"; fi
+  wrong="$( { audience_wrong "$planned" plan; audience_wrong "$applied" apply; } | awk 'NR > 1 { printf " / " } { printf "%s", $0 }')"
+  if [ -z "$wrong" ]; then
+    verdict oidc/audience-stages pass "pull request $o: the plan job held $(jq -r '"\(.aud), which the apply role refuses"' <<<"$planned"); the apply job $(jq -r .aud <<<"$applied"); neither probe held a token-request variable"
+  else
+    verdict oidc/audience-stages fail "pull request $o: $wrong"
+  fi
+}
+
+prove_audience() { claim_audience_stages; }
+break_audience() { claim_audience_stages; }
+
 # ── commands ─────────────────────────────────────────────────────────────────
 
 close_and_prune() {
@@ -2319,8 +2494,8 @@ EOF
       case "$1" in
         --record) record="${2:?--record needs a file}"; shift 2 ;;
         --break) BREAK=1; shift ;;
-        merge|pull-request|modules|reports) phases="$phases $1"; shift ;;
-        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, --break, --record FILE)" ;;
+        merge|pull-request|modules|reports|audience) phases="$phases $1"; shift ;;
+        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, audience, --break, --record FILE)" ;;
       esac
     done
     # Under BREAK only the phases with locking or report claims run.
