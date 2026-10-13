@@ -25,8 +25,8 @@
  * (no credentials for that cloud). Only a mismatch fails the command, and
  * with --require-clouds a cloud left unchecked.
  *
- * Every call goes through readOnly(): GET and HEAD, and no AWS Query action
- * but GetRole. Nothing here can write to a forge or a cloud.
+ * Every call goes through readOnly(): GET and HEAD, and to AWS a POST of
+ * GetRole and no other Query action. Nothing here can write to a forge or a cloud.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -502,11 +502,14 @@ export async function awsRows(c: Identities, deps: ForgeCheckDeps): Promise<Chec
     }
     const [, partition, account, name] = m;
     const { url: base, region } = iamEndpoint(partition!, deps.env);
-    const url = `${base}/?Action=GetRole&RoleName=${encodeStrict(name!)}&Version=2010-05-08`;
-    const headers = sign({ region, ...creds }, "GET", url, {}, sha256(""), (deps.now ?? (() => new Date()))(), "iam");
+    // A form POST, as the AWS SDKs send it: IAM takes the Query API as GET or
+    // POST, and floci answers only POST.
+    const url = `${base}/`;
+    const body = `Action=GetRole&RoleName=${encodeStrict(name!)}&Version=2010-05-08`;
+    const headers = sign({ region, ...creds }, "POST", url, { "content-type": "application/x-www-form-urlencoded" }, sha256(body), (deps.now ?? (() => new Date()))(), "iam");
     let res: Awaited<ReturnType<Fetch>>;
     try {
-      res = await deps.fetch(url, { method: "GET", headers });
+      res = await deps.fetch(url, { method: "POST", headers, body });
     } catch (e) {
       if (e instanceof ReadOnlyError) throw e;
       row(`could not read: ${(e as Error).message}`, "unknown");

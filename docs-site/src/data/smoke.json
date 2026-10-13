@@ -2618,6 +2618,38 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "2071cf73"
+    },
+    {
+      "claim": "oidc/audience-stages",
+      "says": "with oidc.audience a map, the plan job of a pull request and the apply job of main each hold a token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable in its environment",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    },
+    {
+      "claim": "apply/groups",
+      "says": "with environments prod and dev, each with its own roles, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment, each carrying the apply role of its own environment alone, under one approval; on Forgejo both jobs present the same token subject, so the roles each job is handed are all that keeps them apart",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    },
+    {
+      "claim": "apply/check-job",
+      "says": "with environments prod and dev and the condition of the apply jobs widened by hand to any push, the apply job of each environment on a branch it does not apply from fails before it trades a token, naming the expected and the found ref, and on main passes its check and trades its token; Forgejo has no deployment environments and names no runner labels to a job, so the ref is what is checked here",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    },
+    {
+      "claim": "forge/check",
+      "says": "terragucci forge check exits 0 when main is protected and each role in floci trusts exactly what config identities prints, and exits 1 with a row naming the expected and found value when main is unprotected, a role trusts any subject, or a role trusts an extra audience; it runs with a Forgejo token scoped read:repository and AWS keys granted iam:GetRole alone, and sends no request but GET and GetRole",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
     }
   ]
 }
