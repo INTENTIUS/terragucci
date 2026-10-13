@@ -2395,6 +2395,8 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
   const what = last ? `migration ${last.name}` : "a migration";
   writeOutcome(options.env, run.code === EXIT.waiting ? `${what} waits: ${run.command ?? ""}` : run.code === EXIT.refused ? `${what}: the states moved since it was approved` : `${what} failed`, j.w);
   if (run.code !== EXIT.waiting) console.log(`wave 1: ${what} did not apply, so no wave plans until it does`);
+  // One apply job per identity: wave 1's deciding job runs the migrations, and it holds the plan identities alone.
+  if (options.groups && run.code === EXIT.failed) console.log(`wave 1: with one apply job per identity, the wave's deciding job runs ${what} with the plan identities alone, which cannot write a state`);
   // A hold, also one made after an approved migration applied in this run (the next migration's, chant#3847), waits on chant's decision of its gate.
   // A hold waits on chant's decision of the migration's gate (gateCall); anything else is this wave's own code.
   if (run.code !== EXIT.waiting) j.code = run.code;

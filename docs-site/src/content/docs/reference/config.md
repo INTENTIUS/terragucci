@@ -185,7 +185,7 @@ dashboards: true
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 | `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
-| `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc` and `parallelism`; a root in no environment takes the top-level values. Read at base; see [Environments](#environments) |
+| `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
@@ -351,29 +351,37 @@ environments:
     roots: ["envs/prod/**"]
     gate: always
     oidc: { plan_role: arn:aws:iam::111111111111:role/prod-plan, apply_role: arn:aws:iam::111111111111:role/prod-apply }
+    runner: { apply: [self-hosted, prod] }
     parallelism: 2
   dev:
     roots: ["envs/dev/**"]
     gate: never
 ```
 
-An environment names its roots by glob, and sets only the keys below for them. A root matches at most one environment. A root in no environment takes the top-level `gate`, `oidc` and `parallelism`.
+An environment names its roots by glob, and sets only the keys below for them. A root matches at most one environment. A root in no environment takes the top-level `gate`, `oidc`, `runner` and `parallelism`.
 
 | Key | Meaning |
 |---|---|
 | `roots` | root globs, required; in a Terragrunt repo they match unit paths, and in an Atmos repo instances (`<stack>/<component>`) |
 | `gate` | `always`, `on-destructive` or `never` for the environment's roots. A wave is approved as one set digest, so a wave whose roots are in several environments takes the strictest of their gates (`always`, then `on-destructive`, then `never`), and a root in no environment counts with the top-level `gate`. A Terragrunt wave finds its units when it plans, so it takes the strictest of the top-level `gate` and every environment's |
-| `oidc` | `plan_role` and `apply_role` (AWS), `gcp` with `plan_service_account` and `apply_service_account`, `azure` with `plan_client_id` and `apply_client_id`. The environment's roots plan and apply with them, as with a pair under `oidc.roles`, `oidc.gcp.roles` or `oidc.azure.roles` for each of its globs. `gcp` and `azure` need the top-level `oidc.gcp` or `oidc.azure`, which give the provider, the tenant and the token. Not in a Terragrunt repo, where `terragrunt.credentials` sets each unit's roles |
+| `oidc` | `plan_role` and `apply_role` (AWS), `gcp` with `plan_service_account` and `apply_service_account`, `azure` with `plan_client_id` and `apply_client_id`. The environment's roots plan and apply with them, as with a pair under `oidc.roles`, `oidc.gcp.roles` or `oidc.azure.roles` for each of its globs. `gcp` and `azure` need the top-level `oidc.gcp` or `oidc.azure`, which give the provider, the tenant and the token. `audience` is the AWS token audience of the environment's apply jobs, over the top-level `oidc.audience` ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Not in a Terragrunt repo, where `terragrunt.credentials` sets each unit's roles |
+| `runner` | the runner of the environment's apply jobs: one runner (a label, a list of labels, or a GitHub runner group), or `{ apply: <runner> }`. It replaces the top-level `runner.apply` for those jobs. The plan jobs plan every environment's roots, so they keep the top-level runner. Not in a Terragrunt repo |
 | `parallelism` | how many of the environment's roots of one layer plan at once. A layer with roots in several environments plans as many at once as the lowest of their values allows. Not in a Terragrunt repo, where `terragrunt.parallelism` sets it |
+| `forge_environment` | the forge environment the environment's apply jobs run in, on GitHub (`environment: <name>`) and GitLab (`environment: { name: <name> }`). Default: the environment's name. Forgejo has no environments, so it renders none, and `config check` refuses the key there. Not in a Terragrunt repo |
 
 `terragucci config check` refuses:
 
-- any other key in an environment, naming the environment and the key; `runner` and `forge_environment` among them, since one apply job applies every root of its wave whatever its environment
-- `oidc.audience` in an environment: a job takes one token for every root it runs, so set `oidc.audience`
+- any other key in an environment, naming the environment and the key; `runner.plan` among them, since a plan job plans every environment's roots
+- an environment named `default`, `decide` or `share-<n>`, which the apply jobs use for their own
+- beside `environments`: `apply.when: pull-request`, `ephemeral`, and on GitHub and Forgejo `apply.resume`, since each applies every wave in one job
 - an environment with no `roots`, a glob listed by two environments, and a root of the repo that two environments' globs match, naming both environments and the root
 - a root given identities both by its environment and by `oidc.roles`, `oidc.gcp.roles` or `oidc.azure.roles`, naming the root, so each root's identities are set in one place
 
-`gate` is read from `terragucci.yml` at base, as `approval` is: a pull request that edits `environments` is gated by the default branch's block, and its own edits take effect once it merges. The plan note gives each wave's environments a column of its own, and the [report](/terragucci/reference/report-schema/) names each root's `environment`; the [estate page](/terragucci/guides/see-every-project/) shows it beside each root's resources. Run `npx terragucci init` after adding or changing an environment's `oidc` or `gate`: the pipeline carries the roles by glob, and a wave that an environment's gate can hold needs the jobs that record a waiting wave. In a [control repo](/terragucci/concepts/control-repo/), `defaults` and a project can each carry `environments`; they merge by environment name, and a project's keys for an environment replace the defaults' for that environment.
+On Forgejo, `config check` also warns that one ref's jobs carry the same token subject, so a role's trust cannot tell one environment's apply job from another's.
+
+Each environment's roots apply in jobs of their own ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)). With `environments` the `apply-comment` job applies nothing: it answers the comment, and a push's run is re-run to apply again.
+
+`gate` is read from `terragucci.yml` at base, as `approval` is: a pull request that edits `environments` is gated by the default branch's block, and its own edits take effect once it merges. The plan note gives each wave's environments a column of its own, and the [report](/terragucci/reference/report-schema/) names each root's `environment`; the [estate page](/terragucci/guides/see-every-project/) shows it beside each root's resources. Run `npx terragucci init` after adding or changing an environment: the pipeline has each environment's apply jobs with its roles, runner, forge environment and audience, and a wave that an environment's gate can hold needs the jobs that record a waiting wave. In a [control repo](/terragucci/concepts/control-repo/), `defaults` and a project can each carry `environments`; they merge by environment name, and a project's keys for an environment replace the defaults' for that environment.
 
 ## Runners
 

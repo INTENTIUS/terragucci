@@ -182,6 +182,19 @@ In a Terragrunt repo the wave's job plans every unit with one `run --all`, and e
 
 On GitLab the shares take each other's place in the apply resource group, which runs one job at a time, so with `waves.jobs` the apply jobs hold a lock on the remote instead, as on Forgejo; the pipeline's `CI_JOB_TOKEN` cannot push, so the project's token does. `init` refuses the key under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
 
+## One apply job per identity
+
+With [`environments`](/terragucci/reference/config/#environments), or with [`oidc.roles`](/terragucci/reference/environment/#oidc) (or `oidc.gcp.roles`, `oidc.azure.roles`) that give the roots more than one set of identities, a wave of plain roots applies in one job per group of roots, so roots under different roles never share a job's token:
+
+| Job | What it does |
+|---|---|
+| `apply-wave-<n>` | plans every root of the wave with the plan identities, on the plan audience, runs the policy and decides the gate; it holds no apply identity and applies nothing |
+| `apply-wave-<n>-<group>` | plans its group's roots again with the group's apply identities and applies each one whose digest matches what `apply-wave-<n>` decided; with `waves.jobs`, `apply-wave-<n>-<group>-share-<s>` |
+
+The groups are the environments, each with the roots its globs match, and `default` for the roots in none. Without `environments`, roots that take the same identities by glob are a group, named after the glob (`envs/prod/**` is `envs-prod`), and `default` holds the roots no glob matches. A wave gets a job for each group with roots in it. Each group's job carries only its own identities in `TERRAGUCCI_ROOT_ROLES`, `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` and `TERRAGUCCI_ROOT_AZURE_CLIENTS`, and the job's own role only when one of its roots takes it. An environment's jobs also run on its `runner`, in its `forge_environment` on GitHub and GitLab, and with its `oidc.audience`.
+
+One approval of the wave's set digest applies every group's job, and a refused root refuses the whole wave. The next wave needs every group's job, and `apply-done` posts the last success. The group jobs apply side by side under the run's apply lock, as shares do. With neither `environments` nor roles that tell roots apart, a wave keeps its one job. A Terragrunt repo's waves keep one job each.
+
 ## Applies side by side
 
 Two pushes that change different roots apply at the same time, and a root's own applies take turns at its state lock; with [choudoufu](/terragucci/concepts/glossary/#choudoufu), waves wait only for a run changing one of their resources. A wave a newer push superseded stands down. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#applies-side-by-side).

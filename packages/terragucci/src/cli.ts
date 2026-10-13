@@ -75,7 +75,7 @@ import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } fro
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
-import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGEJO_ONE_SUBJECT, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, ONE_SUBJECT_ON_FORGEJO, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -1022,7 +1022,7 @@ export async function main(argv: string[]): Promise<number> {
           if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // Forgejo's token names the ref alone, so each environment's apply jobs hold a token every environment's role on that ref trusts.
-          if (!config.projects && config.environments && (config.forge ?? detectForge(dirname(resolve(path)))?.value) === "forgejo") warnings.push(`environments: ${FORGEJO_ONE_SUBJECT}`);
+          if (!config.projects && config.environments && (config.forge ?? detectForge(dirname(resolve(path)))?.value) === "forgejo") warnings.push(`environments: ${ONE_SUBJECT_ON_FORGEJO}`);
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.

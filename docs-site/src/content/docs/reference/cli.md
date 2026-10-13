@@ -205,7 +205,7 @@ terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
     [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
-    [--on-held wait|refuse] [--stand-down]
+    [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
 ```
 
 | Flag | Environment | Meaning |
@@ -237,6 +237,8 @@ Both `stage tf-plan` and `stage tf-drift` write the report even when a root refu
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
 | `--share` | | with `--shares`: plan this share's roots and apply each one whose plan has the digest in the decision file; exit 4 when one moved, which is not applied |
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
+| `--groups` | | [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), as `prod=envs/prod/**;dev=envs/dev/**`: each group's root globs or roots, and `default` for the roots none matches. Without `--group` the stage plans every root with the job's identities, decides the gate, writes the decision file and applies nothing. Plain roots only |
+| `--group` | | with `--groups`: plan this group's roots of the wave (with `--shares`, its `--share`) and apply each one whose plan has the digest in the decision file; a group with no root in the wave applies nothing |
 | `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots (in a Terragrunt repo, the units) of `--branch` when the map names it, and otherwise every root no branch's glob matches |
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
 | `--on-held` | `TG_LOCK_POLL` | with `binary: choudoufu`, when another run's apply holds a resource the wave changes: `wait` (the default) polls every `TG_LOCK_POLL` seconds (10) for up to an hour, then plans again; `refuse` exits 5 naming that run, as the apply a comment starts does |
