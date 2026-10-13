@@ -1,7 +1,7 @@
 ---
 title: Separate environments
 description: Which forge and cloud settings keep a branch's job away from prod's apply runner, secrets and role on GitHub, GitLab and Forgejo, and what terragucci renders and checks beside them.
-claims: [apply/groups, oidc/audience-stages, oidc/state-roles, oidc/cloud-roles]
+claims: [apply/groups, apply/check-job, identities/trust-policy, oidc/audience-stages, oidc/state-roles, oidc/cloud-roles]
 prompt: |
   Read https://intentius.io/terragucci/guides/separate-environments/.
   Check this repo's forge and cloud settings and say whether a branch job can reach the prod apply runner, secrets or role.
