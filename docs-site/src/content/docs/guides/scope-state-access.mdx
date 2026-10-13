@@ -119,7 +119,7 @@ Each pair's apply role applies in jobs of its own, but those jobs carry the defa
 | GitLab | the environment's `oidc.audience` in the role's `aud` condition, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | an attribute condition on `assertion.environment`, `assertion.environment_protected` and `assertion.ref_protected` | a federated credential that matches on the same claims with a claims expression |
 | Forgejo | one ref's jobs carry the same subject, so a role cannot tell environments apart: keep them apart with a repo per environment, or a protected branch per environment | the same | the same |
 
-On GitHub, set the environment's deployment branch rule to the default branch alone, since the environment's subject does not name the ref.
+On GitHub, set the environment's deployment branch rule to the default branch alone, since the environment's subject does not name the ref. [Separate environments](/terragucci/guides/separate-environments/) has the forge's settings for runners and secrets too.
 
 ## Limits
 
@@ -129,3 +129,4 @@ A job's token can be exchanged for every role whose trust names the job's subjec
 
 - [Credentials](/terragucci/reference/pipeline/#credentials) for the trust each role needs on each forge.
 - [`config check`](/terragucci/reference/cli/#config-check) for every warning.
+- [Separate environments](/terragucci/guides/separate-environments/) for the forge and cloud settings around each environment's roles.
