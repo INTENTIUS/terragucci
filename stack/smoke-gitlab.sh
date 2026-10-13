@@ -51,7 +51,8 @@ ephemeral/pr|the copy a pull request gets of a root on GitLab-managed state live
 linked/gitlab-state|a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output|
 policy/tofu|a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial|
 affected/tofu|a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone|
-oidc/gitlab|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|'
+oidc/gitlab|the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS|
+oidc/audience-stages|with oidc.audience a map, the merge request plan job holds an id_token for the plan audience alone and the apply job on main one for the apply audience, and a role whose trust names the apply audience refuses the plan token|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
@@ -90,6 +91,7 @@ linked/gitlab-state   runner weight=200
 policy/tofu           runner weight=150
 affected/tofu         runner weight=150
 oidc/gitlab             runner weight=250
+oidc/audience-stages    runner weight=250
 '
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
@@ -2539,5 +2541,176 @@ JS
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the plan job held $(jq -r '"\(.role) for \(.sub)"' <<<"$planned"), the apply job $(jq -r '"\(.role) for \(.sub)"' <<<"$applied"), each token verified against the lab's keys"
+  return $rc
+}
+
+gitlab_claim_oidc/audience_stages() {
+  # oidc.audience as a map: plan terragucci-plan, apply terragucci-apply,
+  # drift terragucci-drift. app, on a local backend, reads a data source whose
+  # program (probe.mjs) reads the job's TERRAGUCCI_OIDC id_token from its own
+  # environment, checks that AWS_WEB_IDENTITY_TOKEN_FILE holds the same token,
+  # verifies it against the lab's published keys, and evaluates on its aud and
+  # sub the trust of two roles: terragucci-plan's, which admits only the plan
+  # audience, and terragucci-apply's, which admits only the apply audience, for
+  # this project. The trust documents are in the tree beside the probe; the lab
+  # has no IAM that checks them, and nothing trades the token with STS, so the
+  # probe's evaluation stands in for the check AWS makes. The merge request's
+  # plan job must hold a token for terragucci-plan that the apply role's trust
+  # refuses, and main's apply-wave-1 one for terragucci-apply. Each probe
+  # writes what it found to its job's report artifact.
+  # BREAK: the plan job's id_tokens in the pipeline init wrote asks for the
+  # apply audience in place of the plan one, so the plan job's token is one
+  # the apply role's trust admits.
+  log() { echo "[smoke gitlab audience-stages] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project sha job planned applied wf rc=0 stage
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project audience-stages)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  mkdir -p "$work/tree/app"
+  cat > "$work/tree/app/main.tf" <<'TF'
+terraform {
+  backend "local" {}
+
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.5"
+    }
+  }
+}
+
+data "external" "audience" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "probe" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+
+output "audience" {
+  value = data.external.audience.result
+}
+TF
+  echo 1 > "$work/tree/app/rev.txt"
+  # Each role's trust: the lab's issuer, this project, its own stage's audience.
+  for stage in plan apply; do
+    jq -n --arg sub "project_path:$GL_USER/$project:*" --arg aud "terragucci-$stage" '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/gitlab:8929"},
+      Condition: {StringEquals: {"gitlab:8929:aud": $aud}, StringLike: {"gitlab:8929:sub": $sub}}}]}' > "$work/tree/app/trust-$stage.json"
+  done
+  cat > "$work/tree/app/probe.mjs" <<'JS'
+// In a GitLab job: the TERRAGUCCI_OIDC id_token, the same token in
+// AWS_WEB_IDENTITY_TOKEN_FILE, verified against the instance's keys, and the
+// verdict of each role's trust (trust-plan.json, trust-apply.json) on its aud
+// and sub. What it found goes to terragucci-report/audience-<plan|apply>.json,
+// which the job keeps as an artifact. Outside a job it checks nothing. It
+// fails the job when the job's own role's trust refuses the token, as AWS would.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+import { resolve } from "node:path";
+const e = process.env;
+if (e.GITLAB_CI !== "true") { console.log(JSON.stringify({ job: "none" })); process.exit(0); }
+const kind = (e.AWS_ROLE_SESSION_NAME || "none").replace(/^terragucci-/, "");
+const out = resolve(e.CI_PROJECT_DIR || "..", "terragucci-report");
+const found = { kind, source: e.CI_PIPELINE_SOURCE, job: e.CI_JOB_NAME, problems: [] };
+const done = (code) => {
+  mkdirSync(out, { recursive: true });
+  writeFileSync(resolve(out, `audience-${kind}.json`), JSON.stringify(found, null, 2) + "\n");
+  if (code) { console.error("audience probe: " + found.problems.join("; ")); process.exit(code); }
+  console.log(JSON.stringify({ aud: String(found.aud), role: found.role }));
+  process.exit(0);
+};
+const jwt = (e.TERRAGUCCI_OIDC || "").trim();
+if (!jwt) { found.problems.push("no TERRAGUCCI_OIDC in the job's environment"); done(1); }
+found.same_file = !!e.AWS_WEB_IDENTITY_TOKEN_FILE && readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim() === jwt;
+if (!found.same_file) found.problems.push("AWS_WEB_IDENTITY_TOKEN_FILE does not hold the TERRAGUCCI_OIDC token");
+const [h, p, s] = jwt.split(".");
+if (!s) { found.problems.push("TERRAGUCCI_OIDC holds no JWT"); done(1); }
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const head = dec(h), c = dec(p);
+const ISS = e.CI_SERVER_URL;
+try {
+  const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
+  // The lab advertises https endpoints but serves http, so the keys are read from the issuer's origin.
+  const jwks = new URL(new URL(conf.jwks_uri).pathname, ISS).href;
+  const jwk = (await (await fetch(jwks)).json()).keys.find((k) => k.kid === head.kid);
+  found.verified = head.alg === "RS256" && !!jwk
+    && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
+  if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${jwks}`);
+} catch (err) {
+  found.verified = false;
+  found.problems.push(`the keys of ${ISS} could not be read: ${err.message}`);
+}
+// The conditions on aud and sub, StringEquals and StringLike, as AWS reads them.
+const glob = (pat, v) => new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$").test(v);
+const admits = (doc) => [doc.Statement].flat().some((st) => st.Effect === "Allow"
+  && Object.entries(st.Condition ?? {}).every(([op, conds]) => Object.entries(conds).every(([k, want]) => {
+    const have = [c[k.slice(k.lastIndexOf(":") + 1)]].flat().filter((v) => v !== undefined).map(String);
+    const wants = [want].flat().map(String);
+    if (op === "StringEquals") return have.some((v) => wants.includes(v));
+    if (op === "StringLike") return have.some((v) => wants.some((w) => glob(w, v)));
+    return false;
+  })));
+const trust = (stage) => JSON.parse(readFileSync(new URL(`./trust-${stage}.json`, import.meta.url), "utf8"));
+found.trust = { plan: admits(trust("plan")), apply: admits(trust("apply")) };
+found.role = (e.AWS_ROLE_ARN || "").split("/").pop();
+Object.assign(found, { iss: c.iss, aud: c.aud, sub: c.sub });
+if (found.role !== "terragucci-" + kind) found.problems.push(`a ${kind} job holds ${found.role}`);
+if (found.trust[kind] !== true) found.problems.push(`the trust of terragucci-${kind} refuses this token (aud ${JSON.stringify(c.aud)})`);
+done(found.problems.length ? 1 : 0);
+JS
+  printf 'forge: gitlab\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/terragucci-plan\n  apply_role: arn:aws:iam::000000000000:role/terragucci-apply\n  audience:\n    plan: terragucci-plan\n    apply: terragucci-apply\n    drift: terragucci-drift\n' > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.gitlab/terragucci.yml"
+  # The audience a job's TERRAGUCCI_OIDC id_token asks for, as init wrote it.
+  job_aud() { # job
+    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    TERRAGUCCI_OIDC:$/ { want = 1; next } inside && want && /^      aud: / { print $2; exit }' "$wf"
+  }
+  [ "$(job_aud plan)" = terragucci-plan ] && [ "$(job_aud apply-wave-1)" = terragucci-apply ] \
+    || { log "the pipeline's id_tokens ask for $(job_aud plan) in plan and $(job_aud apply-wave-1) in apply-wave-1"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^[^ #][^:]*:$/ { inside = ($0 == "plan:") } inside && $0 == "      aud: terragucci-plan" { $0 = "      aud: terragucci-apply" } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    [ "$(job_aud plan)" = terragucci-apply ] || { break_setup_failed "the plan job's id_tokens still ask for $(job_aud plan)"; drop_work "$work"; return 1; }
+    log "BREAK: the plan job's id_tokens ask for terragucci-apply"
+  fi
+  probe_found() { # job kind
+    gl_artifact "$project" "$1" "terragucci-report/audience-$2.json" 2>/dev/null | jq -c . 2>/dev/null || true
+  }
+  # A probe's record from a job of STAGE: a verified token, the one in the
+  # token file, for STAGE's audience alone, admitted by STAGE's role and
+  # refused by the other one's.
+  checked() { # json stage
+    local other=apply
+    [ "$2" = apply ] && other=plan
+    [ -n "$1" ] || { log "the $2 job's probe wrote nothing"; return 1; }
+    jq -e '.verified == true and .same_file == true' <<<"$1" >/dev/null || { log "the $2 job's token does not verify, or is not the one in the token file: $(jq -c .problems <<<"$1")"; return 1; }
+    jq -e --arg aud "terragucci-$2" '[.aud] | flatten == [$aud]' <<<"$1" >/dev/null || { log "the $2 job's token carries aud $(jq -c .aud <<<"$1"), not terragucci-$2"; return 1; }
+    jq -e --arg s "$2" '.trust[$s] == true' <<<"$1" >/dev/null || { log "the terragucci-$2 role's trust refuses the $2 job's token"; return 1; }
+    jq -e --arg o "$other" '.trust[$o] == false' <<<"$1" >/dev/null || { log "the terragucci-$other role's trust admits the $2 job's token"; return 1; }
+    jq -e '.problems == []' <<<"$1" >/dev/null || { log "the $2 job's probe: $(jq -c .problems <<<"$1")"; return 1; }
+  }
+  gl_planned_mr "$work/tree" "$project" "smoke audience-stages" || rc=1
+  if [ $rc = 0 ]; then
+    job="$(gl_job plan)"
+    planned="$(probe_found "$job" plan)"
+    log "plan (job $job): ${planned:-the probe wrote nothing}"
+    checked "$planned" plan || rc=1
+    [ "$PIPE_STATUS" = success ] || { log "the merge request's pipeline ended $PIPE_STATUS"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(gl_push "$work/tree" "$project" main "audience-stages: apply")" || rc=1
+    [ $rc = 1 ] || gl_wait "$project" "$sha" push || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    job="$(gl_job apply-wave-1)"
+    applied="$(probe_found "$job" apply)"
+    log "apply-wave-1 (job $job): ${applied:-the probe wrote nothing}"
+    checked "$applied" apply || rc=1
+    [ "$PIPE_STATUS" = success ] || { log "main's pipeline ended $PIPE_STATUS"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the plan job's token carried $(jq -r .aud <<<"$planned"), which the apply role's trust refuses, and apply-wave-1's $(jq -r .aud <<<"$applied"), each verified against the lab's keys"
   return $rc
 }
