@@ -8007,7 +8007,8 @@ printf 'sources:\n  modules: [\"./**\", \"../**\", \"$host/**\"]\n' >> terragucc
     grep -qF "$want" "$work/check.log" || { log "the check job does not refuse $root with: $want"; tail -20 "$work/check.log" >&2; rc=1; }
     grep -qF "FAILED $root: refused by sources, so it was not initialised" "$work/check.log" || { log "the check job does not say $root was not initialised"; rc=1; }
   fi
-  drop_work "$work"; drop_work "$tree"
+  # $work stays until the end: it holds the BREAK bundle the Terragrunt steps run.
+  drop_work "$tree"
   # Terragrunt: a copy of the Terragrunt example, its list at base, and a unit
   # whose source is the Forgejo module above. Terragrunt inits the unit in its
   # working directory inside run --all; the unit is refused before its plan,
@@ -8028,6 +8029,9 @@ printf 'sources:\n  modules: [\"./**\", \"../**\", \"$host/**\"]\n' >> terragucc
   providers: ["hashicorp/aws"]'
       ;;
   esac
+  if [ -n "$tg_unit" ] && [ -n "$bundle" ] && [ ! -f "$bundle" ]; then
+    break_setup_failed "the BREAK bundle $bundle is gone before the Terragrunt steps"; drop_work "$work"; return 1
+  fi
   if [ -n "$tg_unit" ]; then
     tgw="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tgw"
     tg_edit="mkdir -p $tg_unit
@@ -8044,6 +8048,7 @@ HCL"
     tr="$tgw/terragucci-report/report.json"
     if [ ! -f "$tr" ]; then
       log "no Terragrunt report"; rc=1
+      [ -z "${BREAK:-}" ] || break_setup_failed "the BREAK run's Terragrunt plan wrote no report"
     else
       [ "$tg_run" = 1 ] || { log "the Terragrunt plan exited $tg_run, not 1"; rc=1; }
       jq -e --arg n "$tg_unit" '.roots[] | select(.path == $n and .status == "failed")' "$tr" >/dev/null || { log "$tg_unit is not failed in the Terragrunt report: it planned"; rc=1; }
@@ -8071,6 +8076,7 @@ HCL"
     fi
     drop_work "$tgw"
   fi
+  drop_work "$work"
   [ $rc = 0 ] && log "$root failed tf-plan before its init, refused by the list at base: $want${after:+; $after failed after its init and before its plan: $after_block}${after:+$after_what}${tg_unit:+; Terragrunt unit $tg_unit failed after its init and before its plan: $tg_block}"
   return $rc
 }
