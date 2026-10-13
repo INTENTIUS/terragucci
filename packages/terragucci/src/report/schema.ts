@@ -331,7 +331,7 @@ export interface ReportRoot {
  */
 export interface ReportRead {
   upstream: string;
-  /** The block's label: a `terraform_remote_state` data block's, or a Terragrunt unit's `dependency` blocks' (minor 25), `dependency` when no block names the upstream plainly. */
+  /** The block's label: a `terraform_remote_state` or `terraform_estate_outputs` data block's, or a Terragrunt unit's `dependency` blocks' (minor 25), `dependency` when no block names the upstream plainly. */
   data: string;
   /** `planned`: the outputs the upstream's plan in this run makes. `applied`: its state as it stands. */
   outputs: "planned" | "applied";

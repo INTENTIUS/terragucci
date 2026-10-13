@@ -111,18 +111,26 @@ export interface Shape {
  * refuses the refresh-only plan drift runs, so drift plans such a root in
  * full (`refreshOnlyOnLiveRoots`, liveDrift in ./report/drift.ts); and its applies are kept apart
  * per resource, where every other binary's are kept apart per root by the
- * backend's state lock (`applyScope`, ./apply-rows.ts).
+ * backend's state lock (`applyScope`, ./apply-rows.ts). Its plan answers a
+ * `terraform_estate_outputs` read from another estate's plan
+ * (`estateOutputsFrom`, ./estate-planned.ts).
  */
-export const BINARY: Record<Binary, { releaseInRequiredVersion: boolean; test: boolean; refreshOnlyOnLiveRoots: boolean; applyScope: "resource" | "root" }> = {
-  tofu: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root" },
-  terraform: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root" },
-  choudoufu: { releaseInRequiredVersion: false, test: false, refreshOnlyOnLiveRoots: false, applyScope: "resource" },
+export const BINARY: Record<Binary, { releaseInRequiredVersion: boolean; test: boolean; refreshOnlyOnLiveRoots: boolean; applyScope: "resource" | "root"; estateOutputsFrom: boolean }> = {
+  tofu: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root", estateOutputsFrom: false },
+  terraform: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root", estateOutputsFrom: false },
+  choudoufu: { releaseInRequiredVersion: false, test: false, refreshOnlyOnLiveRoots: false, applyScope: "resource", estateOutputsFrom: true },
 };
 
 /** Whether drift plans a root under live resource markers in full, since the binary refuses a refresh-only plan there. */
 export function fullDriftPlans(binary: string): boolean {
   const name = binary.split("/").pop()!;
   return Object.hasOwn(BINARY, name) && !BINARY[name as Binary].refreshOnlyOnLiveRoots;
+}
+
+/** Whether a pull request's plan hands a root another estate's planned outputs (`plan -estate-outputs-from`, ./estate-planned.ts). */
+export function plansOnPlannedEstates(binary: string): boolean {
+  const name = binary.split("/").pop()!.replace(/\.exe$/, "");
+  return Object.hasOwn(BINARY, name) && BINARY[name as Binary].estateOutputsFrom;
 }
 
 const NO_ROOTS = "found no roots: no directory has Terraform files with a backend or a provider block";
