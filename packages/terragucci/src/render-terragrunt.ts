@@ -3,7 +3,9 @@
  * for plain roots; what they run differs:
  *
  * check  `terragrunt hcl fmt --check`, `terragrunt hcl validate --inputs`, and
- *        `terragucci check-pins` for `modules.require: attested`.
+ *        `terragucci check-pins` for `modules.require: attested`. With
+ *        `sources:`, `terragucci check-sources --units` before the validate,
+ *        which fetches each unit's source.
  * plan   `terragucci stage tf-plan --terragrunt`: one `run --all` per wave.
  * apply  `terragucci stage tf-apply --terragrunt`, one job per wave: a wave
  *        is one dependency layer of the units, cut from `terragrunt find`
@@ -42,6 +44,8 @@ export interface TerragruntPipelineInput {
   stacks?: boolean;
   /** `generate` is set: the check job runs `terragucci generate --check`, which refuses a terragucci.hcl out of line with terragucci.yml. */
   generate?: boolean;
+  /** `sources` is set: the check job runs `terragucci check-sources --units` before its validate fetches any unit's source. */
+  sources?: boolean;
 }
 
 /** Where sources and providers are kept: under the repo, in a directory Terragrunt's discovery skips. */
@@ -95,6 +99,8 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     ...(tg.generate ? ["terragucci generate --check"] : []),
     // An explicit stack's units are generated, not committed: generate them, then validate them with the rest.
     ...(tg.stacks ? ["terragrunt stack generate --non-interactive --no-color"] : []),
+    // With `sources` set, a unit using a module or provider outside the list at base is refused before the validate fetches its source.
+    ...(tg.sources ? ["terragucci check-sources --units"] : []),
     `terragrunt hcl validate --inputs --no-color ${filters(tg.exclude)}`,
     'echo "every unit is formatted and its inputs match its module"',
     // With `modules.require: attested`, each unit's terraform source must pin an attested release; without it, prints nothing.

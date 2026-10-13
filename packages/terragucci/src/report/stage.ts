@@ -45,7 +45,8 @@ import { prForgeOf, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
-import { sourceChecker } from "../sources";
+import { sourceChecker, type SourceChecker } from "../sources";
+import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "../sources-terragrunt";
 import { describeTips, repoTips } from "../tips";
 import { renamesIn } from "../tips/moved";
 import type { DecideOptions } from "../decide";
@@ -520,7 +521,7 @@ async function planUnits(
   layers: UnitLayer[],
   binary: string,
   work: string,
-  options: StageOptions & { selection: (unit: string) => string; drift?: boolean; observer?: StageObserver; graph: TerragruntUnit[]; waveOf: ReadonlyMap<string, number>; steps?: StepSettings[]; tools?: UnitBinaries },
+  options: StageOptions & { selection: (unit: string) => string; drift?: boolean; observer?: StageObserver; graph: TerragruntUnit[]; waveOf: ReadonlyMap<string, number>; steps?: StepSettings[]; tools?: UnitBinaries; sources?: SourceChecker },
   log: (line: string) => void,
 ): Promise<{
   inputs: RootInput[];
@@ -548,7 +549,11 @@ async function planUnits(
   let redacted = 0;
   const terragrunt = options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
   // A drift plan takes no lock. A plan waits for one as long as a plain root's apply-time plan does.
-  const exec = drift ? refreshOnlyExec(options.terragruntExec) : lockTimeoutExec(options.terragruntExec, env);
+  const timed = drift ? refreshOnlyExec(options.terragruntExec) : lockTimeoutExec(options.terragruntExec, env);
+  // sources: what each unit's init fetched and locked, checked between its init and its plan (../sources-terragrunt.ts).
+  const sourcesRefused = new Map<string, string[]>();
+  const sourcesAsked = new Set<string>();
+  const exec = options.sources ? unitSourcesExec(timed, options.sources, binary, env, sourcesRefused, sourcesAsked) : timed;
   const edges = new Map(options.graph.map((u) => [u.path, u.dependencies]));
   const includes = new Map(options.graph.map((u) => [u.path, [...Object.values(u.include ?? {}), ...(u.reading ?? [])]]));
   /** Every unit this run planned or meant to: its plan, when it has one, and its wave. */
@@ -654,6 +659,22 @@ async function planUnits(
         } catch {
           plan = undefined;
         }
+      }
+      const refusedLines = sourcesRefused.get(path);
+      if (refusedLines) {
+        run.set(path, { wave: number });
+        inputs.push({ path, planner, error: refusedLines.join("\n"), preventDestroy: new Set(), terragrunt: unit, ...(bin ? { binary: bin } : {}) });
+        log(`${path}: ${UNIT_REFUSED}`);
+        for (const l of refusedLines) log(`  ${l}`);
+        continue;
+      }
+      // A unit that planned without the wrapper asking about it was never checked: its plan is not used.
+      if (options.sources && plan !== undefined && !sourcesAsked.has(path)) {
+        const error = `${path}: ${uncheckedUnit("planned")}`;
+        run.set(path, { wave: number });
+        inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: unit, ...(bin ? { binary: bin } : {}) });
+        log(error);
+        continue;
       }
       if (plan === undefined) {
         const error = part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it";
@@ -1461,8 +1482,10 @@ async function runTerragruntStage(
     }
   }
   // sources: each unit's terraform source and the module and provider sources under it, against the list at base (../sources.ts).
+  // What each unit's init fetched and locked is checked again before its plan.
+  let unitSources: SourceChecker | undefined;
   {
-    const sourcesOf = waves.length > 0 ? await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log, afterInit: false }) : undefined;
+    const sourcesOf = (unitSources = waves.length > 0 ? await sourceChecker(repo, settings.sources, base, policyTrust(repo, options), { log }) : undefined);
     const already = new Set(refusedUnits.map((u) => u.path));
     for (const unit of sourcesOf ? waves.flat() : []) {
       if (already.has(unit)) continue;
@@ -1501,6 +1524,7 @@ async function runTerragruntStage(
       const tools = new UnitBinaries(dir, binary, settings.version, terragrunt, env, options.installer);
       return planUnits(dir, own, binary, sub, {
         ...options, env, drift, observer, waveOf, steps, tools,
+        ...(unitSources ? { sources: unitSources } : {}),
         // The edges a preview follows: discovery's, else the plain paths the units' files name.
         graph,
         selection: (u) => reasons.get(u) ?? everyUnit,

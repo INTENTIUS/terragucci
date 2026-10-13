@@ -17,7 +17,7 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
- *   terragucci check-sources <dir> [--config <file>] [--base <ref>]
+ *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>   (Linux builds, for a CI job)
  *   terragucci atmos write   (write each Atmos instance to <stack>/<component> from atmos describe stacks; run by the generated pipeline)
@@ -151,7 +151,7 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
-  terragucci check-sources <dir> [--config <file>] [--base <ref>]   (each root's module and provider sources under sources, before its init)
+  terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]   (a root's module and provider sources under sources, before its init; --units: each Terragrunt unit's)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
@@ -247,7 +247,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "units"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -478,13 +478,18 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "check-sources": {
         // tf-check's step before each root's init, when `sources:` is set: the root's module and provider sources against the list at base.
+        // --units: a Terragrunt repo's check job, before its validate fetches anything: every unit's terraform source and what it reads.
+        const units = flags.units === true;
         const dir = args[0];
-        if (!dir) throw new ConfigError("usage: terragucci check-sources <dir> [--config <file>] [--base <ref>]");
+        if (units === Boolean(dir)) throw new ConfigError("usage: terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]");
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const check = await sourceChecker(cwd, settings.sources, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {}, { afterInit: false });
         if (!check) return 0;
-        const result = checkSourcesResult(dir, await check.before(dir));
+        const dirs = units ? walkUnits(cwd, settings.terragrunt?.exclude).map((u) => u.path) : [dir!];
+        const results = [];
+        for (const d of dirs) results.push(checkSourcesResult(d, await check.before(d)));
+        const result = { ok: results.every((r) => r.ok), log: results.flatMap((r) => r.log), report: results.flatMap((r) => r.report) };
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
