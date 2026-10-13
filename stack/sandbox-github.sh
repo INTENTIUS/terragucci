@@ -12,8 +12,8 @@
 #   stack/sandbox-github.sh change <s>     open a pull request with a scenario
 #                                     (one-root, module-bump, destroy, replace,
 #                                     unformatted, orders-note, refuse, or oidc,
-#                                     override and environments once prove
-#                                     has set main up)
+#                                     override, groups and environments once
+#                                     prove has set main up)
 #                                     and wait for its plan
 #   stack/sandbox-github.sh merge <s>      merge it, listing this run's signer
 #                                     key in .chant/allowed_signers first, and
@@ -37,11 +37,11 @@
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
 #                                     the docs show, recorded as text into
 #                                     docs-site as step `github`, then reset
-#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports|audience|check-job|trust-policy] [--break] [--record FILE]
+#   stack/sandbox-github.sh prove [merge|pull-request|modules|reports|audience|groups|check-job|trust-policy] [--break] [--record FILE]
 #                                     from a reset sandbox, each phase (the
 #                                     first four when none is named; audience,
-#                                     check-job and trust-policy only when
-#                                     named) sets main up
+#                                     groups, check-job and trust-policy only
+#                                     when named) sets main up
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
@@ -55,8 +55,9 @@
 #   stack/sandbox-github.sh reset          close the pull requests and issues,
 #                                     delete every other branch, every tag,
 #                                     every secret and the environments prod
-#                                     and dev, and put main back to its first
-#                                     commit
+#                                     and dev (groups, check-job and
+#                                     trust-policy make them), and put main
+#                                     back to its first commit
 #   stack/sandbox-github.sh minutes [ISO-time]
 #                                     the sandbox's Actions run time since then
 #
@@ -330,8 +331,9 @@ title_of() { # scenario
     orders-note) echo "Say who owns dev orders" ;;
     override) echo "Send the OIDC probe out under a policy override" ;;
     refuse) echo "Stop keeping records for staging payments" ;;
+    groups) echo "Plan and apply the probes of prod and dev again" ;;
     environments) echo "Plan and apply the environment probes of prod and dev again" ;;
-    *) fail "unknown scenario '$1' (one-root, module-bump, destroy, replace, unformatted, oidc, orders-note, override, refuse, environments)" ;;
+    *) fail "unknown scenario '$1' (one-root, module-bump, destroy, replace, unformatted, oidc, orders-note, override, refuse, groups, environments)" ;;
   esac
 }
 
@@ -519,6 +521,7 @@ github.com|report/keys|with the bucket keys in repo secrets, which the pipeline 
 github.com|report/oidc|with no static keys, the plan job takes reports.role with its GitHub-signed OIDC token, writes report.json to the bucket, and the index lists the run; floci in the job stands in for STS and the bucket
 github.com|estate/job|the estate workflow of the see-every-project page, committed with its role in the account floci serves and the stand-ins added to its job, and run by workflow_dispatch with only its OIDC token, writes estate.html showing the project to the bucket and prints a presigned link; floci in the job stands in for STS and the bucket
 github.com|oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job on main each hold a GitHub-signed token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable; with no cloud account the trust is evaluated, not checked by STS
+github.com|apply/groups|with environments prod and dev, each with its own roles and a deployment environment that main alone may deploy to, the apply job of each environment runs in it, so its GitHub-signed token names the environment as its subject; the prod apply role, trusting the prod environment subject alone, admits the prod job and refuses the dev job; each job carries its own apply role alone; with no cloud account the trust is evaluated, not checked by STS
 github.com|apply/check-job|with environments prod and dev, each a deployment environment that main alone may deploy to, the prod apply job checks the environment its GitHub-signed token names and its ref before it fetches a token for its role; moved into the environment dev by a hand edit to the workflow, it fails naming the expected prod and the found dev, and the code it runs never sees a token
 github.com|identities/trust-policy|the trust of the prod and dev apply roles, as terragucci config identities prints it for terragucci_trust_policy, admits the GitHub-signed token of the prod apply job, whose subject names the environment prod, and refuses that of the dev apply job; with no cloud account the trust is evaluated, not checked by STS'
 
@@ -2227,6 +2230,246 @@ claim_audience_stages() {
 prove_audience() { claim_audience_stages; }
 break_audience() { claim_audience_stages; }
 
+# ── the group jobs claim ─────────────────────────────────────────────────────
+
+# With environments each environment's roots apply in jobs of their own, and
+# on GitHub each such job runs in the environment's deployment environment,
+# so its OIDC token's subject names the environment instead of the ref. The
+# groups phase runs only when named (`prove groups`): it needs a release
+# whose init renders the group jobs, which 0.4.8 does not, so
+# TERRAGUCCI_SANDBOX_RELEASE names one that does.
+GROUP_ENVS="prod dev"
+PROBE_PROD=envs/prod/oidc
+group_role() { echo "arn:aws:iam::000000000000:role/terragucci-sandbox-$1-$2"; } # env, plan|apply
+group_root() { case "$1" in prod) echo "$PROBE_PROD" ;; dev) echo "$PROBE" ;; esac; }
+
+# A probe root of ENV for this claim: a data source whose program, in a job,
+# reads the token terragucci requested for the root's role, verifies it
+# against GitHub's keys, records its sub and the roles the job handed the
+# binary, and evaluates on its aud and sub the trust of each environment's
+# plan and apply roles (trust-<env>-<plan|apply>.json beside it): a plan role
+# trusts this repo's pull requests and main, an apply role this repo's
+# deployment environment of its name alone. The sandbox has no cloud account,
+# so the trust is evaluated here, not checked by STS. What it found goes to
+# terragucci-report/groups-<job>--<env>.json, which the job keeps. A job
+# whose own role's trust refuses its token fails there, as AWS would refuse
+# it. It prints the same result in every job, so the deciding job's plan and
+# the group job's plan of the root match.
+groups_probe() { # dir, env
+  local dir="$1/$(group_root "$2")" env stage owner="${REPO%%/*}" name="${REPO#*/}"
+  mkdir -p "$dir"
+  cat > "$dir/main.tf" <<'TF'
+# The sandbox's group probe. Each plan of this root runs probe.mjs, which
+# checks the token terragucci requested for the root's role and writes what it
+# found beside the job's report. The sandbox has no cloud account, so nothing
+# trades the token with STS.
+terraform {
+  required_version = "~> 1.13.0"
+
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.5"
+    }
+  }
+}
+
+provider "external" {}
+
+data "external" "groups" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+TF
+  printf '%s' "$OVERRIDE_LOCAL" > "$dir/state_override.tf"
+  echo first > "$dir/rev.txt"
+  echo "$2" > "$dir/env.txt"
+  for env in $GROUP_ENVS; do
+    for stage in plan apply; do
+      if [ "$stage" = plan ]; then
+        jq -n --arg r "repo:$REPO" --arg i "repo:$owner@*/$name@*" '[($r, $i) | (. + ":pull_request", . + ":ref:refs/heads/main")]'
+      else
+        jq -n --arg r "repo:$REPO" --arg i "repo:$owner@*/$name@*" --arg e "$env" '[($r, $i) | . + ":environment:" + $e]'
+      fi | jq '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+          Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"},
+          Condition: {StringEquals: {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"}, StringLike: {"token.actions.githubusercontent.com:sub": .}}}]}' \
+        > "$dir/trust-$env-$stage.json"
+    done
+  done
+  cat > "$dir/probe.mjs" <<'JS'
+// In a GitHub job: the token in AWS_WEB_IDENTITY_TOKEN_FILE, verified against
+// GitHub's published keys; its sub; the roles by root glob the job handed the
+// binary and this root's role; and the verdict of each environment's plan and
+// apply roles' trust (trust-<env>-<plan|apply>.json) on its aud and sub. What
+// it found goes to terragucci-report/groups-<job>--<env>.json, which the job
+// keeps as an artifact. Outside a job (the script's own state apply) it
+// checks nothing.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+import { resolve } from "node:path";
+const e = process.env;
+const env = readFileSync(new URL("./env.txt", import.meta.url), "utf8").trim();
+if (e.GITHUB_ACTIONS !== "true") { console.log(JSON.stringify({ env })); process.exit(0); }
+const out = resolve(e.GITHUB_WORKSPACE || "../../..", "terragucci-report");
+const found = { job: e.GITHUB_JOB, env, event: e.GITHUB_EVENT_NAME, run_id: e.GITHUB_RUN_ID, problems: [] };
+const done = (code) => {
+  mkdirSync(out, { recursive: true });
+  writeFileSync(resolve(out, `groups-${found.job}--${env}.json`), JSON.stringify(found, null, 2) + "\n");
+  if (code) { console.error("groups probe: " + found.problems.join("; ")); process.exit(code); }
+  console.log(JSON.stringify({ env }));
+  process.exit(0);
+};
+try { found.roles = JSON.parse(e.TERRAGUCCI_ROOT_ROLES || "[]"); } catch { found.problems.push("TERRAGUCCI_ROOT_ROLES is not JSON"); done(1); }
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) { found.problems.push("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the root took no role"); done(1); }
+found.role = e.AWS_ROLE_ARN.split("/").pop();
+const [h, p, s] = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim().split(".");
+if (!s) { found.problems.push("the token file holds no JWT"); done(1); }
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const head = dec(h), c = dec(p);
+const ISS = "https://token.actions.githubusercontent.com";
+const conf = await (await fetch(ISS + "/.well-known/openid-configuration")).json();
+const jwk = (await (await fetch(conf.jwks_uri)).json()).keys.find((k) => k.kid === head.kid);
+found.verified = head.alg === "RS256" && !!jwk
+  && verify("sha256", Buffer.from(h + "." + p), createPublicKey({ key: jwk, format: "jwk" }), Buffer.from(s, "base64url"));
+if (!found.verified) found.problems.push(`the signature (${head.alg}, kid ${head.kid}) does not verify against ${conf.jwks_uri}`);
+Object.assign(found, { iss: c.iss, aud: c.aud, sub: c.sub, environment: c.environment ?? null });
+// The conditions on aud and sub, StringEquals and StringLike, as AWS reads them.
+const glob = (pat, v) => new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$").test(v);
+const admits = (doc) => [doc.Statement].flat().some((st) => st.Effect === "Allow"
+  && Object.entries(st.Condition ?? {}).every(([op, conds]) => Object.entries(conds).every(([k, want]) => {
+    const have = [c[k.slice(k.lastIndexOf(":") + 1)]].flat().filter((v) => v !== undefined).map(String);
+    const wants = [want].flat().map(String);
+    if (op === "StringEquals") return have.some((v) => wants.includes(v));
+    if (op === "StringLike") return have.some((v) => wants.some((w) => glob(w, v)));
+    return false;
+  })));
+found.trust = {};
+for (const x of ["prod", "dev"]) for (const st of ["plan", "apply"]) {
+  found.trust[`${x}-${st}`] = admits(JSON.parse(readFileSync(new URL(`./trust-${x}-${st}.json`, import.meta.url), "utf8")));
+}
+const own = found.role.replace(/^terragucci-sandbox-/, "");
+if (!(own in found.trust)) found.problems.push(`the root holds ${found.role}, no role of an environment`);
+else if (found.trust[own] !== true) found.problems.push(`the trust of ${found.role} refuses this token (sub ${c.sub})`);
+done(found.problems.length ? 1 : 0);
+JS
+}
+
+# Each environment as GitHub keeps it: a deployment environment whose
+# deployment branch rule lets main alone deploy to it, as the docs ask. The
+# token needs Administration write on the sandbox.
+group_environments() {
+  local env
+  for env in $GROUP_ENVS; do
+    jq -n '{deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}}' \
+      | gh api -X PUT "repos/$REPO/environments/$env" --input - >/dev/null \
+      || fail "could not make the environment $env; a fine-grained token needs Administration read and write on $REPO"
+    gh api "repos/$REPO/environments/$env/deployment-branch-policies" -q '.branch_policies[] | select(.type == "branch") | .name' | grep -qx main \
+      || gh api -X POST "repos/$REPO/environments/$env/deployment-branch-policies" -f name=main -f type=branch >/dev/null \
+      || fail "could not limit the environment $env to main"
+  done
+  log "environments $GROUP_ENVS, each deployable from main alone"
+}
+
+# main as the groups phase needs it: oidc with the plan and apply roles, the
+# environments prod (envs/prod/oidc) and dev (envs/dev/oidc), each with its
+# own pair and forge_environment, the two probe roots, the pipeline init
+# writes, and the state. BREAK: the environment key is cut from the prod
+# group's job, so its token's subject names the ref. The commit skips CI. Run
+# it in a subshell: fail and push end the shell they are in.
+groups_main() {
+  local tree="$WORK/groups-main" wf sha env job
+  clone_main "$tree"
+  {
+    printf '# Set by stack/sandbox-github.sh prove groups; reset takes it away.\noidc:\n  plan_role: %s\n  apply_role: %s\nenvironments:\n' "$PLAN_ROLE" "$APPLY_ROLE"
+    for env in $GROUP_ENVS; do
+      printf '  %s:\n    roots: ["%s"]\n    forge_environment: %s\n    oidc:\n      plan_role: %s\n      apply_role: %s\n' \
+        "$env" "$(group_root "$env")" "$env" "$(group_role "$env" plan)" "$(group_role "$env" apply)"
+    done
+  } >> "$tree/terragucci.yml"
+  for env in $GROUP_ENVS; do groups_probe "$tree" "$env"; done
+  (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-groups-init.log" 2>&1) \
+    || { cat "$DIR/logs/prove-groups-init.log" >&2; fail "terragucci init of $RELEASE failed; it renders environments' group jobs from the release after 0.4.8 (TERRAGUCCI_SANDBOX_RELEASE)"; }
+  wf="$tree/.github/workflows/terragucci.yml"
+  grep -q 'id-token: write' "$wf" || fail "init asked for no OIDC token"
+  for env in $GROUP_ENVS; do
+    job="$(grep -E "^  apply-wave-[0-9]+-$env:\$" "$wf" | head -1 | tr -d ' :')"
+    [ -n "$job" ] || fail "init of $RELEASE renders no apply job for the group $env; set TERRAGUCCI_SANDBOX_RELEASE to a release with environments' group jobs"
+    [ "$(awk -v j="  $job:" '/^  [^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    environment: / { print $2; exit }' "$wf")" = "$env" ] \
+      || fail "$job runs in no environment $env"
+  done
+  if [ -n "$BREAK" ]; then
+    awk '/^  [^ #][^:]*:$/ { inside = ($0 ~ /^  apply-wave-[0-9]+-prod:$/) } inside && $0 == "    environment: prod" { next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    ! grep -q '^    environment: prod$' "$wf" || fail "BREAK left the prod group's job in the environment prod"
+    log "BREAK: cut the environment from the prod group's job"
+  fi
+  apply_state "$tree"
+  commit "$tree" "Give prod's and dev's probe roots environments of their own${BREAK:+, and cut the environment of the prod job} [skip ci]"
+  sha="$(push "$tree" main)"
+  log "main at ${sha:0:8}: environments $GROUP_ENVS with $PROBE_PROD and $PROBE${BREAK:+ (BREAK)}"
+}
+
+# The probe's records in a run, from the report artifacts its jobs keep: the
+# one whose file name matches. Empty when none does.
+groups_found() { # run id, file name glob
+  local d="$WORK/groups-$1" f
+  [ -n "$1" ] || return 0
+  [ -d "$d" ] || gh run download "$1" -R "$REPO" -D "$d" >/dev/null 2>&1 || true
+  f="$(find "$d" -name "$2" 2>/dev/null | head -1)"
+  [ -z "$f" ] || jq -c . "$f"
+}
+
+# A group job's record for ENV: a verified token whose subject is ENV's
+# environment, which ENV's apply role trusts, OTHER's refuses, and with ENV's
+# apply role alone in the job's variables. Prints what is wrong.
+groups_wrong() { # json, env
+  local other=dev
+  [ "$2" = dev ] && other=prod
+  [ -n "$1" ] || { echo "the $2 group's job wrote nothing"; return 0; }
+  jq -r --arg e "$2" --arg o "$other" --arg repo "$REPO" --arg role "$(group_role "$2" apply)" --arg root "$(group_root "$2")" '[
+      (if .verified != true then "the token does not verify against GitHub keys" else empty end),
+      (if (.sub | type) != "string" or (.sub | endswith(":environment:" + $e) | not) or ((.sub | startswith("repo:" + $repo + ":")) or (.sub | test("^repo:[^/]+@[0-9]+/[^:]+@[0-9]+:")) | not)
+        then "sub is \(.sub), not the subject of the environment \($e)" else empty end),
+      (if .trust[$e + "-apply"] != true then "the \($e) apply role refuses it" else empty end),
+      (if .trust[$o + "-apply"] != false then "the \($o) apply role admits it" else empty end),
+      (if .roles != [[$root, $role]] then "TERRAGUCCI_ROOT_ROLES is \(.roles | tostring), not the \($e) apply role alone" else empty end),
+      (.problems[]?)
+    ] | if length == 0 then empty else "the \($e) job: " + join("; ") end' <<<"$1" 2>/dev/null || echo "the $2 group's job wrote no JSON"
+}
+
+# apply/groups: both probe roots change on a pull request, which merges. The
+# prod group's job runs in the environment prod, so its token's subject is
+# repo:<owner>/<repo>:environment:prod, which the prod apply role's trust
+# admits; the dev group's job's token, in the environment dev, is refused by
+# it. Each job carries its own environment's apply role alone.
+# BREAK: the prod job runs in no environment, so its token names the ref and
+# the prod apply role's trust refuses its own job.
+claim_apply_groups() {
+  local o run job prod dev wrong
+  ( group_environments ) || { unrun apply/groups "the environments could not be made"; return 0; }
+  ( groups_main ) || { unrun apply/groups "main could not be set up (see $DIR/logs/prove-groups-init.log)"; return 0; }
+  step change groups || { unrun apply/groups "change groups failed"; return 0; }
+  o="$(pr_for groups open)"
+  step merge groups || { unrun apply/groups "merge groups failed"; return 0; }
+  run="$(cat "$DIR/last-run")"
+  prod="$(groups_found "$run" 'groups-apply-wave-*-prod--prod.json')"
+  dev="$(groups_found "$run" 'groups-apply-wave-*-dev--dev.json')"
+  for job in prod dev; do
+    log "the $job group's job in run $run: $(groups_found "$run" "groups-apply-wave-*-$job--$job.json" | jq -c '{job, sub, role, trust, problems}' 2>/dev/null || echo nothing)"
+  done
+  wrong="$( { groups_wrong "$prod" prod; groups_wrong "$dev" dev; } | awk 'NR > 1 { printf " / " } { printf "%s", $0 }')"
+  if [ -z "$wrong" ]; then
+    verdict apply/groups pass "pull request $o: the prod job's token named $(jq -r .sub <<<"$prod"), which the prod apply role trusts; the dev job's $(jq -r .sub <<<"$dev"), which it refuses; each job carried its own apply role alone"
+  else
+    verdict apply/groups fail "pull request $o: $wrong"
+  fi
+}
+
+prove_groups() { claim_apply_groups; }
+break_groups() { claim_apply_groups; }
+
 # ── the environment claims: check-job and trust-policy ──────────────────────
 
 # With environments each environment's roots apply in jobs of their own, and
@@ -2580,7 +2823,7 @@ close_and_prune() {
   for b in $(gh secret list -R "$REPO" --json name -q '.[].name' 2>/dev/null || true); do
     gh secret delete "$b" -R "$REPO" >/dev/null && log "deleted secret $b"
   done
-  # The deployment environments the check-job and trust-policy phases make.
+  # The deployment environments the groups, check-job and trust-policy phases make.
   for b in $(gh api "repos/$REPO/environments" -q '.environments[]?.name' 2>/dev/null | grep -Fx -e prod -e dev || true); do
     gh api -X DELETE "repos/$REPO/environments/$b" >/dev/null && log "deleted environment $b"
   done
@@ -2619,6 +2862,12 @@ case "$CMD" in
       # The probe root's one input moves, so the root plans and applies again.
       [ -f "$WORK/tree/$PROBE/rev.txt" ] || fail "main has no $PROBE; run 'just sandbox prove', which adds it"
       date -u +%Y-%m-%dT%H:%M:%SZ > "$WORK/tree/$PROBE/rev.txt"
+    elif [ "$name" = groups ]; then
+      # Both environments' probe roots move, so each plans and applies again.
+      for f in "$PROBE" "$PROBE_PROD"; do
+        [ -f "$WORK/tree/$f/rev.txt" ] || fail "main has no $f; run 'just sandbox prove groups', which adds it"
+        date -u +%Y-%m-%dT%H:%M:%SZ > "$WORK/tree/$f/rev.txt"
+      done
     elif [ "$name" = environments ]; then
       # Both environments' probe roots move, so each plans and applies again.
       for f in "$PROBE" "$ENVS_PROBE_PROD"; do
@@ -2841,8 +3090,8 @@ EOF
       case "$1" in
         --record) record="${2:?--record needs a file}"; shift 2 ;;
         --break) BREAK=1; shift ;;
-        merge|pull-request|modules|reports|audience|check-job|trust-policy) phases="$phases $1"; shift ;;
-        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, audience, check-job, trust-policy, --break, --record FILE)" ;;
+        merge|pull-request|modules|reports|audience|groups|check-job|trust-policy) phases="$phases $1"; shift ;;
+        *) fail "unknown argument '$1' (merge, pull-request, modules, reports, audience, groups, check-job, trust-policy, --break, --record FILE)" ;;
       esac
     done
     # Under BREAK only the phases with locking or report claims run.

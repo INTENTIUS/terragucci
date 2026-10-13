@@ -119,6 +119,7 @@
     "oidc/audience-stages": "Setup and runtime",
     "apply/check-job": "Locks and safety",
     "identities/trust-policy": "Setup and runtime",
+    "apply/groups": "Approve and apply",
     "security/fork": "Locks and safety",
     "linked/fresh": "Plan and review",
     "report/front-door": "Reports and visibility",

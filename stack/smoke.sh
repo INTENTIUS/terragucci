@@ -217,6 +217,7 @@ respond/notes|release notes come from the conventional commits that touched the 
 linked/fresh|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
 oidc/forgejo|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
 oidc/audience-stages|with oidc.audience a map, the plan job of a pull request and the apply job of main each hold a token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable in its environment|
+apply/groups|with environments prod and dev, each with its own roles, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment, each carrying the apply role of its own environment alone, under one approval; on Forgejo both jobs present the same token subject, so the roles each job is handed are all that keeps them apart|
 apply/check-job|with environments prod and dev and the condition of the apply jobs widened by hand to any push, the apply job of each environment on a branch it does not apply from fails before it trades a token, naming the expected and the found ref, and on main passes its check and trades its token; Forgejo has no deployment environments and names no runner labels to a job, so the ref is what is checked here|
 apply/steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy/tofu|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
@@ -4699,6 +4700,190 @@ JS
   checked plan "repo:$subrepo:pull_request" <<<"$plan_mark" || rc=1
   drop_work "$work"
   [ $rc = 0 ] && log "the plan job's token carried terragucci-plan, which the apply role refuses, the apply job's terragucci-apply, and neither job's code held a token-request variable"
+  return $rc
+}
+
+claim_apply/groups() {
+  # One apply job per environment. environments prod (envs/prod/**) and dev
+  # (envs/dev/**), each with its own plan and apply roles, made in floci, and
+  # gate: always. envs/prod/app and envs/dev/app read nothing of each other,
+  # so wave 1 holds both: init renders apply-wave-1, which plans both roots
+  # with the plan roles and decides the gate, then apply-wave-1-prod and
+  # apply-wave-1-dev. Each root reads a data source whose program, a child of
+  # the binary, writes to floci what its job handed it: the job's name
+  # (GITHUB_JOB), TERRAGUCCI_ROOT_ROLES, the root's AWS_ROLE_ARN, the token's
+  # sub and aud, and the role floci's STS gave for that token. The first push
+  # waits at wave 1's gate; after one approval of its digest, a second push of
+  # the same tree applies both group jobs. Each group job must apply its own
+  # root alone and carry its own environment's apply role alone, and the
+  # deciding job no apply role at all.
+  # What this does not show: Forgejo's token names the repo and the ref, and
+  # both group jobs run on main, so they present the same subject and the
+  # same audience. No trust policy can tell them apart, and floci grants any
+  # role a token names in any case. The separation shown here is only which
+  # roles each job's variables carry and that the deciding job holds no apply
+  # role: a job that learnt the other environment's role ARN could still
+  # assume it. config check says so in its shared-subject tip.
+  # BREAK: init runs a bundle whose groupOidc keeps every role by glob for
+  # each group, so each group job carries both environments' apply roles.
+  log() { echo "[smoke apply-groups] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/apply-groups" sha rc=0 env role wf key m applied ledger approvals TERRAGUCCI="$TERRAGUCCI"
+  local marks=shop-terraform-state/groups-marks prefix=arn:aws:iam::000000000000:role/terragucci-grp
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    TERRAGUCCI="$work/break.mjs"
+    break_bundle "$TERRAGUCCI" \
+      groups.ts '    const out = Object.fromEntries(Object.entries(roles).filter(([g]) => used.has(g)));' '    const out = { ...roles };' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  fresh_repo apply-groups || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=groups-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+  # The job's own pair and each environment's, each trusting Forgejo's issuer.
+  # floci checks no condition, so the trust only lets its STS answer.
+  iam() { curl -sS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$1" --data-urlencode Version=2010-05-08 "${@:2}"; }
+  for role in plan apply prod-plan prod-apply dev-plan dev-apply; do
+    role="terragucci-grp-$role"
+    iam DeleteRole --data-urlencode "RoleName=$role" >/dev/null 2>&1 || true
+    iam CreateRole --data-urlencode "RoleName=$role" --data-urlencode "AssumeRolePolicyDocument=$(jq -cn '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/forgejo:3000/api/actions"}}]}')" >/dev/null || true
+    iam GetRole --data-urlencode "RoleName=$role" | grep -q "<RoleName>$role</RoleName>" || { log "floci has no role $role"; drop_work "$work"; return 1; }
+  done
+  for env in prod dev; do
+    mkdir -p "$work/tree/envs/$env/app"
+    echo 1 > "$work/tree/envs/$env/app/rev.txt"
+    jq -n --arg env "$env" --arg marks "$marks" '{env: $env, marks: $marks}' > "$work/tree/envs/$env/app/probe.json"
+    cat > "$work/tree/envs/$env/app/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+# The probe's result is the same in every job, so the deciding job's plan of
+# this root and its group job's plan match.
+data "external" "groups" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = trimspace(file("${path.module}/rev.txt"))
+}
+TF
+    cat > "$work/tree/envs/$env/app/probe.mjs" <<'JS'
+// In a job, as a child of the binary: the job's name, the roles by root glob
+// the job handed the binary, this root's role, the token's sub and aud, and
+// the role floci's STS gave for the token, written to floci as
+// <marks>/<job>--<environment>.json. It prints the same result in every job.
+import { readFileSync } from "node:fs";
+const e = process.env;
+const fail = (m) => { console.error("groups probe: " + m); process.exit(1); };
+const cfg = JSON.parse(readFileSync(new URL("./probe.json", import.meta.url), "utf8"));
+if (!e.GITHUB_JOB) fail("no GITHUB_JOB, so the probe cannot say which job it ran in");
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) fail("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the root took no role");
+let roles;
+try { roles = JSON.parse(e.TERRAGUCCI_ROOT_ROLES || "[]"); } catch { fail("TERRAGUCCI_ROOT_ROLES is not JSON: " + e.TERRAGUCCI_ROOT_ROLES); }
+const jwt = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim();
+const claims = JSON.parse(Buffer.from(jwt.split(".")[1] || "", "base64url").toString() || "{}");
+const body = new URLSearchParams({ Action: "AssumeRoleWithWebIdentity", Version: "2011-06-15", RoleArn: e.AWS_ROLE_ARN, RoleSessionName: e.AWS_ROLE_SESSION_NAME || "terragucci", WebIdentityToken: jwt });
+const r = await fetch(e.AWS_ENDPOINT_URL + "/", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+const xml = await r.text();
+const assumed = xml.match(/<AssumedRoleUser>[\s\S]*?<Arn>([^<]+)<\/Arn>/)?.[1] ?? null;
+const mark = { job: e.GITHUB_JOB, env: cfg.env, role: e.AWS_ROLE_ARN, roles, sub: claims.sub, aud: claims.aud, assumed };
+await fetch(`${e.AWS_ENDPOINT_URL}/${cfg.marks}/${e.GITHUB_JOB}--${cfg.env}.json`, { method: "PUT", body: JSON.stringify(mark) });
+if (!assumed) fail("STS answered " + r.status + ": " + xml.slice(0, 300));
+console.log(JSON.stringify({ env: cfg.env }));
+JS
+  done
+  {
+    printf 'forge: forgejo\nbinary: tofu\ngate: always\noidc:\n  plan_role: %s-plan\n  apply_role: %s-apply\nenvironments:\n' "$prefix" "$prefix"
+    for env in prod dev; do
+      printf '  %s:\n    roots: ["envs/%s/**"]\n    oidc:\n      plan_role: %s-%s-plan\n      apply_role: %s-%s-apply\n' "$env" "$env" "$prefix" "$env" "$prefix" "$env"
+    done
+  } > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  # The TERRAGUCCI_ROOT_ROLES a job of the pipeline exports, as init wrote it.
+  job_roles() { # job
+    awk -v j="  $1:" '/^  [^ #][^:]*:$/ { inside = ($0 == j) } inside && /export TERRAGUCCI_ROOT_ROLES=/ { sub(/.*TERRAGUCCI_ROOT_ROLES=/, ""); print; exit }' "$wf"
+  }
+  for m in apply-wave-1 apply-wave-1-prod apply-wave-1-dev; do
+    grep -q "^  $m:\$" "$wf" || { log "init wrote no $m job"; drop_work "$work"; return 1; }
+  done
+  ! grep -q '^  apply-wave-1-default:$' "$wf" || { log "init wrote a default group, though every root is in an environment"; drop_work "$work"; return 1; }
+  log "apply-wave-1-prod exports $(job_roles apply-wave-1-prod), apply-wave-1-dev $(job_roles apply-wave-1-dev)"
+  if [ -n "${BREAK:-}" ]; then
+    job_roles apply-wave-1-prod | grep -q dev-apply || { break_setup_failed "the BREAK pipeline's apply-wave-1-prod still carries prod's roles alone"; drop_work "$work"; return 1; }
+  fi
+  job_log() { # run id, job name
+    local id
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '.[] | select(.name == $n) | .id' | head -1)"
+    [ -n "$id" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null
+  }
+  job_status() { # run id, job name
+    api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '[.[] | select(.name == $n)][0].status // "missing"'
+  }
+  mark_of() { curl -fsS "$FLOCI/$marks/$1.json" 2>/dev/null || true; }
+  # A group job's mark: the root took ENV's apply role, which STS gave, and
+  # the job's variables name that role alone.
+  group_ok() { # env, mark
+    local want="$prefix-$1-apply"
+    [ -n "$2" ] || { log "the apply-wave-1-$1 job's probe wrote no mark"; return 1; }
+    jq -e --arg w "$want" '.role == $w' <<<"$2" >/dev/null || { log "envs/$1/app took $(jq -r .role <<<"$2") in apply-wave-1-$1, not $want"; return 1; }
+    jq -e --arg w "$want" --arg g "envs/$1/**" '.roles == [[$g, $w]]' <<<"$2" >/dev/null \
+      || { log "apply-wave-1-$1's TERRAGUCCI_ROOT_ROLES is $(jq -c .roles <<<"$2"), not $1's apply role alone"; return 1; }
+    jq -e --arg r "terragucci-grp-$1-apply/" '.assumed // "" | contains(":assumed-role/" + $r)' <<<"$2" >/dev/null \
+      || { log "apply-wave-1-$1's token was not traded for $want: $(jq -c .assumed <<<"$2")"; return 1; }
+  }
+  # The deciding job's mark: the root took ENV's plan role, and no apply role
+  # is anywhere in the job's variables.
+  decide_ok() { # env, mark
+    [ -n "$2" ] || { log "apply-wave-1's probe in envs/$1/app wrote no mark"; return 1; }
+    jq -e --arg w "$prefix-$1-plan" '.role == $w' <<<"$2" >/dev/null || { log "envs/$1/app took $(jq -r .role <<<"$2") in apply-wave-1, not $1's plan role"; return 1; }
+    jq -e '[.roles[][1] | select(endswith("-apply"))] == []' <<<"$2" >/dev/null || { log "apply-wave-1, which decides and applies nothing, carries an apply role: $(jq -c .roles <<<"$2")"; return 1; }
+  }
+  sha="$(push_tree "$work/tree" "$repo" main "apply-groups: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  log "first push: run $RUN_STATUS; apply-wave-1-prod $(job_status "$RUN_ID" apply-wave-1-prod), apply-wave-1-dev $(job_status "$RUN_ID" apply-wave-1-dev)"
+  job_log "$RUN_ID" apply-wave-1 | grep -q "terragucci approve wave-1" || { log "apply-wave-1 did not wait for an approval of wave 1"; rc=1; }
+  [ $rc = 0 ] && { gated_approve apply-groups 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "apply-groups: after wave 1 was approved")" || { drop_work "$work"; return 1; }
+    wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+    log "after the approval: run $RUN_STATUS; apply-wave-1-prod $(job_status "$RUN_ID" apply-wave-1-prod), apply-wave-1-dev $(job_status "$RUN_ID" apply-wave-1-dev)"
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" | grep -E 'groups probe|applied|refus' >&2 || true; log "the run ended $RUN_STATUS"; rc=1; }
+    for env in prod dev; do
+      applied="$(job_log "$RUN_ID" "apply-wave-1-$env" | sed -n 's#.*applied \(envs/[a-z]*/app\): .*#\1#p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+      log "apply-wave-1-$env applied: ${applied:-nothing}"
+      [ "$applied" = "envs/$env/app" ] || { log "apply-wave-1-$env should have applied envs/$env/app alone"; rc=1; }
+      m="$(mark_of "apply-wave-1-$env--$env")"
+      log "apply-wave-1-$env: ${m:-no mark}"
+      group_ok "$env" "$m" || rc=1
+      m="$(mark_of "apply-wave-1--$env")"
+      log "apply-wave-1 in envs/$env/app: ${m:-no mark}"
+      decide_ok "$env" "$m" || rc=1
+    done
+    [ -z "$(mark_of apply-wave-1-prod--dev)$(mark_of apply-wave-1-dev--prod)" ] || { log "a group job planned the other environment's root"; rc=1; }
+    # The limit, as the run shows it: both group jobs' tokens name one subject.
+    log "the group jobs' token subjects: prod $(mark_of apply-wave-1-prod--prod | jq -r '.sub // "none"' 2>/dev/null), dev $(mark_of apply-wave-1-dev--dev | jq -r '.sub // "none"' 2>/dev/null)"
+    ledger="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl)"
+    approvals="$(jq -s '[.[] | select(.gate == "wave-1" and .kind != "pending")] | length' <<<"$ledger")"
+    log "wave 1 on the ledger: $approvals approval(s)"
+    [ "$approvals" = 1 ] || { log "expected the one approval of wave 1 to apply both group jobs"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "apply-wave-1 decided with the plan roles alone, then under one approval apply-wave-1-prod and apply-wave-1-dev each applied their own root, each job carrying its own environment's apply role alone"
   return $rc
 }
 
@@ -22176,6 +22361,7 @@ modules/terragrunt-require runner self! weight=220
 modules/registry self! weight=120
 oidc/forgejo    runner self! weight=200
 oidc/audience-stages    runner self! weight=200
+apply/groups            runner self! weight=250
 apply/check-job         runner self! weight=250
 note/grouped         ex runner self! after=boot/tofu weight=200
 check/tofu           ex runner self! after=boot/tofu weight=200

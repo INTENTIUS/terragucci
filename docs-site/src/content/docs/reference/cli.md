@@ -40,6 +40,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state; [config check tips](/terragucci/reference/tips/#config-check-tips) after `ok` |
 | `config identities` | per environment and stage, prints the roots, the runner, the forge environment, the cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs to accept that job |
+| `forge check` | compares what `config identities` expects with the live forge environments, runners, protections and variables and each cloud's trust, reading only, and exits 1 on a mismatch; a person or a scheduled job of the team's own runs it |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
@@ -664,6 +665,65 @@ environment prod: envs/prod/app, envs/prod/net
     aws arn:aws:iam::222222222222:role/prod-apply aud terragucci-apply
 ```
 
+## forge check
+
+```bash
+terragucci forge check [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots] [--require-clouds]
+```
+
+Compares what [`config identities`](#config-identities) expects with the forge's and the clouds' live setup, and prints a row for each setting: what it expects, what it found, and whether they match. It reads the repository's default branch from the forge, and on Forgejo the owner's and repository's numeric ids, so the subjects it expects are the ones the jobs present. A person runs it, or a team adds it as a scheduled job of its own; no generated job runs it. `--json` prints [the rows](/terragucci/reference/cli-json/#forge-check).
+
+The flags are those of `config identities`, and:
+
+| Flag | Meaning |
+|---|---|
+| `--require-clouds` | a cloud the config configures but no credentials reach fails the check too |
+
+| Where | Checks |
+|---|---|
+| GitHub | each forge environment of the apply jobs exists, and its deployment branch rule lets only the default branch deploy: protected branches, or custom policies that name the default branch alone; each runner group an apply runner names is limited to selected workflows |
+| GitLab | each forge environment is protected; every runner of the project that carries an apply runner's tags runs on protected refs only (`ref_protected`); each variable the apply jobs read (`pass.secrets`, `pass.vars`, the `cost` key, the `notify` secrets) has a definition scoped to the environment and protected |
+| Forgejo | the default branch and each [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) branch is protected |
+| AWS | each role's trust admits each job the contract names, and no other: a `sub` or `aud` the contract does not name, a wildcard wider than its pattern, a statement with no `sub` or `aud` condition, another OIDC provider or account is a mismatch |
+| GCP | the workload identity provider's `attribute_condition` is the contract's or narrower: each of its `\|\|` terms holds every `&&` part of a term of the contract's |
+| Azure | each app's federated credentials are the contract's issuer, subject (or expression) and audiences; a credential the contract does not name is a mismatch |
+
+Each row's status is one of these.
+
+| Status | `MATCH` column | Means |
+|---|---|---|
+| `match` | `yes` | as expected |
+| `mismatch` | `no` | different, missing or wider |
+| `unknown` | `unknown` | could not be read: the row names the scope it needs, or that the edition has no such setting (GitLab protected environments are Premium) |
+| `not-checked` | `not checked` | no credentials for that cloud |
+
+Only a `mismatch` exits 1, and with `--require-clouds` a cloud row that is `not-checked`. A GitLab variable defined only at the group or instance is `unknown`, since the check reads the project's variables.
+
+```text
+terragucci.yml: github github.com/acme/infra (default branch main)
+
+WHERE   CHECK                SUBJECT                                    EXPECTED                                                   FOUND                                                                                                         MATCH
+github  environment          prod                                       exists                                                     exists                                                                                                        yes
+github  deployment-branches  prod                                       deploys from main only                                     custom: main, release/*                                                                                       no
+github  runner-group         deployers                                  limited to selected workflows                              could not read (403); the token needs Self-hosted runners: read on the organization (classic: admin:org)      unknown
+aws     trust                arn:aws:iam::222222222222:role/prod-apply  sub repo:acme/infra:environment:prod aud terragucci-apply  not checked: no AWS credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or a profile with static keys)  not checked
+
+1 match, 1 mismatch, 1 could not be read, 1 not checked
+```
+
+### Read-only credentials
+
+The command sends GET requests only, and to AWS no action but `GetRole`; it refuses any other request before sending it. Give it read-only credentials.
+
+| Where | Read from | Needs |
+|---|---|---|
+| GitHub | the variable `token_env` names, or `GITHUB_TOKEN` | a fine-grained token with Metadata: read and Actions: read on the repository, and Self-hosted runners: read on the organization for runner groups; a classic token needs `repo`, and `admin:org` for runner groups |
+| GitLab | the variable `token_env` names, or `GITLAB_TOKEN` | the `read_api` scope, held by a user or token with the Maintainer role, which protected environments, runners and variables need |
+| Forgejo | the variable `token_env` names, or `FORGEJO_TOKEN` | the `read:repository` scope, held by a user with admin on the repository, which branch protections need |
+| AWS | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, or static keys under `AWS_PROFILE` (or `default`) in the shared credentials file | `iam:GetRole` on each role; for SSO or a role profile, export its keys first with `aws configure export-credentials --format env` |
+| GCP | `GOOGLE_OAUTH_ACCESS_TOKEN`, such as from `gcloud auth print-access-token` | `iam.workloadIdentityPoolProviders.get` on the provider |
+| Azure | `AZURE_GRAPH_TOKEN`, such as from `az account get-access-token --resource-type ms-graph --query accessToken -o tsv` | `Application.Read.All` on Microsoft Graph |
+
 ## approve
 
 ```bash
@@ -856,7 +916,7 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities` and `query` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check` and `query` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -885,6 +945,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok`, with or without warnings | | problems found | | |
 | `config identities` | printed | | no config, an unknown project, or no forge to name | | |
+| `forge check` | no mismatch | a mismatch, or with `--require-clouds` a cloud not checked | no config, an unknown project, or no forge to name | | |
 | `state export` | the version written and recorded | | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | | |
 | `check-job` | the job runs where its environment's apply is set to run | a forge environment, ref or runner differs | a flag missing | | |

@@ -309,6 +309,19 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | the service name, `terragucci` by default, and extra resource attributes |
 | `TRACEPARENT` | the parent span of the stage's trace |
 
+## Forge check
+
+[`terragucci forge check`](/terragucci/reference/cli/#forge-check) reads these on the machine that runs it. Each needs [read-only scopes](/terragucci/reference/cli/#read-only-credentials).
+
+| Variable | Meaning |
+|---|---|
+| `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | the forge's token, by the config's forge; `token_env` renames it |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS keys for `iam:GetRole` |
+| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE` | without keys in the environment: the profile (`default` when unset) whose static keys the shared credentials file (`~/.aws/credentials` by default) holds |
+| `AWS_ENDPOINT_URL_IAM` | IAM's address, in place of the partition's |
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | a GCP access token for the workload identity provider |
+| `AZURE_GRAPH_TOKEN` | a Microsoft Graph access token for the apps' federated credentials |
+
 ## Other variables you can set
 
 | Variable | Flag | Meaning |
