@@ -10,6 +10,12 @@ Release `0.4.8` is on npm as `@intentius/terragucci@0.4.8`, and its [GitHub rele
 | Each repo | `npx @intentius/terragucci@0.4.8 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
+## Since 0.4.8
+
+| What | Where |
+|---|---|
+| The choudoufu image runs choudoufu 0.28.0. In a pull request that plans both, a root that reads another estate's outputs through `terraform_estate_outputs` plans on the outputs the upstream's plan makes; one that reads an output known only after apply is named with the wave that settles it | [Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots) |
+
 ## In 0.4.8
 
 0.4.8 fixes a security issue: in 0.4.7 and earlier, the code of a pull request re-planned with `/terragucci plan` could get a token the apply role trusts, or leave files in the Terragrunt cache that the apply jobs restore. Upgrade every repo that has a re-plan job.

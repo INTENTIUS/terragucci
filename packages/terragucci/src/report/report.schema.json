@@ -246,7 +246,7 @@
             }
           },
           "reads": {
-            "description": "The roots whose state the root reads through terraform_remote_state, and which outputs it planned on: planned, the upstream's plan in this run, with the outputs known only once it applies under unknown; applied, its state as it stands (minor 21).",
+            "description": "The roots whose state the root reads through terraform_remote_state, or under choudoufu whose estate's outputs it reads through terraform_estate_outputs, and which outputs it planned on: planned, the upstream's plan in this run, with the outputs known only once it applies under unknown; applied, its state as it stands (minor 21).",
             "type": "array",
             "items": {
               "type": "object",
