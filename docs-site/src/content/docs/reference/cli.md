@@ -713,7 +713,7 @@ aws     trust                arn:aws:iam::222222222222:role/prod-apply  sub repo
 
 ### Read-only credentials
 
-The command sends GET requests only, and to AWS no action but `GetRole`; it refuses any other request before sending it. Give it read-only credentials.
+The command reads the forge with GET requests only, and sends AWS one action, `GetRole`, as a signed form POST, the way the AWS SDKs send it; it refuses any other request before sending it. Give it read-only credentials.
 
 | Where | Read from | Needs |
 |---|---|---|
