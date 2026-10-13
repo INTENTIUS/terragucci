@@ -272,7 +272,27 @@
               }
             }
           },
-          "unaddressed": { "type": "string", "description": "Why the code does not address the root's own state, when a root of the run reads state through terraform_remote_state: a reader of it is not ordered after it (minor 30)." }
+          "unaddressed": { "type": "string", "description": "Why the code does not address the root's own state, when a root of the run reads state through terraform_remote_state: a reader of it is not ordered after it (minor 30)." },
+          "cone": {
+            "type": "object",
+            "description": "A choudoufu plan of a pull request's root under a live block, run with -cone=<base>: the cone it planned, or why choudoufu's guard planned the whole estate (minor 34). Absent on every other plan.",
+            "required": ["base"],
+            "properties": {
+              "base": { "type": "string", "description": "The revision the change is measured from: the pull request's base." },
+              "blocks": { "type": "integer", "description": "With a cone: the blocks it holds, when choudoufu said." },
+              "of": { "type": "integer", "description": "With a cone: the estate's blocks, when choudoufu said." },
+              "targets": { "type": "integer", "description": "With a cone: how many addresses it targets. Its targets join the root's plan digest." },
+              "fallback": {
+                "type": "object",
+                "description": "The guard planned the whole estate: its kind and why.",
+                "required": ["kind", "reason"],
+                "properties": {
+                  "kind": { "type": "string" },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
         }
       }
     },

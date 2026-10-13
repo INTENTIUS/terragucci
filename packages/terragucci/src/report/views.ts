@@ -294,6 +294,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
   const binaries = binariesLine(report);
   if (binaries) head.push(binaries, "");
+  const cones = coneLine(report);
+  if (cones) head.push(cones, "");
   const stacks = explicitStacksLine(report);
   if (stacks) head.push(stacks, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
@@ -504,6 +506,24 @@ export function explicitStacksLine(report: Report): string | undefined {
   if (by.size === 0) return undefined;
   const each = [...by].sort(([a], [b]) => (a < b ? -1 : 1)).map(([f, units]) => `${code(f)} generates ${units.sort().map(code).join(", ")}`);
   return `Explicit stacks: ${each.join("; ")}.`;
+}
+
+/**
+ * The roots choudoufu planned with `-cone=<base>` (../cone.ts): each cone's
+ * size, or why the guard planned the whole estate. Nothing when no root
+ * planned with `-cone`.
+ */
+export function coneLine(report: Report): string | undefined {
+  const coned = report.roots.filter((r) => r.cone);
+  if (coned.length === 0) return undefined;
+  const each = coned.slice(0, 20).map((r) => {
+    const c = r.cone!;
+    if (c.fallback) return `${code(r.path)} the whole estate, since ${c.fallback.reason.replace(/\s+/g, " ")} (guard ${code(c.fallback.kind)})`;
+    if (c.blocks !== undefined && c.of !== undefined) return `${code(r.path)} ${c.blocks} of its ${c.of} blocks`;
+    return `${code(r.path)} ${plural(c.targets ?? 0, "address", "addresses")}`;
+  });
+  const more = coned.length > 20 ? `; and ${coned.length - 20} more in the report` : "";
+  return `Cone plans of the change since ${code(coned[0].cone!.base)}: ${each.join("; ")}${more}.`;
 }
 
 /**

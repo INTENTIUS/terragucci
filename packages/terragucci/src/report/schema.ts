@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 33;
+export const REPORT_MINOR = 34;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -320,6 +320,25 @@ export interface ReportRoot {
    * Absent when it names none.
    */
   dependencies?: string[];
+  /**
+   * A choudoufu plan of a pull request's root under a `live` block, run with
+   * `-cone=<base>` (minor 34): the cone it planned, or why choudoufu's guard
+   * planned the whole estate. Absent on every other plan.
+   */
+  cone?: ReportCone;
+}
+
+/** What a root's `plan -cone=<base>` planned (minor 34). */
+export interface ReportCone {
+  /** The revision the change is measured from: the pull request's base. */
+  base: string;
+  /** With a cone: the blocks it holds, and the estate's, when choudoufu said. */
+  blocks?: number;
+  of?: number;
+  /** With a cone: how many addresses it targets. Its targets join the root's plan digest. */
+  targets?: number;
+  /** The guard planned the whole estate: its kind (`provider-changed`, `cone-too-large`, ...) and why. */
+  fallback?: { kind: string; reason: string };
 }
 
 /**

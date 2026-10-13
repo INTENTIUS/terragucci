@@ -35,6 +35,7 @@ import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environmen
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
+import { coneArgs, coneLogLine, coneRoot, readPlanCone } from "../cone";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
 import { discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
@@ -1039,6 +1040,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // drift plans it in full, and what the plan would change is what moved outside the code.
   const live = new Set(drift && fullDriftPlans(binary) ? liveRoots(repo, roots) : []);
   const planner = plannerForBinary(binary);
+  // A pull request's plan under choudoufu takes -cone=<base> (../cone.ts). Not under approval: pr-review with the apply
+  // after merge: the review binds this plan's digest to the merge commit's plan, which is full, and a cone's never equals it.
+  const coneBase = base && !(settings.approval === "pr-review" && settings.apply?.when !== "pull-request") ? base : undefined;
   // Each root's binary: the job's, or the version the root pins, installed once per version.
   const binaries = new RootBinaries(repo, binary, settings.version, env, options.installer);
   const started = new Date().toISOString();
@@ -1256,9 +1260,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
-      // choudoufu: -estate-outputs-from for each estate it reads whose root planned in this run. Never with -cone, which
-      // choudoufu would drop for a full plan anyway.
-      const planOnce = () => run("plan", ...(drift && !live.has(root) ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", ...estate.args, `-out=${planFile}`);
+      // choudoufu: -estate-outputs-from for each estate it reads whose root planned in this run (../estate-planned.ts).
+      const planArgs = [...(drift && !live.has(root) ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", ...estate.args, `-out=${planFile}`];
+      // choudoufu plans a pull request's live root as the cone of its change since base (../cone.ts), but not one planned
+      // on another estate's planned outputs, which choudoufu would plan in full anyway.
+      const cone = estate.args.length > 0 ? [] : coneArgs(bin.name, coneBase, planArgs, coneRoot(checkoutOf(root), root));
+      const planOnce = () => run("plan", ...cone, ...planArgs);
       // Linked: the root plans on the planned outputs of the upstreams this run planned, its files put back once the plan is made.
       let linked: Linked | undefined;
       const unlink = (why: string): void => {
@@ -1309,6 +1316,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (p.status === 0) for (const r of estate.reads) if (r.outputs === "planned") lines.push(plannedReadLine(root, r));
       reads.sort((a, b) => (a.upstream < b.upstream ? -1 : a.upstream > b.upstream ? 1 : a.data < b.data ? -1 : 1));
       if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
+      const planCone = cone.length && coneBase ? readPlanCone(`${p.stdout}\n${p.stderr}`, planFile, coneBase) : undefined;
+      if (planCone) lines.push(coneLogLine(root, planCone));
       stepError = await step(`after-${planStep}`, planFile);
       if (stepError) return failed(stepError, `${root}: a step after ${planStep} failed`);
       const json = await run("show", "-json", planFile);
@@ -1343,7 +1352,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...unaddressedOf.get(root) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(planCone ? { cone: planCone } : {}), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...unaddressedOf.get(root) },
       };
     } finally {
       observer.endRoot(timing);
