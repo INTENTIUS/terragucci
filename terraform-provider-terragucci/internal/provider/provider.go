@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -38,6 +39,8 @@ type providerModel struct {
 	Branch     types.String `tfsdk:"branch"`
 	Path       types.String `tfsdk:"path"`
 	Token      types.String `tfsdk:"token"`
+
+	TerragucciPath types.String `tfsdk:"terragucci_path"`
 }
 
 func (p *terragucciProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -50,8 +53,8 @@ func (p *terragucciProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 		Description: "Writes a terragucci control repo's terragucci.yml through the forge's API. Each resource owns one key of the file; `terragucci reconcile` reads the file as it does any other.",
 		Attributes: map[string]schema.Attribute{
 			"forge": schema.StringAttribute{
-				Required:    true,
-				Description: "The control repo's forge: github, gitlab or forgejo.",
+				Optional:    true,
+				Description: "The control repo's forge: github, gitlab or forgejo. The resources need it; the data sources need it only to read terragucci.yml from the control repo rather than from a local path.",
 			},
 			"url": schema.StringAttribute{
 				Optional:    true,
@@ -62,8 +65,8 @@ func (p *terragucciProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Description: "The API base, when it is not the one url implies (url + /api/v3 on GitHub Enterprise, /api/v4 on GitLab, /api/v1 on Forgejo).",
 			},
 			"repository": schema.StringAttribute{
-				Required:    true,
-				Description: "The control repo: owner/name, or a GitLab project's full path.",
+				Optional:    true,
+				Description: "The control repo: owner/name, or a GitLab project's full path. Needed as forge is.",
 			},
 			"branch": schema.StringAttribute{
 				Optional:    true,
@@ -78,6 +81,10 @@ func (p *terragucciProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Sensitive:   true,
 				Description: "A token that can push to the branch. Default: TERRAGUCCI_TOKEN, else GITHUB_TOKEN, GITLAB_TOKEN or FORGEJO_TOKEN by forge.",
 			},
+			"terragucci_path": schema.StringAttribute{
+				Optional:    true,
+				Description: "The terragucci command the data sources run, `terragucci config identities --json`: a path, or a command and its arguments split on spaces, such as \"npx -y @intentius/terragucci\". Default: terragucci on PATH.",
+			},
 		},
 	}
 }
@@ -88,14 +95,42 @@ func (p *terragucciProvider) Configure(ctx context.Context, req provider.Configu
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if m.Forge.IsUnknown() || m.Repository.IsUnknown() || m.URL.IsUnknown() || m.API.IsUnknown() || m.Branch.IsUnknown() || m.Path.IsUnknown() || m.Token.IsUnknown() {
+	if m.Forge.IsUnknown() || m.Repository.IsUnknown() || m.URL.IsUnknown() || m.API.IsUnknown() || m.Branch.IsUnknown() || m.Path.IsUnknown() || m.Token.IsUnknown() || m.TerragucciPath.IsUnknown() {
 		// Known at apply; resources are not called before then.
 		return
 	}
+	resource, sources, diags := configureData(m)
+	resp.Diagnostics.Append(diags...)
+	if diags.HasError() {
+		return
+	}
+	resp.ResourceData = resource
+	resp.DataSourceData = sources
+}
+
+// noControl is what the resources get when the provider block names no control repo: the attributes it lacks.
+type noControl struct{ missing []string }
+
+// configureData is the provider block's control repo for the resources, or
+// noControl when it names none, and the data sources' terragucci command,
+// with the control repo when there is one.
+func configureData(m providerModel) (any, *sources, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	src := &sources{command: commandOf(m.TerragucciPath.ValueString())}
+	var missing []string
+	if m.Forge.IsNull() || m.Forge.ValueString() == "" {
+		missing = append(missing, "forge")
+	}
+	if m.Repository.IsNull() || m.Repository.ValueString() == "" {
+		missing = append(missing, "repository")
+	}
+	if len(missing) > 0 {
+		return &noControl{missing: missing}, src, diags
+	}
 	kind := m.Forge.ValueString()
 	if !slices.Contains(forges, kind) {
-		resp.Diagnostics.AddAttributeError(path.Root("forge"), "Unknown forge", "forge is "+kind+"; use one of github, gitlab, forgejo")
-		return
+		diags.AddAttributeError(path.Root("forge"), "Unknown forge", "forge is "+kind+"; use one of github, gitlab, forgejo")
+		return nil, nil, diags
 	}
 	origin := m.URL.ValueString()
 	if origin == "" {
@@ -121,8 +156,8 @@ func (p *terragucciProvider) Configure(ctx context.Context, req provider.Configu
 		branch: m.Branch.ValueString(),
 		path:   file,
 	}
-	resp.ResourceData = c
-	resp.DataSourceData = c
+	src.control = c
+	return c, src, diags
 }
 
 func trimSlash(s string) string {
@@ -137,5 +172,5 @@ func (p *terragucciProvider) Resources(_ context.Context) []func() resource.Reso
 }
 
 func (p *terragucciProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{newEnvironmentsDataSource, newTrustPolicyDataSource}
 }

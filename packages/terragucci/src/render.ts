@@ -2280,7 +2280,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
           id_tokens: {
             ...(hasAws(o) || credentials ? { TERRAGUCCI_OIDC: { aud: stageAudience(o, stage) } } : {}),
             ...(o?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(o.gcp.workload_identity_provider) } } : {}),
-            ...(o?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: AZURE_AUDIENCE } } : {}),
+            ...(o?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: o.azure.audience ?? AZURE_AUDIENCE } } : {}),
           },
         }
       : {};

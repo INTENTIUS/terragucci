@@ -1,0 +1,9 @@
+# GitHub, AWS, apply.when: pull-request: the push after a merge runs confirm, which plans with the plan role on the apply audience.
+forge: github
+binary: tofu
+apply:
+  when: pull-request
+oidc:
+  plan_role: arn:aws:iam::121212121212:role/plan
+  apply_role: arn:aws:iam::121212121212:role/apply
+  audience: { plan: terragucci-plan, apply: terragucci-apply }
