@@ -429,8 +429,10 @@ export interface ProjectSettings {
   /**
    * `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots or units spread across (GitHub and Forgejo).
    * `after`: plain roots only, for a root or glob the roots or globs it applies after, beside the order its `terraform_remote_state` reads give.
+   * `compose`: plain roots only, opt-in beside the waves: the roots a change reaches plan as one composed run and apply as one (./compose.ts). Default false.
+   * `compose_max`: the most roots one composed run covers; a change that reaches more applies in waves. Default 10.
    */
-  waves?: { canary?: string[]; jobs?: number; after?: Record<string, string[]> };
+  waves?: { canary?: string[]; jobs?: number; after?: Record<string, string[]>; compose?: boolean; compose_max?: number };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
   /**
@@ -967,6 +969,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       else if (typeof jobs === "number" && jobs > 1) {
         if (isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
       }
+      if (s.waves.compose !== undefined && typeof s.waves.compose !== "boolean") problems.push(`${where}.waves.compose must be true or false`);
+      const max = s.waves.compose_max;
+      if (max !== undefined && !(Number.isInteger(max) && (max as number) >= 2)) problems.push(`${where}.waves.compose_max must be a whole number of 2 or more`);
+      if (s.waves.compose === true) {
+        if (s.binary === "choudoufu") problems.push(`${where}.waves.compose: ${COMPOSE_NOT_CHOUDOUFU}`);
+        if (s.terragrunt !== undefined) problems.push(`${where}.waves.compose: ${COMPOSE_NOT_TERRAGRUNT}`);
+      }
     }
   }
   if (s.env !== undefined) {
@@ -1251,6 +1260,10 @@ export interface RegistrySettings {
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
+/** Why `waves.compose` is refused with `binary: choudoufu`: one run would have to carry several estates (INTENTIUS/choudoufu#2059). */
+export const COMPOSE_NOT_CHOUDOUFU = "a composed run splits one working state back into each root's state, and choudoufu keeps no state to split; one choudoufu run carrying several estates is not built yet, so leave waves.compose unset with binary: choudoufu";
+/** Why `waves.compose` is refused in a Terragrunt repo. */
+export const COMPOSE_NOT_TERRAGRUNT = "a Terragrunt repo's units apply through terragrunt, one run per unit, so they cannot compose; leave waves.compose unset";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
