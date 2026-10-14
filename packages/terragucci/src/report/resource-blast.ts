@@ -15,6 +15,11 @@
  * `terraform_estate_outputs`) reaches every resource that reads that output,
  * and on through that root's own outputs. A reader whose plan this run did
  * not make is named in the root-level blast radius only.
+ *
+ * Each resource it reaches carries its `depth` (minor 36): 1 when it refers
+ * to the changed resource, through locals, variables and modules or not, and
+ * one more for each resource in between and each hop from a root's output
+ * into a root that reads it.
  */
 import { join } from "node:path";
 import { estateOf, estateOutputReads, localsText } from "../detect";
@@ -205,7 +210,8 @@ const outputsIn = (nodes: Iterable<string>): string[] => [...nodes].filter((n) =
  * For each resource the `changed` roots' plans change, what depends on it:
  * the resources its own root's references reach, and the resources of each
  * root that reads an output those reach, followed through those roots'
- * outputs. Nearest first; a resource that reaches nothing is left out.
+ * outputs. Nearest first, by depth; a resource that reaches nothing is
+ * left out.
  */
 export function resourceBlast(roots: readonly BlastRoot[], changed: readonly string[]): ReportBlastResource[] {
   const byRoot = new Map(roots.map((r) => [r.root, r]));
@@ -224,13 +230,14 @@ export function resourceBlast(roots: readonly BlastRoot[], changed: readonly str
     for (const c of changedResources(byRoot.get(root)!.plan)) {
       const start = configAddress(c.address);
       const reaches: ReportBlastReach[] = [];
+      const depth = depthsFrom(root, start, graph, readersOf);
       const listed = new Set<string>([`${root}\u0000${start}`]);
       const take = (r: string, nodes: Iterable<string>, through?: ReportBlastReach["through"]): void => {
         const g = graph(r);
         for (const n of [...nodes].sort()) {
           if (!g.resources.has(n) || listed.has(`${r}\u0000${n}`)) continue;
           listed.add(`${r}\u0000${n}`);
-          reaches.push({ root: r, address: n, ...(through ? { through } : {}) });
+          reaches.push({ root: r, address: n, depth: depth.get(`${r}\u0000${n}`) ?? 1, ...(through ? { through } : {}) });
         }
       };
       const own = reach(graph(root), [start]);
@@ -257,10 +264,49 @@ export function resourceBlast(roots: readonly BlastRoot[], changed: readonly str
           }
         }
       }
-      if (reaches.length > 0) out.push({ root, address: c.address, actions: c.actions, reaches });
+      // Nearest first by depth; a stable sort keeps the order found among equals.
+      if (reaches.length > 0) out.push({ root, address: c.address, actions: c.actions, reaches: reaches.sort((a, b) => a.depth - b.depth) });
     }
   }
   return out;
+}
+
+/**
+ * Each node's distance from a changed resource, keyed `<root>\u0000<node>`:
+ * the fewest resources on a path to it, the node itself included, plus one
+ * for each hop from a root's output into a root that reads it. Locals,
+ * variables, module inputs and outputs, and outputs within a root add
+ * nothing, so a resource that refers to the change through a local is 1, as
+ * one that refers to it directly is.
+ */
+function depthsFrom(
+  root: string,
+  start: string,
+  graph: (root: string) => Graph,
+  readersOf: (root: string) => { root: string; data: string[] }[],
+): Map<string, number> {
+  const key = (r: string, n: string): string => `${r}\u0000${n}`;
+  const depth = new Map<string, number>([[key(root, start), 0]]);
+  // A 0-1 search: a step that adds nothing goes to the front of the queue, a step that adds one to the back.
+  const queue: { root: string; node: string; depth: number }[] = [{ root, node: start, depth: 0 }];
+  const visit = (r: string, n: string, d: number): void => {
+    const was = depth.get(key(r, n));
+    if (was !== undefined && was <= d) return;
+    depth.set(key(r, n), d);
+    const at = { root: r, node: n, depth: d };
+    if (queue.length > 0 && d <= queue[0]!.depth) queue.unshift(at);
+    else queue.push(at);
+  };
+  while (queue.length) {
+    const { root: r, node: n, depth: d } = queue.shift()!;
+    if (depth.get(key(r, n)) !== d) continue;
+    const g = graph(r);
+    for (const next of g.dependents.get(n) ?? []) visit(r, next, d + (g.resources.has(next) ? 1 : 0));
+    const output = /^output\.([^.]+)$/.exec(n)?.[1];
+    if (output === undefined) continue;
+    for (const reader of readersOf(r)) for (const data of reader.data) for (const seed of [`read.${data}.${output}`, `read.${data}.*`]) visit(reader.root, seed, d + 1);
+  }
+  return depth;
 }
 
 /**
