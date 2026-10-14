@@ -8,3 +8,8 @@ reports:
   bucket: s3://demo-reports
   endpoint: http://floci:4566
   prefix: demo
+# The cost line in each plan note comes from a stub with a fixed price per
+# terraform_data (scripts/cost.mjs), not from a pricing service. The note
+# names it "cost-stub".
+cost:
+  command: scripts/cost-stub

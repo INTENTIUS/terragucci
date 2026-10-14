@@ -301,23 +301,27 @@ scenario_title() {
   esac
 }
 
+# The plan note's cost line comes from example-demo/scripts/cost.mjs, a stub;
+# every planned label says so.
+COST_STUB="The cost line is from a stub that prices each terraform_data from a fixed table, not from a pricing service"
+
 # The label of a step for this cycle's scenario; the generic one when the
 # scenario has none of its own.
 say() { # step
   local values
   case "$SCENARIO:$1" in
     a-known:pull-request)   echo "Pull request $PULL: network's http_proxy_port goes 8080 -> 9090, and its output reads .input" ;;
-    a-known:planned)        echo "One plan note: network 8080 -> 9090, app's listener 9080 and edge's upstream http://app:9080 planned on the new value; other is not planned" ;;
+    a-known:planned)        echo "One plan note: network 8080 -> 9090, app's listener 9080 and edge's upstream http://app:9080 planned on the new value; other is not planned. $COST_STUB" ;;
     a-known:applying)       echo "Wave 1 applies network, then wave 2 app and wave 3 edge, each in its own state; nothing is destroyed, so no wave waits" ;;
     a-output:pull-request)  echo "Pull request $PULL: the same 8080 -> 9090, but network's output reads terraform_data.http_proxy_port.output, which is unknown until it applies" ;;
-    a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply: the review does not show the values they will get; other is not planned" ;;
+    a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
     a-output:applying)      echo "Wave 1 applies network; app and edge plan again on what it applied and apply with no approval, so their new values apply unreviewed" ;;
     a-output:applied)       echo "Applied: $(applied_values). app's and edge's values applied unreviewed: no review showed them" ;;
     failure:pull-request)   echo "Pull request $PULL: network 8080 -> 9090, and app gains a migration that fails while a marker object is in floci" ;;
-    failure:planned)        echo "One plan note: network, app with its new migration, and edge; other is not planned. The driver has set the marker, so the migration will fail" ;;
+    failure:planned)        echo "One plan note: network, app with its new migration, and edge; other is not planned. The driver has set the marker, so the migration will fail. $COST_STUB" ;;
     failure:applying)       echo "Wave 1 applies network; wave 2 applies app, whose migration runs after its listener" ;;
     stale-plan:pull-request) echo "Pull request $PULL: network's release marker goes from r0 to r$CYCLE, which replaces it" ;;
-    stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned" ;;
+    stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Merged pull request $PULL into main at ${COMMIT:0:8}" ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
     *:applied)
@@ -525,8 +529,29 @@ run_cycle() {
   if [ "$OUTCOME" = applied ]; then
     demo_hold applied "$(say applied)" "reset"
   fi
-  # Step 3 (terragucci#1014) runs `terragucci audit` here, so the audit trail in
-  # the bucket grows each cycle.
+  audit_trail
+}
+
+# The history: terragucci audit appends this cycle's approvals (from
+# chant/lifecycle on the demo repo) and wave reports (from the reports bucket)
+# to <prefix>/audit.jsonl in floci, and writes audit.html and audit.json beside
+# it. It runs from the host, in a clone of main whose origin is the demo repo,
+# against floci's host address. The project is named as the jobs name it
+# (GITHUB_SERVER_URL is Forgejo's ROOT_URL inside the stack), so it reads the
+# reports the waves indexed under forgejo:3000/<admin>/demo. An audit that
+# fails is logged and never stalls the cycle.
+audit_trail() {
+  local clone="$WORK/c$CYCLE/audit" out
+  git clone -q "$REMOTE" "$clone" 2>/dev/null || { log "audit: could not clone $REPO"; return 0; }
+  if out="$(cd "$clone" && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
+      GITHUB_SERVER_URL=http://forgejo:3000 GITHUB_REPOSITORY="$REPO" \
+      "$TERRAGUCCI" audit --bucket "s3://$REPORT_BUCKET" --bucket-endpoint "$FLOCI" --bucket-prefix "$REPORT_PREFIX" \
+      --out "$WORK/c$CYCLE/audit-out" --link-hours 1 2>&1)"; then
+    log "audit: $(head -1 <<<"$out")"
+  else
+    log "audit: terragucci audit failed; the trail did not grow this cycle"
+    printf '%s\n' "$out" >&2
+  fi
 }
 
 # ── reset, out of band ───────────────────────────────────────────────────────
