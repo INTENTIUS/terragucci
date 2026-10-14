@@ -699,7 +699,7 @@ export async function placesOf(repo: string, roots: readonly string[], options: 
 }
 
 /** A root's state as `state pull` gives it, or null when it has none. */
-async function pullState(exec: BinaryExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv): Promise<StateFile | null> {
+export async function pullState(exec: BinaryExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv): Promise<StateFile | null> {
   const pulled = await exec(binary, ["state", "pull"], dir, env);
   if (pulled.code !== 0) throw new ConfigError(`state pull in ${root} failed: ${firstLine(pulled.out)}`);
   if (!pulled.stdout.trim()) return null;
@@ -965,11 +965,20 @@ async function proofPlan(exec: BinaryExec, binary: string, place: Place, root: s
 export const lockKey = (key: string): string => `${key}.tflock`;
 
 /** The lock info a migration writes, in the shape the binary writes and prints when it finds a lock held. */
-export function lockInfo(path: string, now: string, who = `terragucci@${hostname()}`): string {
-  return JSON.stringify({ ID: randomUUID(), Operation: "terragucci migrate", Info: "a state migration is writing this state", Who: who, Version: "", Created: now, Path: path });
+export function lockInfo(path: string, now: string, who = `terragucci@${hostname()}`, op: LockOperation = MIGRATE_LOCK): string {
+  return JSON.stringify({ ID: randomUUID(), Operation: op.operation, Info: op.info, Who: who, Version: "", Created: now, Path: path });
 }
 
-interface HeldLock {
+/** What a lock terragucci takes says holds it: the operation and a line of info, as the binary prints them when it finds the lock held. */
+export interface LockOperation {
+  operation: string;
+  info: string;
+}
+
+/** A state migration's lock. */
+export const MIGRATE_LOCK: LockOperation = { operation: "terragucci migrate", info: "a state migration is writing this state" };
+
+export interface HeldLock {
   root: string;
   /** The state the lock is on, and the store that holds it; absent for a workspace a state moves from. */
   object?: StateObject;
@@ -978,7 +987,13 @@ interface HeldLock {
 }
 
 /** Take the lock of each state a migration writes or moves from, as its backend takes it. Releases what it took and throws when one is held. */
-export async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {
+export async function takeLocks(
+  files: ReadonlyMap<string, { object: StateObject; source?: Source }>,
+  now: string,
+  fetchFn?: S3Fetch,
+  op: LockOperation = MIGRATE_LOCK,
+  adopt?: (root: string, store: StateStore, held: { id: string; info: string }) => Promise<boolean>,
+): Promise<HeldLock[]> {
   const held: HeldLock[] = [];
   const objects = [...files].flatMap(([root, f]) => [{ root, object: f.object }, ...(f.source && "object" in f.source ? [{ root, object: f.source.object }] : [])]);
   // A workspace the state moves from is locked as its backend locks it, so no run writes it meanwhile.
@@ -986,7 +1001,7 @@ export async function takeLocks(files: PlannedMigration["files"], now: string, f
     const take = f.source && "external" in f.source ? f.source.external.lock : undefined;
     if (!take) continue;
     try {
-      held.push({ root, release: await take("terragucci migrate: a state migration is reading this state") });
+      held.push({ root, release: await take(`${op.operation}: ${op.info}`) });
     } catch (e) {
       for (const h of held) await h.release().catch(() => {});
       throw new ConfigError(`${root}: ${(e as Error).message}`);
@@ -998,14 +1013,20 @@ export async function takeLocks(files: PlannedMigration["files"], now: string, f
     let got: boolean;
     try {
       store = await stateStore(object, fetchFn);
-      got = await store.lock(lockInfo(store.location.replace(/^[a-z0-9]+:\/\//, ""), now));
+      got = await store.lock(lockInfo(store.location.replace(/^[a-z0-9]+:\/\//, ""), now, undefined, op));
     } catch (e) {
       for (const h of held) await h.release().catch(() => {});
       throw new ConfigError(`${root}: the lock ${store?.lockLocation ?? stateLocation(object)} could not be taken: ${(e as Error).message}`);
     }
     if (!got) {
-      for (const h of held) await h.release().catch(() => {});
       const info = await store.heldLock().catch(() => undefined);
+      // A lock this operation left held on purpose, which the caller takes over (a composed run's state kept unwritten, ./compose.ts).
+      if (info && adopt && (await adopt(root, store, info).catch(() => false))) {
+        const s = store;
+        held.push({ root, object, store: s, release: () => s.unlock() });
+        continue;
+      }
+      for (const h of held) await h.release().catch(() => {});
       throw new ConfigError(`${root}: its state is locked (${store.lockLocation}${info ? `: ${info.info.slice(0, 300)}` : ""}), so nothing was written`);
     }
     const s = store;

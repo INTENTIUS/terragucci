@@ -112,7 +112,7 @@ function hasLiveBlock(text: string): boolean {
   return false;
 }
 
-function stripComments(text: string): string {
+export function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
 }
 
@@ -249,7 +249,8 @@ export interface RootStateCode {
   unresolved: { name: string; why: string }[];
 }
 
-function blockBody(text: string, start: number): string {
+/** The text of the block that starts at `start`: up to the brace that closes its first `{`. */
+export function blockBody(text: string, start: number): string {
   let depth = 0;
   for (let i = text.indexOf("{", start); i < text.length; i++) {
     if (text[i] === "{") depth++;
