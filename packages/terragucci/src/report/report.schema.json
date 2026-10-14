@@ -36,6 +36,7 @@
     "unit": { "enum": ["member", "instance"] },
     "units": { "type": "integer" },
     "totals": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "totals_roots": { "type": "integer", "description": "How many roots totals counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, less a root the policy refused (minor 35)." },
     "groups": {
       "type": "array",
       "items": {

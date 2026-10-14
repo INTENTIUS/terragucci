@@ -108,7 +108,7 @@ import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
 import { comparePreview } from "./tg-preview-gate";
 import { runPath } from "./report/store";
-import { buildReport, planFiles, withEnvironment, type RootInput } from "./report/build";
+import { buildReport, planFiles, planTotals, withEnvironment, type RootInput } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
@@ -1331,6 +1331,8 @@ export interface WaveRun {
   ended?: string;
   /** The roots whose plan changes something. */
   changedRoots?: string[];
+  /** Its changes by action and how many roots they count, for its row in the run view (waveTotals). */
+  totals?: ReturnType<typeof planTotals>;
   /** The applied record that named each change its apply makes: the apply records how it ended beside it. */
   appliedUnder?: AppliedRecord;
 }
@@ -1396,6 +1398,19 @@ function logReads(label: string, reads: Map<string, ReportRead[]>, waves: readon
 }
 
 /**
+ * The wave's totals for its row in the run view, once it planned, as its
+ * report counts them. Only the job that plans every root of the wave writes
+ * them: a share's or a group's job plans part of it, and its count would
+ * replace the wave's. Counted once, since a wave's progress rewrites the row
+ * every few seconds.
+ */
+function waveTotals(options: ApplyWaveOptions, w: WaveRun): Pick<RunWave, "totals" | "totals_roots"> {
+  if (!w.planned || w.share !== undefined || options.group !== undefined) return {};
+  w.totals ??= planTotals(w.planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(options.binary), ...(p.error ? { error: p.error } : {}), ...(p.policy ? { policy: p.policy } : {}) })));
+  return { totals: w.totals.totals, totals_roots: w.totals.roots };
+}
+
+/**
  * Replace this wave's row in the bucket's run view (./report/run-view.ts),
  * when the config names a reports bucket. A view that cannot be written is
  * logged; it never fails the wave.
@@ -1414,7 +1429,7 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     const skeleton = runSkeleton(facts.project, facts.commit, waves, reads, states);
     const spans = waveSpans(w);
     const timing = { ...(spans.length ? { spans } : {}), ...(w.changedRoots ? { changed: w.changedRoots } : {}) };
-    const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...timing, ...row });
+    const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...timing, ...waveTotals(options, w), ...row });
     if (!quiet) console.log(`wave ${options.wave}: run view at ${key}`);
   } catch (e) {
     console.log(`wave ${options.wave}: the run view was not written: ${(e as Error).message}`);

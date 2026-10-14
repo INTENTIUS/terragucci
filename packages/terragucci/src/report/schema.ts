@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 34;
+export const REPORT_MINOR = 35;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -677,6 +677,8 @@ export interface Report {
   unit: PlanSummaryUnit;
   units: number;
   totals: Record<ChangeSetAction, number>;
+  /** How many roots `totals` counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, less a root the policy refused (minor 35). */
+  totals_roots?: number;
   groups: ReportGroup[];
   roots: ReportRoot[];
   waves: ReportWave[];

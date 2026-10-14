@@ -98,6 +98,7 @@ The note comments the plan back to the pull request, grouped. A group of two roo
 
 | Part | What it holds |
 |---|---|
+| Total line | the run's changes over every root whose plan changes something, counted as the binary's `Plan:` line counts them (a replacement adds one and destroys one): `3 to add, 2 to change, 0 to destroy across 3 roots`, with `to forget` when a plan forgets; on a `tf-apply` wave's note, the wave's total. It comes from `totals` and `totals_roots` in `report.json`, and is left out when no plan changes anything |
 | Group | the diff of its first root (or instance) as the binary printed it: each attribute that changes with its value before and after, nested blocks, `(known after apply)`; once per group, then the roots that make the same change |
 | Values that differ | the attributes whose values differ between the group's roots, by name |
 | Each root's plan | the root's whole plan in a collapsed block, with its `Plan:` line as the title and a link to its `plan.txt` |
