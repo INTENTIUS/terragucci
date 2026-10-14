@@ -10,6 +10,7 @@
  * is, so the waves' jobs never lose each other's rows. A run view that cannot
  * be written is logged; it never fails the wave.
  */
+import type { ChangeSetAction } from "@intentius/chant/change-set";
 import { esc } from "./html";
 import { progressCounts, type ProgressStatus, type WaveProgress } from "../apply-progress";
 import { blastRadius, GRAPH_CSS, phaseTotals, renderGraphSvg, renderTimelineSvg, span, type Span } from "./graph";
@@ -43,6 +44,10 @@ export interface RunWave {
   shares_applied?: number[];
   /** The roots whose plan in this wave changes something: where a blast radius starts. */
   changed?: string[];
+  /** The wave's changes by action, as its report's `totals` counts them, once it planned (report minor 35). Written by the job that plans the whole wave, not by a share of it. */
+  totals?: Record<ChangeSetAction, number>;
+  /** How many of its roots `totals` counts a change of. */
+  totals_roots?: number;
   /** Its time: each plan, each wait at the gate (no `end` while it waits) and each apply, oldest first. */
   spans?: Span[];
   /** A choudoufu wave's resources, done, in flight or waiting, as its estates' records stood at the last read (../apply-progress.ts). */

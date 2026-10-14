@@ -5,7 +5,7 @@
  * plan summary. The report adds what a reader needs on top: links to every
  * root's full plan, every destroy by name, and what is open or folded.
  */
-import { changeSetDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart, type ChangeSetPlanner } from "@intentius/chant/change-set";
+import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetEntry, type ChangeSetPart, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import type { Gate } from "../config";
@@ -230,6 +230,37 @@ function plannedPart(r: RootInput): ChangeSetPart {
   return { ...part, member: { ...part.member, status: "failed", error: r.error, planDigest: null } };
 }
 
+/** The actions a root's change counts under in `totals_roots`: everything but a no-op and a read. */
+const COUNTED: ReadonlySet<ChangeSetAction> = new Set(["create", "update", "replace", "delete", "forget"]);
+
+/**
+ * The totals by action and how many roots they count a change of. A root the
+ * policy refused keeps its changes in the report, but they cannot apply, so
+ * the totals leave them out.
+ */
+function countTotals(actions: Record<ChangeSetAction, number>, entries: readonly ChangeSetEntry[], refused: (member: string) => boolean): { totals: Record<ChangeSetAction, number>; roots: number } {
+  const totals = { ...actions };
+  const changing = new Set<string>();
+  for (const e of entries) {
+    if (refused(e.member)) {
+      if (totals[e.action] > 0) totals[e.action]--;
+    } else if (COUNTED.has(e.action)) changing.add(e.member);
+  }
+  return { totals, roots: changing.size };
+}
+
+/**
+ * The totals of a set of roots' plans as a report counts them, and how many
+ * roots they count a change of: for a `tf-apply` wave's row in run.json,
+ * before its report is written. A root that did not plan counts nothing.
+ */
+export function planTotals(roots: readonly RootInput[]): { totals: Record<ChangeSetAction, number>; roots: number } {
+  const parts = roots.filter((r) => r.plan !== undefined && (r.error === undefined || policyRefused(r))).map(plannedPart);
+  const doc = composeChangeSet(parts);
+  const byPath = new Map(roots.map((r) => [r.path, r]));
+  return countTotals(doc.summary.actions, doc.entries, (member) => policyRefused(byPath.get(member)!));
+}
+
 export function buildReport(input: BuildInput): Report {
   const inputRun = input.run;
   const byPath = new Map(input.roots.map((r) => [r.path, r]));
@@ -245,9 +276,7 @@ export function buildReport(input: BuildInput): Report {
   if (summary.unit === "member") for (const g of summary.groups) for (const u of g.units) memberGroup.set(u, g.id);
   const outliers = new Set(summary.groups.filter((g) => g.outlier).flatMap((g) => g.units));
 
-  // A root the policy refused keeps its changes in the report, but they cannot apply, so the totals leave them out.
-  const totals = { ...doc.summary.actions };
-  for (const e of doc.entries) if (policyRefused(byPath.get(e.member)!) && totals[e.action] > 0) totals[e.action]--;
+  const { totals, roots: totalsRoots } = countTotals(doc.summary.actions, doc.entries, (member) => policyRefused(byPath.get(member)!));
 
   const named: ReportNamed[] = [];
   const roots: ReportRoot[] = doc.members.map((m) => {
@@ -394,6 +423,7 @@ export function buildReport(input: BuildInput): Report {
     unit: summary.unit,
     units: summary.units,
     totals,
+    totals_roots: totalsRoots,
     groups,
     roots,
     waves,

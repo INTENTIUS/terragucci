@@ -66,6 +66,8 @@
           "shares": { "type": "integer", "description": "A wave split across jobs: how many share jobs apply it." },
           "shares_applied": { "type": "array", "items": { "type": "integer" }, "description": "The shares that applied; the wave is applied once every share has." },
           "changed": { "type": "array", "items": { "type": "string" }, "description": "The roots whose plan in this wave changes a resource or an output: where the run's blast radius starts." },
+          "totals": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "The wave's changes by action (create, update, replace, delete, read, no-op, forget), as its report's totals counts them, once it planned. Written by the job that plans the whole wave, not by a share of it." },
+          "totals_roots": { "type": "integer", "description": "How many of the wave's roots totals counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, less a root the policy refused." },
           "spans": {
             "type": "array",
             "description": "The wave's time, oldest first: each plan, each wait at its gate (no end while it waits) and each apply (no end while it applies). At most 24.",
