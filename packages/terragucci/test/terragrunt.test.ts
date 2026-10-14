@@ -27,7 +27,7 @@ import {
 import { explicitStacksLine } from "../src/report/views";
 import { detectShape } from "../src/shape";
 import { resolveRepo } from "../src/config";
-import type { Report } from "../src/report/schema";
+import { REPORT_MINOR, type Report } from "../src/report/schema";
 import { rc } from "./report-fixtures";
 import { git, tmp, write } from "./helpers";
 
@@ -593,7 +593,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(35);
+    expect(r.report.minor).toBe(REPORT_MINOR);
     // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));

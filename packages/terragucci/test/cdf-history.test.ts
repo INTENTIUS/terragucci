@@ -6,7 +6,7 @@ import { estate } from "../src/estate";
 import { buildReport } from "../src/report/build";
 import { buildHistory, changeRows, historyId, renderHistoryHtml } from "../src/report/history";
 import { S3Client, type S3Fetch } from "../src/report/s3";
-import type { Report, ReportRecordVersions } from "../src/report/schema";
+import { REPORT_MINOR, type Report, type ReportRecordVersions } from "../src/report/schema";
 import { uploadReport, writeReportDir } from "../src/report/store";
 import { validate, type Json } from "../../../scripts/schema-check";
 import { plan, rc, RUN } from "./report-fixtures";
@@ -120,7 +120,7 @@ const config = { reports: { bucket: "s3://acme-reports", endpoint: "http://minio
 describe("record versions in the report, the history and the estate page", () => {
   it("rides on the applied change in report.json and changes.json, which hold to their schemas", () => {
     const r = applyOf(2);
-    expect(r.minor).toBe(35);
+    expect(r.minor).toBe(REPORT_MINOR);
     expect(validate(schema("report.schema.json"), r as unknown as Json)).toEqual([]);
     expect(r.roots[0].applied_changes?.[0].record_versions?.versions?.map((v) => v.version_id)).toEqual(["v2", "v1"]);
     const rows = changeRows(r, "x");
