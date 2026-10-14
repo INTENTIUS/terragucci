@@ -263,6 +263,10 @@ example-gitlab *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
+[doc("The looping demo behold shows (example-demo/): up once, then loop [--once] [scenario...] writes demo.json at every step; down removes the stack.")]
+demo *args="up":
+    stack/demo.sh {{args}}
+
 [doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--break] [--record FILE], reset, minutes.")]
 sandbox *args:
     stack/sandbox-github.sh {{args}}

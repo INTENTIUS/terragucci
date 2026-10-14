@@ -32,6 +32,8 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `just example merge <scenario>` | merges that scenario's pull request as the reader would, listing the reader's ssh key in `.chant/allowed_signers` first, and prints the approval a waiting wave asks for or the refusal a changed one gives |
 | `just example approve [wave-N]` | approves the waiting wave as the reader, sealed with the reader's key (by default the wave the last run asked about) |
 | `just example reset` | closes the pull requests, puts main back, applies again |
+| `just demo up` | the looping demo behold shows: pushes `example-demo/` (four roots of `terraform_data`: network, app, edge and other) to `terragucci-admin/demo`, applies it, and keeps the base commit and each root's state as the base snapshot |
+| `just demo loop [--once] [scenario...]` | runs `stack/demo.sh`'s scenarios one after another, writing `demo.json` to the reports bucket at every step and resetting out of band after each: each state written back to the snapshot, main forced back to the base commit |
 | `just smoke [claim]` | one line per claim: `SMOKE claim=… verdict=pass\|caught\|fail\|pending`; `BREAK=1` must print `caught` |
 | `just smoke-record` | every claim plain and under `BREAK=1`, written to `docs-site/src/data/smoke.json` for the status page. Claims run several at a time (`SMOKE_JOBS`, default 6; `SMOKE_SERIAL=1` for one at a time), each holding the resources its line in `CLAIM_GROUPS` in `smoke.sh` names; each run's log is under `stack/.state/smoke-logs/` |
 | `just tutorial-capture` | the tutorial's output, notes, logs and diffs as text, for steps whose claims pass, on the capture stack |
