@@ -356,7 +356,7 @@
           },
           "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed." },
           "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
-          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." },
+          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply, and when that plan changes something its gate holds it for an approval of that plan under gate always or on-destructive, but not under gate never; its review digest is null (minor 21)." },
           "preview": {
             "type": "object",
             "required": ["pull_request", "units"],

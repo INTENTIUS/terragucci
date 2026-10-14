@@ -389,10 +389,12 @@ export function buildReport(input: BuildInput): Report {
       const changing = members.filter((m) => changesSomething(plans.get(m.member)));
       const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
       const gate = w.policy ?? input.gate;
+      const replans = (w.replansAfter?.length ?? 0) > 0;
       review = {
         // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
-        review_digest: failed || changing.length === 0 || (w.replansAfter?.length ?? 0) > 0 ? null : changeSetDigest([...changing, ...extra]),
-        waits: changing.length > 0 && (gate === "always" || (gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
+        review_digest: failed || changing.length === 0 || replans ? null : changeSetDigest([...changing, ...extra]),
+        // Nobody reviews the plan it makes then, so its gate holds it under every policy but never (#1012).
+        waits: (replans && gate !== "never") || (changing.length > 0 && (gate === "always" || (gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0)),
       };
     }
     return {
