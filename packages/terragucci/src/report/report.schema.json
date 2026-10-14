@@ -462,6 +462,7 @@
                   "properties": {
                     "root": { "type": "string" },
                     "address": { "type": "string", "description": "Its address in the root's configuration, with no instance key." },
+                    "depth": { "type": "integer", "minimum": 1, "description": "Its distance from the changed resource (minor 36): 1 when it refers to it, directly or through locals, variables and modules, and one more for each resource in between and each hop from a root's output into a root that reads it. Absent from a report before minor 36." },
                     "through": {
                       "type": "object",
                       "required": ["root", "output"],

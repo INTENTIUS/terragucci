@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 35;
+export const REPORT_MINOR = 36;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -748,6 +748,14 @@ export interface ReportBlastReach {
   root: string;
   /** Its address in the root's configuration, with no instance key. */
   address: string;
+  /**
+   * Its distance from the changed resource (minor 36): 1 when it refers to
+   * it, directly or through locals, variables and modules, and one more for
+   * each resource in between and each hop from a root's output into a root
+   * that reads it. A reader's resource that reads an output made from the
+   * changed resource is 2.
+   */
+  depth: number;
   /** In another root: the output it reads, and the root that makes it. */
   through?: { root: string; output: string };
 }

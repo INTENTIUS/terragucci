@@ -77,10 +77,10 @@ describe("the blast radius by resource", () => {
         address: "aws_sqs_queue.jobs",
         actions: ["update"],
         reaches: [
-          { root: "queue", address: "aws_sqs_queue_policy.jobs" },
-          { root: "worker", address: "aws_lambda_event_source_mapping.jobs", through: { root: "queue", output: "jobs_arn" } },
-          { root: "worker", address: "aws_lambda_function.worker", through: { root: "queue", output: "jobs_arn" } },
-          { root: "alerts", address: "module.alarm.aws_cloudwatch_metric_alarm.this", through: { root: "worker", output: "worker_arn" } },
+          { root: "queue", address: "aws_sqs_queue_policy.jobs", depth: 1 },
+          { root: "worker", address: "aws_lambda_function.worker", depth: 2, through: { root: "queue", output: "jobs_arn" } },
+          { root: "worker", address: "aws_lambda_event_source_mapping.jobs", depth: 3, through: { root: "queue", output: "jobs_arn" } },
+          { root: "alerts", address: "module.alarm.aws_cloudwatch_metric_alarm.this", depth: 4, through: { root: "worker", output: "worker_arn" } },
         ],
       },
     ]);
@@ -94,7 +94,7 @@ describe("the blast radius by resource", () => {
 
   it("reaches every resource that reads a reader's whole outputs", () => {
     const whole = { root: "all", plan: { configuration: { root_module: { resources: [{ address: "terraform_data.all", mode: "managed", expressions: { input: refs("data.terraform_remote_state.q.outputs", "data.terraform_remote_state.q") } }] } } }, reads: [{ data: "terraform_remote_state.q", upstream: "queue" }] };
-    expect(resourceBlast([roots[0]!, whole], ["queue"])[0]!.reaches).toContainEqual({ root: "all", address: "terraform_data.all", through: { root: "queue", output: "jobs_arn" } });
+    expect(resourceBlast([roots[0]!, whole], ["queue"])[0]!.reaches).toContainEqual({ root: "all", address: "terraform_data.all", depth: 2, through: { root: "queue", output: "jobs_arn" } });
   });
 
   it("follows estate outputs as it follows remote state", () => {
@@ -104,7 +104,7 @@ describe("the blast radius by resource", () => {
 
   it("stops at a reference to a local it cannot read", () => {
     const blind = { ...roots[0]!, locals: undefined };
-    expect(resourceBlast([blind, roots[1]!], ["queue"])[0]!.reaches).toEqual([{ root: "queue", address: "aws_sqs_queue_policy.jobs" }]);
+    expect(resourceBlast([blind, roots[1]!], ["queue"])[0]!.reaches).toEqual([{ root: "queue", address: "aws_sqs_queue_policy.jobs", depth: 1 }]);
   });
 
   it("names nodes without instance keys, and a module's outputs and reads", () => {
