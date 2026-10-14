@@ -1,0 +1,10 @@
+# The demo's four roots: network, app (reads network), edge (reads app) and
+# other (reads nothing). Each is terraform_data with its own state in floci;
+# the plan reports and run views go to the reports bucket there too.
+forge: forgejo
+binary: tofu
+gate: on-destructive
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
