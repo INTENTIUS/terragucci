@@ -120,7 +120,7 @@ const config = { reports: { bucket: "s3://acme-reports", endpoint: "http://minio
 describe("record versions in the report, the history and the estate page", () => {
   it("rides on the applied change in report.json and changes.json, which hold to their schemas", () => {
     const r = applyOf(2);
-    expect(r.minor).toBe(34);
+    expect(r.minor).toBe(35);
     expect(validate(schema("report.schema.json"), r as unknown as Json)).toEqual([]);
     expect(r.roots[0].applied_changes?.[0].record_versions?.versions?.map((v) => v.version_id)).toEqual(["v2", "v1"]);
     const rows = changeRows(r, "x");
