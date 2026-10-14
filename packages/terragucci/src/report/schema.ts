@@ -555,9 +555,11 @@ export interface ReportWave {
   reads?: number[];
   /**
    * A `tf-plan` wave whose plans read outputs that are known only once these
-   * waves apply (minor 21). It plans again after they apply, and waits for
-   * an approval of that plan: its review digest is null, and no approval of
-   * this run's digests applies it.
+   * waves apply (minor 21). It plans again after they apply. When that plan
+   * changes something, its gate holds it for an approval of that plan under
+   * `gate: always` and `gate: on-destructive`, whether or not it destroys
+   * anything; under `gate: never` it applies without one. Its review digest
+   * is null, and no approval of this run's digests applies it.
    */
   replans_after?: number[];
   /**

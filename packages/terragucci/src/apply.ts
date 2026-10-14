@@ -107,13 +107,17 @@ import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
 import { comparePreview } from "./tg-preview-gate";
-import { runPath } from "./report/store";
+import { readsOf, unitTexts } from "./tg-preview";
+import { rootOutputsRead } from "./linked";
+import { unknownReadLine, unknownReads, type PullReport, type UnknownRead, type WaveRead } from "./unknown-reads";
+import { runPath, type IndexEntry } from "./report/store";
 import { buildReport, planFiles, planTotals, withEnvironment, type RootInput } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
+import type { ObjectStore } from "./report/object-store";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import { binaryText, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
+import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
@@ -1094,7 +1098,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       console.log(`wave ${options.wave}: gate ${gates[0]}, the strictest of the environments at base, since a Terragrunt wave finds its units when it plans`);
       options = { ...options, gate: gates[0]! };
     }
-    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}) };
+    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned };
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
@@ -1208,6 +1212,8 @@ interface WavesContext {
   work: string;
   /** A group's job: its part of the wave from 1, counted across the wave's groups and their shares, as the run view counts shares. */
   part?: number;
+  /** The plans of a wave this job planned earlier (`--rest`), by wave number: the first carrier of an unknown read (./unknown-reads.ts). */
+  planned?: (k: number) => WavePlan[] | undefined;
 }
 
 /** One call chant makes back into the wave's job. Returns the call's exit code. */
@@ -1691,11 +1697,14 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const heldBySteps = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
   for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: step ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
+  // A root that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
+  const linkedReads = deciding && changes > 0 && gate !== "never" ? rootReads(repo, waves, wave, w.reads, changing) : [];
+  const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads)).length > 0;
   // A step that asks for an approval, or a change over cost.approve_above at base, holds the wave whatever the gate policy says.
-  const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0;
+  const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0 || byReads;
   const byCost = w.waveCost?.over === true;
   if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);
-  j.held = changes > 0 && (heldBySteps.length > 0 || byCost);
+  j.held = changes > 0 && (heldBySteps.length > 0 || byCost || byReads);
   const plans = planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary }));
   w.digest = digest;
   if (deciding) {
@@ -2048,6 +2057,128 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
     console.log(`${label}: review: could not read the pull request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
     return noReview();
   }
+}
+
+/**
+ * A wave's reads of roots in earlier waves, by each of `readers` (its roots
+ * whose plan changes something): each `terraform_remote_state` block's
+ * upstream, and the outputs the root's files read from it. Reads of the same
+ * upstream by one root are one read.
+ */
+function rootReads(repo: string, waves: readonly string[][], wave: number, reads: Map<string, ReportRead[]> | undefined, readers: ReadonlySet<string>): WaveRead[] {
+  const waveOf = new Map(waves.flatMap((rs, i) => rs.map((r) => [r, i + 1] as const)));
+  const out = new Map<string, WaveRead>();
+  for (const [root, rs] of reads ?? []) {
+    if (!readers.has(root)) continue;
+    for (const r of rs) {
+      const k = waveOf.get(r.upstream);
+      if (k === undefined || k >= wave) continue;
+      const outputs = rootOutputsRead(join(repo, root), r.data);
+      const id = `${root}\n${r.upstream}`;
+      const had = out.get(id);
+      const merged = had ? (had.outputs && outputs ? new Set([...had.outputs, ...outputs]) : undefined) : outputs;
+      out.set(id, { root, upstream: r.upstream, wave: k, ...(merged ? { outputs: merged } : {}) });
+    }
+  }
+  return [...out.values()];
+}
+
+/** A Terragrunt wave's reads of units in earlier waves, by each of `readers`: each dependency, and the outputs its blocks read. */
+function unitReads(repo: string, waves: readonly string[][], wave: number, edges: Map<string, Set<string>>, readers: readonly string[]): WaveRead[] {
+  const waveOf = new Map(waves.flatMap((us, i) => us.map((u) => [u, i + 1] as const)));
+  const out: WaveRead[] = [];
+  for (const unit of readers) {
+    const texts = unitTexts(repo, unit);
+    for (const up of [...(edges.get(unit) ?? [])].sort()) {
+      const k = waveOf.get(up);
+      if (k === undefined || k >= wave) continue;
+      const read = readsOf(unit, up, texts);
+      if (read === null) continue;
+      out.push({ root: unit, upstream: up, wave: k, ...(read.outputs ? { outputs: read.outputs } : {}) });
+    }
+  }
+  return out;
+}
+
+/**
+ * The reads that hold a wave at its gate (#1012): those whose outputs were
+ * unknown when the change was reviewed, from the first carrier that can say
+ * (./unknown-reads.ts). The upstream's plan in this push: a wave this job
+ * planned earlier, else the upstream wave's report this commit put in the
+ * reports bucket. Then the report of the pull request that merged as this
+ * commit, which the forge names and the bucket holds. With neither, every
+ * read holds the wave. Each read is logged, with the outputs that were
+ * unknown and the wave that settled them.
+ */
+async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: WavesContext, w: WaveRun, label: string, gate: Gate, reads: WaveRead[]): Promise<UnknownRead[]> {
+  if (reads.length === 0) return [];
+  const env = options.env ?? process.env;
+  const settings = w.settings;
+  const facts = runFacts(repo, env, settings?.forge);
+  const prefix = settings?.reports?.prefix ?? "";
+  const key = (...p: string[]): string => p.map((x) => x.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/");
+  let store: ObjectStore | undefined;
+  let storeError: string | undefined;
+  if (settings?.reports?.bucket) {
+    try {
+      store = storeFromEnv(settings.reports, env);
+    } catch (e) {
+      storeError = (e as Error).message.split("\n")[0];
+    }
+  }
+  let rows: Promise<IndexEntry[]> | undefined;
+  const indexRows = (): Promise<IndexEntry[]> =>
+    (rows ??= store!.get(key(prefix, facts.project, "index.json")).then((text) => {
+      if (text === undefined) return [];
+      const parsed = JSON.parse(text) as { reports?: IndexEntry[] };
+      return Array.isArray(parsed.reports) ? parsed.reports : [];
+    }));
+  const reportAt = async (path: string): Promise<Report | undefined> => {
+    const body = await store!.get(key(prefix, facts.project, path, "report.json"));
+    return body === undefined ? undefined : (JSON.parse(body) as Report);
+  };
+  const verdict = await unknownReads(reads, {
+    async upstreamPlan(upstream, k) {
+      const mine = ctx.planned?.(k)?.find((p) => p.root === upstream && p.plan !== undefined);
+      if (mine) return { plan: mine.plan, from: `wave ${k}'s plan of ${upstream} in this job` };
+      if (!store) return undefined;
+      // The upstream wave's own job: its report in the bucket, with each root's redacted plan, which keeps after_unknown.
+      for (const row of (await indexRows()).filter((r) => r.stage === APPLY_OP && r.commit === facts.commit && r.wave === k)) {
+        const root = (await reportAt(row.path))?.roots.find((x) => x.path === upstream);
+        if (!root?.plan.json) continue;
+        const text = await store.get(key(prefix, facts.project, row.path, root.plan.json));
+        if (text !== undefined) return { plan: JSON.parse(text), from: `wave ${k}'s plan of ${upstream} in this push (${row.path})` };
+      }
+      return undefined;
+    },
+    async pullReport(): Promise<PullReport> {
+      if (!store) return { missing: storeError ? `the reports bucket could not be read (${storeError})` : "the config names no reports bucket to read the pull request's report from" };
+      const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+      let pr: { number: number; head: string } | undefined;
+      try {
+        if (env.GITLAB_CI === "true" || settings?.forge === "gitlab") {
+          const mr = await gitlabMergeRequestOf(gitlabCalls(env, options.fetch), sha, env);
+          pr = mr ? { number: mr.iid, head: typeof mr.sha === "string" ? mr.sha : "" } : undefined;
+        } else {
+          pr = await pullOf(forgeCalls(env, options.fetch), env, sha);
+        }
+      } catch (e) {
+        return { missing: `the forge could not say which pull request made ${sha.slice(0, 8)} (${(e as Error).message.split("\n")[0]})` };
+      }
+      if (!pr) return { missing: `no pull request made ${sha.slice(0, 8)} (a direct push, or a merge the forge maps to no pull request)` };
+      const plans = (await indexRows()).filter((r) => r.stage === "tf-plan" && (r.commit === pr.head || r.pull_request === String(pr.number)));
+      // The plan of the head reviewed, else the newest plan of the pull request.
+      const row = plans.find((r) => r.commit === pr.head) ?? plans[0];
+      if (!row) return { missing: `the reports bucket holds no plan report of pull request ${pr.number}` };
+      const report = await reportAt(row.path);
+      if (!report) return { missing: `the reports bucket has no ${row.path}/report.json` };
+      return { report, from: `pull request ${pr.number}'s plan of ${row.commit.slice(0, 8)}` };
+    },
+  });
+  for (const l of verdict.lines) console.log(`${label}: ${l}`);
+  for (const u of verdict.unknown) console.log(`${label}: ${unknownReadLine(u)}`);
+  if (verdict.unknown.length) console.log(`${label}: nobody reviewed the plan it made on those outputs, so it waits for an approval of it${gate === "always" ? "" : ` although gate is ${gate}`}`);
+  return verdict.unknown;
 }
 
 /**
@@ -2762,10 +2893,13 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     for (const u of heldBySteps) console.log(`${label}: ${u}: step ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
   }
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
-  const byGate = options.gate === "always" || (options.gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0;
+  // A unit that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
+  const linkedReads = deciding && changing.length > 0 && options.gate !== "never" ? unitReads(repo, cut, wave, w.units?.edges ?? new Map(), changing.map((p) => p.root)) : [];
+  const byReads = (await unknownReadHold(repo, options, ctx, w, label, options.gate, linkedReads)).length > 0;
+  const byGate = options.gate === "always" || (options.gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0 || byReads;
   const byCost = w.waveCost?.over === true;
   if (changing.length > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${options.gate}`}`);
-  j.held = changing.length > 0 && (heldBySteps.length > 0 || byCost);
+  j.held = changing.length > 0 && (heldBySteps.length > 0 || byCost || byReads);
   if (deciding && changing.length > 0) {
     w.preview = await comparePreview({ repo, env, wave, binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
     if (byGate || byCost) {
