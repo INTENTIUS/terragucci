@@ -88,6 +88,11 @@ function configFiles(dir: string): string[] {
   }
 }
 
+/** The outputs a root's own files read from its `terraform_remote_state` block `name`, as outputsRead says. */
+export function rootOutputsRead(dir: string, name: string): Set<string> | undefined {
+  return outputsRead(configFiles(dir).map((f) => readFileSync(f, "utf-8")), name);
+}
+
 /** The file a linked plan adds to the root for as long as it plans. */
 export const LINKED_FILE = "terragucci_linked.tf";
 const UNKNOWN_LOCAL = "terragucci_unknown";

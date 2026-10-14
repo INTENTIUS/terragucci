@@ -33,7 +33,7 @@ export function readInlineReport(html: string): Report {
 
 /** A wave's state as the report's table says it: a plan that is made again after the waves it reads apply says so. */
 export function waveStateText(w: Report["waves"][number]): string {
-  const again = w.replans_after?.length ? `; plans again once wave ${w.replans_after.join(", ")} applies, and waits for an approval of that plan` : "";
+  const again = w.replans_after?.length ? `; plans again once wave ${w.replans_after.join(", ")} applies, and waits for an approval of that plan unless gate is never` : "";
   return `${w.state ?? ""}${again}`.replace(/^; /, "");
 }
 
