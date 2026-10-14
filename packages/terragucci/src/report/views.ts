@@ -194,6 +194,21 @@ export function noteLimit(forge: keyof typeof NOTE_LIMITS, report: Report): numb
 }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * The run's total across its roots, as the binary's own `Plan:` line counts a
+ * plan: a replacement adds one and destroys one. `3 to add, 2 to change, 0 to
+ * destroy across 3 roots`, with the forgets when there are any. None when no
+ * root's plan changes anything, or on a report older than minor 35.
+ */
+export function totalsLine(report: Pick<Report, "totals" | "totals_roots">): string | undefined {
+  const n = report.totals_roots;
+  if (n === undefined || n === 0) return undefined;
+  const t = report.totals;
+  const parts = [`${t.create + t.replace} to add`, `${t.update} to change`, `${t.delete + t.replace} to destroy`];
+  if (t.forget > 0) parts.push(`${t.forget} to forget`);
+  return `${parts.join(", ")} across ${plural(n, "root")}`;
+}
 const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
 const codePoints = (s: string): number => [...s].length;
 
@@ -289,6 +304,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   const parts = [plural(report.groups.length, "group"), plural(destroys, "destroy or replacement", "destroys or replacements")];
   if (refused > 0) parts.push(`${refused} refused`);
   head.push(`${plural(report.units, unitWord)}: ${parts.join(", ")}. ${full}`, "");
+  const total = totalsLine(report);
+  if (total) head.push(total, "");
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
   for (const n of options.notices ?? []) head.push(`> ${n}`, "");
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");

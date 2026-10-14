@@ -29,6 +29,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `unit`, `units` | what the groups count: `member` or `instance`, and how many |
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
+| `totals_roots` | how many roots `totals` counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, a root planned on its upstream's planned outputs included, and no root the policy denied. The note's total line reads `3 to add, 2 to change, 0 to destroy across 3 roots` from the two (minor 35) |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
 | `waves[]` | one entry per wave; [its fields](#waves) are below |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
@@ -122,6 +123,8 @@ Every `index.json` in the bucket is `terragucci.report-index/v1` (JSON Schema `d
 | `overridden` | roots the policy denied that a recorded override let through; absent when none |
 | `destroys`, `destroys_total` | up to 50 destroys and replacements, and how many there are when the row lists fewer |
 | `commit_url`, `pull_request`, `pull_request_url`, `job_url`, `trace_url` | links |
+
+In the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view)'s `run.json`, each wave that planned carries `waves[].totals` and `waves[].totals_roots`, counted the same way over the wave's roots, so a page can show each wave's total while it applies. The job that plans the whole wave writes them; a share's or a group's job does not.
 
 From those rows and each project's newest run view, [`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, schema `terragucci.estate/v1` (`dist/estate.schema.json`):
 
