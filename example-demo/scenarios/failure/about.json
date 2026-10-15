@@ -1,0 +1,5 @@
+{
+  "changes": "Network's port goes from 8080 to 9090, and app gains a migration that fails.",
+  "watch": "Wave 2 fails partway while wave 1 stays as it landed. The driver clears the fault and comments /terragucci apply. The re-run holds until someone approves replacing the migration, and only then lands.",
+  "shows": "Nothing here is atomic. A failure leaves in place what already landed, and a second run completes the change."
+}
