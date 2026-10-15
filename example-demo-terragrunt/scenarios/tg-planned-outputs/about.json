@@ -1,5 +1,5 @@
 {
-  "changes": "Terragrunt, a tool that runs many Terraform units as one, keeps each unit's record of what it built in a state of its own. One pull request (a proposed change, waiting for review) adds two units. Ledger sets up a storage bucket and passes its name on as an output, a value other units can read. The other new unit, billing, reads that name.",
-  "watch": "Nothing in ledger is built yet, so Terragrunt alone would plan billing (work out what it will change) with a stand-in name written for that case. Here billing gets the real name, taken from ledger's plan. Wave 2 (the second group of units to apply) plans billing again after the merge and compares the result with what the pull request showed.",
-  "shows": "Billing's plan used the values ledger went on to build, so the review showed what billing would get. The pipeline checked that plan again before the apply and said what it found."
+  "changes": "A pull request (a change up for review) adds two Terragrunt units: ledger makes a bucket, and billing reads its name.",
+  "watch": "Ledger isn't built yet, so Terragrunt alone would plan billing (work out its changes) with a stand-in name. Here billing plans on the name from ledger's plan. Wave 2 (the second units to apply) checks it after merging.",
+  "shows": "The review showed what billing would get, and the pipeline checked that plan again before the apply."
 }

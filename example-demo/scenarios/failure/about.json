@@ -1,5 +1,5 @@
 {
-  "changes": "The network state (the record of what Terraform built for the network) changes its port from 8080 to 9090. The app state gains a database migration that fails.",
-  "watch": "Wave 1 (the first group of states to apply) changes network. App's migration then fails in wave 2 (the states that read from wave 1), and network stays changed. The driver (the script running this demo) clears the fault and runs the pipeline again. The re-run has to replace the failed migration. That destroys something, so it asks a person first. With that approval the change finishes.",
+  "changes": "A pull request (a change up for review) moves network's port to 9090 and gives app a database migration that fails.",
+  "watch": "Wave 1, the first states to apply, changes network. App's migration fails in wave 2; network stays changed. The driver (this demo's script) clears the fault, and the re-run asks a person before replacing the migration.",
   "shows": "A failure doesn't undo what already landed. The pipeline shows where it stopped, and a second run completes the change."
 }
