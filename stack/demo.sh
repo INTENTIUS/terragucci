@@ -324,8 +324,9 @@ say() { # step
     a-known:applying)       echo "Wave 1 applies network, then wave 2 app and wave 3 edge, each in its own state; nothing is destroyed, so no wave waits" ;;
     a-output:pull-request)  echo "Pull request $PULL: the same 8080 -> 9090, but network's output reads terraform_data.http_proxy_port.output, which is unknown until it applies" ;;
     a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
-    a-output:applying)      echo "Wave 1 applies network; app and edge plan again on what it applied and apply with no approval, so their new values apply unreviewed" ;;
-    a-output:applied)       echo "Applied: $(applied_values). app's and edge's values applied unreviewed: no review showed them" ;;
+    a-output:applying)      echo "Wave 1 applies network; app and edge read its output before it was known, so each plans again on what was applied before it and waits for an approval of that plan" ;;
+    a-output:approved)      echo "Wave $WAVE approved by the driver with its key, not by the pull request's review: no review showed the values it now applies" ;;
+    a-output:applied)       echo "Applied: $(applied_values). app's and edge's values applied after the driver's approvals, not the pull request's review: no review showed them" ;;
     b-waves:pull-request)   echo "Pull request $PULL: network adds a subnet, and app adds four resources placed in it by reading its id" ;;
     b-waves:planned)        echo "One plan note: network creates its subnet, and app's four new resources plan as known after apply, since the subnet's id is unknown until network applies: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
     b-waves:applying)       echo "Wave 1 applies network and creates the subnet; app's wave 2 then plans again on the id wave 1 applied" ;;
@@ -457,6 +458,7 @@ default_waiting() {
 waiting_label() {
   case "$SCENARIO:$WAVE" in
     b-composed:1) echo "Wave 1 waits for an approval of the composed run: app reads network's subnet id, unknown at plan time and computed in this apply, so no review showed the values app gets. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves the composed run's digest" ;;
+    a-output:*)   echo "Wave $WAVE waits for an approval: it read an output that was unknown when the change was reviewed, and nobody reviewed the plan it made once that output applied. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
     b-waves:2)    echo "Wave 2 waits for an approval: app read network's subnet id before it was known, and nobody reviewed the plan app made after wave 1. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
     failure:2)    echo "Wave 2 waits for an approval: the failed migration is tainted, so the re-run replaces it, and gate: on-destructive holds a replace" ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
@@ -469,7 +471,9 @@ default_refused() { fail "wave ${WAVE:-?} refused its plan ($RUN_URL)"; }
 
 # ── the scenarios ────────────────────────────────────────────────────────────
 
-# 1 and 2: open, plan, merge, follow. No wave waits under gate: on-destructive.
+# 1 and 2: open, plan, merge, follow. In 1 no wave waits under gate: on-destructive;
+# in 2 app's and edge's waves read an output unknown at review, so each waits
+# for the driver's approval (#1012).
 scenario_a() {
   open_pull
   demo_hold planned "$(say planned)" "merge pull request $PULL"
