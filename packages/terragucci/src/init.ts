@@ -41,6 +41,7 @@ import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { migrationFiles } from "./migrate";
+import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
 import { ATMOS_VERSION } from "./atmos";
@@ -371,6 +372,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
+  // terragucci.components.json at the repo's root: the roots as chant components by wave, under the jobs that apply them, for behold.
+  // Its waves are the pipeline's: a plain repo's cut by waves.canary, a Terragrunt, Atmos or Terramate repo's layers as the shape cut them.
+  const componentsPath = join(repo, COMPONENTS_PATH);
+  if (existsSync(componentsPath) && !options.force && !componentsWrittenByTerragucci(readFileSync(componentsPath, "utf-8"))) {
+    throw new ConfigError(`${COMPONENTS_PATH} exists and terragucci did not write it; move it aside or pass --force`);
+  }
   // A rollout, review or ephemeral workflow an earlier init wrote goes when the config stops asking for it.
   for (const rel of [rolloutRel, reviewRel, ephemeralRel]) {
     if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
@@ -465,6 +472,15 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.waves?.canary?.length && terragrunt) {
     notes.push("waves.canary is set; the canary units' layers apply first, then the layers of the rest, each wave behind its gate");
   }
+
+  // Last in the list, after every file the pipeline needs.
+  const components = componentsDecl({
+    waves: tgMode || atmos || terramate ? layers : applyWaves(layers, settings.waves?.canary),
+    order: found.order,
+    ...(atmos ? { dirOf: (r: string) => shape.sourceOf(r) } : {}),
+    pipeline: { path: pipeline.path, forge: forgeChoice.value, applyJobs: pipeline.applyJobs },
+  });
+  files.push(plan(componentsPath, componentsJson(components)));
 
   if (!options.dryRun) {
     for (const f of files) {

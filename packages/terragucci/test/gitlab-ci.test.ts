@@ -80,17 +80,17 @@ describe("init on GitLab", () => {
     const dir = gitlabRepo({ ".gitlab-ci.yml": own });
     const r = await init(dir, { binary: "tofu" });
     expect(r.forge.value).toBe("gitlab");
-    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"]]);
+    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"], ["terragucci.components.json", "created"]]);
     expect(readFileSync(join(dir, ".gitlab-ci.yml"), "utf-8")).toBe(`include:\n${ENTRY}\n\n${own}`);
     expect(readFileSync(join(dir, ".gitlab/terragucci.yml"), "utf-8").startsWith(MARKER)).toBe(true);
-    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
   });
 
   it("moves a pipeline terragucci wrote into .gitlab-ci.yml before into the included file", async () => {
     const dir = gitlabRepo();
     write(dir, { ".gitlab-ci.yml": `${MARKER}\nstages:\n  - check\n` });
     const r = await init(dir, { binary: "tofu" });
-    expect(r.files.map((f) => f.status)).toEqual(["created", "updated"]);
+    expect(r.files.map((f) => f.status)).toEqual(["created", "updated", "created"]);
     expect(parseYAML(readFileSync(join(dir, ".gitlab-ci.yml"), "utf-8"))).toEqual({ include: [{ local: ".gitlab/terragucci.yml" }] });
   });
 

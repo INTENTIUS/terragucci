@@ -130,7 +130,7 @@ describe("reconcile", () => {
     const bare = bareFrom(write(twoRootRepo(), { ".gitlab-ci.yml": own }));
     const config = validateConfig({ defaults: { binary: "tofu" }, projects: { "gitlab.example.com/platform/network": { url: bare } } }, "t");
     const out = await reconcile(config, { mode: "apply", fetch: recordingFetch().fetch, env });
-    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"]]);
+    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"], ["terragucci.components.json", "created"]]);
     expect(git(bare, "show", `${BRANCH}:.gitlab-ci.yml`)).toBe(`include:\n  - local: .gitlab/terragucci.yml\n\n${own}`);
     git(bare, "update-ref", "refs/heads/main", `refs/heads/${BRANCH}`);
     const again = recordingFetch();
