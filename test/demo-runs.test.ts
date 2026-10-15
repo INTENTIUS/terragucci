@@ -21,6 +21,7 @@ import {
   type Job,
   keptIds,
   mapStatus,
+  parseRepos,
   parseSteps,
   readMarks,
   runKeys,
@@ -437,6 +438,99 @@ describe("scripts/demo-runs.ts with DEMO_RUNS_PRUNE_KEEP", () => {
       // Runs 900..871 are past the newest 100; 871 is still running.
       expect(deleted).toEqual(Array.from({ length: 29 }, (_, i) => 872 + i));
       expect(stderr).toContain("runs: deleted 29 ended runs of admin/demo in Forgejo past the newest 100");
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("the repos to copy", () => {
+  it("reads one repo and its tool a line, each repo once, and falls back to DEMO_RUNS_REPO as terraform", () => {
+    expect(parseRepos("admin/demo terraform\nadmin/demo-terragrunt terragrunt\n\nadmin/demo terragrunt\n")).toEqual([
+      { repo: "admin/demo", tool: "terraform" },
+      { repo: "admin/demo-terragrunt", tool: "terragrunt" },
+    ]);
+    expect(parseRepos(undefined, "admin/demo")).toEqual([{ repo: "admin/demo", tool: "terraform" }]);
+    expect(parseRepos("", "admin/demo", "terragrunt")).toEqual([{ repo: "admin/demo", tool: "terragrunt" }]);
+    expect(parseRepos("  \n", undefined)).toEqual([]);
+  });
+
+  it("buildRun names the run's repo and tool, and null for both when it is not told", () => {
+    const run = json<ForgeRun>("run-443.json");
+    const { doc, entry } = buildRun(run, [], undefined, { repo: "admin/demo-terragrunt", tool: "terragrunt" });
+    expect(doc).toMatchObject({ repo: "admin/demo-terragrunt", tool: "terragrunt" });
+    expect(entry).toMatchObject({ repo: "admin/demo-terragrunt", tool: "terragrunt" });
+    expect(buildRun(run, [], undefined).entry).toMatchObject({ repo: null, tool: null });
+  });
+});
+
+// Two repos into one index: each run read from its own repo, with its repo and tool.
+describe("scripts/demo-runs.ts with DEMO_RUNS_REPOS", () => {
+  it("copies the runs of every repo into one index, newest first, each with its repo and tool", async () => {
+    const base = json<ForgeRun>("run-443.json");
+    const lists: Record<string, ForgeRun[]> = {
+      "admin/demo": [{ ...base, id: 501, prettyref: "main" }, { ...base, id: 503, prettyref: "main" }],
+      "admin/demo-terragrunt": [{ ...base, id: 502, prettyref: "main" }],
+    };
+    const bucket = new Map<string, string>();
+    const asked: string[] = [];
+    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      const url = new URL(req.url ?? "/", "http://x");
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const send = (code: number, out: string) => {
+          res.writeHead(code);
+          res.end(out);
+        };
+        const m = /^\/api\/v1\/repos\/(admin\/[\w-]+)(\/.*)$/.exec(url.pathname);
+        if (m) {
+          const [, repo, p] = m;
+          const runs = lists[repo] ?? [];
+          asked.push(`${repo}${p}`);
+          if (p === "/actions/runs") return send(200, JSON.stringify({ workflow_runs: runs }));
+          const r = /^\/actions\/runs\/(\d+)(\/jobs)?$/.exec(p);
+          const found = r && runs.find((x) => x.id === Number(r[1]));
+          if (!found) return send(404, "");
+          return send(200, r?.[2] ? "[]" : JSON.stringify(found));
+        }
+        if (url.searchParams.get("list-type") === "2") return send(200, "<ListBucketResult></ListBucketResult>");
+        if (req.method === "PUT") bucket.set(url.pathname.replace(/^\/demo-reports\//, ""), body);
+        send(200, "");
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    const state = mkdtempSync(join(tmpdir(), "demo-runs-repos-"));
+    try {
+      await new Promise<void>((resolve, reject) =>
+        execFile(
+          join(root, "node_modules", ".bin", "tsx"),
+          [join(root, "scripts", "demo-runs.ts")],
+          {
+            env: {
+              PATH: process.env.PATH ?? "",
+              DEMO_RUNS_FORGE_URL: `http://127.0.0.1:${port}`,
+              DEMO_RUNS_TOKEN: "sekrit",
+              DEMO_RUNS_REPOS: "admin/demo terraform\nadmin/demo-terragrunt terragrunt",
+              DEMO_RUNS_BUCKET_URL: `http://127.0.0.1:${port}/demo-reports`,
+              DEMO_RUNS_PREFIX: "demo",
+              DEMO_RUNS_STATE: state,
+            },
+          },
+          (err, _out, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve()),
+        ),
+      );
+      const index = JSON.parse(bucket.get("demo/runs/index.json") ?? "{}") as IndexDoc;
+      expect(index.runs.map((r) => [r.id, r.repo, r.tool])).toEqual([
+        [503, "admin/demo", "terraform"],
+        [502, "admin/demo-terragrunt", "terragrunt"],
+        [501, "admin/demo", "terraform"],
+      ]);
+      expect((JSON.parse(bucket.get("demo/runs/502.json") ?? "{}") as RunDoc).repo).toBe("admin/demo-terragrunt");
+      // Each run's detail came from its own repo.
+      expect(asked).toContain("admin/demo-terragrunt/actions/runs/502");
+      expect(asked).not.toContain("admin/demo/actions/runs/502");
     } finally {
       server.close();
     }

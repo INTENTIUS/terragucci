@@ -1,6 +1,6 @@
 // The demo's pipeline runs as the reports bucket holds them for behold's kiosk:
 // <prefix>/runs/index.json (schema demo.runs/v1) and <prefix>/runs/<id>.json
-// (schema demo.run/v1). Pure functions over what Forgejo's API returns; the
+// (schema demo.run/v1), each run with the repo it is of and the tool it shows. Pure functions over what Forgejo's API returns; the
 // fetching and the uploads are in scripts/demo-runs.ts, which stack/demo.sh calls.
 
 export const KEEP = 30;
@@ -71,6 +71,9 @@ export interface RunDoc {
   title: string;
   event: string;
   trigger: Trigger;
+  /** The forge repo the run is of ("<admin>/demo"), and the tool its scenarios show; null for a run copied before they were kept. */
+  repo: string | null;
+  tool: string | null;
   commit: string;
   pull: number | null;
   cycle: number | null;
@@ -87,6 +90,9 @@ export interface IndexEntry {
   title: string;
   event: string;
   trigger: Trigger;
+  /** The forge repo the run is of ("<admin>/demo"), and the tool its scenarios show; null for a run copied before they were kept. */
+  repo: string | null;
+  tool: string | null;
   ref: string | null;
   commit: string;
   pull: number | null;
@@ -451,7 +457,31 @@ export function defaultTrigger(event: string): Trigger {
   return "push";
 }
 
-export function buildRun(run: ForgeRun, jobs: Job[], mark: Mark | undefined): { doc: RunDoc; entry: IndexEntry } {
+/** A repo the copy reads, and the tool its scenarios show. */
+export interface DemoRepo {
+  repo: string;
+  tool: string;
+}
+
+/**
+ * The repos to copy: DEMO_RUNS_REPOS, one "<repo> <tool>" a line, or else the
+ * one DEMO_RUNS_REPO, whose tool is DEMO_RUNS_TOOL (terraform when unset).
+ * A repo named twice is read once, with its first tool.
+ */
+export function parseRepos(lines: string | undefined, repo?: string, tool?: string): DemoRepo[] {
+  const out: DemoRepo[] = [];
+  const add = (r: string, t: string) => {
+    if (r && !out.some((x) => x.repo === r)) out.push({ repo: r, tool: t || "terraform" });
+  };
+  for (const line of (lines ?? "").split("\n")) {
+    const [r, t] = line.trim().split(/\s+/);
+    if (r) add(r, t ?? "");
+  }
+  if (out.length === 0 && repo) add(repo, tool ?? "");
+  return out;
+}
+
+export function buildRun(run: ForgeRun, jobs: Job[], mark: Mark | undefined, where?: DemoRepo): { doc: RunDoc; entry: IndexEntry } {
   const pr = /^#(\d+)$/.exec(run.prettyref ?? "");
   const pull = mark?.pull ?? (pr ? Number(pr[1]) : null);
   const ref = mark?.ref ?? (run.prettyref && !pr ? run.prettyref : null);
@@ -461,6 +491,8 @@ export function buildRun(run: ForgeRun, jobs: Job[], mark: Mark | undefined): { 
     title: run.title,
     event: run.event,
     trigger: mark?.trigger ?? defaultTrigger(run.event),
+    repo: where?.repo ?? null,
+    tool: where?.tool ?? null,
     commit: run.commit_sha,
     pull,
     cycle: mark?.cycle ?? null,

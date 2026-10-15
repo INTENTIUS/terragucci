@@ -1,18 +1,22 @@
-// Copy the demo repo's pipeline runs from Forgejo into the reports bucket, for
+// Copy the demo repos' pipeline runs from Forgejo into the reports bucket, for
 // behold's kiosk: <prefix>/runs/index.json and <prefix>/runs/<id>.json (the
 // formats are in scripts/demo-runs-lib.ts). stack/demo.sh runs it every few
 // seconds while it waits on a run, and once each run ends. It keeps the newest
-// 30 runs and deletes the objects of older ones.
+// 30 runs of all the repos together (Forgejo numbers runs across repos, so the
+// ids never meet) and deletes the objects of older ones. Each run carries the
+// repo it is of and the tool that repo's scenarios show.
 //
 // Everything comes from the environment the driver sets:
-//   DEMO_RUNS_FORGE_URL, DEMO_RUNS_TOKEN, DEMO_RUNS_REPO   Forgejo and the demo repo
+//   DEMO_RUNS_FORGE_URL, DEMO_RUNS_TOKEN                   Forgejo, and a token that reads every repo
+//   DEMO_RUNS_REPOS                                        the repos, one "<repo> <tool>" a line; or else
+//   DEMO_RUNS_REPO, DEMO_RUNS_TOOL                         one repo, and its tool (terraform when unset)
 //   DEMO_RUNS_BUCKET_URL, DEMO_RUNS_PREFIX                 the reports bucket's URL in floci, and the prefix
 //   DEMO_RUNS_STATE                                        a directory: marks.jsonl (the driver's), cache.json,
 //                                                         and workflows/ (each run commit's workflow file, for step names)
 //   DEMO_RUNS_CYCLE, DEMO_RUNS_SCENARIO, DEMO_RUNS_CYCLE_STARTED
 //                                                         the driver's cycle, to place runs it did not mark
 //   DEMO_RUNS_DROP                                         more strings no line written may hold, one a line
-//   DEMO_RUNS_PRUNE_KEEP                                   when set, after the copy: delete the demo repo's runs in
+//   DEMO_RUNS_PRUNE_KEEP                                   when set, after the copy: delete each repo's runs in
 //                                                         Forgejo past the newest this many (at least 50) that have
 //                                                         ended, at most 50 at a time, and print how many
 //
@@ -29,12 +33,14 @@ import {
   FORGE_KEEP_MIN,
   forgeRunsToDelete,
   type ForgeJob,
+  type DemoRepo,
   type ForgeRun,
   type IndexEntry,
   type Job,
   KEEP,
   keptIds,
   type Mark,
+  parseRepos,
   readMarks,
   type WorkflowStep,
   workflowSteps,
@@ -50,7 +56,8 @@ const env = (k: string, def?: string): string => {
 
 const forge = env("DEMO_RUNS_FORGE_URL").replace(/\/+$/, "");
 const token = env("DEMO_RUNS_TOKEN");
-const repo = env("DEMO_RUNS_REPO");
+const repos = parseRepos(process.env.DEMO_RUNS_REPOS, process.env.DEMO_RUNS_REPO, process.env.DEMO_RUNS_TOOL);
+if (repos.length === 0) throw new Error("DEMO_RUNS_REPOS (or DEMO_RUNS_REPO) is not set");
 const bucket = env("DEMO_RUNS_BUCKET_URL").replace(/\/+$/, "");
 const prefix = env("DEMO_RUNS_PREFIX", "demo");
 const state = env("DEMO_RUNS_STATE");
@@ -69,7 +76,7 @@ setTimeout(() => {
 const TIMEOUT = 10_000;
 const auth = { Authorization: `token ${token}` };
 
-async function forgeGet(path: string): Promise<Response> {
+async function forgeGet(repo: string, path: string): Promise<Response> {
   const res = await fetch(`${forge}/api/v1/repos/${repo}${path}`, { headers: auth, signal: AbortSignal.timeout(TIMEOUT) });
   if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
   return res;
@@ -97,9 +104,12 @@ interface Cached {
   entry: IndexEntry;
 }
 interface Cache {
+  /** The cache's shape: 2 since each entry carries its repo and tool; an older cache is dropped. */
+  version?: number;
   runs: Record<string, Cached>;
   index: string;
 }
+const CACHE_VERSION = 2;
 
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 
@@ -118,7 +128,7 @@ function writeAtomic(p: string, text: string): void {
 
 // The workflow file at a commit, kept under <state>/workflows/ once read: it
 // names the steps the log's markers leave out. Null when it can't be read.
-async function workflowAt(sha: string, file: string): Promise<Map<string, WorkflowStep[]> | null> {
+async function workflowAt(repo: string, sha: string, file: string): Promise<Map<string, WorkflowStep[]> | null> {
   if (!/^[0-9a-f]{7,64}$/.test(sha) || !/^[\w.-]+\.ya?ml$/.test(file)) return null;
   const dir = join(state, "workflows");
   const path = join(dir, `${sha}-${file}`);
@@ -140,23 +150,24 @@ async function workflowAt(sha: string, file: string): Promise<Map<string, Workfl
   return workflowSteps(text);
 }
 
-async function exportRun(run: ForgeRun, mark: Mark | undefined): Promise<{ doc: string; entry: IndexEntry; body: string }> {
-  const detail = (await (await forgeGet(`/actions/runs/${run.id}`)).json()) as ForgeRun;
-  const workflow = await workflowAt(detail.commit_sha, detail.workflow_id || "terragucci.yml");
-  const forgeJobs = (await (await forgeGet(`/actions/runs/${run.id}/jobs`)).json()) as ForgeJob[] | null;
+async function exportRun(run: ForgeRun, where: DemoRepo, mark: Mark | undefined): Promise<{ doc: string; entry: IndexEntry; body: string }> {
+  const repo = where.repo;
+  const detail = (await (await forgeGet(repo, `/actions/runs/${run.id}`)).json()) as ForgeRun;
+  const workflow = await workflowAt(repo, detail.commit_sha, detail.workflow_id || "terragucci.yml");
+  const forgeJobs = (await (await forgeGet(repo, `/actions/runs/${run.id}/jobs`)).json()) as ForgeJob[] | null;
   const jobs: Job[] = [];
   for (const j of forgeJobs ?? []) {
     let log: string | null = null;
     if (j.task_id) {
       try {
-        log = await (await forgeGet(`/actions/jobs/${j.id}/logs`)).text();
+        log = await (await forgeGet(repo, `/actions/jobs/${j.id}/logs`)).text();
       } catch {
         log = null; // a job with no log yet
       }
     }
     jobs.push(buildJob(j, log, drop, workflow?.get(j.name) ?? null));
   }
-  const { doc, entry } = buildRun(detail, jobs, mark);
+  const { doc, entry } = buildRun(detail, jobs, mark, where);
   const body = JSON.stringify(doc);
   return { doc: hash(doc), entry, body };
 }
@@ -167,14 +178,23 @@ async function main(): Promise<void> {
   const cachePath = join(state, "cache.json");
   let cache: Cache = { runs: {}, index: "" };
   try {
-    cache = { runs: {}, index: "", ...(JSON.parse(readText(cachePath)) as Partial<Cache>) };
+    const read = { runs: {}, index: "", ...(JSON.parse(readText(cachePath)) as Partial<Cache>) };
+    if (read.version === CACHE_VERSION) cache = read;
   } catch {
     // no cache yet, or a torn one: every run is written again
   }
 
-  const listed = ((await (await forgeGet("/actions/runs?page=1&limit=50")).json()) as { workflow_runs?: ForgeRun[] })
-    .workflow_runs ?? [];
-  const byId = new Map(listed.map((r) => [r.id, r]));
+  // Each repo's newest 50, together.
+  const byId = new Map<number, ForgeRun>();
+  const repoOf = new Map<number, DemoRepo>();
+  for (const where of repos) {
+    const listed = ((await (await forgeGet(where.repo, "/actions/runs?page=1&limit=50")).json()) as { workflow_runs?: ForgeRun[] })
+      .workflow_runs ?? [];
+    for (const r of listed) {
+      byId.set(r.id, r);
+      repoOf.set(r.id, where);
+    }
+  }
   const kept = keptIds([...byId.keys()]);
 
   // Runs the driver did not mark take its cycle when it first sees them, if
@@ -200,7 +220,7 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      const out = await exportRun(run, mark);
+      const out = await exportRun(run, repoOf.get(id) as DemoRepo, mark);
       if (!was || was.doc !== out.doc) await put(`runs/${id}.json`, out.body);
       cache.runs[id] = { forge: run.status, mark: markHash, doc: out.doc, entry: out.entry };
       entries.push(out.entry);
@@ -236,19 +256,19 @@ async function main(): Promise<void> {
       console.error(`runs: could not delete run ${id}: ${(e as Error).message}`);
     }
   }
-  writeAtomic(cachePath, JSON.stringify(cache));
+  writeAtomic(cachePath, JSON.stringify({ ...cache, version: CACHE_VERSION }));
   if (failed) console.error(`runs: ${failed} of ${kept.length} runs not written this time`);
 
   const pruneKeep = Number(process.env.DEMO_RUNS_PRUNE_KEEP || 0);
-  if (pruneKeep > 0) await pruneForge(pruneKeep);
+  if (pruneKeep > 0) for (const where of repos) await pruneForge(where.repo, pruneKeep);
 }
 
 // Every run Forgejo lists for the repo, page by page, newest first. A page
 // that adds no run it has not seen ends the list.
-async function allRuns(): Promise<ForgeRun[]> {
+async function allRuns(repo: string): Promise<ForgeRun[]> {
   const out = new Map<number, ForgeRun>();
   for (let page = 1; page <= 200; page++) {
-    const runs = ((await (await forgeGet(`/actions/runs?page=${page}&limit=50`)).json()) as { workflow_runs?: ForgeRun[] })
+    const runs = ((await (await forgeGet(repo, `/actions/runs?page=${page}&limit=50`)).json()) as { workflow_runs?: ForgeRun[] })
       .workflow_runs ?? [];
     const before = out.size;
     for (const r of runs) out.set(r.id, r);
@@ -259,8 +279,8 @@ async function allRuns(): Promise<ForgeRun[]> {
 
 // Delete the runs past the newest `keep` that have ended (forgeRunsToDelete),
 // so Forgejo's database does not grow with the loop.
-async function pruneForge(keep: number): Promise<void> {
-  const ids = forgeRunsToDelete(await allRuns(), keep);
+async function pruneForge(repo: string, keep: number): Promise<void> {
+  const ids = forgeRunsToDelete(await allRuns(repo), keep);
   let deleted = 0;
   for (const id of ids) {
     try {
