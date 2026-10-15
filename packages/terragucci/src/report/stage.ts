@@ -1843,10 +1843,12 @@ function mergePlanned(parts: Awaited<ReturnType<typeof planUnits>>[]): Awaited<R
  * `waves.after` puts after one, followed through. Undefined, so every root
  * plans, when git cannot diff the range.
  */
-export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void, after?: WavesAfter, outside: OutsideRoots = {}): Set<string> | undefined {
-  const diff = spawnSync("git", ["-C", repo, "diff", "--name-only", "--no-renames", "--relative", `${base}...HEAD`], { encoding: "utf-8" });
+export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void, after?: WavesAfter, outside: OutsideRoots = {}, direct = false): Set<string> | undefined {
+  // direct: base is HEAD's parent (an apply), so the change is the diff between the two, which a shallow checkout can take.
+  const range = direct ? [base, "HEAD"] : [`${base}...HEAD`];
+  const diff = spawnSync("git", ["-C", repo, "diff", "--name-only", "--no-renames", "--relative", ...range], { encoding: "utf-8" });
   if (diff.status !== 0) {
-    log(`every root: affected selection failed (git diff ${base}...HEAD: ${(diff.stderr || "").trim().split("\n")[0]})`);
+    log(`every root: affected selection failed (git diff ${range.join(" ")}: ${(diff.stderr || "").trim().split("\n")[0]})`);
     return undefined;
   }
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
