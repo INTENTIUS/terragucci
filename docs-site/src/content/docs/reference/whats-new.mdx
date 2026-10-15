@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.13
-description: "terragucci 0.4.13, released 2026-10-15."
+title: Changes in 0.4.14
+description: "terragucci 0.4.14, released 2026-10-15."
 ---
 
-Release `0.4.13` is on npm as `@intentius/terragucci@0.4.13`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.13) lists every change.
+Release `0.4.14` is on npm as `@intentius/terragucci@0.4.14`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.14) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.13 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.14 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.14
+
+- The demo driver runs the reset during the last step's hold and polls every second, and each reset deletes the demo repo's old finished Forgejo runs beyond the newest 100 (#1047).
 
 ## In 0.4.13
 
