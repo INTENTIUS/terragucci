@@ -58,7 +58,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/dev/platform"
+              "root": "live/dev/platform",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -75,7 +76,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/dev/email"
+              "root": "live/dev/email",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -92,7 +94,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/dev/orders"
+              "root": "live/dev/orders",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -109,7 +112,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/dev/payments"
+              "root": "live/dev/payments",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -126,7 +130,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/dev/search"
+              "root": "live/dev/search",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -146,7 +151,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/prod/platform"
+              "root": "live/prod/platform",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -166,7 +172,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/staging/platform"
+              "root": "live/staging/platform",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -184,7 +191,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/prod/email"
+              "root": "live/prod/email",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -202,7 +210,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/prod/orders"
+              "root": "live/prod/orders",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -220,7 +229,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/prod/payments"
+              "root": "live/prod/payments",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -238,7 +248,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/staging/email"
+              "root": "live/staging/email",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -256,7 +267,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/staging/orders"
+              "root": "live/staging/orders",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -274,7 +286,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/staging/payments"
+              "root": "live/staging/payments",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -292,7 +305,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/staging/search"
+              "root": "live/staging/search",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }
@@ -316,7 +330,8 @@
           "steps": [
             {
               "kind": "terraform-apply",
-              "root": "live/prod/search"
+              "root": "live/prod/search",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
             }
           ]
         }

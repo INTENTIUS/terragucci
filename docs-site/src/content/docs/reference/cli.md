@@ -89,7 +89,7 @@ The approval mode decides what else `init` writes.
 | `schema` | `terragucci.components/v1` |
 | `generated_by` | `terragucci` and the release that wrote it |
 | `roots` | each root by name, as reports and waves name it, with `dir`, its directory in the repo; an Atmos instance's `dir` is its component's |
-| `components` | one per root: `name`, `dependsOn`, and `deploy`, one `Apply` phase with a `terraform-apply` step for the root |
+| `components` | one per root: `name`, `dependsOn`, and `deploy`, one `Apply` phase with a `terraform-apply` step for the root. The step's `noRollback` says why it has no rollback: the pipeline applies the root, a failed wave leaves what applied, and a re-run finishes it |
 | `pipeline.path`, `pipeline.forge` | the pipeline file and its forge |
 | `pipeline.jobs` | each job that applies roots, named as in the pipeline, with its `needs`, its `wave`, and `applies`, the roots it applies |
 

@@ -13,6 +13,8 @@
  *   layer into terragucci's waves, as when `waves.canary` reorders them, each
  *   root in wave k also depends on every root in wave k-1, so chant's wave
  *   grouping equals terragucci's waves.
+ *   Each root's one step, `terraform-apply`, carries `noRollback`: terragucci
+ *   has no rollback, and chant's lint refuses a mutating step without one.
  * - `pipeline.jobs`: the jobs that apply roots, named as the rendered workflow
  *   names them (render.ts `applyJobs`).
  */
@@ -23,12 +25,14 @@ import type { PipelineApplyJob } from "./render";
 export const COMPONENTS_PATH = "terragucci.components.json";
 export const COMPONENTS_SCHEMA = "terragucci.components/v1";
 const GENERATED_BY = "terragucci";
+/** Each terraform-apply step's opt-out of a rollback, which chant's lint (COMP003) asks of a mutating step with none. */
+export const NO_ROLLBACK = "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it";
 
 export interface ComponentsDecl {
   schema: typeof COMPONENTS_SCHEMA;
   generated_by: string;
   roots: Record<string, { dir: string }>;
-  components: { name: string; dependsOn: string[]; deploy: { phase: "Apply"; steps: { kind: "terraform-apply"; root: string }[] }[] }[];
+  components: { name: string; dependsOn: string[]; deploy: { phase: "Apply"; steps: { kind: "terraform-apply"; root: string; noRollback: string }[] }[] }[];
   pipeline: { path: string; forge: ForgeName; jobs: PipelineApplyJob[] };
 }
 
@@ -79,7 +83,7 @@ export function componentsDecl(input: ComponentsDeclInput): ComponentsDecl {
     schema: COMPONENTS_SCHEMA,
     generated_by: `${GENERATED_BY} ${VERSION}`,
     roots: Object.fromEntries(roots.map((r) => [r, { dir: dirOf(r) }])),
-    components: roots.map((r) => ({ name: r, dependsOn: [...deps.get(r)!].sort(), deploy: [{ phase: "Apply" as const, steps: [{ kind: "terraform-apply" as const, root: r }] }] })),
+    components: roots.map((r) => ({ name: r, dependsOn: [...deps.get(r)!].sort(), deploy: [{ phase: "Apply" as const, steps: [{ kind: "terraform-apply" as const, root: r, noRollback: NO_ROLLBACK }] }] })),
     pipeline: { path: input.pipeline.path, forge: input.pipeline.forge, jobs: input.pipeline.applyJobs },
   };
 }

@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { opWaveShare } from "@intentius/chant/op";
 import { resolveComponentGraph } from "@intentius/chant/components";
+import { comp003MutatingNoRollbackRule } from "@intentius/chant/lint/rules/comp/comp003-mutating-no-rollback";
+import { terraformApplyCapability } from "@intentius/chant-lexicon-terraform/components/capability-plugin";
 import { applyWaves } from "../src/apply";
-import { COMPONENTS_PATH, componentsDecl, componentsWrittenByTerragucci, type ComponentsDecl } from "../src/components-decl";
+import { COMPONENTS_PATH, NO_ROLLBACK, componentsDecl, componentsWrittenByTerragucci, type ComponentsDecl } from "../src/components-decl";
 import type { ForgeName, ProjectSettings } from "../src/config";
 import { applyGroups } from "../src/groups";
 import { withEnvironmentRoles } from "../src/environments";
@@ -152,6 +154,21 @@ describe("terragucci.components.json", () => {
     expect(decl.pipeline.jobs.map((j) => j.name)).toEqual(applyKeys(rendered.content, "github"));
     expect(decl.pipeline.jobs.map((j) => [j.name, j.applies])).toEqual([["apply-wave-1", []], ["apply-wave-1-share-1", ["live/a", "live/b"]], ["apply-wave-1-share-2", ["live/c"]], ["apply-rest", []]]);
     expect(chantWaves(decl)).toEqual(layers);
+  });
+
+  it("each step carries noRollback, so chant's lint (COMP003) passes the components, and refuses them without it", async () => {
+    const dir = demoRepo();
+    const r = await init(dir, { dryRun: true });
+    const decl = JSON.parse(r.files.find((f) => f.path === join(dir, COMPONENTS_PATH))!.content) as ComponentsDecl;
+    for (const c of decl.components) expect(c.deploy).toEqual([{ phase: "Apply", steps: [{ kind: "terraform-apply", root: c.name, noRollback: NO_ROLLBACK }] }]);
+    // terraform-apply's own disposition, from the terraform lexicon that registers it.
+    const policy = terraformApplyCapability.rollbackPolicy;
+    expect(policy).toBe("needs-opt-out");
+    const lint = (components: ComponentsDecl["components"]) =>
+      comp003MutatingNoRollbackRule.check({ components: new Map(components.map((c) => [c.name, { component: c as never, filePath: COMPONENTS_PATH }])), rollbackPolicies: new Map([["terraform-apply", policy!]]) });
+    expect(lint(decl.components)).toEqual([]);
+    const bare = decl.components.map((c) => ({ ...c, deploy: c.deploy.map((p) => ({ ...p, steps: p.steps.map(({ noRollback: _, ...s }) => s) })) }));
+    expect(lint(bare as never)).toHaveLength(decl.components.length);
   });
 
   it("shares cut as chant's opWaveShare cuts them", () => {
