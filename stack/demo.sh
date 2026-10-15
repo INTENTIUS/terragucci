@@ -79,11 +79,18 @@ RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may ta
 if [ "$CMD" = up ]; then
   # The pipeline runs in terragucci's CI image. Before an image is published,
   # build it into the local daemon, where the runner finds it without pulling.
+  # The tag names the version, not the commit, so a checkout that moved within
+  # one version would keep running the images of an older commit: they are
+  # built again whenever the checkout's commit differs from the one they came from.
   ref="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
-  if ! docker image inspect "$ref" >/dev/null 2>&1; then
-    log "building the CI images (a few minutes the first time)…"
+  built_from="$HERE/.state/ci-images.commit"
+  head="$(git -C "$HERE/.." rev-parse HEAD)"
+  if ! docker image inspect "$ref" >/dev/null 2>&1 || [ "$(cat "$built_from" 2>/dev/null || true)" != "$head" ]; then
+    log "building the CI images at ${head:0:8} (a few minutes the first time)…"
     (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null && npx tsx scripts/images.ts build >/dev/null 2>&1) \
       || fail "the CI images did not build; run 'just images' to see why"
+    mkdir -p "$HERE/.state"
+    echo "$head" > "$built_from"
   fi
   log "starting Forgejo, its runner and floci (a minute or two the first time)…"
   boot_log="$(mktemp)"
