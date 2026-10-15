@@ -1,14 +1,20 @@
 ---
-title: Changes in 0.4.12
-description: "terragucci 0.4.12, released 2026-10-14."
+title: Changes in 0.4.13
+description: "terragucci 0.4.13, released 2026-10-15."
 ---
 
-Release `0.4.12` is on npm as `@intentius/terragucci@0.4.12`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.12) lists every change.
+Release `0.4.13` is on npm as `@intentius/terragucci@0.4.13`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.13) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.12 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.13 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.13
+
+- An approval counts only from someone who had no hand in the change: the pull request's author, its commits' authors and committers, the people who asked an agent for the change, and the agent's account, which `agent.login` names; `approval.require_signed: true` refuses unsigned ledger approvals (#1044).
+- `terragucci init` writes `terragucci.components.json`, which lists each root as a chant component, grouped by wave under the job that applies it (#1043).
+- Each demo scenario's card text is in its `about.json`, the demo driver writes it into `demo.json`, and `just lint-docs` lints it (#1041).
 
 ## In 0.4.12
 
