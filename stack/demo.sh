@@ -160,7 +160,27 @@ RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may ta
 FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
 POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
 
+# up fails loudly: any command that fails, in up or a function it calls,
+# prints its file, line, function and command, and any non-zero exit prints
+# bootstrap's output, which up otherwise keeps in a file. A driver that died
+# with 141 and printed nothing (behold#571) now says where.
+UP_BOOT_LOG=""
+UP_BOOT_SHOWN=""
+up_err() { # status, file, line, functions, command
+  log "FAIL: exit $1 at stack/$2:$3 (in ${4:-main}): $5"
+}
+up_exit() {
+  local s=$?
+  [ -z "${WORK:-}" ] || rm -rf "$WORK"
+  if [ "$s" != 0 ] && [ -n "$UP_BOOT_LOG" ] && [ -z "$UP_BOOT_SHOWN" ] && [ -s "$UP_BOOT_LOG" ]; then
+    log "up exited $s; bootstrap's output, from $UP_BOOT_LOG:"
+    cat "$UP_BOOT_LOG" >&2
+  fi
+}
 if [ "$CMD" = up ]; then
+  set -E
+  trap 'up_err "$?" "${BASH_SOURCE[0]##*/}" "$LINENO" "${FUNCNAME[*]-}" "$BASH_COMMAND"' ERR
+  trap up_exit EXIT
   # The pipeline runs in terragucci's CI image. Before an image is published,
   # build it into the local daemon, where the runner finds it without pulling.
   # The tag names the version, not the commit, so a checkout that moved within
@@ -183,11 +203,11 @@ if [ "$CMD" = up ]; then
     echo "$head" > "$built_from"
   fi
   log "starting Forgejo, its runner and floci (a minute or two the first time)…"
-  boot_log="$(mktemp)"
-  if ! "$HERE/bootstrap.sh" forgejo >"$boot_log" 2>&1; then
-    cat "$boot_log" >&2; rm -f "$boot_log"; fail "the stack did not start"
+  mkdir -p "$HERE/.state"
+  UP_BOOT_LOG="$HERE/.state/demo-up-bootstrap.log"
+  if ! "$HERE/bootstrap.sh" forgejo >"$UP_BOOT_LOG" 2>&1; then
+    cat "$UP_BOOT_LOG" >&2; UP_BOOT_SHOWN=1; fail "the stack did not start"
   fi
-  rm -f "$boot_log"
 fi
 
 # shellcheck source=lib.sh
@@ -237,7 +257,7 @@ tree_keys() { # dir, tool, [root.hcl]
         [ -z "$key" ] || { root="${f#"$dir"/}"; echo "${root%/*} $key"; }
       done | sort -u ;;
     terragrunt)
-      template="$(sed -n 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${3:-$dir/root.hcl}" 2>/dev/null | head -1)"
+      template="$(sed -n 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${3:-$dir/root.hcl}" 2>/dev/null | awk 'NR == 1')"
       [ -n "$template" ] || return 0
       (cd "$dir" && find . -name terragrunt.hcl -not -path '*/.terragrunt-cache/*' -not -path './scenarios/*' | sed 's#^\./##; s#/terragrunt.hcl$##' | sort) \
         | while read -r root; do echo "$root ${template//\$\{path_relative_to_include()\}/$root}"; done ;;
@@ -245,12 +265,16 @@ tree_keys() { # dir, tool, [root.hcl]
 }
 
 # The state bucket a tree's roots name: the first bucket in a backend or remote_state.
+# It returns on the first bucket rather than piping every file's into head -1:
+# under pipefail, head exiting after one line killed the loop still writing the
+# next file's bucket with SIGPIPE, and up died with 141 (behold#571).
 tree_bucket() { # dir
-  local f
+  local f b
   for f in "$1"/root.hcl "$1"/*/*.tf; do
     [ -f "$f" ] || continue
-    awk '/backend "s3"|remote_state/ { b = 1 } b && /^[[:space:]]*bucket[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f"
-  done | head -1
+    b="$(awk '/backend "s3"|remote_state/ { b = 1 } b && /^[[:space:]]*bucket[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f")"
+    [ -z "$b" ] || { echo "$b"; return 0; }
+  done
 }
 
 # Point the driver at a tool's repo: REPO, its remotes, its example tree, the
@@ -315,7 +339,7 @@ CHANT="$HERE/../node_modules/.bin/chant"
 TERRAGUCCI="$HERE/../node_modules/.bin/terragucci"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-demo.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+if [ "$CMD" = up ]; then trap up_exit EXIT; else trap 'rm -rf "$WORK"' EXIT; fi
 
 now() { date +%s; }
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
@@ -592,15 +616,15 @@ run_outcome() {
   logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
   # A wave whose plans moved after their approval (apply.ts) prints the approve
   # line too, so the refusal is read first.
-  if line="$(grep -oE 'wave [0-9]+ changed after it was approved' <<<"$logs" | head -1)" && [ -n "$line" ]; then
-    OUTCOME=refused; WAVE="$(grep -oE '[0-9]+' <<<"$line" | head -1)"; return 0
+  if line="$(grep -oE 'wave [0-9]+ changed after it was approved' <<<"$logs" | awk 'NR == 1')" && [ -n "$line" ]; then
+    OUTCOME=refused; WAVE="$(grep -oE '[0-9]+' <<<"$line" | awk 'NR == 1')"; return 0
   fi
-  if line="$(grep -oE 'terragucci approve wave-[0-9]+' <<<"$logs" | head -1)" && [ -n "$line" ]; then
+  if line="$(grep -oE 'terragucci approve wave-[0-9]+' <<<"$logs" | awk 'NR == 1')" && [ -n "$line" ]; then
     OUTCOME=waiting; WAVE="${line##*wave-}"; return 0
   fi
   OUTCOME=failed
   job="$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null | jq -r '[.[] | select(.status == "failure") | .name][0] // empty' || true)"
-  WAVE="$(grep -oE 'wave-[0-9]+' <<<"$job" | head -1 | sed 's/wave-//' || true)"
+  WAVE="$(grep -oE 'wave-[0-9]+' <<<"$job" | awk 'NR == 1' | sed 's/wave-//' || true)"
 }
 
 # The reviewer's approval: chant approve as the reviewer's principal, sealed
@@ -907,7 +931,9 @@ stale_waiting() {
 # value applies after the driver's approval, not the pull request's review.
 b_waves_waiting() {
   [ "$WAVE" = 2 ] || fail "wave $WAVE waits, not app's wave 2 ($RUN_URL)"
-  run_logs "$REPO" "$RUN_ID" 2>/dev/null | grep -q 'nobody reviewed the plan it made on those outputs' \
+  local logs
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  grep -q 'nobody reviewed the plan it made on those outputs' <<<"$logs" \
     || fail "wave 2 waits, but its run does not say it read an output unknown at review ($RUN_URL)"
   default_waiting
 }
@@ -938,8 +964,8 @@ COMPOSED="network, app and edge"
 b_composed_planned() {
   local logs line roots
   logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
-  if ! line="$(grep -oE 'compose: [^ ].* plan as one composed run in wave [0-9]+' <<<"$logs" | head -1)" || [ -z "$line" ]; then
-    line="$(grep -oE 'compose: .*, so the change applies in waves' <<<"$logs" | head -1 || true)"
+  if ! line="$(grep -oE 'compose: [^ ].* plan as one composed run in wave [0-9]+' <<<"$logs" | awk 'NR == 1')" || [ -z "$line" ]; then
+    line="$(grep -oE 'compose: .*, so the change applies in waves' <<<"$logs" | awk 'NR == 1' || true)"
     fail "the pull request's plan did not compose: ${line:-its run does not say} ($RUN_URL)"
   fi
   roots="${line#compose: }"
@@ -990,7 +1016,9 @@ tg_mock() {
 }
 
 tg_planned() {
-  run_logs "$REPO" "$RUN_ID" 2>/dev/null | grep -qF "$TG_READER: plans on the planned outputs of $TG_UPSTREAM" \
+  local logs
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  grep -qF "$TG_READER: plans on the planned outputs of $TG_UPSTREAM" <<<"$logs" \
     || fail "the pull request's plan did not plan $TG_READER on the planned outputs of $TG_UPSTREAM ($RUN_URL)"
 }
 
@@ -1002,7 +1030,7 @@ tg_compared() {
   if grep -qF "$TG_READER plans as pull request $PULL previewed it" <<<"$logs"; then
     TG_COMPARED=matched
   elif grep -qF "plans differently now:" <<<"$logs"; then
-    TG_COMPARED="$(grep -F ":   $TG_READER: " <<<"$logs" | head -1 | sed "s#^.*:   $TG_READER: #$TG_READER: #")"
+    TG_COMPARED="$(grep -F ":   $TG_READER: " <<<"$logs" | awk 'NR == 1' | sed "s#^.*:   $TG_READER: #$TG_READER: #")"
     [ -n "$TG_COMPARED" ] || TG_COMPARED="$TG_READER plans differently"
   else
     fail "wave 2 did not compare its plan of $TG_READER with pull request $PULL's ($RUN_URL)"
@@ -1263,7 +1291,9 @@ loop_ready() {
   [ -f "$RSTATE/base.sha" ] || fail "no base snapshot of $REPO; run 'just demo up' first"
   # A base pushed before the driver played two people names the driver's key
   # in .chant/allowed_signers, so the reviewer's seal would not verify.
-  git -C "$RSTATE/base-tree" show "$(cat "$RSTATE/base.sha"):.chant/allowed_signers" 2>/dev/null | grep -q "^$REVIEWER " \
+  local signers
+  signers="$(git -C "$RSTATE/base-tree" show "$(cat "$RSTATE/base.sha"):.chant/allowed_signers" 2>/dev/null || true)"
+  grep -q "^$REVIEWER " <<<"$signers" \
     || fail "the base of $REPO: .chant/allowed_signers does not name $REVIEWER; run 'just demo up' again"
   people_join
 }
