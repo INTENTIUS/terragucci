@@ -348,9 +348,10 @@ runner_online() {
 }
 
 # A config written before the runner carried the AWS environment, or with
-# another capacity, is replaced.
+# another capacity or fetch interval, is replaced.
 if "${COMPOSE[@]}" exec -T forgejo-runner grep -q AWS_ENDPOINT_URL /data/config.yml 2>/dev/null \
   && "${COMPOSE[@]}" exec -T forgejo-runner grep -qx "  capacity: ${RUNNER_CAPACITY}" /data/config.yml 2>/dev/null \
+  && "${COMPOSE[@]}" exec -T forgejo-runner grep -qx "  fetch_interval: 1s" /data/config.yml 2>/dev/null \
   && runner_online; then
   log "the runner is already registered and online"
 else
@@ -377,7 +378,9 @@ runner:
   capacity: ${RUNNER_CAPACITY}
   timeout: 30m
   shutdown_timeout: 0s
-  fetch_interval: 2s
+  # How often the runner asks for a job: a job waits up to this long after
+  # Forgejo queues it, and the demo's cycle waits on several in a row.
+  fetch_interval: 1s
   report_interval: 1s
   envs:
     # Read by the install steps and by tofu itself.

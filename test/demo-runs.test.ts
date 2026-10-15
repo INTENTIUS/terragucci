@@ -13,8 +13,10 @@ import {
   buildIndex,
   buildJob,
   buildRun,
+  FORGE_DELETE_MAX,
   type ForgeJob,
   type ForgeRun,
+  forgeRunsToDelete,
   type IndexDoc,
   type Job,
   keptIds,
@@ -233,6 +235,19 @@ describe("keeping 30", () => {
     expect(runKeys(xml, "demo")).toEqual([12]);
   });
 
+  it("deletes in Forgejo only ended runs past the newest kept, oldest first, a few at a time", () => {
+    const runs = Array.from({ length: 120 }, (_, i) => ({ id: 1 + i, status: "success" }));
+    runs[4].status = "running"; // run 5: old, but in progress
+    runs[5].status = "waiting"; // run 6: queued
+    runs[6].status = "failure"; // run 7: a wave held at the gate, ended
+    const ids = forgeRunsToDelete(runs, 100);
+    expect(ids).toEqual([1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    // Never fewer kept than the copy lists, and never more than FORGE_DELETE_MAX at once.
+    expect(forgeRunsToDelete(runs, 10)).toHaveLength(FORGE_DELETE_MAX);
+    expect(Math.max(...forgeRunsToDelete(runs, 10))).toBeLessThanOrEqual(70);
+    expect(forgeRunsToDelete(runs.slice(0, 50), 10)).toEqual([]);
+  });
+
   it("orders the index newest first", () => {
     const idx = buildIndex([1, 3, 2].map((id) => ({ id }) as never), new Date("2026-10-15T04:00:00.123Z"));
     expect(idx.runs.map((r) => r.id)).toEqual([3, 2, 1]);
@@ -349,6 +364,79 @@ describe("scripts/demo-runs.ts", () => {
       await run();
       expect(seen.filter((s) => s.startsWith("PUT")).sort()).toEqual(["PUT /demo-reports/demo/runs/444.json", "PUT /demo-reports/demo/runs/index.json"]);
       expect((JSON.parse(bucket.get("demo/runs/444.json") ?? "{}") as RunDoc).trigger).toBe("merge");
+    } finally {
+      server.close();
+    }
+  });
+});
+
+// The prune a reset asks for (DEMO_RUNS_PRUNE_KEEP), against a stand-in Forgejo
+// that pages its runs as Forgejo does.
+describe("scripts/demo-runs.ts with DEMO_RUNS_PRUNE_KEEP", () => {
+  it("deletes the ended runs past the newest kept, and never one in progress", async () => {
+    const base = json<ForgeRun>("run-443.json");
+    const listed: ForgeRun[] = Array.from({ length: 130 }, (_, i) => ({ ...base, id: 1000 - i, prettyref: "main", status: "success" }));
+    // The oldest run is still running.
+    listed[listed.length - 1].status = "running";
+    const deleted: number[] = [];
+    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      const url = new URL(req.url ?? "/", "http://x");
+      req.resume();
+      req.on("end", () => {
+        const send = (code: number, out: string) => {
+          res.writeHead(code);
+          res.end(out);
+        };
+        const api = "/api/v1/repos/admin/demo";
+        if (url.pathname.startsWith(api)) {
+          if (req.headers.authorization !== "token sekrit") return send(401, "");
+          const p = url.pathname.slice(api.length);
+          const live = listed.filter((r) => !deleted.includes(r.id));
+          if (p === "/actions/runs") {
+            const page = Number(url.searchParams.get("page") ?? 1);
+            const limit = Number(url.searchParams.get("limit") ?? 50);
+            return send(200, JSON.stringify({ workflow_runs: live.slice((page - 1) * limit, page * limit), total_count: live.length }));
+          }
+          let m = /^\/actions\/runs\/(\d+)$/.exec(p);
+          if (m && req.method === "DELETE") {
+            deleted.push(Number(m[1]));
+            return send(204, "");
+          }
+          if (m) return send(200, JSON.stringify(live.find((r) => r.id === Number(m?.[1]))));
+          m = /^\/actions\/runs\/(\d+)\/jobs$/.exec(p);
+          if (m) return send(200, "[]");
+          return send(404, "");
+        }
+        if (url.searchParams.get("list-type") === "2") return send(200, "<ListBucketResult></ListBucketResult>");
+        send(200, "");
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    const state = mkdtempSync(join(tmpdir(), "demo-runs-prune-"));
+    try {
+      const stderr = await new Promise<string>((resolve, reject) =>
+        execFile(
+          join(root, "node_modules", ".bin", "tsx"),
+          [join(root, "scripts", "demo-runs.ts")],
+          {
+            env: {
+              PATH: process.env.PATH ?? "",
+              DEMO_RUNS_FORGE_URL: `http://127.0.0.1:${port}`,
+              DEMO_RUNS_TOKEN: "sekrit",
+              DEMO_RUNS_REPO: "admin/demo",
+              DEMO_RUNS_BUCKET_URL: `http://127.0.0.1:${port}/demo-reports`,
+              DEMO_RUNS_PREFIX: "demo",
+              DEMO_RUNS_STATE: state,
+              DEMO_RUNS_PRUNE_KEEP: "100",
+            },
+          },
+          (err, _out, err2) => (err ? reject(new Error(`${err.message}\n${err2}`)) : resolve(err2)),
+        ),
+      );
+      // Runs 900..871 are past the newest 100; 871 is still running.
+      expect(deleted).toEqual(Array.from({ length: 29 }, (_, i) => 872 + i));
+      expect(stderr).toContain("runs: deleted 29 ended runs of admin/demo in Forgejo past the newest 100");
     } finally {
       server.close();
     }

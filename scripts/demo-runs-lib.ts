@@ -488,6 +488,27 @@ export function keptIds(ids: number[], keep = KEEP): number[] {
   return [...new Set(ids)].sort((a, b) => b - a).slice(0, keep);
 }
 
+/** The fewest runs Forgejo keeps when the driver prunes it: the newest 50 are the ones the copy lists. */
+export const FORGE_KEEP_MIN = 50;
+/** At most this many runs are deleted in one export, so a long backlog never holds up a reset. */
+export const FORGE_DELETE_MAX = 50;
+/** Forgejo's statuses of a run that has ended. A run waiting, blocked, running or unknown has not. */
+export const FORGE_ENDED: ReadonlySet<string> = new Set(["success", "failure", "cancelled", "skipped"]);
+
+/**
+ * The Forgejo runs to delete, oldest first: those past the newest `keep`
+ * (never fewer than FORGE_KEEP_MIN) that have ended, at most FORGE_DELETE_MAX.
+ * A run still in progress is never one, however old.
+ */
+export function forgeRunsToDelete(runs: Pick<ForgeRun, "id" | "status">[], keep: number): number[] {
+  const byId = new Map(runs.map((r) => [r.id, r.status]));
+  const older = [...byId.keys()].sort((a, b) => b - a).slice(Math.max(keep, FORGE_KEEP_MIN));
+  return older
+    .filter((id) => FORGE_ENDED.has(byId.get(id) ?? ""))
+    .sort((a, b) => a - b)
+    .slice(0, FORGE_DELETE_MAX);
+}
+
 /** The run objects in the bucket to delete: every one not kept. */
 export function toPrune(stored: number[], kept: number[]): number[] {
   const k = new Set(kept);
