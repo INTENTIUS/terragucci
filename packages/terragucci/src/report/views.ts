@@ -13,7 +13,7 @@ import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
-import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportStep, type ReportWave } from "./schema";
+import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -326,6 +326,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   }
 
   const blocks: NoteBlock[] = [];
+  const composed = composeBlock(report, (root) => to(code(root), rootAnchor(root)));
+  if (composed) blocks.push({ kind: "line", units: 0, text: composed + "\n" });
   const named = report.named;
   if (named.length > 0) {
     blocks.push({ kind: "line", units: 0, text: `**Destroys, replacements, refusals, imports and forgets (${named.length}):**\n\n` });
@@ -375,15 +377,18 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const when = again
         ? `${again}${w.waits ? "waits for an approval of that plan" : "applies"}`
         : w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
-      const by = w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
-      t += `| ${w.number} | ${w.roots.length} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
+      const unknownBy = w.composed?.held_by_unknown?.length ? w.composed.held_by_unknown : [];
+      const by = w.waits && unknownBy.length
+        ? ` (since ${joinAnd(unknownBy.map(code))} ${unknownBy.length === 1 ? "reads" : "read"} a value unknown at plan time)`
+        : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
+      t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     const previews = notePreviews(report.roots);
     head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })), ...(previews.length ? { previews } : {}) }), "");
   } else if (report.waves.length > 0) {
     let t = `| Wave | Roots |${envHead} Set digest | Approval |\n|---|---|${envRule}---|---|\n`;
-    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} |${envCell(w)} ${w.replans_after?.length ? `none yet: it plans again once wave ${w.replans_after.join(", ")} applies` : w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
+    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.replans_after?.length ? `none yet: it plans again once wave ${w.replans_after.join(", ")} applies` : w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   // A wave planned at its gate, against the preview the pull request's plan note showed of it.
@@ -400,7 +405,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   const linked = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.outputs === "planned").map((x) => ({ root: r.path, ...x })));
   if (linked.length > 0) {
     let t = `**Planned on the planned outputs of another root (${linked.length}):**\n\n`;
-    for (const x of linked) t += `- ${to(code(x.root), rootAnchor(x.root))} reads ${code(x.upstream)}${x.unknown?.length ? `; ${x.unknown.map(code).join(", ")} known once it applies` : ""}\n`;
+    for (const x of linked) t += `- ${to(code(x.root), rootAnchor(x.root))} reads ${code(x.upstream)}${x.composed ? ", in the composed run" : ""}${x.unknown?.length ? `; ${x.unknown.map(code).join(", ")} known once it applies` : ""}\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   const blast = blastLines(report, (root) => to(code(root), rootAnchor(root)));
@@ -514,6 +519,64 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
  * a change to one is made in the stack file or its unit template. Nothing
  * when no unit is generated.
  */
+/** `a`, `a and b`, `a, b and c`. */
+const joinAnd = (xs: readonly string[]): string => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/** A root's counts as the binary's `Plan:` line gives them: a replacement is one to add and one to destroy. */
+function planLineCounts(r: ReportRoot): { add: number; change: number; destroy: number } {
+  const c = r.counts;
+  return { add: (c.create ?? 0) + (c.replace ?? 0), change: c.update ?? 0, destroy: (c.delete ?? 0) + (c.replace ?? 0) };
+}
+
+/**
+ * What `waves.compose` came to, for the note (and the report page): the
+ * composed run, each root's changes under its own name and the values read
+ * before they were known; on a tf-apply wave, what came of each root; or the
+ * one line that says why the change applies in waves.
+ */
+export function composeBlock(report: Report, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
+  const c = report.compose;
+  if (!c) return undefined;
+  if (c.fallback || c.wave === undefined) return `**Applies in waves** (\`waves.compose\`): ${c.fallback?.reason ?? "no wave runs the composed run"}.\n`;
+  const w = report.waves.find((x) => x.number === c.wave && x.composed);
+  if (!w?.composed) return undefined;
+  const members = w.composed.members;
+  const roots = members.map((m) => name(m.root));
+  let t = `**One composed run, in wave ${c.wave}** (\`waves.compose\`): ${joinAnd(roots)} plan as one plan and apply as one apply. Each root keeps its own state: the run locks each state, applies, and writes each state back with what applied to it. If the apply fails part way, what applied stays applied, and wave ${c.wave}'s report names which roots applied and each state as written.\n\n`;
+  t += "| Root | In the run as | To add | To change | To destroy |\n|---|---|---|---|---|\n";
+  for (const m of members) {
+    const r = report.roots.find((x) => x.path === m.root);
+    const n = r ? planLineCounts(r) : undefined;
+    t += `| ${name(m.root)} | ${code(m.module)} | ${n ? n.add : "failed"} | ${n ? n.change : ""} | ${n ? n.destroy : ""} |\n`;
+  }
+  const unknown = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.composed && x.unknown?.length).map((x) => ({ root: r.path, ...x })));
+  if (unknown.length > 0) {
+    t += `\n**Read before they were known (${unknown.length}).** The run applies these after the root that makes them, so no plan shows their values, and the run waits for an approval under any gate but \`never\`:\n\n`;
+    for (const x of unknown) t += `- ${name(x.root)} reads ${x.unknown!.map(code).join(", ")} from ${code(x.upstream)} (\`data.terraform_remote_state.${x.data}\`)\n`;
+  }
+  if (report.run.stage === "tf-apply" && members.some((m) => m.state !== undefined)) {
+    const ok = members.every((m) => (m.apply === "applied" || m.apply === "no-changes") && m.state !== "not-written" && !m.error);
+    t += ok
+      ? "\n**The composed run applied.** Each state was written with what applied to it:\n\n"
+      : "\n**The composed run failed part way.** What applied stays applied, and each state was written with what applied to it:\n\n";
+    t += "| Root | Its changes | State |\n|---|---|---|\n";
+    for (const m of members) {
+      const changes = m.changes ? `${m.apply === "no-changes" ? "no changes" : m.apply}, ${m.changes.done} of ${m.changes.planned}` : (m.apply ?? "not applied");
+      const err = m.error && m.state !== "not-written" ? `: ${m.error.split("\n")[0]!.replaceAll("|", "\\|")}` : "";
+      const version = report.roots.find((x) => x.path === m.root)?.state;
+      const id = version?.version_id ? `, version ${code(version.version_id)}` : "";
+      const state = m.state === "written" ? `written${id}` : m.state === "unchanged" ? "as it was, nothing to write" : `not written: kept at ${m.kept ?? "the job's artifacts"}, ${m.lock_held ? "its lock still held" : "its lock released"}`;
+      t += `| ${name(m.root)} | ${changes}${err} | ${state} |\n`;
+    }
+    if (!ok) {
+      t += `\nRunning the wave again plans what is left against these states.`;
+      if (members.some((m) => m.state === "not-written")) t += " A state the run could not write is written first, before anything plans.";
+      t += "\n";
+    }
+  }
+  return t;
+}
+
 export function explicitStacksLine(report: Report): string | undefined {
   const by = new Map<string, string[]>();
   for (const r of report.roots) {

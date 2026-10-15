@@ -1740,7 +1740,8 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   // pull request's note shows is the one this wave asks approval for when nothing moved. chant takes it over the plans that are not empty.
   const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
-  w.changedRoots = [...changing].sort();
+  // The composed run's target is no root: the run view's blast radius starts at its roots whose part changes something.
+  w.changedRoots = [...changing].flatMap((r) => (r === target && composed ? composed.views.filter((v) => changesSomething(v.plan)).map((v) => v.root) : [r])).sort();
   // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
   const priced = deciding ? costMember(w.waveCost) : undefined;
   const members = [...all.filter((m) => changing.has(m.member)), ...(priced && changing.size > 0 ? [priced] : [])];
