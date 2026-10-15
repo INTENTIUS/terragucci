@@ -55,7 +55,7 @@ export function hclValue(value: unknown, unknown: unknown, unknownRef: string): 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** A reference to the block, not to one whose label starts with it. */
-const refRe = (name: string, flags = "g"): RegExp => new RegExp(`\\bdata\\.terraform_remote_state\\.${escapeRe(name)}(?![\\w-])`, flags);
+export const refRe = (name: string, flags = "g"): RegExp => new RegExp(`\\bdata\\.terraform_remote_state\\.${escapeRe(name)}(?![\\w-])`, flags);
 
 /** The outputs a root's files read from the block: their names, or undefined when it reads the whole object. */
 export function outputsRead(texts: readonly string[], name: string): Set<string> | undefined {
@@ -77,7 +77,7 @@ export function outputsRead(texts: readonly string[], name: string): Set<string>
  * same rewrite applies to its text. The linked file is HCL beside them, which
  * the binary reads with the JSON files.
  */
-function configFiles(dir: string): string[] {
+export function configFiles(dir: string): string[] {
   try {
     return readdirSync(dir)
       .filter((n) => n.endsWith(".tf") || n.endsWith(".tofu") || n.endsWith(".tf.json") || n.endsWith(".tofu.json"))

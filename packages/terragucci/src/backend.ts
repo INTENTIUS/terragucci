@@ -399,6 +399,20 @@ export interface StateStore {
    * the binary writes with `-lock=false` while terragucci holds the lock.
    */
   write?: (body: string) => Promise<void>;
+  /**
+   * The object beside the state whose key is the state's with `suffix` after
+   * it, in the same bucket or container, under the state's own access
+   * controls: read (undefined when there is none) and written. A composed run
+   * keeps a state it could not write there (./compose.ts).
+   */
+  readBeside(suffix: string): Promise<string | undefined>;
+  writeBeside(suffix: string, body: string): Promise<void>;
+  /**
+   * Take over a lock this store finds held, which an earlier run of the same
+   * operation left held on purpose: `unlock` then releases it. A lease
+   * (azurerm) is taken over by its ID, the others need nothing.
+   */
+  adopt(held: HeldLock): void;
 }
 
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
@@ -427,6 +441,9 @@ function s3Store(o: S3State, fetchFn?: S3Fetch): StateStore {
     },
     lock: (info) => client.putIfAbsent(lockKey, info, "application/json"),
     unlock: () => client.remove(lockKey),
+    readBeside: (suffix) => client.get(`${o.key}${suffix}`),
+    writeBeside: async (suffix, body) => void (await client.put(`${o.key}${suffix}`, body, "application/json")),
+    adopt: () => {},
   };
 }
 
@@ -471,6 +488,9 @@ function gcsStore(o: GcsState, fetchFn?: StoreFetch): StateStore {
     },
     lock: (info) => client.putIfAbsent(o.lock, info, "application/json"),
     unlock: () => client.remove(o.lock),
+    readBeside: (suffix) => client.get(`${o.key}${suffix}`),
+    writeBeside: async (suffix, body) => void (await client.put(`${o.key}${suffix}`, body, "application/json")),
+    adopt: () => {},
   };
 }
 
@@ -559,6 +579,11 @@ async function azureStore(o: AzureState, fetchFn: StoreFetch = fetch as unknown 
       if (o.snapshot && (await client.head(o.key)).exists) await client.snapshot(o.key);
       const meta = (await client.head(o.key)).metadata;
       await client.putBlob(o.key, body, "application/json", { leaseId, metadata: meta });
+    },
+    readBeside: (suffix) => client.get(`${o.key}${suffix}`),
+    writeBeside: async (suffix, body) => void (await client.put(`${o.key}${suffix}`, body, "application/json")),
+    adopt: (held) => {
+      leaseId = held.id;
     },
   };
 }

@@ -98,6 +98,61 @@ The wave that applies the reading root plans it again on the outputs its upstrea
 
 A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#later-layers).
 
+## A composed run
+
+A composed run is opt-in, beside the waves: `waves.compose: true` in `terragucci.yml`. Without it nothing here happens. Each root plans and applies in its own run with its own state, in dependency order, and each state matches what applied to it.
+
+With it, the roots a change reaches, and every root they read followed upstream, plan as one plan and apply as one apply of the stock binary (`tofu` or `terraform`). terragucci writes a temporary root, `.terragucci-compose/`, with one module block per root. A value one root reads from another that is known only after apply is then computed in the same apply, after the resources that make it, instead of in a later wave that plans again.
+
+| Step | What the run does |
+|---|---|
+| Lock | takes each root's backend lock the way a [state migration](/terragucci/guides/move-resources-between-roots/) takes it, naming the run in the lock; a lock another run holds stops the wave before anything is pulled |
+| Pull | pulls each root's state and moves it under its module's address in one working state |
+| Plan | plans once: one digest, one approval, one note. A wave that waits or is refused releases the locks and writes nothing |
+| Apply | applies the saved plan once the gate lets it through |
+| Split and write | whether the apply finished or failed, splits the working state back by module and writes each changed state, upstreams first, with the lock held; a root that planned no change, or whose state came back as it was pulled, is not written |
+| Release | releases each lock once its state is written |
+
+Nothing about this is atomic. A failure part way leaves what applied applied, and each state is written with what applied to it. The wave's report and note name which roots applied, which did not, and each state as written. Running the wave again plans what is left against those states.
+
+A write that fails is retried five times over up to five minutes, with the lock still held. A state still not written after that is kept beside the state in the root's own backend, as `<key>.terragucci-unwritten`, under the state's own access controls, and the root's lock stays held, naming the run. The next run of the wave takes that lock over, writes the kept state first, and only then plans. If the backend cannot take the kept copy either, the job keeps it under `terragucci-report/unwritten/` in its artifacts, which never go to the reports bucket.
+
+### The composed root
+
+Each root's `backend` block is cut from its files while it is composed, so the composed root's working state is local. Each `terraform_remote_state` block that reads another root of the run is cut too, and its references point at a variable the composed root fills with that root's module outputs. A read of a root outside the run stays as it is. `import` and `removed` blocks are lifted into the composed root with the module's address in front, and `moved` blocks stay where they are. Provider blocks stay in each root, so two roots that configure one provider for two regions keep two configurations. Each root's `terraform.tfvars`, `*.auto.tfvars` and `-var-file` values become arguments of its module, and a `TF_VAR_` variable in the job's environment still sets the variable it names. Every file goes back as it was when the run ends.
+
+Steps run for each root at the same moments as on a wave. Policy and cost read each root's part of the composed plan as that root's plan, and a denied root refuses the whole run.
+
+One limit nothing detects: a root that finds another root's resources by a lookup with known arguments, rather than by reading its state, reads them when the run plans, before anything applies. On the waves it reads them after the earlier wave applied.
+
+### Approval
+
+The approval binds the composed plan's digest, joined with the digest of each file terragucci generated for it, so an approval of one composition never applies another. The wave's digest covers the composed run as one member, beside any other root of the wave that changes something. That is the digest the plan note shows and the approval names.
+
+A composed run in which a root reads another root's value that is unknown at plan time applies values nobody reviewed, as a [linked root](#linked-roots) that plans again does. So it waits for an approval under `gate: always` and `gate: on-destructive`, and the note names each value that was unknown. Under `gate: never` it applies without one. With only known reads it gates as any wave does. Under `approval: pr-review`, an approving review of the pull request approves the composed digest it saw; a plan that differs at merge has another digest and waits.
+
+### Falling back to waves
+
+The whole change applies in waves, as without the key, and the note says why in one line, when any of these holds. terragucci never composes part of a change.
+
+| Kind | When |
+|---|---|
+| `too-many-roots` | the set has more roots than `waves.compose_max` (10 when unset) |
+| `one-root` | the set is one root |
+| `binary` | its roots run different binaries or versions, or one runs choudoufu |
+| `identity` | its roots run under different roles (`oidc.roles`), or sit in different apply groups: one process has one set of credentials |
+| `workspace` | a root plans in a workspace other than `default` |
+| `backend` | a root's backend is not one whose lock terragucci takes itself (s3 with `use_lockfile`, gcs, azurerm, local), or it has a `cloud` block |
+| `provider-lock` | two roots lock one provider at different versions |
+| `cli-args` | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` carries `-target`, `-exclude`, `-replace` or `-var` |
+| `read` | a root reads another root of the set through a block with `count` or `for_each`, or from a child module |
+| `order-only` | two roots of the set are ordered only by `waves.after`, with no read between them |
+| `import` | an `import` block's `id` is not a literal string |
+| `path` | a root's code uses `path.root` or `path.cwd` |
+| `plan-failed` | the composed plan failed in a pull request; its roots then plan one by one, so the error shows against the root it is in |
+
+The kind and the reason are `compose.fallback` in the [report](/terragucci/reference/report-schema/).
+
 ## The run view
 
 With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply also writes one page for its commit, `<prefix>/<project>/runs/<commit>/run.html`, and its data, `run.json`. It shows the waves left to right with their roots and the roots each reads, and where each wave stands:

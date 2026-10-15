@@ -161,9 +161,16 @@
               "minLength": 1
             }
           }
+        },
+        "compose": {
+          "type": "boolean"
+        },
+        "compose_max": {
+          "type": "integer",
+          "minimum": 2
         }
       },
-      "description": "The canary wave, the jobs one wave spreads across, and extra apply order."
+      "description": "The canary wave, the jobs one wave spreads across, extra apply order, and whether a change's roots apply as one composed run."
     },
     "drift": {
       "anyOf": [
@@ -1810,9 +1817,16 @@
                   "minLength": 1
                 }
               }
+            },
+            "compose": {
+              "type": "boolean"
+            },
+            "compose_max": {
+              "type": "integer",
+              "minimum": 2
             }
           },
-          "description": "The canary wave, the jobs one wave spreads across, and extra apply order."
+          "description": "The canary wave, the jobs one wave spreads across, extra apply order, and whether a change's roots apply as one composed run."
         },
         "drift": {
           "anyOf": [

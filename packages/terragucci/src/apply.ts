@@ -117,10 +117,10 @@ import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import type { ObjectStore } from "./report/object-store";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
+import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportComposedMember, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
-import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
+import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -158,6 +158,9 @@ import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./groups";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
+import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
+import { groupOf } from "./groups";
+import type { WaveComposedInput } from "./report/build";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -935,6 +938,8 @@ export interface ApplyWaveOptions {
   liveness?: Liveness;
   /** The chant executable that runs the wave. Default: the bin of the @intentius/chant installed with terragucci. */
   chant?: string;
+  /** Set by the wave's job with `waves.compose` on: what it comes to for this change (./compose.ts). */
+  composition?: Composition;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it, on `chant run wave`. Returns the exit code; what happened is printed. */
@@ -995,6 +1000,8 @@ interface WaveJob {
   approvedAt?: string;
   /** The migration wave 1 is held on, so a refusal names the roots that moved. */
   migration?: HeldMigration;
+  /** A composed run's: let go of its locks and put its roots' files back, when it planned and did not apply. */
+  release?: () => Promise<void>;
 }
 
 /** A migration wave 1 is held on: its roots, and each one's state as its pending fact names it. */
@@ -1045,17 +1052,23 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       // Each wave finds its units at plan time. With --rest this job's wave is the last of the spec, and goes on through the waves terragrunt find gives.
       specWaves = options.rest ? options.wave : Math.max(options.layers.filter((l) => l.length > 0).length, options.wave);
     } else {
-      const waves = applyWaves(options.layers, options.canary);
+      let waves = applyWaves(options.layers, options.canary);
       if (!waves[options.wave - 1]) {
         jobOf(options.wave).facts.nothing = true;
         console.log(`wave ${options.wave}: this repo has ${waves.length} waves, so there is nothing to apply`);
         return (code = EXIT.applied);
       }
+      // waves.compose: the roots this change reaches run as one target in the earliest wave they are in (./compose.ts).
+      const composition = await waveComposition(repo, options, waves);
+      if (composition) {
+        options = { ...options, composition };
+        waves = wavesWithRun(waves, composition, true);
+      }
       specWaves = waves;
       if (options.groups) {
         // Each group's roots spread across its own shares with waves.jobs, as a wave's do.
         const jobs = options.shares;
-        grouped = rootsByGroup(waves[options.wave - 1]!, options.groups).map((g) => ({ ...g, shares: jobs !== undefined ? shareCount(g.roots, jobs) : 1 }));
+        grouped = groupsWithRun(waves[options.wave - 1]!, options.groups, options.composition).map((g) => ({ ...g, shares: jobs !== undefined ? shareCount(g.roots, jobs) : 1 }));
         if (options.group !== undefined) {
           const at = grouped.findIndex((g) => g.name === options.group);
           const mine = grouped[at];
@@ -1090,7 +1103,8 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     }
     if (rule?.point && rule.mode !== "ledger") throw new ConfigError(`apply.point is set at base and approval is ${rule.mode}; a wave gate that asks a decision point takes its quorum from the point, so set approval to ledger or drop apply.point`);
     // Each wave's gate: the pipeline's --gate, or with `environments` at base the strictest gate of the wave's roots (./environments.ts).
-    const gates = await environmentWaveGates(repo, base, configPath, options, specWaves);
+    // A composed run's wave takes the strictest gate of its own roots and the run's.
+    const gates = await environmentWaveGates(repo, base, configPath, options, options.composition && typeof specWaves !== "number" ? wavesWithRun(applyWaves(options.layers, options.canary), options.composition, false) : specWaves);
     if (typeof specWaves !== "number" && gates[options.wave - 1] !== options.gate) {
       console.log(`wave ${options.wave}: gate ${gates[options.wave - 1]}, the strictest of its roots' environments at base`);
       options = { ...options, gate: gates[options.wave - 1]! };
@@ -1164,6 +1178,8 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     }
     return code;
   } finally {
+    // A composed run that planned and did not apply lets go of its locks.
+    for (const j of jobs.values()) await j.release?.().catch((e: unknown) => console.log(`${j.label}: the composed run's locks were not released: ${(e as Error).message}`));
     for (const k of [...jobs.keys()].sort((a, b) => a - b)) {
       const { w } = jobs.get(k)!;
       const c = k === last ? code : EXIT.applied;
@@ -1227,6 +1243,8 @@ async function waveCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
       if (j.apply || j.w.planned) {
         // The run this wave waited for let go: what it applied may be what these plans were made against, so the wave plans again.
         console.log(`wave ${j.k}: the run it waited for let go; planning again`);
+        await j.release?.();
+        delete j.release;
         const observer = j.w.observer;
         j.w = { observer };
         for (const key of Object.keys(j.facts)) delete (j.facts as Record<string, unknown>)[key];
@@ -1341,6 +1359,8 @@ export interface WaveRun {
   totals?: ReturnType<typeof planTotals>;
   /** The applied record that named each change its apply makes: the apply records how it ended beside it. */
   appliedUnder?: AppliedRecord;
+  /** The composed run this wave carries (./compose.ts), for its row in the report and the run view. */
+  composed?: WaveComposedInput;
 }
 
 /**
@@ -1432,7 +1452,9 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     const reads = options.terragrunt ? (w.units?.edges ?? unitEdges(walkUnits(repo, w.settings?.terragrunt?.exclude))) : rootOrder(repo, options.layers.flat(), detectShape(repo, settings).after);
     // A unit holds the state its remote_state block names, so a read from another project lines up with it on the estate page.
     const states = options.terragrunt ? unitStates(repo, waves.flat()) : rootStates(repo, options.layers.flat());
-    const skeleton = runSkeleton(facts.project, facts.commit, waves, reads, states);
+    // A composed run's roots are drawn in the wave that runs it, each naming the wave it would be in on its own.
+    const c = options.terragrunt ? undefined : options.composition;
+    const skeleton = runSkeleton(facts.project, facts.commit, c ? wavesWithRun(waves, c, false) : waves, reads, states, c?.wave !== undefined && !c.fallback ? c : undefined);
     const spans = waveSpans(w);
     const timing = { ...(spans.length ? { spans } : {}), ...(w.changedRoots ? { changed: w.changedRoots } : {}) };
     const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...timing, ...waveTotals(options, w), ...row });
@@ -1440,6 +1462,20 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
   } catch (e) {
     console.log(`wave ${options.wave}: the run view was not written: ${(e as Error).message}`);
   }
+}
+
+/** A composed run's part of its wave's row in the run view. */
+function runComposed(c: WaveComposedInput | undefined): Partial<RunWave> {
+  if (!c) return {};
+  const done = c.members.some((m) => m.apply !== undefined || m.state !== undefined);
+  return {
+    composed: {
+      roots: c.members.map((m) => m.root),
+      digest: c.planDigest,
+      ...(c.heldByUnknown?.length ? { unknown: c.heldByUnknown } : {}),
+      ...(done ? { members: c.members.map((m) => ({ root: m.root, module: m.module, ...(m.apply ? { apply: m.apply } : {}), ...(m.state ? { state: m.state } : {}) })) } : {}),
+    },
+  };
 }
 
 /**
@@ -1469,12 +1505,16 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
+  // waves.compose: what it came to for this change, on every wave's report.
+  if (options.composition) report.compose = reportCompose(options.composition);
   function planInput(p: (typeof w.planned)[number]): RootInput {
-    const policy = p.policy ? { policy: p.policy } : {};
+    // A root of this wave's composed run names the wave and its module; its plan is its part of the composed plan.
+    const c = options.composition;
+    const policy = { ...(p.policy ? { policy: p.policy } : {}), ...(c?.wave === wave && c.modules.has(p.root) && w.composed ? { composed: { wave, module: `module.${c.modules.get(p.root)}` } } : {}) };
     // A root the policy refused keeps its plan, so the report shows what it would have changed.
     const steps = p.steps?.length ? { steps: p.steps } : {};
     const deps = unitDeps?.get(p.root)?.length ? { dependencies: unitDeps.get(p.root) } : {};
@@ -1511,7 +1551,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     await noteRunView(repo, options, w, w.state === "applied" ? { shares_applied: [w.share] } : { state: w.state });
   } else if (w.state) {
     const cmd = w.state === "waiting" && w.command ? { command: w.command } : {};
-    await noteRunView(repo, options, w, { state: w.state, ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}), ...cmd, ...(w.shareCount ? { shares: w.shareCount } : {}), report: runPath(report) });
+    await noteRunView(repo, options, w, { state: w.state, ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}), ...cmd, ...(w.shareCount ? { shares: w.shareCount } : {}), report: runPath(report), ...runComposed(w.composed) });
   }
   await w.observer.finish(report, env, (l) => console.log(l));
 }
@@ -1605,6 +1645,10 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const { w, facts, k: wave } = j;
   const waves = applyWaves(options.layers, options.canary);
   const roots = runs.runs.map((r) => r.target);
+  // waves.compose: this wave carries the composed run, one target in place of its roots (./compose.ts).
+  const target = options.composition?.wave === wave && roots.includes(composeTarget(wave)) ? composeTarget(wave) : undefined;
+  const own = target ? roots.filter((r) => r !== target) : roots;
+  const covered = target ? [...own, ...options.composition!.order] : roots;
   const share = options.share;
   const group = options.group !== undefined ? `, group ${options.group}` : "";
   const label = (j.label = share !== undefined ? `wave ${wave} of ${waves.length}${group}, share ${share} of ${options.shares}` : `wave ${wave} of ${waves.length}${group}`);
@@ -1612,14 +1656,16 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   else if (share !== undefined) w.share = share;
   if (roots.length === 0) {
     facts.nothing = true;
-    console.log(`${label}: the wave's roots make fewer shares than ${options.shares}, so this one has nothing to apply`);
+    const moved = options.composition?.wave !== undefined && options.composition.wave !== wave && options.shares === undefined;
+    console.log(moved ? `${label}: its roots apply in wave ${options.composition!.wave}'s composed run, so it has nothing to apply` : `${label}: the wave's roots make fewer shares than ${options.shares}, so this one has nothing to apply`);
     writePlans(plansPath, { runs: [] });
     j.apply = async () => EXIT.applied;
     return EXIT.applied;
   }
   facts.roots = roots;
   console.log(`${label}: planning ${roots.join(", ")}`);
-  const linked = waveReads(repo, waves, roots, wave);
+  if (target) console.log(`${label}: ${target} is one composed run of ${options.composition!.order.join(", ")}`);
+  const linked = waveReads(repo, waves, own, wave);
   w.reads = linked.reads;
   w.waveReads = linked.waves;
   logReads(label, linked.reads, waves);
@@ -1630,16 +1676,16 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     return EXIT.failed;
   }
   const settings = (w.settings = read.settings);
-  w.waveReads = afterWaves(repo, settings, options, roots, w.waveReads ?? [], wave);
+  w.waveReads = afterWaves(repo, settings, options, own, w.waveReads ?? [], wave);
   const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
   if ("error" in stepsRead) {
     console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
     return EXIT.failed;
   }
   const ws = stepsRead.ws;
-  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, options.env ?? process.env);
+  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, covered, settings, options.env ?? process.env);
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
-  const planned: PlannedRoot[] = new Array(roots.length);
+  const planned: PlannedRoot[] = new Array(own.length);
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
   const cache = waveCache(work, process.env);
@@ -1649,7 +1695,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   let sourcesOf: SourceChecker | undefined;
   try {
     sourcesOf = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`${label}: ${l}`) });
-    for (const r of sourcesOf ? roots : []) {
+    for (const r of sourcesOf ? covered : []) {
       const refused = await sourcesOf!.before(r);
       if (refused.length) outside.set(r, refused);
     }
@@ -1657,12 +1703,19 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     console.log(`${label}: ${(e as Error).message}, so nothing in it was applied`);
     return EXIT.failed;
   }
-  await eachLimited(roots, limit.value, async (r, i) => {
+  await eachLimited(own, limit.value, async (r, i) => {
     planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined, options.base);
   });
+  // The composed run plans once, its roots' states locked and pulled; the report, the policy and the cost read each root's part.
+  const composed = target ? await planComposedWave(repo, options, { label, target, work, binaries, cache, ws, sourcesOf, outside }, w) : undefined;
+  if (composed) {
+    planned.push(composed.planned);
+    j.release = () => composed.run.release();
+    for (const [r, reads] of composed.reportReads) w.reads!.set(r, reads);
+  }
   w.plannedAt = new Date().toISOString();
-  w.planned = planned;
-  w.roots = roots;
+  w.planned = composed ? [...planned.filter((p) => p.root !== target), ...composed.views] : planned;
+  w.roots = covered;
   const failed = planned.filter((p) => p.error);
   for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
   if (failed.length > 0) {
@@ -1675,17 +1728,20 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const whole = options.shares === undefined && !options.groups;
   const denied = new Map<string, { rules: string[]; reason?: string }>();
   if (deciding) {
-    const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, planned, w);
+    const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, composed ? w.planned : planned, w);
     if (unpriced !== undefined) return unpriced;
-    const checked = await policyCheck(repo, options, ctx, { label, settings }, planned, j);
+    const checked = await policyCheck(repo, options, ctx, { label, settings }, composed ? w.planned : planned, j);
     if (typeof checked === "number") return checked;
     for (const [root, d] of checked) denied.set(root, d);
+    // A denied root of the composed run refuses the whole run, as a denied root refuses its wave.
+    if (composed) foldDenials(denied, options.composition!.roots, target!);
   }
   // The set digest covers the roots whose plan changes something, as a Terragrunt wave's and the plan note's do, so the digest a
   // pull request's note shows is the one this wave asks approval for when nothing moved. chant takes it over the plans that are not empty.
   const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
-  w.changedRoots = [...changing].sort();
+  // The composed run's target is no root: the run view's blast radius starts at its roots whose part changes something.
+  w.changedRoots = [...changing].flatMap((r) => (r === target && composed ? composed.views.filter((v) => changesSomething(v.plan)).map((v) => v.root) : [r])).sort();
   // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
   const priced = deciding ? costMember(w.waveCost) : undefined;
   const members = [...all.filter((m) => changing.has(m.member)), ...(priced && changing.size > 0 ? [priced] : [])];
@@ -1694,11 +1750,13 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const destroys = planned.reduce((n, p) => n + p.destroys, 0);
   console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
   if (changes === 0) facts.nothing = true;
-  const heldBySteps = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
+  const heldBySteps = [...planned.filter((p) => p.holds.length > 0).map((p) => p.root), ...(composed ? [...composed.holds.keys()] : [])].sort();
   for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: step ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
+  for (const [r, h] of composed?.holds ?? []) console.log(`${label}: ${r}: step ${h.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
   // A root that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
-  const linkedReads = deciding && changes > 0 && gate !== "never" ? rootReads(repo, waves, wave, w.reads, changing) : [];
+  // In a composed run, a root that reads another root's value unknown at plan time applies a value nobody reviewed: the same hold.
+  const linkedReads = deciding && changes > 0 && gate !== "never" ? [...rootReads(repo, waves, wave, w.reads, changing), ...(composed?.reads ?? [])] : [];
   const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads)).length > 0;
   // A step that asks for an approval, or a change over cost.approve_above at base, holds the wave whatever the gate policy says.
   const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0 || byReads;
@@ -1715,7 +1773,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     }
     if (changes === 0 && whole && (gate !== "never" || w.waveCost)) closeStopped(repo, label, wave, options.now);
     j.changes = whole ? approvedChanges(plans) : undefined;
-    j.stored = () => storedWaveReport(repo, options, wave, digest, roots, planned);
+    j.stored = () => storedWaveReport(repo, options, wave, digest, composed ? covered : roots, composed ? w.planned! : planned);
   }
   const env = options.env ?? process.env;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
@@ -1744,7 +1802,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     try {
       await eachLimited(applying, limit.value, async (p, i) => {
         await progress?.phase(p.root, "applying");
-        ok[i] = await applyRoot(repo, p, w.observer, ws);
+        ok[i] = p.root === target && composed ? await applyComposedWave(label, composed, w) : await applyRoot(repo, p, w.observer, ws);
         await progress?.phase(p.root, ok[i] ? "applied" : "failed");
       });
     } finally {
@@ -1752,11 +1810,14 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
       await hold.release();
     }
     finishApplied(repo, label, w, ok.includes(false) ? "failed" : "applied", options.now);
-    w.applied = new Set(applying.filter((_, i) => ok[i]).map((p) => p.root));
-    w.states = await recordStateVersions(repo, applying.filter((_, i) => ok[i]), limit.value);
-    w.recordVersions = await listRecordVersions(repo, applying.filter((_, i) => ok[i]), limit.value);
+    // The composed run's target is no root: its roots' outcomes are settled from the run (settleComposed).
+    const appliedRoots = applying.filter((p, i) => ok[i] && p.root !== target);
+    w.applied = new Set(appliedRoots.map((p) => p.root));
+    w.states = await recordStateVersions(repo, appliedRoots, limit.value);
+    w.recordVersions = await listRecordVersions(repo, appliedRoots, limit.value);
+    if (composed?.result) await settleComposed(repo, label, composed, w);
     if (ok.includes(false)) {
-      w.failed = applying.filter((_, i) => !ok[i]).map((p) => p.root);
+      w.failed = [...applying.filter((p, i) => !ok[i] && p.root !== target).map((p) => p.root), ...(composed?.failed ?? [])];
       console.log(`${label}: an apply failed`);
       return (j.code = EXIT.failed);
     }
@@ -1764,6 +1825,222 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     return EXIT.applied;
   };
   return EXIT.applied;
+}
+
+/**
+ * What `waves.compose` comes to for this change, with the config the wave
+ * reads its settings from. Undefined when the key is off (or that config
+ * cannot be read, which the wave's plan then reports). The roots the change
+ * reaches are found from the commit before the one applied, as tf-plan finds
+ * them from its base; with none to diff against, every root counts.
+ */
+async function waveComposition(repo: string, options: ApplyWaveOptions, waves: string[][]): Promise<Composition | undefined> {
+  const configPath = options.config ?? findConfig(repo);
+  const read = await waveSettings(repo, options, configPath).catch(() => undefined);
+  if (!read || "error" in read || read.settings.waves?.compose !== true) return undefined;
+  const settings = read.settings;
+  const env = options.env ?? process.env;
+  const all = options.layers.flat();
+  const after = detectShape(repo, settings).after;
+  let selected: Set<string> | undefined;
+  try {
+    const base = options.base ?? baseCommit(repo);
+    const checkout = resolveRepo(configPath ? await loadConfig(configPath) : {});
+    const outside = await outsideRoots(repo, base, configPath, undefined, checkout, all, env, () => {}, true);
+    selected = affectedRoots(repo, base, all, all, () => {}, after, outside.outside);
+  } catch (e) {
+    console.log(`wave ${options.wave}: compose: the roots this change reaches could not be found (${(e as Error).message.split("\n")[0]}), so every root counts`);
+  }
+  const binaries = new RootBinaries(repo, options.binary, settings.version, env, options.installer);
+  const c = compositionFor(repo, {
+    all,
+    ...(selected ? { selected } : {}),
+    waves,
+    ...(settings.waves?.compose_max !== undefined ? { max: settings.waves.compose_max } : {}),
+    env,
+    binary: (r) => binaries.expected(r),
+    deps: rootDependencies(repo, all),
+    ...(after ? { after } : {}),
+    ...(options.groups ? { groupOf: (r: string) => groupOf(r, options.groups!) } : {}),
+  });
+  console.log(`wave ${options.wave}: ${compositionLine(c)}`);
+  return c;
+}
+
+/** A wave's roots by apply group, the composed run's target in the group its roots are in (they are all in one, or the change would not compose). */
+function groupsWithRun(roots: readonly string[], selectors: Record<string, string[]>, c: Composition | undefined): { name: string; roots: string[] }[] {
+  const target = roots.find(isComposeTarget);
+  if (!target || !c) return rootsByGroup(roots, selectors);
+  const name = groupOf(c.order[0]!, selectors);
+  const groups = rootsByGroup(roots.filter((r) => r !== target), selectors);
+  const at = groups.find((g) => g.name === name);
+  if (at) at.roots.push(target);
+  else groups.push({ name, roots: [target] });
+  return groups;
+}
+
+/** A wave's composed run once planned: its target for chant, each root's part for the report, the policy and the cost, and the run to apply. */
+interface ComposedWave {
+  run: ComposedRun;
+  /** The target as chant takes it: the composed plan, its digest and counts. */
+  planned: PlannedRoot;
+  /** Each root's part of the plan, as the report, the policy and the cost read a root's plan. */
+  views: WavePlan[];
+  /** Each root's reads of another root of the run, for the unknown-read hold. */
+  reads: WaveRead[];
+  reportReads: Map<string, ReportRead[]>;
+  /** The `on_failure: approve` steps that failed, by root. */
+  holds: Map<string, string[]>;
+  plan?: ComposedPlan;
+  result?: ComposedApply;
+  /** The roots whose part did not apply in full, or whose state was not written. */
+  failed?: string[];
+}
+
+/**
+ * Plan the wave's composed run (./compose.ts): each root's lock taken (the
+ * migration's lock, naming the run), its state pulled, one plan made. The
+ * locks stay held until the apply writes each state back, or until the job
+ * ends without applying.
+ */
+async function planComposedWave(
+  repo: string,
+  options: ApplyWaveOptions,
+  at: { label: string; target: string; work: string; binaries: RootBinaries; cache: WaveCache; ws?: WaveSteps; sourcesOf?: SourceChecker; outside: Map<string, string[]> },
+  w: WaveRun,
+): Promise<ComposedWave> {
+  const c = options.composition!;
+  const env = options.env ?? process.env;
+  const timing = w.observer.root(at.target);
+  const first = c.order[0]!;
+  const expected = at.binaries.expected(first);
+  const holds = new Map<string, string[]>();
+  const ran = new Map<string, ReportStep[]>();
+  const base: PlannedRoot = { root: at.target, timing, planFile: join(at.work, "composed.tfplan"), env, changes: 0, destroys: 0, summary: "", binary: at.binaries.binary, bin: expected, steps: [], holds: [] };
+  const module = (r: string): string => `module.${c.modules.get(r)}`;
+  const members = (): ReportComposedMember[] => c.order.map((r) => ({ root: r, module: module(r) }));
+  const failed = (run: ComposedRun, error: string, root?: string): ComposedWave => {
+    w.observer.endRoot(timing);
+    w.composed = { target: at.target, planDigest: null, members: members(), error: `${root ? `${root}: ` : ""}${error.split("\n")[0]}` };
+    return {
+      run,
+      planned: { ...base, error: `the composed run did not plan${root ? ` (${root})` : ""}\n${error}` },
+      views: c.order.map((r) => ({ root: r, bin: expected, error: root === undefined || root === r ? error : `not planned: the composed run failed${root ? ` at ${root}` : ""}` })),
+      reads: [],
+      reportReads: new Map(),
+      holds,
+    };
+  };
+  let resolved: RootBinary;
+  try {
+    resolved = await at.binaries.resolve(first);
+  } catch (e) {
+    return failed(new ComposedRun({ repo, composition: c, binary: { path: at.binaries.binary, name: expected.name }, env, work: at.work, lock: false, hooks: { log: () => {} } }), (e as Error).message, first);
+  }
+  const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
+  const run = new ComposedRun({
+    repo,
+    composition: c,
+    binary: { path: resolved.path, name: resolved.name },
+    env: { ...env, TF_PLUGIN_CACHE_DIR: at.cache.dir },
+    work: mkdtempSync(join(at.work, "compose-")),
+    lock: true,
+    runId: rowHolder(env).run,
+    initTurn: at.cache.initTurn,
+    hooks: {
+      log: (l) => console.log(`${at.label}: ${l}`),
+      step: async (root, when, planFile) => {
+        if (!at.ws || at.ws.steps.length === 0) return undefined;
+        const o = await runSteps(at.ws.steps, when, { repo, root, stage: "tf-apply", env: rootRoleEnv({ ...at.ws.env, TF_PLUGIN_CACHE_DIR: at.cache.dir }, root), ...(planFile ? { planFile } : {}), log: (l) => console.log(l) });
+        ran.set(root, [...(ran.get(root) ?? []), ...o.runs]);
+        if (o.holds.length) holds.set(root, [...(holds.get(root) ?? []), ...o.holds]);
+        return o.error;
+      },
+      afterInit: async (root, renv) => {
+        if (!at.sourcesOf) return undefined;
+        try {
+          const fetched = await at.sourcesOf.afterInit(root, repo, renv);
+          return fetched.length ? `refused by sources after init, so it was not planned\n${fetched.join("\n")}` : undefined;
+        } catch (e) {
+          return (e as Error).message;
+        }
+      },
+    },
+  });
+  const refused = c.order.find((r) => at.outside.get(r)?.length);
+  if (refused) return failed(run, `refused by sources, so it was not initialised\n${at.outside.get(refused)!.join("\n")}`, refused);
+  const plan = await run.plan();
+  if (plan.error) {
+    await run.release();
+    return failed(run, plan.error, plan.root);
+  }
+  w.observer.endRoot(timing);
+  const planner = plannerForBinary(resolved.name);
+  const views: WavePlan[] = c.order.map((r) => {
+    const slice = plan.slices.get(r);
+    const part = terraformChangeSetPart({ member: r, plan: slice, planner });
+    return { root: r, plan: slice, member: { member: r, planDigest: part.member.planDigest ?? "" }, bin, steps: ran.get(r) ?? [] };
+  });
+  const reads: WaveRead[] = c.order.flatMap((r) =>
+    (c.reads.get(r) ?? []).map((b): WaveRead => {
+      const outputs = rootOutputsRead(join(repo, r), b.name);
+      return { root: r, upstream: b.upstream, wave: c.wave!, ...(outputs ? { outputs } : {}) };
+    }),
+  );
+  console.log(`${at.label}: ${at.target}: ${plan.summary} across ${c.order.length} roots, composed digest ${plan.digest}`);
+  for (const r of c.order) console.log(`${at.label}: ${r} (${module(r)}): ${plan.texts.get(r)?.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
+  for (const u of plan.unknown) console.log(`${at.label}: ${u} reads ${(plan.reads.get(u) ?? []).filter((x) => x.unknown?.length).map((x) => `${x.unknown!.join(", ")} of ${x.upstream}`).join("; ")}, unknown at plan time and computed in this apply`);
+  w.composed = { target: at.target, planDigest: plan.digest || null, plan: plan.plan, members: members(), ...(plan.unknown.length ? { heldByUnknown: plan.unknown } : {}) };
+  return {
+    run,
+    planned: { ...base, binary: resolved.path, bin, member: { member: at.target, planDigest: plan.digest }, plan: plan.plan, planFile: plan.planFile, changes: plan.changes, destroys: plan.destroys, summary: plan.summary },
+    views,
+    reads,
+    reportReads: plan.reads,
+    holds,
+    plan,
+  };
+}
+
+/** A denied root of a composed run: the run's target carries the denial, its rules joined, since chant decides the run as one. */
+function foldDenials(denied: Map<string, { rules: string[]; reason?: string }>, roots: readonly string[], target: string): void {
+  const inRun = roots.filter((r) => denied.has(r));
+  if (inRun.length === 0) return;
+  const rules = [...new Set(inRun.flatMap((r) => denied.get(r)!.rules))].sort();
+  const reason = inRun.map((r) => `${r}: ${denied.get(r)!.reason ?? "denied"}`).join("; ");
+  for (const r of inRun) denied.delete(r);
+  denied.set(target, { rules, reason });
+}
+
+/** Apply the wave's composed run, and say what came of each root. True when every root's part applied and every state was written. */
+async function applyComposedWave(label: string, composed: ComposedWave, w: WaveRun): Promise<boolean> {
+  let result: ComposedApply;
+  try {
+    result = await composed.run.apply();
+  } finally {
+    await composed.run.release();
+  }
+  composed.result = result;
+  for (const m of result.members) {
+    const changes = m.changes ? `, ${m.changes.done} of ${m.changes.planned} changes` : "";
+    console.log(`${label}: ${m.root} (${m.module}): ${m.apply ?? "not applied"}${changes}; its state ${m.state === "written" ? "written" : m.state === "unchanged" ? "as it was" : `not written, kept at ${m.kept}, its lock still held`}${m.error ? `: ${m.error}` : ""}`);
+  }
+  if (!result.ok) console.log(`FAILED ${composed.planned.root}: ${result.error ?? "the composed run failed"}; what applied stays applied, and each state was written with what applied to it`);
+  if (w.composed) w.composed = { ...w.composed, members: result.members, ...(result.error ? { error: result.error } : {}) };
+  return result.ok;
+}
+
+/** The composed run's roots in the wave's record: those applied in full, each settled state's version, and those that did not apply in full. */
+async function settleComposed(repo: string, label: string, composed: ComposedWave, w: WaveRun): Promise<void> {
+  const r = composed.result!;
+  const whole = r.members.filter((m) => (m.apply === "applied" || m.apply === "no-changes") && m.state !== "not-written" && !m.error).map((m) => m.root);
+  w.applied ??= new Set();
+  for (const root of whole) w.applied.add(root);
+  w.states ??= new Map();
+  for (const root of r.settled) w.states.set(root, await stateVersion(join(repo, root), composed.run.rootEnv(root)));
+  logStateVersions(r.settled, w.states);
+  composed.failed = r.members.filter((m) => !whole.includes(m.root)).map((m) => m.root);
+  if (composed.failed.length) console.log(`${label}: of the composed run, ${composed.failed.join(", ")} did not apply in full`);
 }
 
 /**
