@@ -11,7 +11,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 
 | Command | Does |
 |---|---|
-| `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
+| `init` | finds roots, binary and forge, and writes the pipeline and [`terragucci.components.json`](#the-components-file); under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml` or a Terragrunt Scale `.gruntwork`, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
@@ -66,7 +66,7 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 | `--approval` | `ledger`, `pr-review` or `sealed`, when the config names no mode; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `--signer` | under `approval: sealed`, write the first line of `.chant/allowed_signers` for this principal from `git config user.signingkey`, when the file does not exist |
 | `--dry-run` | compute everything and write nothing |
-| `--force` | overwrite a pipeline file terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml` |
+| `--force` | overwrite a pipeline file or `terragucci.components.json` terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml` |
 
 A flag detection would not reach goes into a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
 
@@ -79,6 +79,25 @@ The approval mode decides what else `init` writes.
 | `sealed` | writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with each wave's gate (`wave-1`, `wave-2`) under `identity.gates`, so a wave counts only an approval sealed with `terragucci approve --sign`; an existing file gains missing gates |
 
 [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
+
+### The components file
+
+`init` also writes `terragucci.components.json` at the repo's root, beside the pipeline. It lists the repo's roots as chant components, with their waves and the pipeline's jobs that apply them. The pipeline does not read it, and the workflow is the same with or without it. `init` writes it again on every run and replaces it only when `generated_by` names terragucci, unless you pass `--force`.
+
+| Field | Holds |
+|---|---|
+| `schema` | `terragucci.components/v1` |
+| `generated_by` | `terragucci` and the release that wrote it |
+| `roots` | each root by name, as reports and waves name it, with `dir`, its directory in the repo; an Atmos instance's `dir` is its component's |
+| `components` | one per root: `name`, `dependsOn`, and `deploy`, one `Apply` phase with a `terraform-apply` step for the root. The step's `noRollback` says why it has no rollback: the pipeline applies the root, a failed wave leaves what applied, and a re-run finishes it |
+| `pipeline.path`, `pipeline.forge` | the pipeline file and its forge |
+| `pipeline.jobs` | each job that applies roots, named as in the pipeline, with its `needs`, its `wave`, and `applies`, the roots it applies |
+
+A root's `dependsOn` is the roots it must follow: those whose state it reads, those [`waves.after`](/terragucci/reference/config/) puts before it, or in a Terragrunt, Atmos or Terramate repo the order that tool gives. When that order alone would group the roots into other waves than the pipeline's, as [`waves.canary`](/terragucci/reference/config/) does, each root also depends on every root of the wave before its own. Grouping the components by `dependsOn` then gives the pipeline's waves.
+
+In `pipeline.jobs`, a wave split by `waves.jobs` or by environment has a job that decides the wave and applies no root, and a job per share or group that lists its own roots. `apply-done` and `apply-rest` apply none. In a Terragrunt repo, the share jobs' roots are the layer's units as `init` found them; the stage cuts them again when it runs. With `apply.when: pull-request`, the list holds the one job that applies a pull request's every wave, `apply-comment` (`mr-apply` on GitLab), with no `wave` and every root.
+
+The [agent jobs](/terragucci/guides/agent-change-a-pull-request/) refuse a change to the file.
 
 ## import
 
