@@ -1799,6 +1799,10 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     const applying = planned.filter((p) => targets.has(p.root));
     const hold = await holdRows(repo, options, label, plans.filter((p) => targets.has(p.root)), w);
     if (hold.code !== undefined) return heldOutcome(j, hold.code, outcome);
+    if (deciding && changes > 0 && !spendBeforeApply(repo, options, ctx, j)) {
+      await hold.release();
+      return (j.code = EXIT.failed);
+    }
     w.applyStarted = new Date().toISOString();
     if (changes > 0) await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), digest });
     recordChanges(repo, label, j, options.now);
@@ -2102,6 +2106,66 @@ function recordChanges(repo: string, label: string, j: WaveJob, now?: string): v
   appendRecord(repo, record, {}, `Changes approved: ${APPLY_OP} ${record.gate}`, APPLIED_PATH);
   w.appliedUnder = record;
   console.log(`${label}: ${j.changes.length} change${j.changes.length === 1 ? "" : "s"} recorded beside the approval, so a stopped apply resumes from them`);
+}
+
+/**
+ * Just before a wave applies `digest`: the approval of that digest standing
+ * on its gate is spent, whichever path the wave took to get here. chant
+ * writes the `applied` line of an approved wave (its spend rule), but not of
+ * a wave its policy let through (`not-required`), and a spend whose push was
+ * refused only logs (chant op-waves-run.ts spendApproval). An approval left
+ * standing after its plans applied is the changed-set refusal of the next
+ * push whose wave plans anything else, as on the demo host (behold#571):
+ * wave 2 waited for an approval, the approval came, a comment's apply ran
+ * the wave again and no unknown output held it, so it applied under no gate
+ * and the approval stood. Undefined when nothing needed writing; the record
+ * when this wrote it. Throws when the ledger cannot be read or written.
+ */
+export function spendStanding(repo: string, gate: string, digest: string, now?: string, env: NodeJS.ProcessEnv = process.env): AppliedRecord | undefined {
+  const stamp = now ?? new Date().toISOString();
+  const ledger = readLedger(repo);
+  const decision = decideGate(ledger, gate, digest, stamp);
+  if (decision.status !== "approved") return undefined;
+  const spent = (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, digest) && at(a.approvedAt) >= at(decision.at));
+  if (spent) return undefined;
+  const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const record: AppliedRecord = {
+    version: 1,
+    kind: "applied",
+    op: APPLY_OP,
+    gate,
+    planDigest: digest,
+    approvedAt: decision.at,
+    approvedBy: decision.by,
+    timestamp: stamp,
+    ...(runId ? { runId } : {}),
+    ...(commit ? { commit } : {}),
+  };
+  appendRecord(repo, record, {}, `Applied under ${gate}`, APPLIED_PATH);
+  return record;
+}
+
+/**
+ * spendStanding for a wave about to apply. Under an approval a spend that
+ * cannot be recorded stops the wave, as chant's does; a wave its policy let
+ * through applies anyway, and the log says the approval may still stand.
+ */
+function spendBeforeApply(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob): boolean {
+  const { w, label } = j;
+  if (ctx.rule?.point || !w.digest || (w.approval !== "approved" && w.approval !== "not-required")) return true;
+  try {
+    const wrote = spendStanding(repo, waveGate(j.k), w.digest, options.now, options.env ?? process.env);
+    if (wrote) console.log(`${label}: applies ${w.digest}, which ${wrote.approvedBy} approved at ${wrote.approvedAt}; that approval is now spent`);
+    return true;
+  } catch (e) {
+    if (w.approval === "not-required") {
+      console.log(`${label}: could not record that the approval of ${w.digest} on its gate, if one stands, is spent (${(e as Error).message})`);
+      return true;
+    }
+    console.log(`${label}: could not record that it applies under its approval, so nothing in it was applied: ${(e as Error).message}`);
+    return false;
+  }
 }
 
 /** The report of a wave's plans, as a waiting wave keeps it beside its pending fact and respond wave-refused reads it. */
@@ -2426,18 +2490,21 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
     return body === undefined ? undefined : (JSON.parse(body) as Report);
   };
   const verdict = await unknownReads(reads, {
-    async upstreamPlan(upstream, k) {
+    async upstreamPlans(upstream, k) {
+      // Every plan of the upstream at this commit: this job's, then each run's of its wave in the bucket (a comment's apply plans
+      // the upstream again after it applied, and that plan changes nothing; the merge's own plan is the one that was reviewed).
+      const out: { plan: unknown; from: string }[] = [];
       const mine = ctx.planned?.(k)?.find((p) => p.root === upstream && p.plan !== undefined);
-      if (mine) return { plan: mine.plan, from: `wave ${k}'s plan of ${upstream} in this job` };
-      if (!store) return undefined;
-      // The upstream wave's own job: its report in the bucket, with each root's redacted plan, which keeps after_unknown.
+      if (mine) out.push({ plan: mine.plan, from: `wave ${k}'s plan of ${upstream} in this job` });
+      if (!store) return out;
+      // The upstream wave's own jobs: their reports in the bucket, with each root's redacted plan, which keeps after_unknown.
       for (const row of (await indexRows()).filter((r) => r.stage === APPLY_OP && r.commit === facts.commit && r.wave === k)) {
         const root = (await reportAt(row.path))?.roots.find((x) => x.path === upstream);
         if (!root?.plan.json) continue;
         const text = await store.get(key(prefix, facts.project, row.path, root.plan.json));
-        if (text !== undefined) return { plan: JSON.parse(text), from: `wave ${k}'s plan of ${upstream} in this push (${row.path})` };
+        if (text !== undefined) out.push({ plan: JSON.parse(text), from: `wave ${k}'s plan of ${upstream} in this push (${row.path})` });
       }
-      return undefined;
+      return out;
     },
     async pullReport(): Promise<PullReport> {
       if (!store) return { missing: storeError ? `the reports bucket could not be read (${storeError})` : "the config names no reports bucket to read the pull request's report from" };
@@ -3224,6 +3291,10 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     // The saved plans, and nothing planned anew.
     const hold = await holdRows(repo, options, label, changing.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin?.name ?? binary })), w);
     if (hold.code !== undefined) return heldOutcome(j, hold.code, outcome);
+    if (deciding && !spendBeforeApply(repo, options, ctx, j)) {
+      await hold.release();
+      return (j.code = EXIT.failed);
+    }
     w.applyStarted = new Date().toISOString();
     await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
     const applied = await applyWaveGroups(groups, changing.map((p) => p.root), { dir: repo, exec }).finally(() => hold.release());

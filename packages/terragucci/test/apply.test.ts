@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, lockTimeoutArgs, movedMembers, shareCount, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, spendStanding, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { PolicyExec } from "../src/report/policy";
 import { refusedDiff } from "../src/respond/refused";
 import { decideOverride, OVERRIDE_OP, overrideDigest, type OverrideRule } from "../src/override";
@@ -389,6 +389,71 @@ describe("a wave behind its gate", () => {
     expect(await applyWave(work, { ...opts, now: T(6), policy: { exec: deny } })).toBe(1);
     expect(read()).toMatchObject({ status: "failed", exit: 1, policy_denied: ["a"], refused: { reason: "policy", roots: ["a"] } });
     expect(read()).not.toHaveProperty("failed_roots");
+  });
+
+  const appliedLines = (origin: string) => parseApplied(git(origin, "show", "chant/lifecycle:_gates/tf-apply/applied.jsonl"));
+  const pushAgain = (work: string, input: string) => {
+    const plans = join(work, "..", "plans", "a.json");
+    writeFileSync(plans, readFileSync(plans, "utf-8").replace(/"input":"\d+"/, `"input":"${input}"`));
+    write(work, { [`push-${input}`]: input });
+    git(work, "add", "-A");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", `push ${input}`);
+  };
+
+  it("a wave its policy lets through spends the approval of its plans, so the next push's other plans wait and are not refused (behold#571)", async () => {
+    const { work, origin, bin, log } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, env: {} };
+    expect(await applyWave(work, { ...opts, gate: "always", now: T(1) })).toBe(3);
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    // The comment's apply: nothing holds the wave this time, so it applies under no gate, and the approval of these plans is spent all the same.
+    expect(await applyWave(work, { ...opts, gate: "on-destructive", now: T(3) })).toBe(0);
+    expect(existsSync(log)).toBe(true);
+    expect(appliedLines(origin)).toEqual([expect.objectContaining({ kind: "applied", gate: "wave-1", planDigest: digest, approvedAt: T(2), approvedBy: "alice" })]);
+    // The next push plans something else and is held: it waits for an approval of its own plans.
+    pushAgain(work, "2");
+    expect(await applyWave(work, { ...opts, gate: "always", now: T(4) })).toBe(3);
+    const ledger = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
+    expect(ledger.pending.at(-1)!.planDigest).not.toBe(digest);
+    expect(JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0]).toMatchObject({ approval: "waiting", state: "waiting" });
+  });
+
+  it("an approval no wave applied still refuses another push's other plans: the stale plan", async () => {
+    const { work, origin, bin, log } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
+    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    pushAgain(work, "2");
+    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(4);
+    expect(existsSync(log)).toBe(false);
+    expect(() => git(origin, "show", "chant/lifecycle:_gates/tf-apply/applied.jsonl")).toThrow();
+    // chant decided on the ledger it read, then recorded this run's own pending fact, for the plans it refused.
+    expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending.map((p) => p.planDigest === digest)).toEqual([true, false]);
+  });
+
+  it("an approved wave's spend is written once: chant's line stands, and spendStanding writes one only where none is", async () => {
+    const { work, origin, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
+    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    // Nothing applied yet: spendStanding spends the standing approval, once.
+    const fresh = setup();
+    git(fresh.work, "remote", "set-url", "origin", origin);
+    expect(spendStanding(fresh.work, "wave-1", digest, T(3), {})).toMatchObject({ kind: "applied", gate: "wave-1", planDigest: digest, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) });
+    expect(spendStanding(fresh.work, "wave-1", digest, T(3), {})).toBeUndefined();
+    expect(spendStanding(fresh.work, "wave-1", "jcs1-sha256:other", T(3), {})).toBeUndefined();
+    expect(appliedLines(origin)).toHaveLength(1);
+    // A second approval of the same plans, applied through the gate: chant spends it, and the wave writes no second line for it.
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "bob", timestamp: T(4), planDigest: digest });
+    expect(await applyWave(work, { ...opts, now: T(5) })).toBe(0);
+    const lines = appliedLines(origin);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({ gate: "wave-1", planDigest: digest, approvedAt: T(4), approvedBy: "bob" });
   });
 });
 
