@@ -1504,6 +1504,21 @@ export function wavesWithRun(waves: readonly string[][], c: Composition | undefi
   return waves.map((w, i) => [...w.filter((r) => !inRun.has(r)), ...(i + 1 === c.wave ? (target ? [composeTarget(c.wave)] : c.order) : [])]);
 }
 
+/**
+ * The waves as chant's spec holds them: wavesWithRun's, with each wave the
+ * run emptied listing the run's target, where its roots apply. chant refuses
+ * a wave with no runs, and it numbers waves by their place in the spec, so
+ * leaving one out would move every later wave onto another gate. A job runs
+ * only its own wave of the spec, and an emptied wave's job ends before it
+ * asks chant (apply.ts runWaves), so only the composed wave's job runs it.
+ */
+export function specWavesWithRun(waves: readonly string[][], c: Composition | undefined): string[][] {
+  const out = wavesWithRun(waves, c, true);
+  if (!c || c.wave === undefined || c.fallback) return out;
+  const target = composeTarget(c.wave);
+  return out.map((w, i) => (w.length === 0 && waves[i]!.length > 0 ? [target] : w));
+}
+
 /** The log line that says what `waves.compose` came to. */
 export function compositionLine(c: Composition): string {
   return c.fallback || c.wave === undefined
