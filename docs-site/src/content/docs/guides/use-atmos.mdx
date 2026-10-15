@@ -15,6 +15,28 @@ import { Steps } from '@astrojs/starlight/components';
 
 A pipeline whose roots are your [Atmos](https://atmos.tools) component instances, one per stack and component, applied a dependency layer at a time behind the same gate as plain roots.
 
+## Already in Atmos
+
+Atmos and Atmos Pro already do part of this work:
+
+| Feature | What it does |
+|---|---|
+| [Ordered deployments](https://atmos-pro.com/docs/learn/ordered-deployments) (Atmos Pro) | on merge, applies parent stacks first and starts a child only once its parents succeed |
+| [Apply on merge](https://atmos.tools/integrations/github-actions/apply-on-merge) | downloads the plan stored in the pull request, plans again and compares the two, failing on drift by default |
+| [Deploy affected](https://atmos.tools/integrations/github-actions/deploy-affected) | fans out over the changed components as a CI matrix of component and stack |
+| [Planfile storage](https://atmos.tools/ci/planfile-storage) | stores each plan with a SHA256 checksum and checks it before the deploy |
+| [Drift detection](https://atmos-pro.com/docs/learn/drift-detection) (Atmos Pro) | checks for drift from a workflow that runs daily and on every merge |
+
+If Atmos Pro's ordered deployments and apply on merge already fit your team, you may not need terragucci's waves or its stale-plan refusal.
+
+Atmos's own YAML functions also go further than terragucci's reading of them. When it describes the stacks, terragucci refuses `!store` and leaves `!terraform.output` unevaluated, then reads the output itself as described in [Reads of another instance](#reads-of-another-instance).
+
+## Added by terragucci
+
+- An approval binds the wave's plan digest and counts only from someone with no hand in the change. Atmos Pro leaves approvals to GitHub's environment protection rules, and [its docs](https://atmos-pro.com/docs/learn/deployment-approvals) note that required reviewers on a private repo need GitHub Enterprise.
+- No hosted service takes part. The jobs run in your CI and keep their records in your git and your bucket.
+- `init` writes the pipeline for GitLab and Forgejo as well as GitHub.
+
 ## Prerequisites
 
 | You need | Why |
@@ -138,6 +160,8 @@ components:
 ```
 
 `atmos describe stacks` runs before the job has a cloud credential, so the job reads the value itself afterwards from the state in the upstream's own workspace. While the upstream has no state, the instance is held back rather than planned on a stand-in; the plan note names the instance it waits for.
+
+A pull request reads the upstream's applied state, never its plan. When one change edits both instances, the review shows the reader planned on the upstream's old value. After the merge, the reader's wave reads what the upstream's wave applied and plans on that, and its gate decides as for any wave: under `gate: on-destructive` a plan that destroys nothing applies without an approval. A [`terraform_remote_state` read](/terragucci/concepts/waves-and-approvals/#linked-roots) waits for an approval in that case, and an Atmos read does not. Set `gate: always` to approve every wave.
 
 | Form | Read |
 |---|---|
