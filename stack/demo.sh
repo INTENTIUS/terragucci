@@ -125,9 +125,9 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null
   [ -z "$at" ] || at_iso="$(iso "$at")"
   [ -z "$action" ] || next="$(jq -cn --arg a "$action" --arg t "$at_iso" '{action: $a, at: (if $t == "" then null else $t end)}')"
-  jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg label "$label" \
+  jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
-    '{cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $label, started_at: $started, next: $next,
+    '{cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
       pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end)}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
@@ -151,8 +151,8 @@ demo_stalled() {
   last="$(jq -c --argjson cycle "$CYCLE" 'if .cycle == $cycle then . else {} end' "$DEMO_STATE/demo.json" 2>/dev/null || echo '{}')"
   was="$(jq -r '.step // "the start"' <<<"$last")"
   jq -n --argjson last "$last" --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" \
-    --arg started "$(iso "${STARTED:-$(now)}")" --arg label "Stalled after $was: $reason. The driver resets and goes on with the next cycle." \
-    '{cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $label, started_at: $started, next: null,
+    --arg started "$(iso "${STARTED:-$(now)}")" --arg text "Stalled after $was: $reason. The driver resets and goes on with the next cycle." \
+    '{cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
       pull: ($last.pull // null), commit: ($last.commit // null)}' > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: stalled: $reason"
