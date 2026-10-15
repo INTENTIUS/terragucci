@@ -157,7 +157,23 @@ const missing = (what, expected, found, page) => {
 // demo.json's about): three fields of prose shown on a TV, linted at the top strictness with no finding allowed.
 {
   const dir = "example-demo/scenarios";
-  for (const id of readdirSync(dir).sort()) {
+  // intro.json: the problem the whole demo is about, written into demo.json as intro on every step.
+  {
+    const file = join(dir, "intro.json");
+    let intro;
+    try {
+      intro = JSON.parse(read(file));
+    } catch (e) {
+      problems.push(`${file}: the demo has an intro.json with its problem (${e.message})`);
+    }
+    if (intro) {
+      if (typeof intro.problem !== "string" || !intro.problem.trim()) problems.push(`${file}: problem is missing or empty`);
+      else for (const f of lintDocument(intro.problem, { strictness: 3 }).findings) problems.push(`${file}: problem [${f.ruleId}/${f.severity}] ${f.message}`);
+      const extra = Object.keys(intro).filter((k) => k !== "problem");
+      if (extra.length) problems.push(`${file}: unknown field ${extra.join(", ")}; the intro has problem`);
+    }
+  }
+  for (const id of readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()) {
     const file = join(dir, id, "about.json");
     let about;
     try {

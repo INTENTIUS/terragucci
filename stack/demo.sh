@@ -11,7 +11,9 @@
 #                                     run the scenarios one after another and
 #                                     reset to the base after each, forever (one
 #                                     pass with --once). With no scenario named,
-#                                     every scenario in SCENARIOS.
+#                                     the ones in DEMO_SCENARIOS (space-separated),
+#                                     or else the default two: b-waves, then
+#                                     failure. Any of ALL_SCENARIOS can be named.
 #   stack/demo.sh down                remove the stack
 #
 # The roots are network, app (reads network), edge (reads app) and other (reads
@@ -25,8 +27,10 @@
 # demo.json is written to <reports bucket>/<prefix>/demo.json in floci at every
 # step:
 #
-#   { "cycle": 12, "scenario": "a-known", "title": "...",
-#     "step": "waiting", "label": "Wave 2 waits for an approval",
+#   { "intro": "Big Terraform setups are split into separate states, ...",
+#     "cycle": 12, "scenario": "b-waves", "name": "a new subnet", "title": "...",
+#     "index": 1, "scenarios": 2,
+#     "step": "waiting", "label": "Wave 2 stops and waits for a person to approve it. ...",
 #     "started_at": "2026-10-20T10:00:00Z",
 #     "next": { "action": "approve wave-2", "at": "2026-10-20T10:04:20Z" },
 #     "pull": 41, "commit": "<sha>",
@@ -39,6 +43,13 @@
 # card, read from example-demo/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
 # null when the scenario has none (the base). just lint-docs lints its text.
+#
+# intro is the problem the whole demo is about, the same in every write: the
+# problem field of example-demo/scenarios/intro.json, which just lint-docs lints
+# too. name is the scenario's short label ("a new subnet"); title is its
+# headline. index is the scenario's 1-based place in this loop's list and
+# scenarios is how many that list holds, so "1 of 2". index is null for the
+# base, and scenarios is 0 when up writes it, before any loop.
 #
 # Beside it, <prefix>/runs/index.json and <prefix>/runs/<id>.json hold the demo
 # repo's last 30 pipeline runs with their jobs, steps and logs, copied while
@@ -69,8 +80,9 @@ case "$CMD" in
   *) sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 
-# The scenarios a loop runs by default, in order.
-SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed)
+# Every scenario the driver knows, and the ones a loop runs by default, in order.
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed)
+SCENARIOS=(b-waves failure)
 
 ROOTS=(network app edge other)
 STATE_BUCKET=demo-terraform-state
@@ -133,7 +145,7 @@ iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-
 
 # ── demo.json ────────────────────────────────────────────────────────────────
 
-CYCLE=0 SCENARIO="" TITLE="" STARTED="" PULL="" COMMIT=""
+CYCLE=0 SCENARIO="" TITLE="" STARTED="" PULL="" COMMIT="" INDEX="" COUNT=0
 RUN_ID="" RUN_STATUS="" RUN_URL="" OUTCOME="" WAVE="" CYCLE_DONE="" ATTEMPT=0
 
 demo_put() { # the local demo.json to <reports bucket>/<prefix>/demo.json
@@ -147,8 +159,8 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   [ -z "$action" ] || next="$(jq -cn --arg a "$action" --arg t "$at_iso" '{action: $a, at: (if $t == "" then null else $t end)}')"
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
-    --argjson about "${ABOUT:-null}" \
-    '{cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
+    --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
+    '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
       pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end),
       about: $about}' \
     > "$DEMO_STATE/demo.json.new"
@@ -156,6 +168,17 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   log "cycle $CYCLE $SCENARIO: $step: $label"
   demo_put
 }
+
+# The fields of demo.json that say where the viewer is: the demo's intro, the
+# scenario's short name, and its place in this loop's list.
+demo_where() {
+  jq -cn --arg intro "$INTRO" --arg name "$(scenario_name "$SCENARIO")" --arg index "$INDEX" --argjson count "$COUNT" \
+    '{intro: (if $intro == "" then null else $intro end), name: $name,
+      index: (if $index == "" then null else ($index | tonumber) end), scenarios: $count}'
+}
+
+# The problem the demo is about, from example-demo/scenarios/intro.json; empty when it can't be read.
+INTRO="$(jq -r '.problem // empty' "$DEMO/scenarios/intro.json" 2>/dev/null || true)"
 
 # The scenario's card from its about.json, compact; null when it has none.
 scenario_about() { # scenario
@@ -180,8 +203,8 @@ demo_stalled() {
   was="$(jq -r '.step // "the start"' <<<"$last")"
   jq -n --argjson last "$last" --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" \
     --arg started "$(iso "${STARTED:-$(now)}")" --arg text "Stalled after $was: $reason. The driver resets and goes on with the next cycle." \
-    --argjson about "${ABOUT:-null}" \
-    '{cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
+    --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
+    '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
       pull: ($last.pull // null), commit: ($last.commit // null), about: $about}' > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: stalled: $reason"
@@ -400,17 +423,31 @@ scenario_title() {
   case "$1" in
     a-known)    echo "A port change, known when it plans" ;;
     a-output)   echo "The same change, read through .output" ;;
-    failure)    echo "app fails mid-apply, and a re-run finishes it" ;;
+    failure)    echo "A failure halfway through, and a re-run that finishes it" ;;
     stale-plan) echo "main moves after an approval, and the wave refuses the old plan" ;;
-    b-waves)    echo "A new network, read downstream" ;;
+    b-waves)    echo "A new subnet, and a value nobody could review" ;;
     b-composed) echo "A new network, read downstream, in one composed run" ;;
     *) return 1 ;;
   esac
 }
 
+# The scenario's short label, beside its place in the loop ("1 of 2 · a new subnet").
+scenario_name() {
+  case "$1" in
+    base)       echo "the base" ;;
+    a-known)    echo "a known value" ;;
+    a-output)   echo "read through .output" ;;
+    failure)    echo "a failure halfway" ;;
+    stale-plan) echo "a stale plan" ;;
+    b-waves)    echo "a new subnet" ;;
+    b-composed) echo "B composed" ;;
+    *)          echo "$1" ;;
+  esac
+}
+
 # The plan note's cost line comes from example-demo/scripts/cost.mjs, a stub;
 # every planned label says so.
-COST_STUB="The cost line is from a stub that prices each terraform_data from a fixed table, not from a pricing service"
+COST_STUB="Its cost line uses made-up prices from a fixed table"
 
 # The label of a step for this cycle's scenario; the generic one when the
 # scenario has none of its own.
@@ -425,28 +462,30 @@ say() { # step
     a-output:applying)      echo "Wave 1 applies network; app and edge read its output before it was known, so each plans again on what was applied before it and waits for an approval of that plan" ;;
     a-output:approved)      echo "Wave $WAVE approved by the driver with its key, not by the pull request's review: no review showed the values it now applies" ;;
     a-output:applied)       echo "Applied: $(applied_values). app's and edge's values applied after the driver's approvals, not the pull request's review: no review showed them" ;;
-    b-waves:pull-request)   echo "Pull request $PULL: network adds a subnet, and app adds four resources placed in it by reading its id" ;;
-    b-waves:planned)        echo "One plan note: network creates its subnet, and app's four new resources plan as known after apply, since the subnet's id is unknown until network applies: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
-    b-waves:applying)       echo "Wave 1 applies network and creates the subnet; app's wave 2 then plans again on the id wave 1 applied" ;;
-    b-waves:approved)       echo "Wave 2 approved by the driver with its key, not by the pull request's review: app's resources in subnet $(state_id network subnet) apply after this approval" ;;
-    b-waves:applied)        echo "Applied: network's subnet $(state_id network subnet), and app's $(state_input app instance). app's four resources applied after the driver's approval, not the pull request's review: no review showed the subnet id they read" ;;
+    b-waves:pull-request)   echo "Pull request $PULL is open (a proposed change, waiting for review). Network adds a subnet, and app adds four resources that use the subnet's id." ;;
+    b-waves:planned)        echo "The plan is posted on the pull request. Network will build the subnet. App's four resources say \"known after apply\", because the subnet has no id until it exists, so the reviewer can't see what they will get. Other, the fourth state, has no change." ;;
+    b-waves:applying)       echo "Wave 1 builds network's subnet, and now the subnet has an id. App, in wave 2, makes a new plan with that id." ;;
+    b-waves:approved)       echo "The driver approves wave 2 with its signing key, standing in for a person. The pull request's review never covered this plan. App's resources go into subnet $(state_id network subnet)." ;;
+    b-waves:applied)        echo "Done. Network has subnet $(state_id network subnet), and app put its four resources in it. They landed only after a person approved them, because no review showed the subnet id they use." ;;
     b-composed:pull-request) echo "Pull request $PULL: scenario 3's change, a subnet in network that app's four new resources read, and terragucci.yml turns on waves.compose for this pull request only, so the roots it reaches plan as one plan and apply as one apply. compose is opt-in beside the waves: every other scenario applies in waves" ;;
     b-composed:planned)     echo "One plan note with one composed plan of $COMPOSED, each a module of the one run and each keeping its own state. app's four new resources plan as known after apply: the subnet's id is unknown until the run creates it, and the same apply computes them. The review does not show the values they will get; other is not planned. $COST_STUB" ;;
     b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
     b-composed:approved)    echo "Wave 1 approved by the driver with its key, for the composed run's digest; the pull request's review approved nothing. The re-run plans $COMPOSED again as one run and applies them in one apply" ;;
     b-composed:applied)     echo "Applied in one apply: network's subnet $(state_id network subnet), and app's $(state_input app instance), computed in the same run after the driver's approval, not the pull request's review. Each state was written with what applied to it. Nothing here is atomic: had the apply failed part way, what applied would stay applied and each state would be written with what applied to it" ;;
-    failure:pull-request)   echo "Pull request $PULL: network 8080 -> 9090, and app gains a migration that fails while a marker object is in floci" ;;
-    failure:planned)        echo "One plan note: network, app with its new migration, and edge; other is not planned. The driver has set the marker, so the migration will fail. $COST_STUB" ;;
-    failure:applying)       echo "Wave 1 applies network; wave 2 applies app, whose migration runs after its listener" ;;
+    failure:pull-request)   echo "Pull request $PULL is open (a proposed change, waiting for review). Network's port goes from 8080 to 9090, and app gains a database migration. The driver (the script running this demo) has switched on a fault, so the migration will fail." ;;
+    failure:planned)        echo "The plan is posted on the pull request. Network and app each get a new port. App also gets the migration, and edge will follow app's port. Other, the fourth state, has no change." ;;
+    failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the migration runs." ;;
+    failure:approved)       echo "The driver approves wave $WAVE with its signing key, standing in for a person, so the re-run can replace the failed migration." ;;
+    failure:applied)        echo "Done on the second run. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
     stale-plan:pull-request) echo "Pull request $PULL: network's release marker goes from r0 to r$CYCLE, which replaces it" ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
-    *:merged)               echo "Merged pull request $PULL into main at ${COMMIT:0:8}" ;;
+    *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
     *:applied)
       values="$(applied_values)"
       echo "Applied: $values" ;;
     *:approved)             echo "Wave $WAVE approved, sealed with the driver's key" ;;
-    *:resumed)              echo "Posted /terragucci apply on pull request $PULL; its waves run again and each gate decides" ;;
+    *:resumed)              echo "The driver comments /terragucci apply on pull request $PULL, and the pipeline runs the waves again. A wave that already landed has nothing left to do." ;;
     *) echo "$1" ;;
   esac
 }
@@ -559,8 +598,8 @@ waiting_label() {
   case "$SCENARIO:$WAVE" in
     b-composed:1) echo "Wave 1 waits for an approval of the composed run: app reads network's subnet id, unknown at plan time and computed in this apply, so no review showed the values app gets. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves the composed run's digest" ;;
     a-output:*)   echo "Wave $WAVE waits for an approval: it read an output that was unknown when the change was reviewed, and nobody reviewed the plan it made once that output applied. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
-    b-waves:2)    echo "Wave 2 waits for an approval: app read network's subnet id before it was known, and nobody reviewed the plan app made after wave 1. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
-    failure:2)    echo "Wave 2 waits for an approval: the failed migration is tainted, so the re-run replaces it, and gate: on-destructive holds a replace" ;;
+    b-waves:2)    echo "Wave 2 stops and waits for a person to approve it. App's new plan holds the subnet's id, and no review ever saw that plan. Nothing gets destroyed, yet the pipeline still asks. The driver (the script running this demo) gives that approval here." ;;
+    failure:2)    echo "Wave 2 stops and waits for a person to approve it. The re-run replaces the failed migration, which destroys something, so it asks first. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
@@ -587,11 +626,11 @@ scenario_a() {
 # migration waits at the gate first, and is approved like any waiting wave).
 failure_failed() {
   [ "${WAVE:-2}" = 2 ] || fail "wave $WAVE failed, not app's wave 2 ($RUN_URL)"
-  demo_hold failed "Wave 2 failed: app's migration exited 1. Wave 1 stays applied: network holds $(state_input network http_proxy_port). app's state holds what applied before the failure: listener $(state_input app listener_port). edge did not run" \
-    "delete the marker and post /terragucci apply"
+  demo_hold failed "Wave 2 failed in app's migration. Nothing is undone. Network keeps port $(state_input network http_proxy_port), and app's state keeps port $(state_input app listener_port), which landed before the migration ran. Edge did not run." \
+    "clear the fault and run the pipeline again"
   marker_clear
   resume_pull
-  demo_write resumed "The marker is deleted; /terragucci apply on pull request $PULL runs the waves again: network has nothing left to apply, and app's migration runs again" "follow the waves"
+  demo_write resumed "The driver clears the fault and comments /terragucci apply on pull request $PULL. On this second run network has nothing left to change, and app's migration gets another try." "follow the waves"
 }
 
 scenario_failure() {
@@ -710,7 +749,7 @@ scenario_stale_plan() {
 
 run_cycle() {
   SCENARIO="$1"
-  TITLE="$(scenario_title "$1")" || fail "unknown scenario '$1' (${SCENARIOS[*]})"
+  TITLE="$(scenario_title "$1")" || fail "unknown scenario '$1' (${ALL_SCENARIOS[*]})"
   ABOUT="$(scenario_about "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL=""
   on_waiting() { default_waiting; }
@@ -837,7 +876,7 @@ reset_written() {
   local base
   base="$(cat "$DEMO_STATE/base.sha")"
   PULL="" COMMIT="$base"
-  demo_write reset "Reset out of band: each root's state written back to the base snapshot, and main forced back to the base commit ${base:0:8}" "start the next cycle"
+  demo_write reset "Outside the pipeline, the driver resets every state to how it started. It also moves main back to ${base:0:8} for the next scenario." "start the next cycle"
 }
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -923,21 +962,32 @@ OUT
       case "$a" in
         --once) ONCE=1 ;;
         -*) fail "unknown flag '$a' (--once)" ;;
-        *) scenario_title "$a" >/dev/null || fail "unknown scenario '$a' (${SCENARIOS[*]})"; list+=("$a") ;;
+        *) scenario_title "$a" >/dev/null || fail "unknown scenario '$a' (${ALL_SCENARIOS[*]})"; list+=("$a") ;;
       esac
     done
+    # No scenario named: DEMO_SCENARIOS, checked like the arguments, or the default two.
+    if [ "${#list[@]}" -eq 0 ] && [ -n "${DEMO_SCENARIOS:-}" ]; then
+      read -r -a named <<<"$DEMO_SCENARIOS"
+      for a in ${named[@]+"${named[@]}"}; do
+        scenario_title "$a" >/dev/null || fail "unknown scenario '$a' in DEMO_SCENARIOS (${ALL_SCENARIOS[*]})"
+        list+=("$a")
+      done
+    fi
     [ "${#list[@]}" -gt 0 ] || list=("${SCENARIOS[@]}")
+    COUNT="${#list[@]}"
     [ -f "$DEMO_STATE/base.sha" ] || fail "no base snapshot; run 'just demo up' first"
     echo "$$" > "$DEMO_STATE/driver.pid"
     # An earlier driver's background copy is not this one's to wait on.
     mkdir -p "$RUNS_STATE" && : > "$RUNS_PID"
     CYCLE="$(cat "$DEMO_STATE/cycle" 2>/dev/null || echo 0)"
-    SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)"
+    SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)" INDEX=""
     # A driver the watchdog restarted may have left a cycle half done.
     attempt reset_base
     [ "$ATTEMPT" = 0 ] || demo_stalled
     while :; do
+      INDEX=0
       for s in "${list[@]}"; do
+        INDEX=$((INDEX + 1))
         CYCLE=$((CYCLE + 1))
         echo "$CYCLE" > "$DEMO_STATE/cycle"
         : > "$DEMO_STATE/reason"
