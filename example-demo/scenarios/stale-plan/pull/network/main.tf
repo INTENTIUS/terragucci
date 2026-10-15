@@ -1,6 +1,8 @@
 # network: the producer. app reads its output through terraform_remote_state.
 
 terraform {
+  required_version = ">= 1.13"
+
   backend "s3" {
     bucket         = "demo-terraform-state"
     key            = "network.tfstate"
