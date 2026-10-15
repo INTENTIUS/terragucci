@@ -1,5 +1,5 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 5d76c4f..0d10e4c 100644
+index a414b65..6f1bf3d 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -120,7 +120,7 @@ jobs:
@@ -163,3 +163,132 @@ index 0000000..2fcab74
 +  env  = local.env.locals.env
 +  name = "ledger"
 +}
+diff --git a/terragucci.components.json b/terragucci.components.json
+index 140f3c9..533badf 100644
+--- a/terragucci.components.json
++++ b/terragucci.components.json
+@@ -2,9 +2,15 @@
+   "schema": "terragucci.components/v1",
+   "generated_by": "terragucci 0.4.13",
+   "roots": {
++    "live/dev/ledger": {
++      "dir": "live/dev/ledger"
++    },
+     "live/dev/platform": {
+       "dir": "live/dev/platform"
+     },
++    "live/dev/billing": {
++      "dir": "live/dev/billing"
++    },
+     "live/dev/email": {
+       "dir": "live/dev/email"
+     },
+@@ -49,6 +55,22 @@
+     }
+   },
+   "components": [
++    {
++      "name": "live/dev/ledger",
++      "dependsOn": [],
++      "deploy": [
++        {
++          "phase": "Apply",
++          "steps": [
++            {
++              "kind": "terraform-apply",
++              "root": "live/dev/ledger",
++              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
++            }
++          ]
++        }
++      ]
++    },
+     {
+       "name": "live/dev/platform",
+       "dependsOn": [],
+@@ -65,9 +87,29 @@
+         }
+       ]
+     },
++    {
++      "name": "live/dev/billing",
++      "dependsOn": [
++        "live/dev/ledger",
++        "live/dev/platform"
++      ],
++      "deploy": [
++        {
++          "phase": "Apply",
++          "steps": [
++            {
++              "kind": "terraform-apply",
++              "root": "live/dev/billing",
++              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
++            }
++          ]
++        }
++      ]
++    },
+     {
+       "name": "live/dev/email",
+       "dependsOn": [
++        "live/dev/ledger",
+         "live/dev/platform"
+       ],
+       "deploy": [
+@@ -86,6 +128,7 @@
+     {
+       "name": "live/dev/orders",
+       "dependsOn": [
++        "live/dev/ledger",
+         "live/dev/platform"
+       ],
+       "deploy": [
+@@ -104,6 +147,7 @@
+     {
+       "name": "live/dev/payments",
+       "dependsOn": [
++        "live/dev/ledger",
+         "live/dev/platform"
+       ],
+       "deploy": [
+@@ -122,6 +166,7 @@
+     {
+       "name": "live/dev/search",
+       "dependsOn": [
++        "live/dev/ledger",
+         "live/dev/platform"
+       ],
+       "deploy": [
+@@ -140,6 +185,7 @@
+     {
+       "name": "live/prod/platform",
+       "dependsOn": [
++        "live/dev/billing",
+         "live/dev/email",
+         "live/dev/orders",
+         "live/dev/payments",
+@@ -161,6 +207,7 @@
+     {
+       "name": "live/staging/platform",
+       "dependsOn": [
++        "live/dev/billing",
+         "live/dev/email",
+         "live/dev/orders",
+         "live/dev/payments",
+@@ -349,6 +396,7 @@
+         ],
+         "wave": 1,
+         "applies": [
++          "live/dev/ledger",
+           "live/dev/platform"
+         ]
+       },
+@@ -359,6 +407,7 @@
+         ],
+         "wave": 2,
+         "applies": [
++          "live/dev/billing",
+           "live/dev/email",
+           "live/dev/orders",
+           "live/dev/payments",
