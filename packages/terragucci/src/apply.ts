@@ -158,7 +158,7 @@ import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./groups";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
-import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
+import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
 import { groupOf } from "./groups";
 import type { WaveComposedInput } from "./report/build";
 
@@ -1063,8 +1063,15 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       if (composition) {
         options = { ...options, composition };
         waves = wavesWithRun(waves, composition, true);
+        // Every root of this wave moved into the composed run in an earlier wave: that wave's job applied them, so this one has none.
+        if (waves[options.wave - 1]!.length === 0) {
+          jobOf(options.wave).facts.nothing = true;
+          console.log(`wave ${options.wave}: its roots apply in the composed run in wave ${composition.wave}, so this wave has nothing to apply`);
+          return (code = EXIT.applied);
+        }
       }
-      specWaves = waves;
+      // chant's spec numbers waves by place: an emptied wave keeps its place, holding the run's target (./compose.ts).
+      specWaves = composition ? specWavesWithRun(applyWaves(options.layers, options.canary), composition) : waves;
       if (options.groups) {
         // Each group's roots spread across its own shares with waves.jobs, as a wave's do.
         const jobs = options.shares;
@@ -1832,7 +1839,9 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
  * reads its settings from. Undefined when the key is off (or that config
  * cannot be read, which the wave's plan then reports). The roots the change
  * reaches are found from the commit before the one applied, as tf-plan finds
- * them from its base; with none to diff against, every root counts.
+ * them from its base; with none to diff against, every root counts. The roots
+ * differ from the reviewed plan's only when the change does, and then so do
+ * the composed run's generated files and its digest, so the wave waits.
  */
 async function waveComposition(repo: string, options: ApplyWaveOptions, waves: string[][]): Promise<Composition | undefined> {
   const configPath = options.config ?? findConfig(repo);
@@ -1847,7 +1856,9 @@ async function waveComposition(repo: string, options: ApplyWaveOptions, waves: s
     const base = options.base ?? baseCommit(repo);
     const checkout = resolveRepo(configPath ? await loadConfig(configPath) : {});
     const outside = await outsideRoots(repo, base, configPath, undefined, checkout, all, env, () => {}, true);
-    selected = affectedRoots(repo, base, all, all, () => {}, after, outside.outside);
+    // With no --base, base is the parent of the commit applied, so the change is the diff between the two. A merge base needs
+    // history the wave's shallow checkout lacks: `base...HEAD` failed there and every root counted, unrelated ones included.
+    selected = affectedRoots(repo, base, all, all, (l) => console.log(`wave ${options.wave}: compose: ${l}`), after, outside.outside, options.base === undefined);
   } catch (e) {
     console.log(`wave ${options.wave}: compose: the roots this change reaches could not be found (${(e as Error).message.split("\n")[0]}), so every root counts`);
   }
