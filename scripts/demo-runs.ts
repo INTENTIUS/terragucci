@@ -57,7 +57,7 @@ const state = env("DEMO_RUNS_STATE");
 const cycle = process.env.DEMO_RUNS_CYCLE ? Number(process.env.DEMO_RUNS_CYCLE) : null;
 const scenario = process.env.DEMO_RUNS_SCENARIO || null;
 const cycleStarted = Number(process.env.DEMO_RUNS_CYCLE_STARTED || 0);
-// The secret guard: no line holding the token, the driver's key path, or the secret key's name.
+// The secret guard: no line holding the token, the reviewer's key path, the people's tokens, or the secret key's name.
 const drop = [token, "AWS_SECRET_ACCESS_KEY", ...(process.env.DEMO_RUNS_DROP ?? "").split("\n")].filter((s) => s !== "");
 
 // Never hang the driver: the whole export has a minute.

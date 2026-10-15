@@ -11,10 +11,13 @@
 #   stack/bootstrap.sh fountain       floci + fountain + a fountain runner for a steward
 #
 # For each forge it also mints a token, registers the runner where there is
-# one to register, and creates the repo the claims push to. Re-running it is
-# safe: the admin is reused, a token that still works is kept (so a smoke run
-# in progress keeps working), a runner that is already online with the same
-# capacity is kept, and an existing repo is left alone.
+# one to register, and creates the repo the claims push to. Forgejo also gets
+# the demo's two people (stack/demo.sh): demo-author and demo-reviewer, each
+# with a token, and the reviewer's ssh key in stack/.state/demo-reviewer.key.
+# Re-running it is safe: the admin and both people are reused, a token that
+# still works is kept (so a smoke run in progress keeps working), the key is
+# kept, a runner that is already online with the same capacity is kept, and an
+# existing repo is left alone.
 #
 # The env vars go to stdout as `export` lines and to stack/.state/<profile>.env,
 # which stack/validate.sh reads, so `eval "$(stack/bootstrap.sh forgejo)"` is
@@ -325,6 +328,45 @@ else
 fi
 api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
 
+# The two people the demo (stack/demo.sh) plays, so that its approvals pass
+# the rule that an approval counts only from someone who had no hand in the
+# change: demo-author pushes the change, opens and merges its pull request and
+# comments /terragucci apply; demo-reviewer only approves, sealed with its own
+# ssh key. Neither is an admin. Each gets its own token, kept like the admin's
+# while it still signs in as that user, and the reviewer's key is made once.
+person() { # login -> creates the user when it is missing
+  api -o /dev/null "$FORGEJO_URL/api/v1/users/$1" 2>/dev/null && return 0
+  log "creating the user $1…"
+  "${COMPOSE[@]}" exec -T -u git forgejo forgejo admin user create \
+    --username "$1" --password "$PEOPLE_PW" --email "$1@terragucci.local" --must-change-password=false >&2
+}
+person_token() { # login, env var holding its token -> prints a token that signs in as the login
+  local login="$1" var="$2" env t
+  for env in "$STATE/forgejo.env" $(git -C "$HERE" worktree list --porcelain 2>/dev/null | sed -n "s|^worktree \(.*\)|\1/stack/$(basename "$STATE")/forgejo.env|p"); do
+    [ -f "$env" ] || continue
+    t="$(sed -n "s/^export $var=//p" "$env")"
+    if [ -n "$t" ] && [ "$(curl -fsS -H "Authorization: token $t" "$FORGEJO_URL/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null)" = "$login" ]; then
+      echo "$t"; return 0
+    fi
+  done
+  log "minting an API token for $login…"
+  curl -s -o /dev/null -u "$login:$PEOPLE_PW" -X DELETE "$FORGEJO_URL/api/v1/users/$login/tokens/terragucci-demo" || true
+  t="$(curl -fsS -u "$login:$PEOPLE_PW" -H 'content-type: application/json' \
+    -d '{"name":"terragucci-demo","scopes":["all"]}' "$FORGEJO_URL/api/v1/users/$login/tokens" | jq -r '.sha1')"
+  [ -n "$t" ] && [ "$t" != null ] || die "could not mint a token for $login"
+  echo "$t"
+}
+PEOPLE_PW="Terragucci-local-pw-5678"
+DEMO_AUTHOR="demo-author"
+DEMO_REVIEWER="demo-reviewer"
+DEMO_REVIEWER_KEY="$STATE/demo-reviewer.key"
+person "$DEMO_AUTHOR"
+person "$DEMO_REVIEWER"
+DEMO_AUTHOR_TOKEN="$(person_token "$DEMO_AUTHOR" TERRAGUCCI_FORGEJO_AUTHOR_TOKEN)"
+DEMO_REVIEWER_TOKEN="$(person_token "$DEMO_REVIEWER" TERRAGUCCI_FORGEJO_REVIEWER_TOKEN)"
+mkdir -p "$STATE"
+[ -f "$DEMO_REVIEWER_KEY" ] || ssh-keygen -q -t ed25519 -N "" -C "$DEMO_REVIEWER" -f "$DEMO_REVIEWER_KEY"
+
 # Pull the job image once, before any job runs. The runner (force_pull: false)
 # pulls only an image the daemon lacks, so without this the first jobs, up to
 # RUNNER_CAPACITY at once, each ask ECR Public for it, and its anonymous rate
@@ -453,5 +495,10 @@ write_env forgejo \
   "TERRAGUCCI_FORGEJO_TOKEN=$TOKEN" \
   "TERRAGUCCI_FORGEJO_USER=$ADMIN_USER" \
   "TERRAGUCCI_FORGEJO_REPO=$ADMIN_USER/$REPO" \
+  "TERRAGUCCI_FORGEJO_AUTHOR=$DEMO_AUTHOR" \
+  "TERRAGUCCI_FORGEJO_AUTHOR_TOKEN=$DEMO_AUTHOR_TOKEN" \
+  "TERRAGUCCI_FORGEJO_REVIEWER=$DEMO_REVIEWER" \
+  "TERRAGUCCI_FORGEJO_REVIEWER_TOKEN=$DEMO_REVIEWER_TOKEN" \
+  "TERRAGUCCI_FORGEJO_REVIEWER_KEY=$DEMO_REVIEWER_KEY" \
   "TERRAGUCCI_FLOCI_URL=$FLOCI_URL"
 log "ready in $(( $(date +%s) - started ))s"
