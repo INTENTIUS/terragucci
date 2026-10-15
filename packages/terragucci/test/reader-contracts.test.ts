@@ -131,9 +131,11 @@ describe("run.json", () => {
       ["net", { state: { bucket: "state", key: "net.tfstate" }, external: [] }],
       ["app", { state: { key: "app.tfstate" }, external: [{ data: "dns", bucket: "other", key: "dns.tfstate" }] }],
     ]);
-    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]), states);
+    // net and app apply as one composed run in wave 1 (waves.compose): app would be in wave 2 on its own.
+    const composed = { wave: 1, order: ["net", "app"], modules: new Map([["net", "net"], ["app", "app"]]), ownWave: new Map([["net", 1], ["app", 2]]) };
+    const skeleton = runSkeleton(WEB, "c0ffee", [["net", "app"], ["web"]], new Map([["app", new Set(["net"])]]), states, composed);
     const spans = [{ phase: "plan" as const, start: at(1), end: at(1, 2) }, { phase: "gate" as const, start: at(1, 2) }, { phase: "apply" as const, start: at(1, 30), share: 1 }];
-    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1", changed: ["net"], totals: { create: 1, update: 1, replace: 0, delete: 0, read: 0, "no-op": 0, forget: 0 }, totals_roots: 1, spans }, at(1));
+    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1", changed: ["net"], totals: { create: 1, update: 1, replace: 0, delete: 0, read: 0, "no-op": 0, forget: 0 }, totals_roots: 1, spans, composed: { roots: ["net", "app"], digest: "d1", unknown: ["app"], members: [{ root: "net", module: "module.net", apply: "applied", state: "written" }, { root: "app", module: "module.app", apply: "applied", state: "written" }] } }, at(1));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "terragucci approve wave-2 --plan d2", shares: 2 }, at(2));
     v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
     const progress = { read: at(1, 31), resources: [{ root: "net", address: "terraform_data.a", action: "create" as const, status: "done" as const, done_at: at(1, 31) }, { root: "net", address: "terraform_data.b", action: "update" as const, status: "in-flight" as const }] };
