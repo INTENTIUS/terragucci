@@ -1,0 +1,5 @@
+{
+  "changes": "The same port change, but network's output is known only once network has applied.",
+  "watch": "App and edge plan as known after apply. When wave 1 finishes, wave 2 plans again. It then holds until a person approves that plan.",
+  "shows": "One expression decides whether a value gets reviewed, and nothing reaches a root without someone signing off."
+}

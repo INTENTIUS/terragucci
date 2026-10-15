@@ -29,12 +29,16 @@
 #     "step": "waiting", "label": "Wave 2 waits for an approval",
 #     "started_at": "2026-10-20T10:00:00Z",
 #     "next": { "action": "approve wave-2", "at": "2026-10-20T10:04:20Z" },
-#     "pull": 41, "commit": "<sha>" }
+#     "pull": 41, "commit": "<sha>",
+#     "about": { "changes": "...", "watch": "...", "shows": "..." } }
 #
 # step is one of pull-request, planned, merged, applying, waiting, approved,
 # failed, resumed, applied, reset and stalled. next is null at stalled; next.at
 # is null while the driver waits on the pipeline rather than on its own clock.
-# pull and commit are null until the cycle has them.
+# pull and commit are null until the cycle has them. about is the scenario's
+# card, read from example-demo/scenarios/<scenario>/about.json at the start of
+# its cycle: what the change is, what to watch for, and what it shows. It is
+# null when the scenario has none (the base). just lint-docs lints its text.
 #
 # Beside it, <prefix>/runs/index.json and <prefix>/runs/<id>.json hold the demo
 # repo's last 30 pipeline runs with their jobs, steps and logs, copied while
@@ -139,12 +143,20 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   [ -z "$action" ] || next="$(jq -cn --arg a "$action" --arg t "$at_iso" '{action: $a, at: (if $t == "" then null else $t end)}')"
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
+    --argjson about "${ABOUT:-null}" \
     '{cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
-      pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end)}' \
+      pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end),
+      about: $about}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: $step: $label"
   demo_put
+}
+
+# The scenario's card from its about.json, compact; null when it has none.
+scenario_about() { # scenario
+  local f="$DEMO/scenarios/$1/about.json"
+  [ -f "$f" ] && jq -ce '{changes, watch, shows}' "$f" 2>/dev/null || echo null
 }
 
 # Write a step whose next action is the driver's own, HOLD seconds on, and wait them out.
@@ -164,8 +176,9 @@ demo_stalled() {
   was="$(jq -r '.step // "the start"' <<<"$last")"
   jq -n --argjson last "$last" --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" \
     --arg started "$(iso "${STARTED:-$(now)}")" --arg text "Stalled after $was: $reason. The driver resets and goes on with the next cycle." \
+    --argjson about "${ABOUT:-null}" \
     '{cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
-      pull: ($last.pull // null), commit: ($last.commit // null)}' > "$DEMO_STATE/demo.json.new"
+      pull: ($last.pull // null), commit: ($last.commit // null), about: $about}' > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: stalled: $reason"
   demo_put
@@ -662,6 +675,7 @@ scenario_stale_plan() {
 run_cycle() {
   SCENARIO="$1"
   TITLE="$(scenario_title "$1")" || fail "unknown scenario '$1' (${SCENARIOS[*]})"
+  ABOUT="$(scenario_about "$1")"
   PULL="" COMMIT="" HELD=""
   on_waiting() { default_waiting; }
   on_failed() { default_failed; }
@@ -807,7 +821,7 @@ case "$CMD" in
     done
     echo "$sha" > "$DEMO_STATE/base.sha"
     [ -f "$DEMO_STATE/cycle" ] || echo 0 > "$DEMO_STATE/cycle"
-    CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" STARTED="$started" COMMIT="$sha"
+    CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" ABOUT=null STARTED="$started" COMMIT="$sha"
     runs_mark base
     demo_write reset "The base is applied: $(applied_values), and other" "start the first cycle"
     log "ready in $(( $(now) - started ))s"
@@ -836,7 +850,7 @@ OUT
     [ -f "$DEMO_STATE/base.sha" ] || fail "no base snapshot; run 'just demo up' first"
     echo "$$" > "$DEMO_STATE/driver.pid"
     CYCLE="$(cat "$DEMO_STATE/cycle" 2>/dev/null || echo 0)"
-    SCENARIO=base TITLE="The base" STARTED="$(now)"
+    SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)"
     # A driver the watchdog restarted may have left a cycle half done.
     attempt reset_base
     [ "$ATTEMPT" = 0 ] || demo_stalled
@@ -845,7 +859,7 @@ OUT
         CYCLE=$((CYCLE + 1))
         echo "$CYCLE" > "$DEMO_STATE/cycle"
         : > "$DEMO_STATE/reason"
-        SCENARIO="$s" TITLE="$(scenario_title "$s")" STARTED="$(now)" PULL="" COMMIT="" OUTCOME=""
+        SCENARIO="$s" TITLE="$(scenario_title "$s")" ABOUT="$(scenario_about "$s")" STARTED="$(now)" PULL="" COMMIT="" OUTCOME=""
         # A step that fails or passes its limit ends the cycle's subshell; the
         # loop writes stalled and resets.
         attempt run_cycle "$s"

@@ -1,0 +1,5 @@
+{
+  "changes": "Network's port goes from 8080 to 9090, and app's listener and edge's upstream follow it.",
+  "watch": "One plan note covers all three roots, each planned on the new value. The waves run in order without stopping, since nothing is destroyed.",
+  "shows": "The pull request reviews one change across three states, and the waves carry it out in dependency order while each root keeps its own state."
+}

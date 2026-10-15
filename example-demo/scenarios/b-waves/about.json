@@ -1,0 +1,5 @@
+{
+  "changes": "Network adds a subnet, and app adds four resources that read its id.",
+  "watch": "Wave 2 can't plan until wave 1 creates the subnet, so it holds for approval of a plan no review saw.",
+  "shows": "A value known only after apply never lands without someone signing off on it."
+}

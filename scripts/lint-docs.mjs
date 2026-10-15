@@ -153,6 +153,32 @@ const missing = (what, expected, found, page) => {
   }
 }
 
+// The demo kiosk's scenario cards (example-demo/scenarios/<id>/about.json, behold reads them through
+// demo.json's about): three fields of prose shown on a TV, linted at the top strictness with no finding allowed.
+{
+  const dir = "example-demo/scenarios";
+  for (const id of readdirSync(dir).sort()) {
+    const file = join(dir, id, "about.json");
+    let about;
+    try {
+      about = JSON.parse(read(file));
+    } catch (e) {
+      problems.push(`${file}: every scenario has an about.json with changes, watch and shows (${e.message})`);
+      continue;
+    }
+    for (const field of ["changes", "watch", "shows"]) {
+      const text = about[field];
+      if (typeof text !== "string" || !text.trim()) {
+        problems.push(`${file}: ${field} is missing or empty`);
+        continue;
+      }
+      for (const f of lintDocument(text, { strictness: 3 }).findings) problems.push(`${file}: ${field} [${f.ruleId}/${f.severity}] ${f.message}`);
+    }
+    const extra = Object.keys(about).filter((k) => !["changes", "watch", "shows"].includes(k));
+    if (extra.length) problems.push(`${file}: unknown field ${extra.join(", ")}; the card has changes, watch and shows`);
+  }
+}
+
 for (const p of problems) console.log(`FAIL  ${p}`);
 
 const files = roots.flatMap(collect);
