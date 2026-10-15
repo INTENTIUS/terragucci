@@ -125,7 +125,10 @@ function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: 
   writeFileSync(eventFile, JSON.stringify(opts.event ?? { comment: { body: "/terragucci agent add a tag", user: { login: "dev" } } }));
   const sent: Sent[] = [];
   const f: Fetch = async (url, init) => {
-    sent.push({ path: url.replace("https://forge.test/api/v1/", ""), body: init?.body ? JSON.parse(init.body) : undefined });
+    const path = url.replace("https://forge.test/api/v1/", "");
+    // The agent's token acts as agent-bot, which the commit's Pushed-by trailer names.
+    if (path === "user") return { ok: true, status: 200, json: async () => ({ login: "agent-bot" }), text: async () => "" } as never;
+    sent.push({ path, body: init?.body ? JSON.parse(init.body) : undefined });
     return { ok: true, status: 201, json: async () => ({}), text: async () => "" } as never;
   };
   const env = {
@@ -155,6 +158,10 @@ describe("pushAgentChange", () => {
     const message = git(s.bare, "log", "-1", "--format=%B", r.commit!);
     expect(message).toContain("Change asked for by dev on pull request #7");
     expect(message).toContain("add a tag");
+    // The trailers name who asked and the user the push token acts as, so no review of the change counts from either.
+    expect(git(s.bare, "log", "-1", "--format=%(trailers:key=Requested-by,valueonly)", r.commit!).trim()).toBe("dev");
+    expect(git(s.bare, "log", "-1", "--format=%(trailers:key=Pushed-by,valueonly)", r.commit!).trim()).toBe("agent-bot");
+    expect(message.split("\n")[0]).toBe("Change asked for by dev on pull request #7");
     expect(s.sent).toHaveLength(1);
     expect(s.sent[0].path).toBe("repos/acme/infra/issues/7/comments");
     expect(s.sent[0].body.body).toContain(`pushed [\`${r.commit!.slice(0, 8)}\`](https://forge.test/acme/infra/commit/${r.commit})`);

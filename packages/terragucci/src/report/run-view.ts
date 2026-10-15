@@ -37,6 +37,8 @@ export interface RunWave {
   digest?: string | null;
   /** The command that approves it, while it waits. */
   command?: string;
+  /** The people whose approval of its digest did not count, and why: they had a hand in the change. */
+  excluded?: { login: string; reason: string }[];
   /** Its report's directory under the project (`<yyyy>/<mm>/<commit>/tf-apply-wave-<k>`). */
   report?: string;
   /** A wave split across jobs (`waves.jobs`): how many shares apply it, and the ones that applied. It is applied once every share has. */

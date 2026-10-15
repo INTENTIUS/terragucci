@@ -64,12 +64,34 @@
       "description": "When a wave waits for an approval. on-destroy is an older name for on-destructive."
     },
     "approval": {
-      "enum": [
-        "ledger",
-        "pr-review",
-        "sealed"
+      "anyOf": [
+        {
+          "enum": [
+            "ledger",
+            "pr-review",
+            "sealed"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "ledger",
+                "pr-review",
+                "sealed"
+              ],
+              "description": "What counts as a waiting wave's approval."
+            },
+            "require_signed": {
+              "type": "boolean",
+              "description": "Refuse an unsigned approval on the ledger, so every ledger approval is tied to the principal who signed it."
+            }
+          }
+        }
       ],
-      "description": "What counts as a waiting wave's approval."
+      "description": "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed."
     },
     "apply": {
       "type": "object",
@@ -1127,6 +1149,11 @@
           "type": "string",
           "minLength": 1
         },
+        "login": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(\\[bot\\])?$",
+          "description": "The forge login agent.token_env's token acts as. No approval by it counts."
+        },
         "comment": {
           "anyOf": [
             {
@@ -1720,12 +1747,34 @@
           "description": "When a wave waits for an approval. on-destroy is an older name for on-destructive."
         },
         "approval": {
-          "enum": [
-            "ledger",
-            "pr-review",
-            "sealed"
+          "anyOf": [
+            {
+              "enum": [
+                "ledger",
+                "pr-review",
+                "sealed"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "ledger",
+                    "pr-review",
+                    "sealed"
+                  ],
+                  "description": "What counts as a waiting wave's approval."
+                },
+                "require_signed": {
+                  "type": "boolean",
+                  "description": "Refuse an unsigned approval on the ledger, so every ledger approval is tied to the principal who signed it."
+                }
+              }
+            }
           ],
-          "description": "What counts as a waiting wave's approval."
+          "description": "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed."
         },
         "apply": {
           "type": "object",
@@ -2774,6 +2823,11 @@
             "token_env": {
               "type": "string",
               "minLength": 1
+            },
+            "login": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(\\[bot\\])?$",
+              "description": "The forge login agent.token_env's token acts as. No approval by it counts."
             },
             "comment": {
               "anyOf": [

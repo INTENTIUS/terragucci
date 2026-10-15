@@ -42,6 +42,30 @@ export function normalizeGate(v: unknown): Gate | undefined {
  * lists for its approver. Every mode binds the digest.
  */
 export const APPROVALS = ["ledger", "pr-review", "sealed"] as const;
+/** The keys of `approval:` as a map: the mode, and whether a ledger approval must be signed. */
+export const APPROVAL_KEYS = ["mode", "require_signed"] as const;
+
+/**
+ * `approval:` as a map, in place of the mode alone. `require_signed: true`
+ * refuses an unsigned approval on the ledger: only a signed one can be tied
+ * to the person whose principal signed it, so only a signed one can be
+ * checked against the people behind the change (./involved.ts).
+ */
+export interface ApprovalSettings {
+  mode?: Approval;
+  require_signed?: boolean;
+}
+
+/** The mode an `approval:` value names: the string, or the map's `mode`. */
+export function approvalModeOf(v: Approval | ApprovalSettings | undefined): Approval | undefined {
+  if (typeof v === "string") return v;
+  return v && typeof v === "object" && typeof v.mode === "string" ? v.mode : undefined;
+}
+
+/** Whether an `approval:` value refuses unsigned ledger approvals. */
+export function requireSignedOf(v: Approval | ApprovalSettings | undefined): boolean {
+  return !!v && typeof v === "object" && v.require_signed === true;
+}
 /** Every stage runs on the forge's CI. */
 export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
@@ -420,8 +444,8 @@ export interface ProjectSettings {
   url?: string;
   /** When a wave waits for an approval. A loaded config holds the policy's current name: on-destroy reads as on-destructive. */
   gate?: GateName;
-  /** What counts as a waiting wave's approval; see APPROVALS. Read from the config at base, never the applied commit's own. */
-  approval?: Approval;
+  /** What counts as a waiting wave's approval; see APPROVALS, or a map with the mode and `require_signed` (ApprovalSettings). Read from the config at base, never the applied commit's own. */
+  approval?: Approval | ApprovalSettings;
   /** When a change applies; see ApplySettings. */
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
@@ -552,7 +576,7 @@ export interface ProjectSettings {
    * can comment, push a branch and open a pull request; the agent itself never
    * holds it.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -878,8 +902,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   if (s.gate !== undefined && normalizeGate(s.gate) === undefined) problems.push(`${where}.gate is ${JSON.stringify(s.gate)}; use one of ${GATES.join(", ")}`);
-  oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
-  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, s.approval);
+  if (isObject(s.approval)) {
+    for (const k of Object.keys(s.approval)) if (!(APPROVAL_KEYS as readonly string[]).includes(k)) problems.push(`${where}.approval.${k} is not a key of approval (keys: ${APPROVAL_KEYS.join(", ")})`);
+    oneOf(s.approval.mode, APPROVALS, `${where}.approval.mode`, problems);
+    if (s.approval.require_signed !== undefined && typeof s.approval.require_signed !== "boolean") problems.push(`${where}.approval.require_signed must be true or false`);
+  } else oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
+  const mode = isObject(s.approval) ? s.approval.mode : s.approval;
+  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, mode);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
@@ -1046,7 +1075,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment, drift)`);
+      for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, login, comment, drift)`);
+      if (a.login !== undefined && (typeof a.login !== "string" || !AGENT_LOGIN.test(a.login))) problems.push(`${where}.agent.login must be the forge login the agent's token acts as`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
       else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
@@ -1088,7 +1118,20 @@ export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
 export const COST_KEYS = ["key_secret", "command", "approve_above"];
 export const PASS_KEYS = ["secrets", "vars"];
-export const AGENT_KEYS = ["via", "token_env", "comment", "drift"];
+export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift"];
+
+/** A forge login, as `agent.login` takes it. */
+export const AGENT_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$/;
+
+/**
+ * `config check`'s warning when `agent.token_env` is set without
+ * `agent.login`: a pull request's author can use the agent's secret to post a
+ * review as the agent's account, and without its login nothing excludes it.
+ */
+export function agentLoginWarning(agent: { token_env?: unknown; login?: unknown } | undefined): string | undefined {
+  if (!agent || typeof agent.token_env !== "string" || !agent.token_env || (typeof agent.login === "string" && agent.login)) return undefined;
+  return `agent.token_env is set without agent.login, so the agent's account isn't excluded from approving a change: set agent.login to the login ${agent.token_env}'s token acts as`;
+}
 
 function checkSteps(v: unknown, where: string, problems: string[]): void {
   if (!Array.isArray(v)) {

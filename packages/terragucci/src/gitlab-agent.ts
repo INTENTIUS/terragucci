@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { landAgentChange, type PushResult } from "./agent-comment";
+import { tokenUser } from "./involved";
 import { BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
 import { gitlabApi, type GitLabCall } from "./comment-apply-gitlab";
 import { ConfigError } from "./config";
@@ -228,6 +229,7 @@ export async function pushGitLabAgentChange(o: GitLabAgentPushOptions): Promise<
     push: () => git(["-c", `http.extraHeader=Authorization: Basic ${auth}`, "push", "-q", `${server}/${path}.git`, `HEAD:refs/heads/${head}`]),
     link: (commit) => (project ? `[\`${short(commit)}\`](${project}/-/commit/${commit})` : `\`${short(commit)}\``),
     what: "merge request",
+    pushedBy: async () => (await tokenUser({ which: "the agent's token", forge: "gitlab", api: env.CI_API_V4_URL, token, fetch: doFetch })).login,
   });
 }
 

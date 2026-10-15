@@ -96,7 +96,7 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 
 4. Ask. Write `/terragucci agent` and the ask on one line. The reply links the commit and names the files it changed.
 
-   The commit records the ask and who made it on which pull request.
+   The commit records the ask and who made it on which pull request. Its `Requested-by: <login>` trailer names you, and its `Pushed-by: <login>` trailer names the user the agent's token acts as, when the forge says. Set [`agent.login`](/terragucci/reference/config/#the-agent-comment) to the agent's account, so its review never counts on any pull request. Neither of you can approve the pull request for the gate afterwards: a review by someone who asked for one of its commits doesn't count ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). Another writer approves it.
 
 </Steps>
 

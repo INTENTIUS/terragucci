@@ -143,7 +143,7 @@ dashboards: true
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destructive` | `always`, `on-destructive` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy). Under `always` and `on-destructive` a wave also waits when a root of it that changes something read an upstream output that was known only once the upstream applied, so nobody reviewed the plan it applies; under `never` it does not ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)). `on-destroy` is accepted as an older name for `on-destructive`, the name SQL Yodeler and chant use |
-| `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
+| `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Or a map: `mode`, one of the three; `require_signed`, `true` to refuse every unsigned approval on the ledger, `false` when unset. In every mode an approval counts only from someone who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `branches`: roots that apply from a branch other than the default; see [Apply from other branches](#apply-from-other-branches). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset. `point`: a workspace decision point every wave gate asks instead of waiting for an approval, read at base, with `approval: ledger`; see [A gate that asks a decision point](/terragucci/guides/approve-from-chat/#a-gate-that-asks-a-decision-point) |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1; `after`, roots that apply after others they do not read (plain roots; see [Root order](#root-order)); `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)); `compose`, `true` to plan and apply the roots a change reaches as one composed run beside the waves, `false` when unset (plain roots on `tofu` or `terraform`; see [A composed run](#a-composed-run)); `compose_max`, the most roots one composed run covers, a whole number of 2 or more, 10 when unset |
@@ -265,7 +265,7 @@ apply:
 
 | `requires` entry | The open pull request needs |
 |---|---|
-| `approved` | an approval of its head by a reviewer other than its author, and no reviewer whose last review asks for changes; on GitLab, an approval by a Developer or above after its latest push |
+| `approved` | an approval of its head by a reviewer who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)), and no reviewer whose last review asks for changes; on GitLab, an approval by a Developer or above after its latest push |
 | `mergeable` | the forge to say it merges: no conflicts with the default branch, on GitHub no branch protection blocking it, on GitLab a `detailed_merge_status` of `mergeable` |
 | `undiverged` | its head to contain the default branch as it is now |
 | `checks` | every status and check on its head to have passed |
@@ -504,7 +504,16 @@ agent:
     timeout: 30
 ```
 
-`comment: true` takes defaults; `agent.token_env` is the push token's secret name.
+`comment: true` takes defaults; `agent.token_env` is the push token's secret name. Set `agent.login` to the forge login that token acts as:
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  login: acme-agent
+```
+
+No approval by `agent.login` counts, on any pull request, whether the agent touched it or not: a pull request's author can edit the workflow in their own pull request and use the agent's secret to post a review as that account. `terragucci config check` warns when `agent.token_env` is set without `agent.login`, and the wave log and the plan note say the agent's account isn't excluded.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -514,6 +523,8 @@ agent:
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
 The agent's jobs get no cloud credentials. On GitLab it needs `comments`, whose job starts the agent's pipeline on the default branch. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).
+
+The agent's commit carries a `Requested-by: <login>` trailer naming who asked, and a `Pushed-by: <login>` trailer naming the user `agent.token_env`'s token acts as, when the forge names one. No approval of the change counts from either ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)).
 
 ## The drift agent
 
@@ -533,6 +544,8 @@ agent:
 ```
 
 Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule and `respond.drift` set to `attribute` or `off`, since the agent's pull request takes the place of the codified one. Neither drift agent job gets cloud credentials, and `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
+
+The drift agent's commit carries a `Requested-by: <login>` trailer when a person started the drift run by hand, and a `Pushed-by: <login>` trailer naming the token's user. A review by either doesn't count; on a drift pull request a schedule opened, a review by any other writer does.
 
 ## The review
 

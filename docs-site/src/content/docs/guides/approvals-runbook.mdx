@@ -22,10 +22,20 @@ The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/con
 | `approval` | An approval counts when | Setup |
 |---|---|---|
 | `ledger` (default) | it names the wave's digest. Anyone who can push to `chant/lifecycle` can write one in anyone's name; it records the plans and does not prove who approved. | none |
-| `pr-review` | the merged pull request's head was approved by a writer other than its author and the wave plans what the review saw, or, as under `ledger`, it names the digest | none; optionally require `terragucci/approval` (GitHub, Forgejo) or an approval rule (GitLab) |
+| `pr-review` | the merged pull request's head was approved by a writer who had no hand in the change and the wave plans what the review saw, or, as under `ledger`, it names the digest | none; optionally require `terragucci/approval` (GitHub, Forgejo) or an approval rule (GitLab) |
 | `sealed` | it names the digest and its seal verifies against the signers file at base | [Set up signers](#set-up-signers) |
 
 `terragucci config check` prints the mode in force and where it comes from. A wave reads it at base, so a change to it governs the merges after it.
+
+In every mode an approval counts only from someone who had no hand in the change: not the pull request's author, nor anyone who wrote or committed one of its commits, asked an agent for one, or is the user the pipeline's or the agent's token acts as ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). A signed approval is judged by its signer's principal, so with `--actor github:alice` the login checked is `alice`. To refuse every unsigned approval on the ledger, write the key as a map:
+
+```yaml
+approval:
+  mode: ledger
+  require_signed: true
+```
+
+Approvers then sign every approval, as under `sealed` (the second tab below).
 
 | You have | You want | Do |
 |---|---|---|
@@ -70,7 +80,7 @@ A waiting wave exits with code 3; its command is in the job log, the `terragucci
   </TabItem>
 </Tabs>
 
-It records an approval of the planned digest and restarts the waiting wave (`--dry-run` prints what it would approve instead). If the restart fails, re-run the job. Commenting `/terragucci apply` on the pull request also works (an open one needs `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
+It records an approval of the planned digest and restarts the waiting wave (`--dry-run` prints what it would approve instead). When the wave's log says your approval doesn't count, for example `alice asked for abc1234, so github:alice's approval doesn't count`, you had a hand in the change: ask another writer to approve it. If the restart fails, re-run the job. Commenting `/terragucci apply` on the pull request also works (an open one needs `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
 
 ## Approve by review
 
