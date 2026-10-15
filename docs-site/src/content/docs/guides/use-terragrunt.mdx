@@ -16,6 +16,26 @@ import { Steps } from '@astrojs/starlight/components';
 
 A pipeline that checks with `terragrunt hcl fmt` and `hcl validate` and plans the units a pull request reaches. It applies a wave at a time behind the same gate as plain roots.
 
+## Already in Terragrunt
+
+Terragrunt and Gruntwork Pipelines already do part of this work:
+
+| Feature | What it does |
+|---|---|
+| [`run --all`](https://docs.terragrunt.com/reference/cli/commands/run) and the [run queue](https://docs.terragrunt.com/features/stacks/run-queue/) | runs every unit in dependency order, waiting for a unit's dependencies before it starts |
+| `--filter-affected`, `--queue-ignore-errors`, retries | plans or applies only the units changed since the default branch, carries on past a failed unit when asked, and retries transient errors by default |
+| [Pipelines plan and apply](https://docs.gruntwork.io/2.0/docs/pipelines/guides/running-plan-apply/) | finds the units a commit changes and plans or applies them, with `plan -destroy` for a deleted unit, in [your own GitHub Actions or GitLab CI](https://docs.gruntwork.io/2.0/docs/pipelines/concepts/overview/) |
+| [Pipelines drift detection](https://docs.gruntwork.io/2.0/docs/pipelines/guides/running-drift-detection/) | plans the units on a schedule and opens a Drift Detected pull request for those that drifted |
+
+If ordering and drift pull requests are what you need, Terragrunt and Pipelines already do them.
+
+## Added by terragucci
+
+- A pull request plans a unit on its upstream's planned outputs in place of `mock_outputs`, and a plan that would read mocks fails its wave ([Later layers](#later-layers)).
+- A wave waits for an approval when it would apply a value no review saw ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)).
+- An approval binds the wave's plan digest and counts only from someone with no hand in the change. Pipelines relies on [branch protection](https://docs.gruntwork.io/2.0/docs/pipelines/installation/branch-protection) for approvals.
+- A wave whose plans moved since the approval applies nothing. For stale plans, the same branch protection page recommends requiring branches to be up to date before merging.
+
 ## Prerequisites
 
 | You need | Why |

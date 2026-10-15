@@ -16,6 +16,23 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or apply the stacks it wrote to `cdktf.out/stacks/`. The synthesized files stay out of git.
 
+## Already in CDK Terrain
+
+[CDK Terrain](https://cdktn.io/docs) already orders and deploys stacks:
+
+| Feature | What it does |
+|---|---|
+| [`cdktn deploy`](https://cdktn.io/docs/cli-reference/commands) | works out the order of the stacks from their cross-stack references and dependencies, and takes several stack ids or a glob such as `'*-production'` |
+| [The CDK Terrain action](https://github.com/cdktn-io/action) | runs synth, plan, or an apply or destroy with auto-approve, for one stack per step |
+
+If one deploy of every stack in order is all you need, `cdktn deploy` already does it.
+
+## Added by terragucci
+
+- A pull request plans only the stacks whose synth output differs between base and head ([Planned stacks](#planned-stacks)).
+- A stack that reads another's state plans on that stack's planned outputs, read from its `cdk.tf.json`.
+- Each wave waits at its own gate. An approval binds the wave's plan digest and counts only from someone with no hand in the change.
+
 ## Prerequisites
 
 | You need | Why |

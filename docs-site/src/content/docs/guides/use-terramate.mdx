@@ -15,6 +15,27 @@ import { Steps } from '@astrojs/starlight/components';
 
 A pipeline whose roots are your [Terramate](https://terramate.io) stacks, applied in the order Terramate gives them, a layer at a time behind the same gate as plain roots.
 
+## Already in Terramate
+
+Terramate and Terramate Cloud already do part of this work:
+
+| Feature | What it does |
+|---|---|
+| [Orchestration](https://terramate.io/docs/cli/orchestration/) | `terramate run` runs parent stacks before their children, in the [order](https://terramate.io/docs/cli/orchestration/order-of-execution) `after` and `before` set, in parallel with `--parallel` |
+| [Change detection](https://terramate.io/docs/cli/change-detection) | `--changed` limits a run to the stacks git shows changed, including those whose local modules changed |
+| [CI/CD workflows](https://terramate.io/docs/cli/automation/) | preview, deployment and drift check workflows for GitHub Actions, GitLab CI and Bitbucket Pipelines |
+| [Deployments](https://terramate.io/docs/cloud/deployments/) (Terramate Cloud) | a searchable history of every deployment, with alerts when one fails |
+| [Drift management](https://terramate.io/docs/cloud/drift/) (Terramate Cloud) | drift checks after a deployment and on a schedule, with alerts and reconciliation jobs in your CI |
+
+If ordered runs of the changed stacks and Terramate's own workflows already fit your team, you may not need terragucci's waves.
+
+## Added by terragucci
+
+- Each layer waits at its own gate. An approval binds the wave's plan digest and counts only from someone with no hand in the change.
+- A wave whose plans moved since the approval applies nothing.
+- A stack that reads an `input` is never planned on its `mock`; it waits for its upstream's state ([Outputs sharing](#outputs-sharing)).
+- `init` writes the pipeline for Forgejo as well as GitHub and GitLab.
+
 ## Prerequisites
 
 | You need | Why |
@@ -111,6 +132,8 @@ input "net_name" {
 ```
 
 The job reads the upstream's outputs from its state, once it has a cloud credential, and fills the variable Terramate generated. While the upstream has no state, the stack is held back rather than planned on its `mock`, and the plan note says which stack it waits for. The `sharing_backend` command is not run; the stack's own binary reads the state.
+
+A pull request reads the upstream's applied state, never its plan. When one change edits both stacks, the review shows the reader planned on the upstream's old value. After the merge the reader's wave plans on what the upstream's wave applied. Its gate then decides as for any wave. A [`terraform_remote_state` read](/terragucci/concepts/waves-and-approvals/#linked-roots) waits for an approval in that case, and an `input` does not. Set `gate: always` to approve every wave.
 
 | `value` | Read |
 |---|---|
