@@ -1,0 +1,3 @@
+{
+  "problem": "Big Terraform setups are split into separate states, so one change can touch several of them. A value one state reads from another may not exist until apply, so no review ever shows it. This pipeline applies the states in order and asks a person before anything unreviewed lands."
+}
