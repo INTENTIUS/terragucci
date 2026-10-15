@@ -48,7 +48,7 @@ describe("agent.drift in terragucci.yml", () => {
     expect(problemsOf({ drift: "0 6 * * *", respond: { drift: "off" }, agent: { ...base, drift: { model: "x" } } })).toEqual([
       "config.agent.drift.model is not a setting (settings: command, key_secret, max_turns, timeout)",
     ]);
-    expect(problemsOf({ agent: { ...base, fix: true } })).toEqual(["config.agent.fix is not a setting (settings: via, token_env, comment, drift)"]);
+    expect(problemsOf({ agent: { ...base, fix: true } })).toEqual(["config.agent.fix is not a setting (settings: via, token_env, login, comment, drift)"]);
   });
 });
 
