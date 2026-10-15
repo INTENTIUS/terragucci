@@ -72,6 +72,11 @@
           "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
           "digest": { "type": ["string", "null"], "description": "The set digest its gate decided on." },
           "command": { "type": "string", "description": "The command that approves it, while it waits." },
+          "excluded": {
+            "type": "array",
+            "description": "The people whose approval of its digest did not count, because they had a hand in the change, each with the reason, such as bob asked for abc1234.",
+            "items": { "type": "object", "required": ["login", "reason"], "properties": { "login": { "type": "string" }, "reason": { "type": "string" } } }
+          },
           "report": { "type": "string", "description": "Its report's directory, relative to the project's index.json." },
           "shares": { "type": "integer", "description": "A wave split across jobs: how many share jobs apply it." },
           "shares_applied": { "type": "array", "items": { "type": "integer" }, "description": "The shares that applied; the wave is applied once every share has." },

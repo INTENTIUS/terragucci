@@ -107,7 +107,7 @@ describe("the drift agent's prompt", () => {
 interface Sent { method: string; path: string; body: any }
 
 /** A forge with a bare repo whose main the drift job planned, the agent's patch against it, and the push job's fresh checkout. */
-function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: boolean; pulls?: unknown[] } = {}) {
+function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: boolean; pulls?: unknown[]; env?: Record<string, string> } = {}) {
   const root = tmp("tg-drift-push-");
   const bare = join(root, "forge.git");
   execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare]);
@@ -136,7 +136,8 @@ function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: 
     const path = url.replace("https://forge.test/api/v1", "");
     const method = init?.method ?? "GET";
     sent.push({ method, path, body: init?.body ? JSON.parse(init.body) : undefined });
-    const reply = method === "GET" && path === "/repos/acme/infra" ? { default_branch: "main" }
+    const reply = method === "GET" && path === "/user" ? { login: "drift-bot" }
+      : method === "GET" && path === "/repos/acme/infra" ? { default_branch: "main" }
       : method === "GET" && path.startsWith("/repos/acme/infra/pulls") ? (opts.pulls ?? [])
       : method === "POST" && path === "/repos/acme/infra/pulls" ? { html_url: "https://forge.test/acme/infra/pulls/9", number: 9 }
       : {};
@@ -150,6 +151,8 @@ function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: 
     TG_TOKEN: "agent-token",
     TG_ISSUE: "12",
     TG_SHA: opts.moved ? "b".repeat(40) : sha,
+    GITHUB_EVENT_NAME: "schedule",
+    ...opts.env,
   };
   const run = () => pushDriftChange({ change, cwd: checkout, env, fetch: f, policyDir: "policy", forge: "forgejo" });
   const branch = (name: string) => spawnSync("git", ["-C", bare, "rev-parse", "--verify", "-q", name], { encoding: "utf-8" }).stdout.trim();
@@ -158,6 +161,24 @@ function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: 
 }
 
 describe("pushDriftChange", () => {
+  it("names the person who started the drift run by hand in a Requested-by trailer, and the token's user in Pushed-by", async () => {
+    const s = setupPush({ patch: { "app/main.tf": "# kept\n" }, env: { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_ACTOR: "carol", GITHUB_TRIGGERING_ACTOR: "carol" } });
+    const r = await s.run();
+    expect(r.opened, r.reason).toBe(true);
+    const message = git(s.bare, "log", "-1", "--format=%B", r.commit!);
+    expect(message.split("\n")[0]).toBe("Bring the code in line with drift issue #12");
+    expect(git(s.bare, "log", "-1", "--format=%(trailers:key=Requested-by,valueonly)", r.commit!).trim()).toBe("carol");
+    expect(git(s.bare, "log", "-1", "--format=%(trailers:key=Pushed-by,valueonly)", r.commit!).trim()).toBe("drift-bot");
+  });
+
+  it("names nobody in Requested-by when a schedule started the drift run", async () => {
+    const s = setupPush({ patch: { "app/main.tf": "# kept\n" }, env: { GITHUB_ACTOR: "carol" } });
+    const r = await s.run();
+    expect(r.opened, r.reason).toBe(true);
+    expect(git(s.bare, "log", "-1", "--format=%(trailers:key=Requested-by,valueonly)", r.commit!).trim()).toBe("");
+    expect(git(s.bare, "log", "-1", "--format=%(trailers:key=Pushed-by,valueonly)", r.commit!).trim()).toBe("drift-bot");
+  });
+
   it("commits the agent's change on a branch of its own, opens the pull request, and says so on the drift issue", async () => {
     const s = setupPush({ patch: { "app/main.tf": "resource \"aws_sqs_queue\" \"jobs\" {\n  visibility_timeout_seconds = 45\n}\n" } });
     const r = await s.run();

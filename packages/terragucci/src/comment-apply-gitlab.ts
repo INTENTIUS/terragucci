@@ -40,6 +40,7 @@ import type { WavesAfter } from "./detect";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
+import { countable, notCounted, pullInvolvement } from "./involved";
 import { gitlabApprovals, type ForgeCalls } from "./review";
 
 /** GitLab's Developer access level: the least that may ask for an apply. */
@@ -97,6 +98,9 @@ export interface OpenCheck {
   /** `apply.requires`. Default: every requirement. */
   requires?: readonly ApplyRequire[];
   wait?: (ms: number) => Promise<void>;
+  /** The job's environment and fetch, for the users its tokens act as. */
+  env?: NodeJS.ProcessEnv;
+  fetch?: Fetch;
 }
 
 /**
@@ -128,7 +132,10 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
     if (a.changes.length > 0) return { refuse: `!${iid} is not approved: ${a.changes.join(", ")} requested changes, so nothing is applied` };
     // GitLab records a push as a new version a moment after it; until then an approval cannot be placed after it.
     if (a.pr.head !== sha) return { refuse: `GitLab has not recorded the latest push to !${iid}, ${short(sha)}, as a version yet, so its approvals cannot be read; comment again in a minute` };
-    if (a.by.length === 0) return { refuse: `!${iid} is not approved: no member other than its author, with Developer or more, approved it after its latest push, ${short(sha)}, so nothing is applied` };
+    // An approval counts only from someone who had no hand in the change (./involved.ts).
+    const involved = await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr: a.pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}) });
+    const { by, excluded } = countable(a.by, involved);
+    if (by.length === 0) return { refuse: `!${iid} is not approved: no member other than its author, with Developer or more, approved it after its latest push, ${short(sha)}${excluded.map((e) => `; ${notCounted(e)}`).join("")}, so nothing is applied` };
   }
 
   let statuses: any;
@@ -339,7 +346,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
   const wave = parsed.kind === "apply" ? parsed.wave : undefined;
   const waves = applyWaves(o.layers, o.canary).length;
   if (wave !== undefined && wave > waves) return refuse(`this repository applies in ${waves} wave${waves === 1 ? "" : "s"}, so there is no wave-${wave}`);
-  const verdict = await openChecks({ api, id, mr, base, ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}) });
+  const verdict = await openChecks({ api, id, mr, base, env, fetch: doFetch, ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}) });
   if (verdict && "fail" in verdict) return broke(verdict.fail);
   if (verdict) return refuse(verdict.refuse);
   const l = await lock("apply");

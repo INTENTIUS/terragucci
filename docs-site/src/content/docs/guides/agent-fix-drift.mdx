@@ -90,6 +90,8 @@ Merging the pull request keeps the change made outside the code, and its apply g
 
 4. Wait for drift, or run the drift workflow by hand. The drift issue gets the pull request's link; read the pull request and its plan note before you merge or close it.
 
+   The pull request's author is the user the agent's token acts as, so its review never counts. When you run the drift workflow by hand, the agent's commit carries a `Requested-by:` trailer with your login, and your review of the pull request doesn't count either. A pull request a scheduled run opened has nobody behind it, and any other writer's review counts ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)).
+
 </Steps>
 
 ## Agent inputs

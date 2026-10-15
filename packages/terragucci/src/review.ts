@@ -26,6 +26,11 @@
  * approval withdrawn later, or a later request for changes, counts for
  * nothing.
  *
+ * A review counts only from someone who had no hand in the change
+ * (./involved.ts): not the pull request's author, nor anyone who wrote or
+ * committed one of its commits, asked an agent for one (`Requested-by:`),
+ * or is the user the pipeline's or the agent's token acts as.
+ *
  * An approval by the identity the pipeline's own token acts as never counts:
  * on GitLab the user `GET /user` names for the token (the project's bot,
  * whose token a merge request's code can read by default), on GitHub
@@ -46,6 +51,7 @@ import { ConfigError } from "./config";
 import { changesSomething } from "./report/changing";
 import { parseMarker, type NoteWaves } from "./report/marker";
 import { poster, type Fetch } from "./forge";
+import { countable, notCounted, pullInvolvement, type Excluded, type Involved } from "./involved";
 
 /** The status a pull request's head carries under pr-review. */
 export const APPROVAL_CONTEXT = "terragucci/approval";
@@ -233,9 +239,9 @@ export async function gitlabApprovals(f: ForgeCalls, mr: any): Promise<{ pr: Rev
 
 /** What a wave the gate holds gets from the review path. */
 export type ReviewOutcome =
-  | { kind: "approved"; pr: number; head: string; by: string[] }
+  | { kind: "approved"; pr: number; head: string; by: string[]; excluded?: Excluded[] }
   /** The reviewed digest differs from the one planned now. */
-  | { kind: "moved"; pr: number; head: string; by: string[]; reviewed: string }
+  | { kind: "moved"; pr: number; head: string; by: string[]; reviewed: string; excluded?: Excluded[] }
   /**
    * Nothing to go on: no pull request, no approval of its head, or no row for
    * the wave in its note. `review` names the pull request when an approving
@@ -243,7 +249,7 @@ export type ReviewOutcome =
    * and the forge takes a review of it (GitLab refuses an approval once a
    * merge request merged).
    */
-  | { kind: "none"; why: string; review?: { pr: number; url: string } };
+  | { kind: "none"; why: string; review?: { pr: number; url: string }; excluded?: Excluded[] };
 
 /** The page where a reviewer approves the pull request: GitHub's and Forgejo's Files changed tab, GitLab's merge request. */
 export function reviewUrl(env: NodeJS.ProcessEnv, forge: "github" | "forgejo" | "gitlab", pr: number): string | undefined {
@@ -253,7 +259,9 @@ export function reviewUrl(env: NodeJS.ProcessEnv, forge: "github" | "forgejo" | 
 }
 
 /** Decide one wave by the merged pull request's reviews. Never throws: a forge it cannot read leaves the wave waiting, with the reason. */
-export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo" | "gitlab"; sha: string; wave: number; digest: string | null }): Promise<ReviewOutcome> {
+export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo" | "gitlab"; sha: string; wave: number; digest: string | null; involved?: Involved }): Promise<ReviewOutcome> {
+  let excluded: Excluded[] = [];
+  const out = (r: ReviewOutcome): ReviewOutcome => (excluded.length ? { ...r, excluded } : r);
   try {
     let pr: ReviewedPull | undefined;
     let by: string[];
@@ -266,24 +274,31 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
       if (!got) return { kind: "none", why: `no merged merge request made ${o.sha.slice(0, 8)}` };
       ({ pr, by, changes, note } = got);
       reviewable = /^\d+$/.test((o.env.TG_PR ?? "").trim());
+      ({ by, excluded } = countable(by, o.involved));
       const own = got.own ? `; the approval by ${got.own}, the user the job's token acts as, never counts` : "";
-      if (by.length === 0 && changes.length === 0) return { kind: "none", why: `no member other than its author approved merge request ${pr.number} after its latest push, ${pr.head.slice(0, 8)}${own}`, ...reviewOf(o, pr.number, note, reviewable) };
+      if (by.length === 0 && changes.length === 0) return out({ kind: "none", why: `no member other than its author approved merge request ${pr.number} after its latest push, ${pr.head.slice(0, 8)}${own}${leftOut(excluded)}`, ...reviewOf(o, pr.number, note, reviewable) });
     } else {
       const f = forgeCalls(o.env, o.fetch);
       pr = await pullOf(f, o.env, o.sha);
       if (!pr) return { kind: "none", why: `no merged pull request made ${o.sha.slice(0, 8)}` };
       ({ by, changes } = await reviewsOf(f, pr, o.forge));
+      ({ by, excluded } = countable(by, o.involved));
       note = await noteWavesOf(f, pr);
     }
-    if (changes.length > 0) return { kind: "none", why: `${changes.join(", ")} asked for changes on pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) };
-    if (by.length === 0) return { kind: "none", why: `no reviewer other than its author approved head ${pr.head.slice(0, 8)} of pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) };
+    if (changes.length > 0) return out({ kind: "none", why: `${changes.join(", ")} asked for changes on pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) });
+    if (by.length === 0) return out({ kind: "none", why: `no reviewer other than its author approved head ${pr.head.slice(0, 8)} of pull request ${pr.number}${leftOut(excluded)}`, ...reviewOf(o, pr.number, note, reviewable) });
     const row = note?.waves.find((w) => w.number === o.wave);
-    if (!row || !row.digest) return { kind: "none", why: `the plan note of head ${pr.head.slice(0, 8)} has no digest for wave ${o.wave}, so its review did not cover these plans` };
-    if (o.digest !== null && row.digest === o.digest) return { kind: "approved", pr: pr.number, head: pr.head, by };
-    return { kind: "moved", pr: pr.number, head: pr.head, by, reviewed: row.digest };
+    if (!row || !row.digest) return out({ kind: "none", why: `the plan note of head ${pr.head.slice(0, 8)} has no digest for wave ${o.wave}, so its review did not cover these plans` });
+    if (o.digest !== null && row.digest === o.digest) return out({ kind: "approved", pr: pr.number, head: pr.head, by });
+    return out({ kind: "moved", pr: pr.number, head: pr.head, by, reviewed: row.digest });
   } catch (e) {
-    return { kind: "none", why: `the reviews could not be read (${(e as Error).message})` };
+    return out({ kind: "none", why: `the reviews could not be read (${(e as Error).message})` });
   }
+}
+
+/** The clause a wait adds for the approvals the rule left out: `; bob asked for abc1234, so bob's review doesn't count`. */
+export function leftOut(excluded: readonly Excluded[]): string {
+  return excluded.map((e) => `; ${notCounted(e, "review")}`).join("");
 }
 
 /** The review that would still approve the wave: its pull request's note has a digest for it, and the forge takes a review. */
@@ -298,7 +313,7 @@ function reviewOf(o: { env: NodeJS.ProcessEnv; forge: "github" | "forgejo" | "gi
  * request's head (`TG_PR`, `TG_SHA`). The waves come from the report in
  * `report` (the plan job) or from the head's plan note (the review job).
  */
-export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo"; report?: string }): Promise<{ state: "pending" | "success"; description: string }> {
+export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo"; report?: string; agentTokenEnv?: string; log?: (line: string) => void }): Promise<{ state: "pending" | "success"; description: string }> {
   const env = o.env ?? process.env;
   const f = forgeCalls(env, o.fetch);
   const number = (env.TG_PR ?? "").trim();
@@ -320,14 +335,17 @@ export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch
     state = "success";
     description = "no wave waits for an approval";
   } else {
-    const { by, changes } = await reviewsOf(f, pr, o.forge);
+    const reviewed = await reviewsOf(f, pr, o.forge);
+    const involved = await pullInvolvement({ forge: o.forge, calls: f, pr, env, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.agentTokenEnv ? { agentTokenEnv: o.agentTokenEnv } : {}) });
+    const { by, excluded } = countable(reviewed.by, involved);
+    for (const e of excluded) o.log?.(notCounted(e, "review"));
     const which = `wave ${waits.join(", ")}`;
-    if (changes.length === 0 && by.length > 0) {
+    if (reviewed.changes.length === 0 && by.length > 0) {
       state = "success";
       description = `${which} approved on ${pr.head.slice(0, 8)} by ${by.join(", ")}`;
     } else {
       state = "pending";
-      description = `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
+      description = excluded.length && reviewed.changes.length === 0 ? `${which} waits: ${excluded.map((e) => `${e.login} had a hand in it`).join(", ")}; another writer approves` : `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
     }
   }
   await poster(o.forge, env, o.fetch ?? fetch).setStatus(pr.head, { state, context: APPROVAL_CONTEXT, description: description.slice(0, 135) });

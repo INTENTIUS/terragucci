@@ -25,6 +25,7 @@ import { apiOf, parseComment } from "./comment";
 import { CONFIG_NAMES, ConfigError, type AgentCommentSettings, type ProjectSettings } from "./config";
 import { detectForge } from "@intentius/chant/pr-forge";
 import { poster, type Fetch } from "./forge";
+import { apiBase, tokenUser } from "./involved";
 
 /** The Claude Code release the default command runs. */
 export const CLAUDE_CODE_VERSION = "2.1.290";
@@ -212,6 +213,7 @@ export async function pushAgentChange(o: PushOptions): Promise<PushResult> {
     push: () => git(["-c", `http.extraHeader=Authorization: Basic ${auth}`, "push", "-q", "origin", `HEAD:refs/heads/${head}`]),
     link: (commit) => (server ? `[\`${commit.slice(0, 8)}\`](${server}/${repo}/commit/${commit})` : `\`${commit.slice(0, 8)}\``),
     what: "pull request",
+    pushedBy: async () => (await tokenUser({ which: "the agent's token", forge: detectForge(env) === "forgejo" ? "forgejo" : "github", api: apiBase("github", env), token, fetch: doFetch })).login,
   });
 }
 
@@ -237,6 +239,8 @@ export interface LandOptions {
   link: (commit: string) => string;
   /** pull request or merge request, as the replies say it. */
   what: string;
+  /** The user the push token acts as, for the commit's `Pushed-by:` trailer; undefined when the forge does not say. */
+  pushedBy?: () => Promise<string | undefined>;
 }
 
 /**
@@ -279,7 +283,10 @@ export async function landAgentChange(c: LandOptions): Promise<PushResult> {
     return refuse(`the agent's change touches ${forbidden.map((p) => `\`${p}\``).join(", ")}, which an agent may not change (CI, terragucci.yml, chant.workspace.json, the signers file, .chant/, the policy directory, code owners, agent instructions and git settings), so nothing was pushed.`);
   }
 
-  const message = [`Change asked for${user ? ` by ${user}` : ""} on ${c.where}`, "", ...(ask ? [ask, ""] : [])].join("\n");
+  // The trailers name who asked and the user the push token acts as, so no approval of the change counts from either (./involved.ts).
+  const pushedBy = c.pushedBy ? await c.pushedBy().catch(() => undefined) : undefined;
+  const trailers = [...(user ? [`Requested-by: ${user}`] : []), ...(pushedBy ? [`Pushed-by: ${pushedBy}`] : [])];
+  const message = [`Change asked for${user ? ` by ${user}` : ""} on ${c.where}`, "", ...(ask ? [ask, ""] : []), ...(trailers.length ? [...trailers, ""] : [])].join("\n");
   let commit: string;
   try {
     git(["-c", "user.name=terragucci agent", "-c", "user.email=terragucci-agent@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], message);

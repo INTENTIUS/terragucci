@@ -128,10 +128,11 @@ import { approvalRule, type ApprovalRule } from "./approval";
 import { overrideCommand } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
-import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
+import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ForgeCalls, type ReviewedPull, type ReviewOutcome } from "./review";
+import { judge, mergeExcluded, notCounted, pullInvolvement, sameLogin, whyInvolved, type Excluded, type Involved } from "./involved";
 import { gitlabReviewCalls, gitlabReviewOf } from "./gitlab-agent";
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
-import { baseCommit, sealRefusal } from "./seal";
+import { baseCommit, sealRefusal, type GateSigners } from "./seal";
 import { coneArgs, coneLogLine, conePlanDigest, coneRoot, readPlanCone, type PlanCone } from "./cone";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
@@ -280,6 +281,10 @@ export interface PendingRecord {
   neverOverMcp?: true;
   /** The decision point question the wave waits on, when the gate asks one (./point-gate.ts). */
   answer?: GateAnswerRef;
+  /** The approval mode the wave asked under, as chant writes it on the facts it records. */
+  approvalMode?: string;
+  /** terragucci's addition: on a fact a wave recorded because no approval of its digest counted under the rule (./involved.ts), the people it left out. */
+  excluded?: Excluded[];
 }
 
 /** The run a pending fact names: its `runId`, or, for one chant's op waves recorded, the run of its `resume` locator. */
@@ -307,6 +312,8 @@ export interface ResolutionRecord {
   /** The answer record the wave passed its gate on, when the gate asks a decision point (./point-gate.ts). */
   answer?: GateAnswerRef;
   approver?: { kind: "human" | "agent" };
+  /** The people the rule left out of this approval (./involved.ts): a review by someone who had a hand in the change. */
+  excluded?: Excluded[];
 }
 
 /**
@@ -339,6 +346,8 @@ export interface AppliedRecord {
   resumes?: string;
   /** On a `changes` line: where the apply runs, in CI, so `chant run resume` starts it again once that run is gone (chant#3858). */
   resume?: GateRunLocator;
+  /** On a `changes` line: the people the rule left out of the wave's approval (./involved.ts). */
+  excluded?: Excluded[];
 }
 
 /** How the apply an applied record with `changes` started ended, in the same file. A killed apply writes none. */
@@ -998,6 +1007,10 @@ interface WaveJob {
   /** The approval chant let the wave through under. */
   approvedBy?: string;
   approvedAt?: string;
+  /** The approval the rule counts, when it is not the newest one chant names (./involved.ts). */
+  counted?: string;
+  /** This wave recorded the pending fact chant waits on, because no approval of its digest counted under the rule. */
+  ruleRecorded?: boolean;
   /** The migration wave 1 is held on, so a refusal names the roots that moved. */
   migration?: HeldMigration;
   /** A composed run's: let go of its locks and put its roots' files back, when it planned and did not apply. */
@@ -1312,6 +1325,8 @@ export interface WaveRun {
   waitingSince?: string;
   /** Under `approval: pr-review`, the pull request whose review would approve the waiting wave. */
   review?: ReportWave["review"];
+  /** The people whose approval of the wave's digest the rule left out, and why (./involved.ts). */
+  excluded?: Excluded[];
   /** The approval mode in force at the wave's gate. */
   mode?: Approval;
   /** The command that approves the wave's digest, when it waits or its plans moved after an approval or a review. */
@@ -1512,7 +1527,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -1558,7 +1573,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     await noteRunView(repo, options, w, w.state === "applied" ? { shares_applied: [w.share] } : { state: w.state });
   } else if (w.state) {
     const cmd = w.state === "waiting" && w.command ? { command: w.command } : {};
-    await noteRunView(repo, options, w, { state: w.state, ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}), ...cmd, ...(w.shareCount ? { shares: w.shareCount } : {}), report: runPath(report), ...runComposed(w.composed) });
+    await noteRunView(repo, options, w, { state: w.state, ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}), ...cmd, ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.shareCount ? { shares: w.shareCount } : {}), report: runPath(report), ...runComposed(w.composed) });
   }
   await w.observer.finish(report, env, (l) => console.log(l));
 }
@@ -2102,6 +2117,7 @@ function recordChanges(repo: string, label: string, j: WaveJob, now?: string): v
     ...(locator ? { resume: locator } : {}),
     changes: j.changes,
     ...(j.resumes ? { resumes: j.resumes } : {}),
+    ...(w.excluded?.length ? { excluded: w.excluded } : {}),
   };
   appendRecord(repo, record, {}, `Changes approved: ${APPLY_OP} ${record.gate}`, APPLIED_PATH);
   w.appliedUnder = record;
@@ -2613,6 +2629,68 @@ async function policyCheck(
 }
 
 /**
+ * Why a ledger approval of a wave does not count under the rule that an
+ * approval comes from someone who had no hand in the change (./involved.ts),
+ * or null when it counts.
+ *
+ * A review recorded under `pr-review` counts when one of its reviewers had no
+ * hand in it. A signed approval whose seal verifies against the signers file
+ * at base is its signer's: the principal it names is the login checked. An
+ * unsigned approval names whoever wrote it; it is refused when that name had
+ * a hand in the change, and with `approval.require_signed` it is refused
+ * whatever it names.
+ */
+export function resolutionRefusal(r: ResolutionRecord, o: { involved?: Involved; signers?: GateSigners; requireSigned?: boolean }): { reason: string; excluded: Excluded[] } | null {
+  const signed = r.seal !== undefined && r.seal !== null;
+  const verified = signed && o.signers !== undefined && sealRefusal(o.signers, r) === null;
+  if (o.requireSigned && !verified) {
+    const what = r.via === "pr-review" && r.reviewers?.length ? `the approval recorded from the review of pull request ${r.pr ?? ""} by ${r.reviewers.join(", ")}`.replace("  ", " ") : `the approval by ${r.resolvedBy}`;
+    return { reason: `${what} is ${signed ? "signed, and its seal does not verify against the signers file at base" : "not signed"}, and approval.require_signed counts only a signed one (terragucci approve --sign)`, excluded: [] };
+  }
+  if (!o.involved) return null;
+  if (r.via === "pr-review" && r.reviewers?.length) {
+    const { by, excluded } = judge(r.reviewers, o.involved);
+    return by.length > 0 ? null : { reason: excluded.map((e) => notCounted(e, "review")).join("; "), excluded };
+  }
+  const why = whyInvolved(o.involved, r.resolvedBy);
+  if (!why) return null;
+  const e = { login: r.resolvedBy, reason: why };
+  return { reason: notCounted(e), excluded: [e] };
+}
+
+/** The forge a job runs on, from its environment. */
+const forgeOfEnv = (env: NodeJS.ProcessEnv): "github" | "forgejo" | "gitlab" => (env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
+
+/**
+ * The people behind the plans a wave applies (./involved.ts): the pull
+ * request that made the commit, when the forge names one, its commits, the
+ * commits git holds after the base the gate is judged at, and the tokens'
+ * users. Never throws.
+ */
+async function waveInvolvement(repo: string, options: ApplyWaveOptions, rule: ApprovalRule): Promise<Involved> {
+  const env = options.env ?? process.env;
+  const forge = forgeOfEnv(env);
+  const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const notes: string[] = [];
+  let calls: ForgeCalls | undefined;
+  let pr: ReviewedPull | undefined;
+  try {
+    if (forge === "gitlab") {
+      calls = gitlabCalls(env, options.fetch);
+      const mr = await gitlabMergeRequestOf(calls, sha, env);
+      if (mr) pr = { number: mr.iid, head: typeof mr.sha === "string" ? mr.sha : sha, ...(typeof mr.author?.username === "string" ? { author: mr.author.username } : {}) };
+    } else {
+      calls = forgeCalls(env, options.fetch);
+      pr = await pullOf(calls, env, sha);
+    }
+  } catch (e) {
+    notes.push(`the pull request that made ${sha.slice(0, 8)} could not be read from the forge (${(e as Error).message}), so only git names the people behind it`);
+  }
+  const inv = await pullInvolvement({ forge, ...(calls ? { calls } : {}), ...(pr ? { pr } : {}), env, ...(options.fetch ? { fetch: options.fetch } : {}), git: { repo, base: rule.base, head: sha }, ...(rule.agentTokenEnv ? { agentTokenEnv: rule.agentTokenEnv } : {}) });
+  return { people: inv.people, notes: [...notes, ...inv.notes] };
+}
+
+/**
  * What a gated wave settles before chant decides its gate, each recorded on
  * the ledger as the approval chant then counts: the rest of a stopped apply,
  * which its approval covers (./remainder.ts), and under `approval:
@@ -2647,7 +2725,59 @@ async function beforeGate(
       return why === null;
     });
   }
-  const decision = decideGate(ledger, name, digest, now);
+  const stamp = (iso: string): number => new Date(iso).getTime();
+  // An approval counts only from someone who had no hand in the change (./involved.ts). chant counts the ledger as it
+  // stands, so when the rule leaves out the approval chant would go by, the wave records a pending fact for its digest
+  // that is newer than it: chant then waits, and an approval made after it answers it.
+  let latest: PendingRecord | undefined;
+  for (const p of ledger.pending) if (p.gate === name && (!latest || stamp(p.timestamp) >= stamp(latest.timestamp))) latest = p;
+  const since = latest ? stamp(latest.timestamp) : 0;
+  const standing = ledger.resolutions.filter((r) => r.gate === name && stamp(r.timestamp) >= since);
+  let involved: Involved | undefined;
+  if (standing.length > 0 || rule.mode === "pr-review") {
+    involved = await waveInvolvement(repo, options, rule);
+    for (const n of involved.notes) console.log(`${label}: ${n}`);
+  }
+  const ruled: GateLedger = { ...ledger, resolutions: [] };
+  for (const r of ledger.resolutions) {
+    const refused = r.gate === name && stamp(r.timestamp) >= since ? resolutionRefusal(r, { ...(involved ? { involved } : {}), signers: rule.signers, ...(rule.requireSigned ? { requireSigned: true } : {}) }) : null;
+    if (!refused) {
+      ruled.resolutions.push(r);
+      continue;
+    }
+    if (samePlanDigest(r.planDigest, digest)) {
+      console.log(`${label}: ${refused.reason}`);
+      w.excluded = mergeExcluded(w.excluded ?? [], refused.excluded);
+    }
+  }
+  const asChant = decideGate(ledger, name, digest, now);
+  const decision = decideGate(ruled, name, digest, now);
+  if ((asChant.status === "approved" && decision.status !== "approved") || (asChant.status === "refused" && decision.status === "waiting")) {
+    const env2 = options.env ?? process.env;
+    const commit = env2.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+    const locator = resolveGateRunLocator(env2);
+    const fact: PendingRecord = {
+      version: 1,
+      kind: "pending",
+      op: APPLY_OP,
+      gate: name,
+      timestamp: now,
+      expiresAt: new Date(stamp(now) + 48 * 3600 * 1000).toISOString(),
+      planDigest: digest,
+      description: `${label}: ${(at.roots ?? []).join(", ")}`,
+      ...(commit ? { commit } : {}),
+      ...(at.members ? { members: at.members } : {}),
+      ...(locator ? { resume: locator } : {}),
+      neverOverMcp: true,
+      approvalMode: rule.mode,
+      ...(w.excluded?.length ? { excluded: w.excluded } : {}),
+    };
+    appendPending(repo, fact);
+    j.ruleRecorded = true;
+    console.log(`${label}: no approval of ${digest} counts once the people behind the change are left out, so it waits for an approval made from now on`);
+    return undefined;
+  }
+  if (decision.status === "approved" && asChant.status === "approved" && !sameLogin(decision.by, asChant.by)) j.counted = decision.by;
   if (decision.status !== "waiting") return undefined;
   // A plain wave whose approved apply stopped before it finished: plans that are the rest of the approved ones apply under that approval.
   if (at.resume && decision.spent) {
@@ -2666,13 +2796,17 @@ async function beforeGate(
   if (decision.spent) console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);
   // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
   if (rule.mode === "pr-review") {
-    const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
+    const forge = forgeOfEnv(env);
     const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
     const priced = costMember(w.waveCost);
     const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
-    const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest });
+    const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest, ...(involved ? { involved } : {}) });
+    if (r.excluded?.length) {
+      for (const e of r.excluded) console.log(`${label}: ${notCounted(e, "review")}`);
+      w.excluded = mergeExcluded(w.excluded ?? [], r.excluded);
+    }
     if (r.kind === "approved") {
-      appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
+      appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by, ...(r.excluded?.length ? { excluded: r.excluded } : {}) }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
       console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
     } else if (r.kind === "moved") {
       j.reviewMoved = r;
@@ -2782,6 +2916,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
     j.approvedBy = d?.approvedBy;
     j.approvedAt = d?.approvedAt;
     console.log(`${label}: approved by ${d?.approvedBy ?? "an approval"} for this digest`);
+    if (j.counted && d?.approvedBy && !sameLogin(j.counted, d.approvedBy)) console.log(`${label}: the rule counts the approval by ${j.counted}; ${d.approvedBy} had a hand in the change, and an approval of the same plans by someone who did not stands`);
     // The wait the approval ended: from the newest pending record of the gate made before it.
     if (d?.approvedAt) {
       try {
@@ -2803,7 +2938,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   w.waitingSince = since;
   w.gateSince = since;
   // The report of the plans this pending fact asks approval for, kept beside it, as respond wave-refused reads it.
-  if (env.CHANT_GATE_RECORDED === "true" && j.stored && digest) {
+  if ((env.CHANT_GATE_RECORDED === "true" || j.ruleRecorded) && j.stored && digest) {
     try {
       appendLifecycle(repo, "", [], { [approvedPath(wave, digest)]: j.stored() }, `The plans of ${APPLY_OP} ${waveGate(wave)}: ${digest}`);
     } catch (e) {
@@ -2863,6 +2998,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
     return EXIT.applied;
   }
   console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
+  if (w.excluded?.length) console.log(`${label}: an approval counts only from someone who had no hand in the change, so not from ${w.excluded.map((e) => e.login).join(", ")}`);
   console.log(`  ${approveLine(wave, digest, mode)}`);
   // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
   console.log(mode === "sealed"

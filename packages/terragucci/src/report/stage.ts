@@ -30,7 +30,7 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
-import { CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
@@ -1075,7 +1075,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const planner = plannerForBinary(binary);
   // A pull request's plan under choudoufu takes -cone=<base> (../cone.ts). Not under approval: pr-review with the apply
   // after merge: the review binds this plan's digest to the merge commit's plan, which is full, and a cone's never equals it.
-  const coneBase = base && !(settings.approval === "pr-review" && settings.apply?.when !== "pull-request") ? base : undefined;
+  const coneBase = base && !(approvalModeOf(settings.approval) === "pr-review" && settings.apply?.when !== "pull-request") ? base : undefined;
   // Each root's binary: the job's, or the version the root pins, installed once per version.
   const binaries = new RootBinaries(repo, binary, settings.version, env, options.installer);
   const started = new Date().toISOString();
@@ -2194,7 +2194,7 @@ async function finish(
     }
   }
   // A waiting wave's command in the note asks for --sign when the repo seals its approvals.
-  const sealed = (settings.approval ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
+  const sealed = (approvalModeOf(settings.approval) ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
   writeReportDir(dir, report, plans, { ...noteLinks, limit, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
   if (leftSchedule) writeFileSync(join(dir, DRIFT_SCHEDULE_FILE), JSON.stringify(leftSchedule) + "\n");
   else rmSync(join(dir, DRIFT_SCHEDULE_FILE), { force: true });

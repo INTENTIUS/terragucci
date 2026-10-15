@@ -989,7 +989,7 @@ export async function main(argv: string[]): Promise<number> {
         const forge = str(flags, "forge") ?? "github";
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("approval-status's --forge is github or forgejo");
         const report = str(flags, "report");
-        const posted = await approvalStatus({ forge, ...(report ? { report: resolve(cwd, report) } : {}) });
+        const posted = await approvalStatus({ forge, ...(report ? { report: resolve(cwd, report) } : {}), log: (l) => console.log(`terragucci approval-status: ${l}`) });
         console.log(`terragucci approval-status: ${posted.state}: ${posted.description}`);
         return 0;
       }

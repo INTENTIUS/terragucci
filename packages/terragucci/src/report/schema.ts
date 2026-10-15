@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 38;
+export const REPORT_MINOR = 39;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -556,6 +556,12 @@ export interface ReportWave {
    * the page to review it on. Absent when no review can approve it.
    */
   review?: { pull_request: number; url: string };
+  /**
+   * A `tf-apply` wave (minor 39): the people whose approval of its digest did
+   * not count, because they had a hand in the change. `reason` says how, such
+   * as `bob asked for abc1234`. Absent when nobody was left out.
+   */
+  excluded_approvers?: { login: string; reason: string }[];
   /**
    * The roots whose `on_failure: approve` step failed (minor 17): the gate
    * holds the wave whatever the gate policy says, when it changes anything.

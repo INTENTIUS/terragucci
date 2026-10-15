@@ -21,7 +21,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { APPROVALS, ConfigError, type Approval, type TerragucciConfig } from "./config";
+import { APPROVALS, approvalModeOf, ConfigError, requireSignedOf, type Approval, type TerragucciConfig } from "./config";
 import { configAtBase } from "./report/policy";
 import { baseCommit, sealRule, type SealRule } from "./seal";
 
@@ -40,6 +40,10 @@ export interface ApprovalRule extends ApprovalMode, SealRule {
   overriders: string[];
   /** The decision point every wave gate asks: `apply.point` in the config at base (./point-gate.ts). Unset, the gate waits for an approval. */
   point?: string;
+  /** `approval.require_signed` at base: an unsigned approval on the ledger counts for nothing. */
+  requireSigned?: boolean;
+  /** `agent.token_env` at base: the variable holding the agent's token, whose user never approves (./involved.ts). */
+  agentTokenEnv?: string;
 }
 
 /** Whether a value is one of APPROVALS. */
@@ -93,15 +97,17 @@ export async function approvalRule(repo: string, options: { at?: string; config?
   const read = await configAtBase(repo, base, options.config ? { config: options.config } : {});
   if ("error" in read) throw new ConfigError(`approval is read from the config at base, and it could not be read (${read.error}), so the gate cannot be decided`);
   const own = !(read.config as TerragucciConfig).projects;
-  const key = own ? read.config.approval : undefined;
+  const key = own ? approvalModeOf(read.config.approval) : undefined;
+  const requireSigned = own && requireSignedOf(read.config.approval);
+  const agentTokenEnv = own && typeof read.config.agent?.token_env === "string" ? read.config.agent.token_env : undefined;
   const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o) => typeof o === "string") : [];
   const point = own && typeof read.config.apply?.point === "string" ? read.config.apply.point : undefined;
-  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}) };
+  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}), ...(requireSigned ? { requireSigned } : {}), ...(agentTokenEnv ? { agentTokenEnv } : {}) };
 }
 
 /** The mode a repo's checkout holds, as `config check` reports it. */
 export function checkoutApproval(dir: string, config: TerragucciConfig): ApprovalMode | undefined {
   if (config.projects) return undefined;
   const decl = join(dir, "chant.workspace.json");
-  return effectiveApproval(config.approval, declaredGates(existsSync(decl) ? readFileSync(decl, "utf-8") : undefined), undefined, "here");
+  return effectiveApproval(approvalModeOf(config.approval), declaredGates(existsSync(decl) ? readFileSync(decl, "utf-8") : undefined), undefined, "here");
 }

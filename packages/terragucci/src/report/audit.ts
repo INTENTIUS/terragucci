@@ -146,6 +146,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
           expires: e.expiresAt,
           run_id: e.runId,
           description: e.description,
+          excluded: excludedOf(e.detail.excluded),
           ...(override ? { rules: e.rules ?? [], plan_digest: membersOf(e)[0]?.planDigest } : { roots: membersOf(e).map((m) => m.member).filter(Boolean) }),
         }),
       });
@@ -168,6 +169,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
           // A service that wrote the line on a person's behalf names itself in relayedBy.
           relayed_by: e.relayedBy,
           committed_by: e.committedBy,
+          excluded: excludedOf(e.detail.excluded),
         }),
       });
     } else if (e.kind === "revoked") {
@@ -181,6 +183,13 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
     }
   }
   return out;
+}
+
+/** The people an approval left out because they had a hand in the change (../involved.ts), as a ledger line or a report carries them. */
+function excludedOf(v: unknown): { login: string; reason: string }[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = v.filter((e): e is { login: string; reason: string } => typeof e?.login === "string" && typeof e?.reason === "string").map((e) => ({ login: e.login, reason: e.reason }));
+  return out.length ? out : undefined;
 }
 
 /** The lines commits added to one of terragucci's own records, with their text and commit. */
@@ -388,6 +397,8 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     wave.approval === "approved" && wave.set_digest
       ? approvals
           .filter((a) => a.project === project && a.kind === "approval" && a.what === gate && samePlanDigest(a.digest ?? undefined, wave.set_digest!) && at(a.at) <= at(report.run.finished))
+          // An approval the rule left out (../involved.ts) is not the one the wave applied under.
+          .filter((a) => !(wave.excluded_approvers ?? []).some((e) => a.who !== null && e.login.toLowerCase() === a.who.toLowerCase()))
           .sort((a, b) => at(b.at) - at(a.at))[0]
       : undefined;
   const overrides = report.roots
@@ -398,7 +409,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     kind: "apply",
     who: approval?.who ?? (overrides.length > 0 ? overrides.map((o) => o.by).join(", ") : null),
     result,
-    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
+    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, excluded: excludedOf(wave.excluded_approvers), changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
   };
 }
 

@@ -34,7 +34,7 @@ Each mode counts different approvals; `approval` in `terragucci.yml` picks one. 
 | Mode | Counts | Setup | What it proves |
 |---|---|---|---|
 | `ledger` (default) | any approval of the digest on `chant/lifecycle`, signed or not | none | someone with push access to `chant/lifecycle` approved these exact plans. Anyone who can push there can write an approval in anyone's name, so it records the plans and does not prove who approved. |
-| `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `terragucci approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer other than the author approved the head whose plans these are. An approval by the user the pipeline's token acts as never counts. A `terragucci approve` still proves only the plans. |
+| `pr-review` | the merged pull request's approval of its head, by a reviewer with write access who had [no hand in the change](#eligible-approvers), when the wave plans what the review saw; and any `terragucci approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer who had no hand in the change approved the head whose plans these are. A `terragucci approve` still proves only the plans. |
 | `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
 
 A wave reads the mode at base, like the signers file ([Rule commit](#rule-commit)). `terragucci config check` prints the mode in force and its source.
@@ -44,6 +44,44 @@ A wave reads the mode at base, like the signers file ([Rule commit](#rule-commit
 | sets `approval` | that mode |
 | sets none, and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` | `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates |
 | sets none, and no gates are listed | `ledger` |
+
+## Eligible approvers
+
+An approval counts only from someone who had no hand in the change it approves. When a wave decides its gate, it works out who is behind the plans it applies:
+
+| Who | Read from |
+|---|---|
+| the pull request's author | the forge |
+| each author, co-author and committer of the commits on the head being applied | git, for the commits after the [rule commit](#rule-commit) (merge commits left out), and the forge's list of the pull request's commits, which keeps them after a squash merge |
+| each person whose `/terragucci agent` comment produced one of those commits | the commit's `Requested-by: <login>` trailer, which the agent's push job writes ([agent](/terragucci/guides/agent-change-a-pull-request/)) |
+| for a drift pull request, the person who started the drift run, when a person did | the same trailer, on the drift agent's commit ([drift agent](/terragucci/guides/agent-fix-drift/)) |
+| the users the pipeline's token and `agent.token_env`'s token act as | the forge's `GET /user` with each token the job holds, and the `Pushed-by: <login>` trailer the agent's push job writes with its own |
+
+Logins compare without regard to case. A commit's author is known by the login the forge gives for it, by the login in a forge's noreply address, and by the address itself. On GitLab, which gives no login for a commit, an author counts by a noreply address alone.
+
+A token the forge names no user for, such as GitHub's own job token, is said in the wave's log and left unknown: its reviews are judged as anyone's. On GitHub and Forgejo the actions user's review never counts whatever the rule finds.
+
+The rule covers each kind of approval:
+
+| Approval | How its approver is known |
+|---|---|
+| a forge review, under `pr-review` | the reviewer's login |
+| a `terragucci approve` signed with `--sign` | the principal its seal names, once the seal verifies against the signers file at base |
+| an unsigned `terragucci approve` | the name it records, which whoever wrote it chose |
+
+An unsigned approval can't be tied to a person, so the rule can only refuse one that names someone behind the change. To refuse every unsigned approval on the ledger, set `approval.require_signed: true` in `terragucci.yml` ([config](/terragucci/reference/config/#keys)). Approvers then sign with `terragucci approve --sign` and need a key in the signers file ([setup](#set-up-the-signers-file)).
+
+```yaml
+approval:
+  mode: ledger
+  require_signed: true
+```
+
+A wave that has no approval left once the rule is applied waits, as it does with none. Its log names each person the rule left out and why, for example `bob asked for abc1234, so bob's approval doesn't count`. The wave's report carries the same list in `excluded_approvers`, the run view in `excluded`, and the [audit trail](/terragucci/guides/read-the-audit-trail/) beside the approval. When chant would have gone by an approval the rule leaves out, the wave records a new pending fact for its digest, so only an approval made after it counts.
+
+On GitHub and Forgejo, a pull request's plan note names the people whose review won't count, when one of its waves will wait.
+
+A drift pull request opened on a schedule has no person behind it. A review from any writer counts there, and the review of the bot whose token opened it never does.
 
 ## Approve by review (`approval: pr-review`)
 
@@ -67,7 +105,7 @@ Works on every forge. GitLab's merge request approvals name no commit, so there 
      </TabItem>
    </Tabs>
 
-   The author's own approval never counts. A review counts only on the commit it names, so a push after your review needs a fresh one; a latest review that asks for changes holds every wave back.
+   The author's own approval never counts, nor does one by anyone else who had a hand in the change ([Eligible approvers](#eligible-approvers)). A review counts only on the commit it names, so a push after your review needs a fresh one; a latest review that asks for changes holds every wave back.
 
 3. Keep unreviewed changes from merging.
 

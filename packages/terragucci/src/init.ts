@@ -12,6 +12,7 @@ import { applyWaves, waveGate } from "./apply";
 import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
 import {
+  approvalModeOf,
   ConfigError,
   COST_KEY_SECRET,
   EPHEMERAL_SWEEP,
@@ -264,8 +265,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const declPath = join(repo, "chant.workspace.json");
   const declared = declaredGates(existsSync(declPath) ? readFileSync(declPath, "utf-8") : undefined) > 0;
   const detectedApproval: Approval = declared ? "sealed" : "ledger";
-  const approval: { value: Approval; explicit: boolean } = settings.approval
-    ? { value: settings.approval, explicit: true }
+  const configured = approvalModeOf(settings.approval);
+  const approval: { value: Approval; explicit: boolean } = configured
+    ? { value: configured, explicit: true }
     : options.approval
       ? { value: options.approval, explicit: true }
       : { value: detectedApproval, explicit: false };
@@ -340,7 +342,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // An environment's gate is read at base by the wave's job; one that can hold a wave needs the jobs that record a waiting one.
     ...(environmentGates(settings).length ? { environmentGates: environmentGates(settings) } : {}),
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
-    ...(options.settings?.approval ? { approval: options.settings.approval } : {}),
+    ...(approvalModeOf(options.settings?.approval) ? { approval: approvalModeOf(options.settings?.approval) } : {}),
     ...(approval.value === "pr-review" ? { prReview: true } : {}),
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
@@ -430,14 +432,14 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // A key the config sets decides; say so when a flag disagrees, rather than ignore it.
     if (options.forge && settings.forge && options.forge !== settings.forge) notes.push(`--forge ${options.forge} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets forge: ${settings.forge}`);
     if (options.binary && settings.binary && options.binary !== settings.binary) notes.push(`--binary ${options.binary} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets binary: ${settings.binary}`);
-    if (options.approval && settings.approval && options.approval !== settings.approval) notes.push(`--approval ${options.approval} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets approval: ${settings.approval}`);
+    if (options.approval && configured && options.approval !== configured) notes.push(`--approval ${options.approval} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets approval: ${configured}`);
   }
   let configNote = configPath ? `using ${relative(repo, configPath)}` : "no terragucci.yml needed (defaults fit)";
   if (!options.settings) {
     const save: ProjectSettings = {};
     if (options.forge && !settings.forge && options.forge !== detectedForge?.value) save.forge = options.forge;
     if (options.binary && !settings.binary && options.binary !== detectedBinary.value) save.binary = options.binary;
-    if (options.approval && !settings.approval && options.approval !== detectedApproval) save.approval = options.approval;
+    if (options.approval && !configured && options.approval !== detectedApproval) save.approval = options.approval;
     if (Object.keys(save).length) {
       if (configPath) {
         throw new ConfigError(`${relative(repo, configPath)} exists and init does not edit it; add ${Object.entries(save).map(([k, v]) => `${k}: ${v}`).join(", ")} to it`);

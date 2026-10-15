@@ -345,6 +345,18 @@
               "url": { "type": "string" }
             }
           },
+          "excluded_approvers": {
+            "type": "array",
+            "description": "A tf-apply wave: the people whose approval of its digest did not count, because they had a hand in the change; reason says how, such as bob asked for abc1234 (minor 39).",
+            "items": {
+              "type": "object",
+              "required": ["login", "reason"],
+              "properties": {
+                "login": { "type": "string" },
+                "reason": { "type": "string" }
+              }
+            }
+          },
           "held_by_steps": {
             "type": "array",
             "items": { "type": "string" },

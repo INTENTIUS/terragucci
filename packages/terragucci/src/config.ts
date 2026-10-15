@@ -42,6 +42,30 @@ export function normalizeGate(v: unknown): Gate | undefined {
  * lists for its approver. Every mode binds the digest.
  */
 export const APPROVALS = ["ledger", "pr-review", "sealed"] as const;
+/** The keys of `approval:` as a map: the mode, and whether a ledger approval must be signed. */
+export const APPROVAL_KEYS = ["mode", "require_signed"] as const;
+
+/**
+ * `approval:` as a map, in place of the mode alone. `require_signed: true`
+ * refuses an unsigned approval on the ledger: only a signed one can be tied
+ * to the person whose principal signed it, so only a signed one can be
+ * checked against the people behind the change (./involved.ts).
+ */
+export interface ApprovalSettings {
+  mode?: Approval;
+  require_signed?: boolean;
+}
+
+/** The mode an `approval:` value names: the string, or the map's `mode`. */
+export function approvalModeOf(v: Approval | ApprovalSettings | undefined): Approval | undefined {
+  if (typeof v === "string") return v;
+  return v && typeof v === "object" && typeof v.mode === "string" ? v.mode : undefined;
+}
+
+/** Whether an `approval:` value refuses unsigned ledger approvals. */
+export function requireSignedOf(v: Approval | ApprovalSettings | undefined): boolean {
+  return !!v && typeof v === "object" && v.require_signed === true;
+}
 /** Every stage runs on the forge's CI. */
 export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
@@ -420,8 +444,8 @@ export interface ProjectSettings {
   url?: string;
   /** When a wave waits for an approval. A loaded config holds the policy's current name: on-destroy reads as on-destructive. */
   gate?: GateName;
-  /** What counts as a waiting wave's approval; see APPROVALS. Read from the config at base, never the applied commit's own. */
-  approval?: Approval;
+  /** What counts as a waiting wave's approval; see APPROVALS, or a map with the mode and `require_signed` (ApprovalSettings). Read from the config at base, never the applied commit's own. */
+  approval?: Approval | ApprovalSettings;
   /** When a change applies; see ApplySettings. */
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
@@ -878,8 +902,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   if (s.gate !== undefined && normalizeGate(s.gate) === undefined) problems.push(`${where}.gate is ${JSON.stringify(s.gate)}; use one of ${GATES.join(", ")}`);
-  oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
-  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, s.approval);
+  if (isObject(s.approval)) {
+    for (const k of Object.keys(s.approval)) if (!(APPROVAL_KEYS as readonly string[]).includes(k)) problems.push(`${where}.approval.${k} is not a key of approval (keys: ${APPROVAL_KEYS.join(", ")})`);
+    oneOf(s.approval.mode, APPROVALS, `${where}.approval.mode`, problems);
+    if (s.approval.require_signed !== undefined && typeof s.approval.require_signed !== "boolean") problems.push(`${where}.approval.require_signed must be true or false`);
+  } else oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
+  const mode = isObject(s.approval) ? s.approval.mode : s.approval;
+  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, mode);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);

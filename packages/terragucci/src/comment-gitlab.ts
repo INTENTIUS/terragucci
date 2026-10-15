@@ -292,7 +292,7 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     const sha = mr.sha;
     if (typeof sha !== "string" || !SHA.test(sha)) return broke(`!${iid}'s head is not a commit`);
     if (parsed.kind === "apply") {
-      const verdict = await openChecks({ api, id, mr, base, ...(ask.requires ? { requires: ask.requires } : {}), ...(ask.wait ? { wait: ask.wait } : {}) });
+      const verdict = await openChecks({ api, id, mr, base, ...(ask.env ? { env: ask.env } : {}), ...(ask.fetch ? { fetch: ask.fetch } : {}), ...(ask.requires ? { requires: ask.requires } : {}), ...(ask.wait ? { wait: ask.wait } : {}) });
       if (verdict && "fail" in verdict) return broke(verdict.fail);
       if (verdict) return reply(verdict.refuse);
     }
