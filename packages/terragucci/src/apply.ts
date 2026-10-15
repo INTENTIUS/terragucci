@@ -152,7 +152,7 @@ import type { ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
 import { readRecords, recordStoreOf } from "./cdf-records";
 import { recordVersions, versionsLine } from "./cdf-history";
-import { planAppliedChanges } from "./report/history";
+import { planAppliedChanges, readChanges } from "./report/history";
 import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "./environments";
@@ -2457,7 +2457,9 @@ function unitReads(repo: string, waves: readonly string[][], wave: number, edges
  * unknown when the change was reviewed, from the first carrier that can say
  * (./unknown-reads.ts). The upstream's plan in this push: a wave this job
  * planned earlier, else the upstream wave's report this commit put in the
- * reports bucket. Then the report of the pull request that merged as this
+ * reports bucket. A plan of it that changes nothing counts only when the
+ * bucket's changes.json has no row of an earlier apply of the upstream at
+ * this commit. Then the report of the pull request that merged as this
  * commit, which the forge names and the bucket holds. With neither, every
  * read holds the wave. Each read is logged, with the outputs that were
  * unknown and the wave that settled them.
@@ -2505,6 +2507,15 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
         if (text !== undefined) out.push({ plan: JSON.parse(text), from: `wave ${k}'s plan of ${upstream} in this push (${row.path})` });
       }
       return out;
+    },
+    async appliedBefore(upstream, k) {
+      // A plan of the upstream that changes nothing is the first of this commit unless an earlier run of it applied a change to the
+      // upstream. The report path has no run, so a later run's report replaces the earlier one's; changes.json keeps the rows of
+      // each wave that changed a root, and a wave that changes nothing adds none, so the earlier run's rows outlive it.
+      if (!store) return storeError ? `the reports bucket, which records earlier applies of this commit, could not be read (${storeError})` : "the config names no reports bucket, which records earlier applies of this commit";
+      const rows = readChanges(await store.get(key(prefix, facts.project, "changes.json"))).changes;
+      const row = rows.find((c) => c.commit === facts.commit && c.root === upstream && (c.wave === undefined || c.wave === k));
+      return row ? `${row.path} applied ${upstream} at this commit before this run (${row.address})` : undefined;
     },
     async pullReport(): Promise<PullReport> {
       if (!store) return { missing: storeError ? `the reports bucket could not be read (${storeError})` : "the config names no reports bucket to read the pull request's report from" };
