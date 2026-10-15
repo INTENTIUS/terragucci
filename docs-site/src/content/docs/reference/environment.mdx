@@ -344,6 +344,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
 | `TG_STAGE`, `TG_STEP`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [step](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the moment (such as `before-plan`), the root, the checkout's path and, after a plan and before an apply, the plan file |
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `terragucci approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
+| `GITHUB_TRIGGERING_ACTOR`, else `GITHUB_ACTOR` |  | in `drift-agent-push`, when `GITHUB_EVENT_NAME` is `workflow_dispatch`: the person who started the drift run, named in the agent commit's `Requested-by:` trailer, whose review of the pull request then doesn't count |
 | `env:` in the config |  | variables every job gets; values only, never secrets |
 
 ## Forge variables

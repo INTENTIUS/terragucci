@@ -14,6 +14,7 @@
 import {
   AGENT_COMMENT_KEYS,
   AGENT_KEYS,
+  AGENT_LOGIN,
   AGENT_VIA,
   APPLY_BRANCH,
   POINT_NAME,
@@ -338,7 +339,20 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     forge: { ...enumOf(FORGES), description: "The forge, for a host terragucci cannot name." },
     url: { ...str, description: "Where the project lives, for a forge not on https or the default port." },
     gate: { ...enumOf(GATE_NAMES), description: "When a wave waits for an approval. on-destroy is an older name for on-destructive." },
-    approval: { ...enumOf(APPROVALS), description: "What counts as a waiting wave's approval." },
+    approval: {
+      anyOf: [
+        enumOf(APPROVALS),
+        {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mode: { ...enumOf(APPROVALS), description: "What counts as a waiting wave's approval." },
+            require_signed: { type: "boolean", description: "Refuse an unsigned approval on the ledger, so every ledger approval is tied to the principal who signed it." },
+          },
+        },
+      ],
+      description: "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed.",
+    },
     apply: { ...apply, description: "When a change applies." },
     locks: { ...enumOf(LOCKS), description: "When a pull request takes its root locks." },
     waves: {
@@ -427,6 +441,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       ...map(AGENT_KEYS, {
         via: enumOf(AGENT_VIA),
         token_env: { type: "string", minLength: 1 },
+        login: { type: "string", pattern: AGENT_LOGIN.source, description: "The forge login agent.token_env's token acts as. No approval by it counts." },
         comment: agentRun,
         drift: agentRun,
       }, { required: ["via", "token_env"] }),

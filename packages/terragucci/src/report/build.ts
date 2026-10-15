@@ -101,6 +101,8 @@ export interface WaveInput {
   refused?: ReportWave["refused"];
   /** The pull request whose review would approve a waiting `tf-apply` wave. */
   review?: ReportWave["review"];
+  /** The people whose approval of the wave the rule left out, and why: they had a hand in the change. */
+  excluded?: { login: string; reason: string }[];
   /** The roots whose `on_failure: approve` step failed: the gate holds the wave. */
   heldBySteps?: string[];
   /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
@@ -431,6 +433,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
       ...(w.refused ? { refused: w.refused } : {}),
       ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
+      ...(w.excluded?.length ? { excluded_approvers: w.excluded.map((e) => ({ login: e.login, reason: e.reason })) } : {}),
       ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
       ...(w.cost ? { cost: w.cost } : {}),
       ...(w.state ? { state: w.state } : {}),

@@ -28,6 +28,7 @@ import { firstLine, forbiddenPaths, signersAt } from "./agent-comment";
 import { ConfigError, type ForgeName } from "./config";
 import { ForgeApiError } from "@intentius/chant/pr-forge";
 import { defaultBranch, ForgeError, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
+import { apiBase, tokenUser } from "./involved";
 import { targetFromEnv } from "./report/drift";
 import type { Report } from "./report/schema";
 
@@ -131,6 +132,16 @@ export interface DriftPushOptions {
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /**
+ * The person who started the drift run: the actor of a run started by hand
+ * (`workflow_dispatch`). A scheduled run has nobody behind it.
+ */
+export function driftStarter(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.GITHUB_EVENT_NAME !== "workflow_dispatch") return undefined;
+  const who = (env.GITHUB_TRIGGERING_ACTOR || env.GITHUB_ACTOR || "").trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(who) ? who : undefined;
+}
+
+/**
  * The drift-agent-push job: apply the agent's patch to a fresh checkout of the
  * commit the drift job planned, refuse it when it touches a forbidden path,
  * and otherwise commit it to a branch of its own, push it without force and
@@ -193,7 +204,11 @@ export async function pushDriftChange(o: DriftPushOptions): Promise<DriftPushRes
   const title = `Bring the code in line with drift issue #${issue}`;
   let commit: string;
   try {
-    git(["-c", "user.name=terragucci agent", "-c", "user.email=terragucci-agent@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], `${title}\n\nWritten by the drift agent from the drift found at ${sha.slice(0, 12)}.\n`);
+    // The trailers name the person who started the drift run, when a person did, and the user the push token acts as: no approval of the pull request counts from either (./involved.ts).
+    const starter = driftStarter(env);
+    const pushedBy = (await tokenUser({ which: "the agent's token", forge: target.forge, api: apiBase(target.forge, env), token, fetch: doFetch })).login;
+    const trailers = [...(starter ? [`Requested-by: ${starter}`] : []), ...(pushedBy ? [`Pushed-by: ${pushedBy}`] : [])];
+    git(["-c", "user.name=terragucci agent", "-c", "user.email=terragucci-agent@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], `${title}\n\nWritten by the drift agent from the drift found at ${sha.slice(0, 12)}.\n${trailers.length ? `\n${trailers.join("\n")}\n` : ""}`);
     commit = git(["rev-parse", "HEAD"]).trim();
   } catch (e) {
     return { opened: false, fail: true, reason: `could not commit the drift agent's change (${firstLine((e as Error).message)})` };
