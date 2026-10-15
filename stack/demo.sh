@@ -36,6 +36,11 @@
 # is null while the driver waits on the pipeline rather than on its own clock.
 # pull and commit are null until the cycle has them.
 #
+# Beside it, <prefix>/runs/index.json and <prefix>/runs/<id>.json hold the demo
+# repo's last 30 pipeline runs with their jobs, steps and logs, copied while
+# they run and when they end (runs_export, scripts/demo-runs.ts), so behold's
+# kiosk shows them without reaching Forgejo.
+#
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
 # dies; the driver's pid is in <state>/demo/driver.pid while it loops.
@@ -166,6 +171,39 @@ demo_stalled() {
   demo_put
 }
 
+# ── the runs, for the kiosk ──────────────────────────────────────────────────
+
+# The demo repo's pipeline runs, copied from Forgejo into <reports
+# bucket>/<prefix>/runs/ by scripts/demo-runs.ts: index.json, and one <id>.json
+# per run with its jobs, steps and the tail of each step's log. It keeps the
+# newest 30 runs and deletes the objects of older ones. behold's kiosk reads
+# these and never talks to Forgejo. Each poll of a wait calls runs_export, which
+# copies at most every 5 s; a run the driver marks or sees end is copied at
+# once. An export that fails is logged, and the cycle goes on.
+RUNS_STATE="$DEMO_STATE/runs"
+RUNS_AT=0
+runs_export() { # [force]
+  [ -n "${1:-}" ] || [ $(( $(now) - RUNS_AT )) -ge 5 ] || return 0
+  RUNS_AT="$(now)"
+  (cd "$HERE/.." && DEMO_RUNS_FORGE_URL="$URL" DEMO_RUNS_TOKEN="$TOKEN" DEMO_RUNS_REPO="$REPO" \
+    DEMO_RUNS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_RUNS_PREFIX="$REPORT_PREFIX" DEMO_RUNS_STATE="$RUNS_STATE" \
+    DEMO_RUNS_CYCLE="$CYCLE" DEMO_RUNS_SCENARIO="$SCENARIO" DEMO_RUNS_CYCLE_STARTED="${STARTED:-}" DEMO_RUNS_DROP="$DRIVER_KEY" \
+    npx tsx scripts/demo-runs.ts) || log "runs: the runs were not all copied to floci; the cycle goes on"
+  return 0
+}
+
+# What the driver did to start run RUN_ID (plan, merge, resume, reset, base or
+# push), in this cycle and scenario, for the run's trigger, cycle and scenario
+# in the bucket. Then copy the runs at once.
+runs_mark() { # trigger, [pull request], [ref]
+  mkdir -p "$RUNS_STATE" 2>/dev/null || true
+  jq -cn --argjson id "${RUN_ID:-null}" --arg t "$1" --argjson c "${CYCLE:-null}" --arg s "$SCENARIO" --arg p "${2:-}" --arg r "${3:-}" \
+    '{id: $id, trigger: $t, cycle: $c, scenario: (if $s == "" then null else $s end),
+      pull: (if $p == "" then null else ($p | tonumber) end)} + (if $r == "" then {} else {ref: $r} end)' \
+    >> "$RUNS_STATE/marks.jsonl" 2>/dev/null || log "runs: could not mark run ${RUN_ID:-?} $1"
+  runs_export force
+}
+
 # ── floci ────────────────────────────────────────────────────────────────────
 
 # A terraform_data's input in the root's state, as floci holds it now. A
@@ -211,6 +249,7 @@ quiet() {
   fi
   while :; do
     runner_watch
+    runs_export
     busy="$(runs | jq -r '[.[] | select(.status == "running" or .status == "waiting" or .status == "blocked" or .status == "unknown")] | length' || true)"
     [ "$busy" = 0 ] && return 0
     [ "$(now)" -lt "$deadline" ] || fail "a run was still in progress after ${LIMIT_QUIET}s, so nothing was pushed"
@@ -234,6 +273,7 @@ run_started() { # before id, event, [sha]
   local before="$1" event="$2" sha="${3:-}" deadline=$(( $(now) + LIMIT_START )) id
   while :; do
     runner_watch
+    runs_export
     id="$(runs | jq -r --argjson b "$before" --arg e "$event" --arg s "$sha" \
       '[.[] | select(.id > $b and .event == $e and ($s == "" or (.head_sha // .commit_sha) == $s))] | min_by(.id) | .id // empty' || true)"
     if [ -n "$id" ]; then RUN_ID="$id"; return 0; fi
@@ -250,12 +290,14 @@ run_ended() { # limit
   local deadline=$(( $(now) + $1 )) run status=""
   while :; do
     runner_watch
+    runs_export
     run="$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID" 2>/dev/null || true)"
     status="$(jq -r '.status // empty' <<<"$run" 2>/dev/null || true)"
     case "$status" in success|failure|cancelled|skipped) break ;; esac
     [ "$(now)" -lt "$deadline" ] || fail "run $RUN_ID did not end within ${1}s (last status: ${status:-none})"
     sleep 3
   done
+  runs_export force
   RUN_STATUS="$status"
   RUN_URL="$(jq -r '.html_url // empty' <<<"$run" | sed "s#^http://forgejo:3000#$URL#")"
 }
@@ -301,6 +343,7 @@ resume_pull() {
   api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci apply"}' \
     "$URL/api/v1/repos/$REPO/issues/$PULL/comments" || fail "could not comment /terragucci apply on pull request $PULL"
   run_started "$before" issue_comment
+  runs_mark resume "$PULL"
 }
 
 # ── one cycle ────────────────────────────────────────────────────────────────
@@ -372,6 +415,7 @@ open_pull() {
   COMMIT="$sha"
   demo_write pull-request "$(say pull-request)" "wait for the plan note"
   run_started "$before" pull_request "$sha"
+  runs_mark plan "$PULL" "demo-$SCENARIO"
   run_ended "$LIMIT_PLAN"
   [ "$RUN_STATUS" = success ] || fail "the plan run of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
   # The plan job's note is a comment on the pull request.
@@ -422,6 +466,7 @@ merge_pull() { # -> COMMIT is the merge commit, RUN_ID its push run
   [ -n "$COMMIT" ] || fail "pull request $PULL merged, but Forgejo names no merge commit"
   demo_write merged "$(say merged)" "follow the waves"
   run_started "$before" push "$COMMIT"
+  runs_mark merge "$PULL"
 }
 
 # Follow run RUN_ID and every re-run the cycle needs, until its waves applied.
@@ -527,6 +572,7 @@ stale_waiting() {
   before="$(last_run_id)"
   COMMIT="$(DEMO_PUSH_WHILE_HELD=1 push_quiet "$tree" "$REPO" main "network: http_proxy_port 8080 -> 9090 (cycle $CYCLE)")"
   run_started "$before" push "$COMMIT"
+  runs_mark push
   demo_write applying "main moved to ${COMMIT:0:8}: network's http_proxy_port 8080 -> 9090 on top of the approved change. Wave 1 plans again on the new commit" "follow the waves"
   run_ended "$LIMIT_RUN"
   run_outcome
@@ -690,6 +736,7 @@ reset_base() {
     # The push back starts a run on the base, which has nothing to apply; wait
     # for it, so the next cycle's first push finds no run in progress.
     if RUN_SOFT=1 run_started "$before" push "$base"; then
+      runs_mark reset
       run_ended "$LIMIT_RUN"
     else
       log "no run started for the push back to ${base:0:8}"
@@ -761,6 +808,7 @@ case "$CMD" in
     echo "$sha" > "$DEMO_STATE/base.sha"
     [ -f "$DEMO_STATE/cycle" ] || echo 0 > "$DEMO_STATE/cycle"
     CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" STARTED="$started" COMMIT="$sha"
+    runs_mark base
     demo_write reset "The base is applied: $(applied_values), and other" "start the first cycle"
     log "ready in $(( $(now) - started ))s"
     cat <<OUT
