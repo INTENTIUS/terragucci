@@ -1,6 +1,8 @@
 # other: reads no root and no root reads it, so no scenario plans it.
 
 terraform {
+  required_version = ">= 1.13"
+
   backend "s3" {
     bucket         = "demo-terraform-state"
     key            = "other.tfstate"

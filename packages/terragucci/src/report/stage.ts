@@ -387,7 +387,13 @@ export function rootCacheEnv(env: NodeJS.ProcessEnv, dir: string, binaryName: st
   return { ...env, TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE: "true" };
 }
 
-/** Whether the root's `.terraform.lock.hcl` pins its providers, all of them at the binary's own registry. */
+/**
+ * Whether the root's `.terraform.lock.hcl` pins its providers, all of them at
+ * the binary's own registry. A lock with no provider entries, which is what
+ * `providers lock` writes for a root of only the built-in `terraform`
+ * provider (terraform_data, terraform_remote_state), covers that root: it
+ * takes nothing from the cache. It covers no other root.
+ */
 export function lockCovers(dir: string, binaryName: string): boolean {
   const registry = binaryName === "terraform" ? "registry.terraform.io" : "registry.opentofu.org";
   let lock = "";
@@ -397,7 +403,32 @@ export function lockCovers(dir: string, binaryName: string): boolean {
     return false;
   }
   const hosts = [...lock.matchAll(/^provider\s+"([^"/]+)\//gm)].map((m) => m[1]!);
-  return hosts.length > 0 && hosts.every((h) => h === registry);
+  if (hosts.length === 0) return builtinOnly(dir);
+  return hosts.every((h) => h === registry);
+}
+
+/**
+ * Whether a root needs no provider but the built-in `terraform` one: its
+ * `.tf` and `.tofu` files call no module, configure no provider, require none
+ * and declare only `terraform_` resources and data sources. A module may need
+ * providers of its own, and a JSON file is not read, so either answers no.
+ */
+export function builtinOnly(dir: string): boolean {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  if (names.some((n) => n.endsWith(".tf.json") || n.endsWith(".tofu.json"))) return false;
+  const texts = names.filter((n) => n.endsWith(".tf") || n.endsWith(".tofu")).map((n) => readFileSync(join(dir, n), "utf8"));
+  if (texts.length === 0) return false;
+  for (const text of texts) {
+    if (/^\s*(module|provider)\s+"/m.test(text)) return false;
+    if (/\brequired_providers\s*\{\s*[A-Za-z_]/.test(text)) return false;
+    for (const m of text.matchAll(/^\s*(?:resource|data|ephemeral)\s+"([^"]+)"/gm)) if (!m[1]!.startsWith("terraform_")) return false;
+  }
+  return true;
 }
 
 export function oneAtATime(): Turn {
