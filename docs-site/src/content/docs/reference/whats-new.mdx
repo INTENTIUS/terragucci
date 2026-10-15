@@ -1,14 +1,19 @@
 ---
-title: Changes in 0.4.11
-description: "terragucci 0.4.11, released 2026-10-14."
+title: Changes in 0.4.12
+description: "terragucci 0.4.12, released 2026-10-14."
 ---
 
-Release `0.4.11` is on npm as `@intentius/terragucci@0.4.11`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.11) lists every change.
+Release `0.4.12` is on npm as `@intentius/terragucci@0.4.12`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.12) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.11 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.12 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.12
+
+- A lock file with no provider entries covers a root that uses only the built-in `terraform` provider, and every root in `example-demo/` sets `required_version` and commits its lock file (#1037).
+- The demo driver copies the demo repo's pipeline runs, with their jobs, steps and log tails, into the reports bucket, and keeps the newest 30 (#1038).
 
 ## In 0.4.11
 
