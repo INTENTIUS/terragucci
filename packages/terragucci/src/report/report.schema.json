@@ -257,7 +257,8 @@
                 "data": { "type": "string" },
                 "outputs": { "enum": ["planned", "applied"] },
                 "unknown": { "type": "array", "items": { "type": "string" } },
-                "why": { "type": "string" }
+                "why": { "type": "string" },
+                "composed": { "const": true, "description": "A read of another root in the same composed run (waves.compose, minor 38): planned on the upstream's part of the composed plan, which the run applies before the resources that read it." }
               }
             }
           },
@@ -292,6 +293,15 @@
                   "reason": { "type": "string" }
                 }
               }
+            }
+          },
+          "composed": {
+            "type": "object",
+            "description": "A root in a composed run (waves.compose, minor 38): the wave whose run holds it and its module there. Its other fields come from its part of the composed plan; its plan_digest is that part's and binds nothing on its own.",
+            "required": ["wave", "module"],
+            "properties": {
+              "wave": { "type": "integer" },
+              "module": { "type": "string" }
             }
           }
         }
@@ -376,7 +386,35 @@
               }
             }
           },
-          "environments": { "type": "array", "items": { "type": "string" }, "description": "The environments of environments: in terragucci.yml its roots are in, sorted (minor 33). Absent when none of its roots is in one." }
+          "environments": { "type": "array", "items": { "type": "string" }, "description": "The environments of environments: in terragucci.yml its roots are in, sorted (minor 33). Absent when none of its roots is in one." },
+          "composed": {
+            "type": "object",
+            "description": "The wave that carries a composed run (waves.compose, minor 38): one plan and one apply across several roots, each keeping its own state. The wave's roots list its own roots and the composed ones; its digests cover the composed plan as one member.",
+            "required": ["plan_digest", "members"],
+            "properties": {
+              "plan_digest": { "type": ["string", "null"], "description": "The composed plan's digest. Null when it failed to plan." },
+              "members": {
+                "type": "array",
+                "description": "Each root in the run, upstreams first.",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "module"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "module": { "type": "string", "description": "Its address in the run, such as module.network." },
+                    "apply": { "enum": ["applied", "partial", "failed", "not-started", "no-changes"], "description": "tf-apply only: how its part of the apply ended, from the binary's apply events." },
+                    "changes": { "type": "object", "required": ["done", "planned"], "properties": { "done": { "type": "integer" }, "planned": { "type": "integer" } }, "description": "tf-apply only: how many of its planned changes completed." },
+                    "state": { "enum": ["written", "unchanged", "not-written"], "description": "tf-apply only: its state after the run." },
+                    "kept": { "type": "string", "description": "With not-written: where the state the run holds for it was kept." },
+                    "lock_held": { "type": "boolean", "description": "With not-written: whether its lock is still held." },
+                    "error": { "type": "string", "description": "Why the write failed, or the first error of its part of the apply." }
+                  }
+                }
+              },
+              "held_by_unknown": { "type": "array", "items": { "type": "string" }, "description": "The members that read a value of another member unknown at plan time: the gate holds the run under every gate but never." },
+              "error": { "type": "string", "description": "Why the run failed, when no member's own error says it." }
+            }
+          }
         }
       }
     },
@@ -422,6 +460,26 @@
         "warnings": { "type": "integer" },
         "overridden": { "type": "array", "items": { "type": "string" }, "description": "The denied roots an override stands for (minor 10)." },
         "overriders": { "type": "array", "items": { "type": "string" }, "description": "Who may override a denial, from policy.override at base (minor 10)." }
+      }
+    },
+    "compose": {
+      "type": "object",
+      "description": "waves.compose (minor 38), on a tf-plan and on a tf-apply wave's report when the run's config turns it on: the roots it covers, and the wave that composes them or why the change applies in waves.",
+      "required": ["roots", "max"],
+      "properties": {
+        "roots": { "type": "array", "items": { "type": "string" }, "description": "The roots the change reaches plus the roots they read, followed upstream, sorted." },
+        "max": { "type": "integer", "description": "waves.compose_max." },
+        "wave": { "type": "integer", "description": "The wave whose run composes them. Absent when the change applies in waves." },
+        "fallback": {
+          "type": "object",
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "type": "string" },
+            "root": { "type": "string" },
+            "reason": { "type": "string" }
+          },
+          "description": "Why the change applies in waves."
+        }
       }
     },
     "blast": {

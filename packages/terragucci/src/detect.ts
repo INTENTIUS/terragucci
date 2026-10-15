@@ -112,7 +112,7 @@ function hasLiveBlock(text: string): boolean {
   return false;
 }
 
-export function stripComments(text: string): string {
+function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
 }
 

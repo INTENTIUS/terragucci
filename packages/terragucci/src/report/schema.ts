@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 36;
+export const REPORT_MINOR = 38;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -326,6 +326,13 @@ export interface ReportRoot {
    * planned the whole estate. Absent on every other plan.
    */
   cone?: ReportCone;
+  /**
+   * A root in a composed run (`waves.compose`, minor 38): the wave whose run
+   * holds it and its module there. Its other fields come from its part of the
+   * composed plan, as if it had planned alone; its `plan_digest` is that
+   * part's, which groups and compares it and binds nothing on its own.
+   */
+  composed?: { wave: number; module: string };
 }
 
 /** What a root's `plan -cone=<base>` planned (minor 34). */
@@ -358,6 +365,13 @@ export interface ReportRead {
   unknown?: string[];
   /** With `applied` in a `tf-plan`: why it did not plan on the upstream's planned outputs. */
   why?: string;
+  /**
+   * A read of another root in the same composed run (`waves.compose`, minor
+   * 38): `outputs` is `planned`, and `unknown` names the outputs known only
+   * once the upstream's part of the run applies, which the run applies before
+   * the resources that read them.
+   */
+  composed?: true;
 }
 
 /** A `terraform_remote_state` block whose state the code does not address (minor 30). */
@@ -571,6 +585,63 @@ export interface ReportWave {
   preview?: ReportWavePreview;
   /** The environments of `environments:` its roots are in, sorted (minor 33). Absent when none of its roots is in one. */
   environments?: string[];
+  /**
+   * The wave that carries a composed run (`waves.compose`, minor 38). Its
+   * `roots` list its own roots and the composed ones; its digests cover the
+   * composed plan as one member.
+   */
+  composed?: ReportComposedRun;
+}
+
+/** A wave's composed run (minor 38): one plan and one apply across several roots, each root keeping its own state. */
+export interface ReportComposedRun {
+  /** The composed plan's digest: the one member of the wave's digests that covers these roots. Null when it failed to plan. */
+  plan_digest: string | null;
+  /** Each root in the run, upstreams first. */
+  members: ReportComposedMember[];
+  /** The members that read a value of another member unknown at plan time: the gate holds the run under every gate but never. Absent when there are none. */
+  held_by_unknown?: string[];
+  /** Why the run failed before or in its apply, when no member's own error says it. */
+  error?: string;
+}
+
+/** One root of a composed run (minor 38). */
+export interface ReportComposedMember {
+  root: string;
+  /** Its address in the run, such as `module.network`. */
+  module: string;
+  /**
+   * `tf-apply` only: how its part of the apply ended, from the binary's apply
+   * events. applied: every change it planned completed. partial: some did.
+   * failed: one errored and none completed. not-started: the apply stopped
+   * before any of its changes began. no-changes: it planned none.
+   */
+  apply?: "applied" | "partial" | "failed" | "not-started" | "no-changes";
+  /** `tf-apply` only: how many of its planned changes completed. */
+  changes?: { done: number; planned: number };
+  /**
+   * `tf-apply` only: its state after the run. written: the run wrote it to
+   * its backend, and `roots[].state` names the version. unchanged: the run
+   * left it as it was pulled. not-written: the write failed.
+   */
+  state?: "written" | "unchanged" | "not-written";
+  /** With not-written: where the state the run holds for it was kept, and whether its lock is still held. */
+  kept?: string;
+  lock_held?: boolean;
+  /** Why the write failed, or the first error of its part of the apply. */
+  error?: string;
+}
+
+/** `waves.compose` on a run (minor 38). */
+export interface ReportCompose {
+  /** The roots the change reaches plus the roots they read, followed upstream, sorted. */
+  roots: string[];
+  /** `waves.compose_max`. */
+  max: number;
+  /** The wave whose run composes them. Absent when the change applies in waves. */
+  wave?: number;
+  /** Why the change applies in waves: a kind, the root it is about when there is one, and a sentence. */
+  fallback?: { kind: string; root?: string; reason: string };
 }
 
 /** A wave's plans against the pull request's preview of them (minor 25). */
@@ -718,6 +789,12 @@ export interface Report {
    * stages.
    */
   blast?: ReportBlast;
+  /**
+   * `waves.compose` (minor 38), on a `tf-plan` and on a `tf-apply` wave's
+   * report, when the run's config turns it on: the roots it covers, and the
+   * wave that composes them or why the change applies in waves.
+   */
+  compose?: ReportCompose;
 }
 
 /** A change's blast radius (minor 22). */
