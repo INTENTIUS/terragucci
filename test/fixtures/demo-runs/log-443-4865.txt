@@ -1,0 +1,17 @@
+2026-10-15T04:09:02.0369974Z Runner 21cf0d8f-45d6-4033-b5a1-cd3658e964d4 (version:v13.2.0) received task 1585 of job plan-note, triggered by event: pull_request
+2026-10-15T04:09:02.0398372Z workflow prepared
+2026-10-15T04:09:02.0458144Z 🚀  Start image=ghcr.io/intentius/terragucci-tofu:0.4.11-tofu1.13.1
+2026-10-15T04:09:02.0934002Z   🐳  docker create image=ghcr.io/intentius/terragucci-tofu:0.4.11-tofu1.13.1 platform=linux/amd64 entrypoint=["tail" "-f" "/dev/null"] cmd=[] network="terragucci"
+2026-10-15T04:09:02.1798104Z   🐳  docker run image=ghcr.io/intentius/terragucci-tofu:0.4.11-tofu1.13.1 platform=linux/amd64 entrypoint=["tail" "-f" "/dev/null"] cmd=[] network="terragucci"
+2026-10-15T04:09:02.3700646Z   ☁️  git fetch 'https://code.forgejo.org/actions/download-artifact' # ref=v3
+2026-10-15T04:09:03.0312701Z ⭐ Run Main Fetch the plan report
+2026-10-15T04:09:03.0344825Z   🐳  docker cp src=/data/.cache/act/f9/d08fc97626eca4c73d176f77c14a17938d108a8a77babd7b51d8bf68fa57bf/ dst=/var/run/act/actions/f9/d08fc97626eca4c73d176f77c14a17938d108a8a77babd7b51d8bf68fa57bf/
+2026-10-15T04:09:03.0432989Z   🐳  docker exec cmd=[node /var/run/act/actions/f9/d08fc97626eca4c73d176f77c14a17938d108a8a77babd7b51d8bf68fa57bf/dist/index.js] user= workdir=
+2026-10-15T04:09:03.1186110Z Starting download for terragucci-report
+2026-10-15T04:09:03.1359401Z Directory structure has been setup for the artifact
+2026-10-15T04:09:03.1367978Z Total number of files that will be downloaded: 16
+2026-10-15T04:09:03.1559166Z Artifact terragucci-report was downloaded to /workspace/terragucci-admin/demo/terragucci-report
+2026-10-15T04:09:03.1564257Z Artifact download has finished successfully
+2026-10-15T04:09:03.4248812Z terragucci plan-note: posted the plan note on pull request 278
+2026-10-15T04:09:03.4249474Z terragucci plan-note: terragucci/plan is success on edfb18b9: 3 roots, 3 groups, 0 destroys
+2026-10-15T04:09:03.4874840Z 🏁  Job succeeded
