@@ -131,9 +131,45 @@ REPO="$USER/demo"
 REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
 DEMO_STATE="$TG_STATE/demo"
 mkdir -p "$DEMO_STATE"
-# The driver's ssh key: it seals approvals, and its public half is the one line
-# in .chant/allowed_signers on main from the bootstrap on.
-DRIVER_KEY="$DEMO_STATE/driver"
+
+# The driver plays two people, as a real team would split the work, because an
+# approval counts only from someone who had no hand in the change (the
+# involvement rule, packages/terragucci/src/involved.ts). The author
+# (demo-author) commits and pushes each scenario's change, opens its pull
+# request, merges it and comments /terragucci apply. The reviewer
+# (demo-reviewer) only approves waves, sealed with its own ssh key, whose public
+# half is the one line in .chant/allowed_signers on main from the base on, under
+# the principal demo-reviewer. A sealed approval is judged by that principal,
+# which is none of the author, the committers, the pipeline token's user or
+# agent.login. The admin ($USER) keeps the out-of-band work: the base, the
+# reset's force-push, the repo and the runs. stack/bootstrap.sh forgejo makes
+# both users, their tokens and the reviewer's key.
+person_var() { # name -> its value, from the environment or else stack/.state/forgejo.env
+  local v="${!1:-}"
+  [ -n "$v" ] || v="$(sed -n "s/^export $1=//p" "$TG_STATE/forgejo.env" 2>/dev/null || true)"
+  [ -n "$v" ] || fail "$1 is not in $TG_STATE/forgejo.env; run 'just demo up' again, whose bootstrap makes the demo's author and reviewer"
+  echo "$v"
+}
+AUTHOR="$(person_var TERRAGUCCI_FORGEJO_AUTHOR)"
+AUTHOR_TOKEN="$(person_var TERRAGUCCI_FORGEJO_AUTHOR_TOKEN)"
+REVIEWER="$(person_var TERRAGUCCI_FORGEJO_REVIEWER)"
+REVIEWER_TOKEN="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_TOKEN)"
+REVIEWER_KEY="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_KEY)"
+[ -f "$REVIEWER_KEY" ] || fail "the reviewer's key $REVIEWER_KEY is missing; run 'just demo up' again"
+REVIEWER_REMOTE="${URL/#http:\/\//http://${REVIEWER}:${REVIEWER_TOKEN}@}/$REPO.git"
+as_author() { curl -fsS -H "Authorization: token $AUTHOR_TOKEN" "$@"; }
+
+# Both people may write to the demo repo: the author pushes, merges and asks for
+# an apply (which needs write access), and the reviewer's approval is a commit
+# chant pushes to the ledger branch. Adding a collaborator again changes nothing.
+people_join() {
+  local who
+  for who in "$AUTHOR" "$REVIEWER"; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"write"}' \
+      "$URL/api/v1/repos/$REPO/collaborators/$who" || fail "could not give $who write access to $REPO"
+  done
+}
+
 CHANT="$HERE/../node_modules/.bin/chant"
 TERRAGUCCI="$HERE/../node_modules/.bin/terragucci"
 
@@ -228,7 +264,7 @@ RUNS_AT=0
 runs_copy() { # [keep: delete the runs Forgejo holds past the newest this many that ended]
   (cd "$HERE/.." && DEMO_RUNS_FORGE_URL="$URL" DEMO_RUNS_TOKEN="$TOKEN" DEMO_RUNS_REPO="$REPO" \
     DEMO_RUNS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_RUNS_PREFIX="$REPORT_PREFIX" DEMO_RUNS_STATE="$RUNS_STATE" \
-    DEMO_RUNS_CYCLE="$CYCLE" DEMO_RUNS_SCENARIO="$SCENARIO" DEMO_RUNS_CYCLE_STARTED="${STARTED:-}" DEMO_RUNS_DROP="$DRIVER_KEY" \
+    DEMO_RUNS_CYCLE="$CYCLE" DEMO_RUNS_SCENARIO="$SCENARIO" DEMO_RUNS_CYCLE_STARTED="${STARTED:-}" DEMO_RUNS_DROP="$REVIEWER_KEY"$'\n'"$AUTHOR_TOKEN"$'\n'"$REVIEWER_TOKEN" \
     DEMO_RUNS_PRUNE_KEEP="${1:-}" node_modules/.bin/tsx scripts/demo-runs.ts) || log "runs: the runs were not all copied to floci; the cycle goes on"
   return 0
 }
@@ -333,6 +369,12 @@ push_quiet() { # dir, branch, message -> prints the pushed sha
   push_tree "$@"
 }
 
+# A scenario's commit: written, committed and pushed by the author, so the
+# commit-author check names the author.
+push_as_author() { # dir, repo, branch, message -> prints the pushed sha
+  PUSH_NAME="$AUTHOR" PUSH_EMAIL="$AUTHOR@terragucci.local" PUSH_USER="$AUTHOR" PUSH_TOKEN="$AUTHOR_TOKEN" push_quiet "$@"
+}
+
 clone_main() { # dir
   git clone -q "$REMOTE" "$1" 2>/dev/null || fail "could not clone $REPO"
 }
@@ -396,22 +438,27 @@ run_outcome() {
   WAVE="$(grep -oE 'wave-[0-9]+' <<<"$job" | head -1 | sed 's/wave-//' || true)"
 }
 
-approve_wave() { # wave number: chant approve, sealed with the driver's key
+# The reviewer's approval: chant approve as the reviewer's principal, sealed
+# with the reviewer's key, from the reviewer's own clone, so the ledger commit
+# chant pushes is the reviewer's too. The reviewer had no hand in the change.
+approve_wave() { # wave number
   local clone="$WORK/approve-$CYCLE-$1-$RANDOM" out
-  clone_main "$clone"
-  git -C "$clone" config user.name "$USER"
-  git -C "$clone" config user.email "$USER@terragucci.local"
-  out="$(cd "$clone" && "$CHANT" approve tf-apply "wave-$1" --actor "$USER" --sign "$DRIVER_KEY" 2>&1)" \
+  git clone -q "$REVIEWER_REMOTE" "$clone" 2>/dev/null || fail "$REVIEWER could not clone $REPO"
+  git -C "$clone" config user.name "$REVIEWER"
+  git -C "$clone" config user.email "$REVIEWER@terragucci.local"
+  out="$(cd "$clone" && "$CHANT" approve tf-apply "wave-$1" --actor "$REVIEWER" --sign "$REVIEWER_KEY" 2>&1)" \
     || { echo "$out" >&2; fail "chant approve tf-apply wave-$1 failed"; }
 }
 
-# Start the merged pull request's waves again, as the approver: /terragucci
-# apply on it with a write token (packages/terragucci/src/resume.ts does the same
-# for Forgejo). Sets RUN_ID to the comment's run.
+# Start the merged pull request's waves again, as the author: /terragucci
+# apply on it with the author's write token (packages/terragucci/src/resume.ts
+# does the same for Forgejo). The rule does not judge the commenter, only who
+# opened, wrote and committed the change and the tokens' users, and the author
+# is one of those anyway. Sets RUN_ID to the comment's run.
 resume_pull() {
   local before
   before="$(last_run_id)"
-  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci apply"}' \
+  as_author -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci apply"}' \
     "$URL/api/v1/repos/$REPO/issues/$PULL/comments" || fail "could not comment /terragucci apply on pull request $PULL"
   run_started "$before" issue_comment
   runs_mark resume "$PULL"
@@ -460,22 +507,22 @@ say() { # step
     a-output:pull-request)  echo "Pull request $PULL: the same 8080 -> 9090, but network's output reads terraform_data.http_proxy_port.output, which is unknown until it applies" ;;
     a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
     a-output:applying)      echo "Wave 1 applies network; app and edge read its output before it was known, so each plans again on what was applied before it and waits for an approval of that plan" ;;
-    a-output:approved)      echo "Wave $WAVE approved by the driver with its key, not by the pull request's review: no review showed the values it now applies" ;;
+    a-output:approved)      echo "Wave $WAVE approved by the driver with the reviewer's key, not by the pull request's review: no review showed the values it now applies" ;;
     a-output:applied)       echo "Applied: $(applied_values). app's and edge's values applied after the driver's approvals, not the pull request's review: no review showed them" ;;
     b-waves:pull-request)   echo "Pull request $PULL is open (a proposed change, waiting for review). Network adds a subnet, and app adds four resources that use the subnet's id." ;;
     b-waves:planned)        echo "The plan is posted on the pull request. Network will build the subnet. App's four resources say \"known after apply\", because the subnet has no id until it exists, so the reviewer can't see what they will get. Other, the fourth state, has no change." ;;
     b-waves:applying)       echo "Wave 1 builds network's subnet, and now the subnet has an id. App, in wave 2, makes a new plan with that id." ;;
-    b-waves:approved)       echo "The driver approves wave 2 with its signing key, standing in for a person. The pull request's review never covered this plan. App's resources go into subnet $(state_id network subnet)." ;;
+    b-waves:approved)       echo "The driver approves wave 2 with the reviewer's signing key, standing in for a person who had no hand in the change. The pull request's review never covered this plan. App's resources go into subnet $(state_id network subnet)." ;;
     b-waves:applied)        echo "Done. Network has subnet $(state_id network subnet), and app put its four resources in it. They landed only after a person approved them, because no review showed the subnet id they use." ;;
     b-composed:pull-request) echo "Pull request $PULL: scenario 3's change, a subnet in network that app's four new resources read, and terragucci.yml turns on waves.compose for this pull request only, so the roots it reaches plan as one plan and apply as one apply. compose is opt-in beside the waves: every other scenario applies in waves" ;;
     b-composed:planned)     echo "One plan note with one composed plan of $COMPOSED, each a module of the one run and each keeping its own state. app's four new resources plan as known after apply: the subnet's id is unknown until the run creates it, and the same apply computes them. The review does not show the values they will get; other is not planned. $COST_STUB" ;;
     b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
-    b-composed:approved)    echo "Wave 1 approved by the driver with its key, for the composed run's digest; the pull request's review approved nothing. The re-run plans $COMPOSED again as one run and applies them in one apply" ;;
+    b-composed:approved)    echo "Wave 1 approved by the driver with the reviewer's key, for the composed run's digest; the pull request's review approved nothing. The re-run plans $COMPOSED again as one run and applies them in one apply" ;;
     b-composed:applied)     echo "Applied in one apply: network's subnet $(state_id network subnet), and app's $(state_input app instance), computed in the same run after the driver's approval, not the pull request's review. Each state was written with what applied to it. Nothing here is atomic: had the apply failed part way, what applied would stay applied and each state would be written with what applied to it" ;;
     failure:pull-request)   echo "Pull request $PULL is open (a proposed change, waiting for review). Network's port goes from 8080 to 9090, and app gains a database migration. The driver (the script running this demo) has switched on a fault, so the migration will fail." ;;
     failure:planned)        echo "The plan is posted on the pull request. Network and app each get a new port. App also gets the migration, and edge will follow app's port. Other, the fourth state, has no change." ;;
     failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the migration runs." ;;
-    failure:approved)       echo "The driver approves wave $WAVE with its signing key, standing in for a person, so the re-run can replace the failed migration." ;;
+    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's signing key, standing in for a person who had no hand in the change, so the re-run can replace the failed migration." ;;
     failure:applied)        echo "Done on the second run. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
     stale-plan:pull-request) echo "Pull request $PULL: network's release marker goes from r0 to r$CYCLE, which replaces it" ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
@@ -484,7 +531,7 @@ say() { # step
     *:applied)
       values="$(applied_values)"
       echo "Applied: $values" ;;
-    *:approved)             echo "Wave $WAVE approved, sealed with the driver's key" ;;
+    *:approved)             echo "Wave $WAVE approved, sealed with the reviewer's key" ;;
     *:resumed)              echo "The driver comments /terragucci apply on pull request $PULL, and the pipeline runs the waves again. A wave that already landed has nothing left to do." ;;
     *) echo "$1" ;;
   esac
@@ -497,7 +544,7 @@ open_pull() {
   clone_main "$tree"
   overlay "$DEMO/scenarios/$SCENARIO/pull" "$tree"
   before="$(last_run_id)"
-  sha="$(push_quiet "$tree" "$REPO" "demo-$SCENARIO" "$TITLE (cycle $CYCLE)")"
+  sha="$(push_as_author "$tree" "$REPO" "demo-$SCENARIO" "$TITLE (cycle $CYCLE)")"
   PULL="$(pr_open "demo-$SCENARIO" "$TITLE")"
   COMMIT="$sha"
   demo_write pull-request "$(say pull-request)" "wait for the plan note"
@@ -522,25 +569,25 @@ overlay() { # from, to: copy the scenario's files over the tree, with @CYCLE@ fi
   done
 }
 
-pr_open() { # branch, title -> prints the number of the pull request into main
+pr_open() { # branch, title -> prints the number of the pull request into main, opened by the author
   local n=""
   for _ in $(seq 1 60); do
     api -o /dev/null "$URL/api/v1/repos/$REPO/branches/$1" 2>/dev/null && break
     sleep "$POLL"
   done
-  n="$(api -H 'content-type: application/json' -X POST \
+  n="$(as_author -H 'content-type: application/json' -X POST \
     -d "$(jq -cn --arg h "$1" --arg t "$2" --argjson c "$CYCLE" '{head: $h, base: "main", title: $t, body: "Cycle \($c) of the terragucci demo (stack/demo.sh)."}')" \
     "$URL/api/v1/repos/$REPO/pulls" | jq -r '.number // empty')"
   [ -n "$n" ] || fail "no pull request opened from $1"
   echo "$n"
 }
 
-merge_pull() { # -> COMMIT is the merge commit, RUN_ID its push run
+merge_pull() { # the author merges -> COMMIT is the merge commit, RUN_ID its push run
   local before merged=""
   quiet
   before="$(last_run_id)"
   for _ in $(seq 1 10); do
-    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$REPO/pulls/$PULL/merge" 2>/dev/null && { merged=1; break; }
+    as_author -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$REPO/pulls/$PULL/merge" 2>/dev/null && { merged=1; break; }
     sleep 3
   done
   [ -n "$merged" ] || fail "pull request $PULL did not merge"
@@ -584,7 +631,8 @@ follow() {
 }
 
 # The default at a waiting wave: hold so the viewer sees it, approve it with
-# the driver's key, and post /terragucci apply on the merged pull request.
+# the reviewer's key, and post /terragucci apply on the merged pull request as
+# the author.
 default_waiting() {
   HELD="wave-$WAVE"
   demo_hold waiting "$(waiting_label)" "approve wave-$WAVE"
@@ -598,7 +646,7 @@ waiting_label() {
   case "$SCENARIO:$WAVE" in
     b-composed:1) echo "Wave 1 waits for an approval of the composed run: app reads network's subnet id, unknown at plan time and computed in this apply, so no review showed the values app gets. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves the composed run's digest" ;;
     a-output:*)   echo "Wave $WAVE waits for an approval: it read an output that was unknown when the change was reviewed, and nobody reviewed the plan it made once that output applied. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
-    b-waves:2)    echo "Wave 2 stops and waits for a person to approve it. App's new plan holds the subnet's id, and no review ever saw that plan. Nothing gets destroyed, yet the pipeline still asks. The driver (the script running this demo) gives that approval here." ;;
+    b-waves:2)    echo "Wave 2 stops and waits for a person to approve it. App's new plan holds the subnet's id, and no review ever saw that plan. Nothing gets destroyed, yet the pipeline still asks. The reviewer (played by the driver, the script running this demo) gives that approval here." ;;
     failure:2)    echo "Wave 2 stops and waits for a person to approve it. The re-run replaces the failed migration, which destroys something, so it asks first. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
@@ -657,7 +705,7 @@ stale_waiting() {
   clone_main "$tree"
   overlay "$DEMO/scenarios/stale-plan/push" "$tree"
   before="$(last_run_id)"
-  COMMIT="$(DEMO_PUSH_WHILE_HELD=1 push_quiet "$tree" "$REPO" main "network: http_proxy_port 8080 -> 9090 (cycle $CYCLE)")"
+  COMMIT="$(DEMO_PUSH_WHILE_HELD=1 push_as_author "$tree" "$REPO" main "network: http_proxy_port 8080 -> 9090 (cycle $CYCLE)")"
   run_started "$before" push "$COMMIT"
   runs_mark push
   demo_write applying "main moved to ${COMMIT:0:8}: network's http_proxy_port 8080 -> 9090 on top of the approved change. Wave 1 plans again on the new commit" "follow the waves"
@@ -902,16 +950,18 @@ case "$CMD" in
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
     for b in "$STATE_BUCKET" "$REPORT_BUCKET" "$CONTROL_BUCKET"; do curl -fsS -o /dev/null -X PUT "$FLOCI/$b" || true; done
     marker_clear
-    [ -f "$DRIVER_KEY" ] || ssh-keygen -q -t ed25519 -N "" -C "$USER" -f "$DRIVER_KEY"
+    people_join
     # The base: example-demo/ less its scenarios, the pipeline init writes, and
-    # the driver's key in .chant/allowed_signers. It is the commit every reset
-    # forces main back to.
+    # the reviewer's key in .chant/allowed_signers. It is the commit every reset
+    # forces main back to. The admin pushes it, out of band: no wave judges it
+    # as a change, because each wave's rule is read at the commit before the one
+    # it applies, and the base is never in the range after it.
     rm -rf "$DEMO_STATE/base-tree"
     mkdir -p "$DEMO_STATE/base-tree"
     (cd "$DEMO" && tar cf - --exclude ./scenarios .) | (cd "$DEMO_STATE/base-tree" && tar xf -)
     (cd "$DEMO_STATE/base-tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on example-demo"
     mkdir -p "$DEMO_STATE/base-tree/.chant"
-    echo "$USER $(cut -d' ' -f1,2 "$DRIVER_KEY.pub")" > "$DEMO_STATE/base-tree/.chant/allowed_signers"
+    echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$DEMO_STATE/base-tree/.chant/allowed_signers"
     # floci may still hold the states of a cycle the driver left part way (a
     # restart after the checkout moved): writing the last base snapshot back
     # first, as the reset does, leaves the base's pipeline nothing to destroy,
@@ -976,6 +1026,11 @@ OUT
     [ "${#list[@]}" -gt 0 ] || list=("${SCENARIOS[@]}")
     COUNT="${#list[@]}"
     [ -f "$DEMO_STATE/base.sha" ] || fail "no base snapshot; run 'just demo up' first"
+    # A base pushed before the driver played two people names the driver's key
+    # in .chant/allowed_signers, so the reviewer's seal would not verify.
+    git -C "$DEMO_STATE/base-tree" show "$(cat "$DEMO_STATE/base.sha"):.chant/allowed_signers" 2>/dev/null | grep -q "^$REVIEWER " \
+      || fail "the base's .chant/allowed_signers does not name $REVIEWER; run 'just demo up' again"
+    people_join
     echo "$$" > "$DEMO_STATE/driver.pid"
     # An earlier driver's background copy is not this one's to wait on.
     mkdir -p "$RUNS_STATE" && : > "$RUNS_PID"

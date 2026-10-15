@@ -13,6 +13,9 @@
 #                              on Forgejo, waits until the repo is not empty;
 #                              prints the sha. TG_FIXED_DATE=1 pins the commit
 #                              dates so the same tree always gets the same sha.
+#                              PUSH_NAME and PUSH_EMAIL author and commit it as
+#                              someone else, PUSH_USER and PUSH_TOKEN push it
+#                              as another Forgejo user (stack/demo.sh's author).
 #   wait_run REPO SHA [EVENT]  wait for the Actions run on SHA (the newest one,
 #                              or the one EVENT started; WAIT_WORKFLOW=<file>
 #                              only that workflow's, WAIT_TRIGGER=<event> only
@@ -114,12 +117,13 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     fi
     # Never sign: these are throwaway commits, and an unsigned commit has the
     # same sha on every machine, which the tutorial's captures rely on.
-    git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false \
+    git -c user.email="${PUSH_EMAIL:-example@terragucci.local}" -c user.name="${PUSH_NAME:-terragucci}" -c commit.gpgsign=false \
       commit -q --allow-empty -m "$message"
-    local remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/${repo}.git"
+    local who="${PUSH_USER:-$USER}" secret="${PUSH_TOKEN:-$TOKEN}"
+    local remote="${URL/#http:\/\//http://${who}:${secret}@}/${repo}.git"
     # Forgejo's "create a pull request" hint is noise; show output only on failure.
     if ! out="$(git push -q --force "$remote" "HEAD:refs/heads/$branch" 2>&1)"; then
-      echo "${out//${TOKEN}/***}" >&2
+      echo "${out//${secret}/***}" >&2
       exit 1
     fi
     # Forgejo makes the first branch its push queue handles in an empty repo
