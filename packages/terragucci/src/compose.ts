@@ -39,10 +39,12 @@ import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexic
 import { backendBlock, blockBody, explicitOrder, stateOf, type WavesAfter } from "./detect";
 import { configFiles, hclValue, outputsRead, refRe } from "./linked";
 import { plannedOutputs, plannedRead } from "./planned-outputs";
-import { rootWorkspace } from "./backend";
+import { isStored, rootWorkspace, stateObject, type StateObject } from "./backend";
 import { rootRoleEnv } from "./roles";
-import { derivedLineage, type StateFile, type StateResource } from "./migrate";
-import type { ReportRead } from "./report/schema";
+import { derivedLineage, pullState, runBinary, takeLocks, type BinaryExec, type HeldLock, type StateFile, type StateResource } from "./migrate";
+import { changesSomething } from "./report/changing";
+import type { ReportComposedMember, ReportRead } from "./report/schema";
+import type { StepWhen } from "./steps";
 
 /** Where the composed root is written, in the checkout. */
 export const COMPOSE_DIR = ".terragucci-compose";
@@ -1062,3 +1064,429 @@ export function writeWithDir(path: string, body: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, body);
 }
+
+// ── the run ───────────────────────────────────────────────────────────────
+
+/** What a composed run calls out to for each member: its steps, and the sources check after its init. */
+export interface ComposeHooks {
+  /** Run one moment's steps for a member; the error when one failed it. A step given the plan file gets the composed one. */
+  step?: (root: string, when: StepWhen, planFile?: string) => Promise<string | undefined>;
+  /** After a member's init, before anything of it plans: the error when the sources check refuses what init fetched. */
+  afterInit?: (root: string, env: NodeJS.ProcessEnv) => Promise<string | undefined>;
+  log: (line: string) => void;
+}
+
+export interface ComposeRunOptions {
+  repo: string;
+  composition: Composition;
+  /** The binary every member runs: its path and its name. */
+  binary: { path: string; name: string };
+  /** The job's environment, with the shared provider cache. Each member's own role is added to it. */
+  env: NodeJS.ProcessEnv;
+  /** A directory of the job's own for the plan file and the states it writes. */
+  work: string;
+  /** Take each state's lock (an apply); a plan takes none. */
+  lock: boolean;
+  /** Names the run in the locks it takes. */
+  runId?: string;
+  hooks: ComposeHooks;
+  exec?: BinaryExec;
+  /** How long to wait before each retry of a state's write. Default 5s, 15s, 30s, 60s, 120s: five retries, inside the lock timeout of 5 minutes. */
+  retryDelays?: number[];
+  /** The init of each member, one at a time when they share a provider cache. */
+  initTurn?: <T>(fn: () => Promise<T>) => Promise<T>;
+}
+
+/** The composed plan, cut back into each member's part. */
+export interface ComposedPlan {
+  /** Why it did not plan, and the member it is about when there is one. */
+  error?: string;
+  root?: string;
+  plan?: unknown;
+  planFile: string;
+  text?: string;
+  /** The digest the gate binds: the composed plan's, joined with the generated files. Empty when it failed. */
+  digest: string;
+  generated: [string, string][];
+  /** Each member's part of the plan JSON and of its text. */
+  slices: Map<string, unknown>;
+  texts: Map<string, string>;
+  /** Each member's reads of another member. */
+  reads: Map<string, ReportRead[]>;
+  /** The members that read a value of another member unknown at plan time. */
+  unknown: string[];
+  changes: number;
+  destroys: number;
+  /** The binary's `Plan:` line for the whole run. */
+  summary: string;
+}
+
+/** How a composed apply ended. */
+export interface ComposedApply {
+  ok: boolean;
+  members: ReportComposedMember[];
+  /** The members whose state the run wrote or left as it was: their backend holds what applied to them. */
+  settled: string[];
+  error?: string;
+}
+
+const DEFAULT_RETRIES = [5_000, 15_000, 30_000, 60_000, 120_000];
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const firstLines = (s: string, n = 6): string => s.trim().split("\n").slice(-n).join("\n");
+const safeName = (root: string): string => (root === "." ? "root" : root.replace(/[^\w.-]/g, "_"));
+
+/**
+ * One composed run: prepare and plan it (`plan`), then apply it once the
+ * gate lets it through (`apply`). `release` lets go of every lock it still
+ * holds, but a lock held on purpose for a state it could not write, and puts
+ * every file back; call it whatever happened.
+ */
+export class ComposedRun {
+  private readonly exec: BinaryExec;
+  private readonly pulled = new Map<string, StateFile | null>();
+  private readonly objects = new Map<string, StateObject>();
+  private locks: HeldLock[] = [];
+  private readonly heldOnPurpose = new Set<string>();
+  private planned?: ComposedPlan;
+  private readonly composeDir: string;
+
+  constructor(private readonly o: ComposeRunOptions) {
+    this.exec = o.exec ?? runBinary;
+    this.composeDir = join(o.repo, COMPOSE_DIR);
+  }
+
+  private get c(): Composition {
+    return this.o.composition;
+  }
+
+  private log(line: string): void {
+    this.o.hooks.log(line);
+  }
+
+  /** A member's environment: the job's with its role. */
+  rootEnv(root: string): NodeJS.ProcessEnv {
+    return rootRoleEnv(this.o.env, root);
+  }
+
+  /**
+   * The composed root's environment: the first member's role (every member
+   * has the same, or the change would not compose), its `-var-file` flags
+   * taken out. With a shared provider cache and no lock file to check a
+   * cached provider against, the cache may fill the lock file, as a root's
+   * own plan lets it (rootCacheEnv in ./report/stage.ts).
+   */
+  private composedEnv(): NodeJS.ProcessEnv {
+    const env = withoutVarFiles(this.rootEnv(this.c.order[0]!));
+    return env.TF_PLUGIN_CACHE_DIR && !existsSync(join(this.composeDir, ".terraform.lock.hcl")) ? { ...env, TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE: "true" } : env;
+  }
+
+  private failedPlan(error: string, root?: string): ComposedPlan {
+    return { error, ...(root ? { root } : {}), planFile: join(this.o.work, "composed.tfplan"), digest: "", generated: [], slices: new Map(), texts: new Map(), reads: new Map(), unknown: [], changes: 0, destroys: 0, summary: "" };
+  }
+
+  private async step(root: string, when: StepWhen, planFile?: string): Promise<string | undefined> {
+    return this.o.hooks.step ? this.o.hooks.step(root, when, planFile) : undefined;
+  }
+
+  /**
+   * Init each member against its backend, take each state's lock (an apply),
+   * write first any state an earlier run kept unwritten, pull each state,
+   * write the composed root and its working state, and plan once.
+   */
+  async plan(): Promise<ComposedPlan> {
+    const { repo } = this.o;
+    const bin = this.o.binary.path;
+    const turn = this.o.initTurn ?? ((fn) => fn());
+    for (const r of this.c.order) {
+      const dir = join(repo, r);
+      const env = this.rootEnv(r);
+      let e = await this.step(r, "before-init");
+      if (e) return this.failedPlan(e, r);
+      const init = await turn(() => this.exec(bin, ["init", "-input=false", "-no-color"], dir, env));
+      if (init.code !== 0) return this.failedPlan(`init failed\n${firstLines(init.out, 40)}`, r);
+      e = await this.o.hooks.afterInit?.(r, env);
+      if (e) return this.failedPlan(e, r);
+      e = await this.step(r, "after-init");
+      if (e) return this.failedPlan(e, r);
+      const object = stateObject(dir, env);
+      if ("unsupported" in object && isStoredBackend(object.backend)) return this.failedPlan(`its state cannot be read where it is: ${object.unsupported}`, r);
+      if (object.backend === "s3" && "lockfile" in object && !object.lockfile && this.o.lock) return this.failedPlan("its s3 backend takes no lock file (use_lockfile = true), so a composed run cannot hold its lock", r);
+      if (!isStored(object) && object.backend !== "local") return this.failedPlan(`its backend is ${object.backend}, and a composed run locks and writes s3, gcs, azurerm and local states`, r);
+      this.objects.set(r, object);
+    }
+    if (this.o.lock) {
+      const op = { operation: COMPOSE_LOCK.operation, info: `${COMPOSE_LOCK.info}${this.o.runId ? ` (run ${this.o.runId})` : ""}` };
+      const files = new Map(this.c.order.map((r) => [r, { object: this.objects.get(r)! }] as const));
+      try {
+        this.locks = await takeLocks(files, new Date().toISOString(), undefined, op, async (root, store, held) => {
+          // A lock an earlier composed run left held for a state it could not write: this run writes that state first.
+          if (!held.info.includes(COMPOSE_LOCK.operation)) return false;
+          const kept = await store.readBeside(UNWRITTEN_SUFFIX).catch(() => undefined);
+          if (!kept?.trim()) return false;
+          store.adopt(held);
+          this.log(`${root}: its lock is held by an earlier composed run that kept a state it could not write; this run takes the lock over and writes that state first`);
+          return true;
+        });
+      } catch (e) {
+        return this.failedPlan(`${(e as Error).message}; nothing was pulled`);
+      }
+      for (const r of this.c.order) {
+        try {
+          await this.writeKept(r);
+        } catch (e) {
+          return this.failedPlan(`the state an earlier composed run kept for it could not be written: ${(e as Error).message}`, r);
+        }
+      }
+    }
+    for (const r of this.c.order) {
+      try {
+        this.pulled.set(r, await pullState(this.exec, bin, r, join(repo, r), this.rootEnv(r)));
+      } catch (e) {
+        return this.failedPlan((e as Error).message, r);
+      }
+    }
+    for (const r of this.c.order) {
+      const e = await this.step(r, "before-plan");
+      if (e) return this.failedPlan(e, r);
+    }
+    const planFile = join(this.o.work, "composed.tfplan");
+    let root: ComposedRoot;
+    try {
+      root = writeComposedRoot(repo, this.c, this.o.env);
+    } catch (e) {
+      return this.failedPlan(`the composed root could not be written: ${(e as Error).message}`);
+    }
+    let plan: unknown;
+    let text = "";
+    let summary = "";
+    try {
+      writeFileSync(join(this.composeDir, "terraform.tfstate"), JSON.stringify(mergeStates(repo, this.c, this.pulled), null, 2) + "\n");
+      const env = this.composedEnv();
+      const init = await turn(() => this.exec(bin, ["init", "-input=false", "-no-color"], this.composeDir, env));
+      if (init.code !== 0) return this.failedPlan(`the composed root's init failed\n${firstLines(init.out, 40)}`);
+      const p = await this.exec(bin, ["plan", "-input=false", "-no-color", "-lock=false", `-out=${planFile}`], this.composeDir, env);
+      if (p.code !== 0 || !existsSync(planFile)) return this.failedPlan(`the composed plan failed\n${firstLines(p.out, 40)}`);
+      summary = p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned";
+      const json = await this.exec(bin, ["show", "-json", planFile], this.composeDir, env);
+      try {
+        plan = JSON.parse(json.stdout);
+      } catch {
+        return this.failedPlan(`show -json printed no plan\n${firstLines(json.out)}`);
+      }
+      text = (await this.exec(bin, ["show", "-no-color", planFile], this.composeDir, env)).stdout;
+    } finally {
+      root.restore();
+    }
+    for (const r of this.c.order) {
+      const e = await this.step(r, "after-plan", planFile);
+      if (e) return this.failedPlan(e, r);
+    }
+    const slices = new Map<string, unknown>();
+    const texts = new Map<string, string>();
+    for (const r of this.c.order) {
+      const m = this.c.modules.get(r)!;
+      const slice = slicePlan(plan, m);
+      slices.set(r, slice);
+      texts.set(r, sliceText(text, m, planCounts(slice)));
+    }
+    const reads = composedReportReads(repo, this.c, slices);
+    const unknown = [...reads].filter(([, rs]) => rs.some((x) => x.unknown?.length)).map(([r]) => r);
+    const counts = planCounts(plan);
+    const target = composeTarget(this.c.wave ?? 0);
+    this.planned = {
+      plan,
+      planFile,
+      text,
+      digest: composedPlanDigest(plan, this.o.binary.name, target, root.generated),
+      generated: root.generated,
+      slices,
+      texts,
+      reads,
+      unknown,
+      changes: counts.changes,
+      destroys: counts.destroys,
+      summary,
+    };
+    return this.planned;
+  }
+
+  /** A state an earlier composed run kept beside a member's state: write it, then clear what was kept. */
+  private async writeKept(root: string): Promise<void> {
+    const object = this.objects.get(root)!;
+    const lock = this.locks.find((l) => l.root === root && l.store);
+    let kept: string | undefined;
+    if (lock?.store) kept = await lock.store.readBeside(UNWRITTEN_SUFFIX);
+    else if (object.backend === "local" && "path" in object) {
+      const file = resolve(this.o.repo, root, object.path) + UNWRITTEN_SUFFIX;
+      kept = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
+    }
+    if (!kept?.trim()) return;
+    await this.writeState(root, JSON.parse(kept) as StateFile);
+    if (lock?.store) await lock.store.writeBeside(UNWRITTEN_SUFFIX, "");
+    else if ("path" in object) writeFileSync(resolve(this.o.repo, root, object.path) + UNWRITTEN_SUFFIX, "");
+    this.log(`${root}: wrote the state an earlier composed run kept unwritten, before planning`);
+  }
+
+  /** Write one member's state to its backend: under azurerm's lease with the store's own write, else `state push`, with the lock terragucci holds. */
+  private async writeState(root: string, state: StateFile): Promise<void> {
+    const body = JSON.stringify(state, null, 2) + "\n";
+    const lock = this.locks.find((l) => l.root === root && l.store);
+    if (lock?.store?.write) {
+      await lock.store.write(body);
+      return;
+    }
+    const file = join(this.o.work, `${safeName(root)}.tfstate`);
+    writeFileSync(file, body);
+    const object = this.objects.get(root);
+    const args = object && isStored(object) ? ["-lock=false"] : [];
+    const push = await this.exec(this.o.binary.path, ["state", "push", ...args, file], join(this.o.repo, root), this.rootEnv(root));
+    if (push.code !== 0) throw new Error(`state push failed: ${firstLines(push.out, 3)}`);
+  }
+
+  /**
+   * Apply the saved plan, then split the working state by module and write
+   * each changed state, upstreams first, whether the apply finished or not.
+   * Each lock is released once its state is written; one whose state could
+   * not be written stays held, and the state is kept beside it.
+   */
+  async apply(): Promise<ComposedApply> {
+    const p = this.planned;
+    const { repo } = this.o;
+    const members = (): ReportComposedMember[] => this.c.order.map((r) => ({ root: r, module: `module.${this.c.modules.get(r)}` }));
+    if (!p?.plan) return { ok: false, members: members(), settled: [], error: "the composed run did not plan" };
+    for (const r of this.c.order) {
+      const e = await this.step(r, "before-apply", p.planFile);
+      if (e) return { ok: false, members: members().map((m) => (m.root === r ? { ...m, apply: "not-started" as const, error: e } : { ...m, apply: "not-started" as const })), settled: [], error: `a step before the apply of ${r} failed, so nothing applied` };
+    }
+    let root: ComposedRoot;
+    try {
+      root = writeComposedRoot(repo, this.c, this.o.env);
+    } catch (e) {
+      return { ok: false, members: members(), settled: [], error: `the composed root could not be written: ${(e as Error).message}` };
+    }
+    let out = "";
+    let code = 1;
+    try {
+      if (JSON.stringify(root.generated) !== JSON.stringify(p.generated)) {
+        return { ok: false, members: members(), settled: [], error: "the composed root differs from the one planned, so nothing applied" };
+      }
+      const a = await this.exec(this.o.binary.path, ["apply", "-json", "-input=false", "-no-color", p.planFile], this.composeDir, this.composedEnv());
+      out = a.stdout;
+      code = a.code;
+      for (const line of a.stdout.split("\n")) {
+        try {
+          const msg = (JSON.parse(line) as { "@message"?: string; type?: string })["@message"];
+          if (msg && !/^(Plan to|Refreshing|Reading)/.test(msg)) this.log(`composed: ${msg}`);
+        } catch {
+          if (line.trim()) this.log(`composed: ${line}`);
+        }
+      }
+    } finally {
+      root.restore();
+    }
+    const mods = this.c.order.map((r) => this.c.modules.get(r)!);
+    const ev = readApplyEvents(out, mods);
+    const workingFile = existsSync(join(this.composeDir, "errored.tfstate")) ? join(this.composeDir, "errored.tfstate") : join(this.composeDir, "terraform.tfstate");
+    let working: StateFile;
+    try {
+      working = JSON.parse(readFileSync(workingFile, "utf-8")) as StateFile;
+    } catch (e) {
+      // With no working state to split, nothing is written and every lock stays held: what applied is only in the binary's output.
+      for (const r of this.c.order) this.heldOnPurpose.add(r);
+      return { ok: false, members: members().map((m) => ({ ...m, state: "not-written" as const, lock_held: true, error: `the working state could not be read: ${(e as Error).message}` })), settled: [], error: "the working state could not be read after the apply" };
+    }
+    const result: ReportComposedMember[] = [];
+    const settled: string[] = [];
+    for (const r of this.c.order) {
+      const m = this.c.modules.get(r)!;
+      const planned = planCounts(p.slices.get(r)).changes;
+      const { apply, done } = memberApply(m, planned, ev);
+      const row: ReportComposedMember = { root: r, module: `module.${m}`, apply, changes: { done, planned }, ...(ev.errored.get(m) ? { error: ev.errored.get(m) } : {}) };
+      const split = splitState(working, this.c, r, this.pulled.get(r) ?? null);
+      if (!changesSomething(p.slices.get(r)) || split.same) {
+        row.state = "unchanged";
+        settled.push(r);
+        await this.releaseOne(r);
+      } else {
+        const err = await this.writeWithRetries(r, split.state);
+        if (err === undefined) {
+          row.state = "written";
+          settled.push(r);
+          this.log(`${r}: wrote its state, serial ${split.state.serial}`);
+          await this.releaseOne(r);
+        } else {
+          const kept = await this.keep(r, split.state);
+          this.heldOnPurpose.add(r);
+          Object.assign(row, { state: "not-written" as const, kept, lock_held: true, error: err });
+          this.log(`${r}: its state could not be written (${err}); kept at ${kept}, and its lock stays held until a run of this wave writes it`);
+        }
+      }
+      result.push(row);
+    }
+    for (const r of this.c.order) {
+      const row = result.find((x) => x.root === r)!;
+      if (row.apply === "applied" || row.apply === "no-changes") {
+        const e = await this.step(r, "after-apply");
+        if (e) row.error = e;
+      }
+    }
+    const ok = code === 0 && result.every((x) => (x.apply === "applied" || x.apply === "no-changes") && x.state !== "not-written" && !x.error);
+    return { ok, members: result, settled, ...(ok ? {} : { error: ev.other[0] ?? (code !== 0 ? "the composed apply failed" : result.find((x) => x.error)?.error) }) };
+  }
+
+  /** Write one state, retrying while the lock is held. Undefined once written; the last error otherwise. */
+  private async writeWithRetries(root: string, state: StateFile): Promise<string | undefined> {
+    const delays = this.o.retryDelays ?? DEFAULT_RETRIES;
+    let last = "";
+    for (let i = 0; i <= delays.length; i++) {
+      try {
+        await this.writeState(root, state);
+        return undefined;
+      } catch (e) {
+        last = (e as Error).message;
+        if (i < delays.length) {
+          this.log(`${root}: the write of its state failed (${last}); trying again in ${Math.round(delays[i]! / 1000)}s`);
+          await sleepMs(delays[i]!);
+        }
+      }
+    }
+    return last;
+  }
+
+  /** Keep a state that could not be written: beside it in its own backend, else as a file of the job's report directory. Returns where. */
+  private async keep(root: string, state: StateFile): Promise<string> {
+    const body = JSON.stringify(state, null, 2) + "\n";
+    const object = this.objects.get(root);
+    const lock = this.locks.find((l) => l.root === root && l.store);
+    try {
+      if (lock?.store) {
+        await lock.store.writeBeside(UNWRITTEN_SUFFIX, body);
+        return `${lock.store.location}${UNWRITTEN_SUFFIX}`;
+      }
+      if (object && "path" in object) {
+        const file = resolve(this.o.repo, root, object.path) + UNWRITTEN_SUFFIX;
+        writeFileSync(file, body);
+        return relative(this.o.repo, file).split("\\").join("/");
+      }
+    } catch (e) {
+      this.log(`${root}: the state could not be kept beside its backend's state either (${(e as Error).message}); it is kept as a file of the job`);
+    }
+    const file = join(this.o.repo, UNWRITTEN_DIR, `${safeName(root)}.tfstate`);
+    writeWithDir(file, body);
+    return `${UNWRITTEN_DIR}/${safeName(root)}.tfstate in the job's artifacts`;
+  }
+
+  private async releaseOne(root: string): Promise<void> {
+    const mine = this.locks.filter((l) => l.root === root);
+    this.locks = this.locks.filter((l) => l.root !== root);
+    for (const l of mine) await l.release().catch((e: unknown) => this.log(`${root}: its lock could not be released: ${(e as Error).message}`));
+  }
+
+  /** Release every lock but those held on purpose, and take the composed root's directory away once nothing in it is needed. */
+  async release(): Promise<void> {
+    for (const r of [...new Set(this.locks.map((l) => l.root))]) if (!this.heldOnPurpose.has(r)) await this.releaseOne(r);
+    rmSync(this.composeDir, { recursive: true, force: true });
+  }
+}
+
+const isStoredBackend = (b: string): boolean => b === "s3" || b === "gcs" || b === "azurerm";
