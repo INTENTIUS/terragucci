@@ -228,7 +228,7 @@ run_started() { # before id, event, [sha]
   while :; do
     runner_watch
     id="$(runs | jq -r --argjson b "$before" --arg e "$event" --arg s "$sha" \
-      '[.[] | select(.id > $b and .event == $e and ($s == "" or .head_sha == $s))] | min_by(.id) | .id // empty' || true)"
+      '[.[] | select(.id > $b and .event == $e and ($s == "" or (.head_sha // .commit_sha) == $s))] | min_by(.id) | .id // empty' || true)"
     if [ -n "$id" ]; then RUN_ID="$id"; return 0; fi
     if [ "$(now)" -ge "$deadline" ]; then
       [ -z "${RUN_SOFT:-}" ] || return 1
