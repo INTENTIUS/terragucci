@@ -1,5 +1,5 @@
 {
-  "changes": "Network's port goes from 8080 to 9090, and app gains a migration that fails.",
-  "watch": "Wave 2 fails partway while wave 1 stays as it landed. The driver clears the fault and comments /terragucci apply. The re-run holds until someone approves replacing the migration, and only then lands.",
-  "shows": "Nothing here is atomic. A failure leaves in place what already landed, and a second run completes the change."
+  "changes": "The network state (the record of what Terraform built for the network) changes its port from 8080 to 9090. The app state gains a database migration that fails.",
+  "watch": "Wave 1 (the first group of states to apply) changes network. App's migration then fails in wave 2 (the states that read from wave 1), and network stays changed. The driver (the script running this demo) clears the fault and runs the pipeline again. The re-run has to replace the failed migration. That destroys something, so it asks a person first. With that approval the change finishes.",
+  "shows": "A failure doesn't undo what already landed. The pipeline shows where it stopped, and a second run completes the change."
 }
