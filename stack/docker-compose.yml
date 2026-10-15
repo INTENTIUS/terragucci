@@ -69,7 +69,7 @@ services:
     container_name: ${TG_PROJECT:-terragucci}-floci
     profiles: [aws, forgejo, github, gitlab, fountain]
     environment:
-      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: "false"
+      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: ${TERRAGUCCI_FLOCI_IAM_ENFORCEMENT:-false}
     ports:
       - "${TERRAGUCCI_FLOCI_PORT:-4580}:4566"
     networks:

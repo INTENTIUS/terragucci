@@ -1,0 +1,48 @@
+# app: reads network's http_proxy_port and listens ten below it. edge reads
+# app's output.
+
+terraform {
+  backend "s3" {
+    bucket         = "demo-terraform-state"
+    key            = "app.tfstate"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+data "terraform_remote_state" "network" {
+  backend = "s3"
+  config = {
+    bucket         = "demo-terraform-state"
+    key            = "network.tfstate"
+    region         = "us-east-1"
+    use_path_style = true
+  }
+}
+
+resource "terraform_data" "listener_port" {
+  input = data.terraform_remote_state.network.outputs.http_proxy_port - 10
+}
+
+output "listener_port" {
+  value = terraform_data.listener_port.input
+}
+
+# Four resources placed in network's new subnet. Its id is unknown until
+# network applies, so the pull request plans each of them as known after apply.
+resource "terraform_data" "security_group" {
+  input = "sg in ${data.terraform_remote_state.network.outputs.subnet_id}"
+}
+
+resource "terraform_data" "load_balancer" {
+  input = "lb in ${data.terraform_remote_state.network.outputs.subnet_id}"
+}
+
+resource "terraform_data" "instance" {
+  input = "instance in ${data.terraform_remote_state.network.outputs.subnet_id}"
+}
+
+resource "terraform_data" "dns_record" {
+  input = "app.internal -> ${data.terraform_remote_state.network.outputs.subnet_id}"
+}
