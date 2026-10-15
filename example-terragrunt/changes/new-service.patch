@@ -1,5 +1,5 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index a414b65..6f1bf3d 100644
+index 23f02dc..6a51131 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -120,7 +120,7 @@ jobs:
