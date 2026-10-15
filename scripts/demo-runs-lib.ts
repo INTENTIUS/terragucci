@@ -18,6 +18,7 @@ export interface ForgeRun {
   status: string;
   commit_sha: string;
   prettyref?: string;
+  workflow_id?: string;
   created: string;
   started?: string;
   stopped?: string;
@@ -155,40 +156,177 @@ export function gateHeld(log: string): boolean {
   return log.includes(GATE) && /\[runner\]: exitcode '3'/.test(log);
 }
 
-/** The name of the steps between an end marker and the next start marker, which the log does not name. */
-export const UNNAMED = "Steps without a marker";
+/** A step's name when the job's workflow can't be read and the log names none. */
+export const UNNAMED = "Run";
+
+/** A step as the workflow declares it. */
+export interface WorkflowStep {
+  name: string;
+  uses: string | null;
+}
+
+function unquote(v: string): string {
+  const t = v.trim();
+  if (t.length >= 2 && ((t[0] === "'" && t.at(-1) === "'") || (t[0] === '"' && t.at(-1) === '"'))) {
+    return t[0] === "'" ? t.slice(1, -1).replace(/''/g, "'") : t.slice(1, -1);
+  }
+  return t;
+}
 
 /**
- * A job's log split into steps on the runner's markers. Lines before the
- * first `⭐ Run` are "Set up job", the runner's trailer from `🏁 Job` on is
- * "Complete job". `✅`/`❌` end a step, and so does the runner's exit line
- * when a step's command fails (the log has no `❌` for it then); lines
- * after an end and before the next start are a step of their own. Each line
- * loses its timestamp and its ANSI escapes, and is cut to 500 characters.
- * `drop` lines (the secret guard) are left out. `jobStatus` is the job's,
- * mapped: a step still open when the job ended takes it, and while it runs
- * the last step is running.
+ * Each job's steps in a workflow file as terragucci renders it (two-space
+ * indents, `jobs:` at the top, each job's `steps:` a list of mappings). A
+ * step's name is its `name:`, else its `uses:`, else the first line of its
+ * `run:`. Not a YAML parser: a file of another shape gives no jobs, and the
+ * steps then come from the log's markers alone.
  */
-export function parseSteps(log: string, jobStatus: Status, drop: string[] = []): Step[] {
-  interface Open { name: string; status: Status | null; started_at: string | null; ended_at: string | null; lines: string[] }
+export function workflowSteps(yaml: string): Map<string, WorkflowStep[]> {
+  const jobs = new Map<string, WorkflowStep[]>();
+  const lines = yaml.split(/\r?\n/);
+  let inJobs = false;
+  let job: string | null = null;
+  let inSteps = false;
+  let item: { name?: string; uses?: string; run?: string } | null = null;
+  let runBlock = false;
+  const flush = () => {
+    if (item && job) {
+      const name = item.name ?? item.uses ?? item.run ?? UNNAMED;
+      jobs.get(job)?.push({ name, uses: item.uses ?? null });
+    }
+    item = null;
+  };
+  const key = (k: string, v: string) => {
+    if (!item) return;
+    if (k === "name") item.name = unquote(v);
+    else if (k === "uses") item.uses = unquote(v);
+    else if (k === "run") {
+      if (/^[|>][-+]?\s*$/.test(v.trim())) runBlock = true;
+      else item.run = unquote(v);
+    }
+  };
+  for (const line of lines) {
+    if (line.trim() === "" || /^\s*#/.test(line)) continue;
+    const indent = line.length - line.trimStart().length;
+    if (runBlock) {
+      if (indent > 8) {
+        if (item && (item as { run?: string }).run === undefined) (item as { run?: string }).run = line.trim();
+        continue;
+      }
+      runBlock = false;
+    }
+    if (indent === 0) {
+      flush();
+      inJobs = /^jobs:\s*$/.test(line);
+      job = null;
+      inSteps = false;
+      continue;
+    }
+    if (!inJobs) continue;
+    if (indent === 2) {
+      flush();
+      const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+      job = m ? m[1] : null;
+      if (job) jobs.set(job, []);
+      inSteps = false;
+      continue;
+    }
+    if (indent === 4) {
+      flush();
+      inSteps = /^ {4}steps:\s*$/.test(line);
+      continue;
+    }
+    if (!inSteps || !job) continue;
+    const start = /^ {6}- ([A-Za-z_-]+):\s?(.*)$/.exec(line);
+    if (start) {
+      flush();
+      item = {};
+      key(start[1], start[2]);
+      continue;
+    }
+    const k = /^ {8}([A-Za-z_-]+):\s?(.*)$/.exec(line);
+    if (k) key(k[1], k[2]);
+  }
+  flush();
+  return jobs;
+}
+
+type Kind = "checkout" | "upload" | "download" | "run";
+function kindOf(uses: string | null): Kind {
+  if (!uses) return "run";
+  if (/actions\/checkout@/.test(uses)) return "checkout";
+  if (/upload-artifact@/.test(uses)) return "upload";
+  if (/download-artifact@/.test(uses)) return "download";
+  return "run";
+}
+
+// Where an action's own output starts or ends, for steps the log does not mark.
+const CHECKOUT_END = /^::remove-matcher owner=checkout-git::$/;
+const UPLOAD_START = /^(With the provided path, there will be \d+ files? uploaded|No files were found with the provided path)/;
+const UPLOAD_END = /^Artifact .+ has been successfully uploaded!$/;
+const DOWNLOAD_END = /^Artifact download has finished successfully$/;
+
+/**
+ * A job's log split into steps. Lines before the first `⭐ Run` are "Set up
+ * job", and the runner's trailer from `🏁 Job` on is "Complete job".
+ *
+ * The runner's markers are boundaries where the log has them: `⭐ Run
+ * Main|Pre|Post <name>` starts a step, `✅`/`❌` ends one, and the runner's
+ * exit line (`exitcode 'N': failure`) ends the step whose command failed. The
+ * log Forgejo returns lacks most of them, so the main steps follow `steps`,
+ * the job's steps as its workflow declares them, in order: output after a
+ * step ended belongs to the next one; checkout's output ends at its
+ * `::remove-matcher owner=checkout-git::`, download-artifact's at its
+ * "finished" line, and upload-artifact's starts at its "With the provided
+ * path" line. With no `steps` (the workflow could not be read), output the
+ * markers do not name is a step named "Run".
+ *
+ * A step whose command exited 3 after the gate's `waits for an approval` is
+ * waiting; Complete job is then success, since the job ended as the gate
+ * meant. Each line loses its timestamp and its ANSI escapes and is cut to 500
+ * characters; `drop` lines (the secret guard) are left out. A step still open
+ * at the end of the log takes the job's status, or is running while the job runs.
+ */
+export function parseSteps(log: string, jobStatus: Status, drop: string[] = [], steps: WorkflowStep[] | null = null): Step[] {
+  interface Open {
+    name: string;
+    kind: Kind;
+    index: number; // in steps, or -1
+    status: Status | null;
+    started_at: string | null;
+    ended_at: string | null;
+    lines: string[];
+  }
   const held = gateHeld(log);
-  let cur: Open = { name: "Set up job", status: null, started_at: null, ended_at: null, lines: [] };
+  const plan = steps ?? [];
+  let phase: "setup" | "main" | "post" | "trailer" = "setup";
+  let cur: Open = { name: "Set up job", kind: "run", index: -1, status: null, started_at: null, ended_at: null, lines: [] };
   const all: Open[] = [cur];
   let last: string | null = null;
+  let k = -1; // the last of `steps` opened
 
-  // A step with no end marker ends where the next one starts.
-  const begin = (name: string, at: string | null) => {
+  const open = (name: string, kind: Kind, index: number, at: string | null) => {
     if (cur.status === null) {
       cur.status = "success";
       cur.ended_at = at;
     }
-    cur = { name, status: null, started_at: at, ended_at: null, lines: [] };
+    cur = { name, kind, index, status: null, started_at: at, ended_at: null, lines: [] };
     all.push(cur);
+    if (index >= 0) k = index;
+  };
+  const openStep = (j: number, at: string | null) => open(plan[j].name, kindOf(plan[j].uses), j, at);
+  // The next main step: the workflow's next one, or "Run".
+  const next = (at: string | null) => {
+    if (k + 1 < plan.length) openStep(k + 1, at);
+    else open(UNNAMED, "run", -1, at);
   };
   const end = (at: string | null, status: Status) => {
     if (cur.status !== null) return;
     cur.status = status;
     cur.ended_at = at;
+  };
+  const find = (name: string, from: number) => {
+    for (let j = Math.max(from, 0); j < plan.length; j++) if (plan[j].name === name || plan[j].uses === name) return j;
+    return -1;
   };
 
   for (const raw of log.split(/\r?\n/)) {
@@ -200,39 +338,70 @@ export function parseSteps(log: string, jobStatus: Status, drop: string[] = []):
     if (cur.started_at === null) cur.started_at = at;
 
     const start = START.exec(line);
-    if (start) {
-      begin(start[1] === "Main" ? start[2] : `${start[1]} ${start[2]}`, at);
+    if (start && phase !== "trailer") {
+      const [, stage, name] = start;
+      if (stage === "Main" && phase !== "post") {
+        phase = "main";
+        const j = find(name, k);
+        if (j >= 0 && j === k && cur.index === k && cur.status === null) continue; // already in it
+        if (j >= 0) openStep(j, at);
+        else open(name, kindOf(name), -1, at);
+      } else {
+        if (stage === "Post") phase = "post";
+        else if (phase === "setup") phase = "main";
+        open(`${stage} ${name}`, kindOf(name), -1, at);
+      }
       continue;
     }
     const e = END.exec(line);
-    if (e) {
+    if (e && phase !== "trailer") {
       end(at, e[2] === "Success" ? "success" : "failure");
       continue;
     }
-    if (TRAILER.test(line)) begin("Complete job", at);
-    else if (cur.status !== null) begin(UNNAMED, at);
+    if (TRAILER.test(line)) {
+      phase = "trailer";
+      open("Complete job", "run", -1, at);
+    } else if (phase === "main") {
+      if (cur.status !== null) next(at);
+      else if (UPLOAD_START.test(line) && cur.kind !== "upload") {
+        const j = plan.findIndex((s, i) => i > k && kindOf(s.uses) === "upload");
+        if (j >= 0) openStep(j, at);
+        else if (!steps) open(UNNAMED, "upload", -1, at);
+      }
+    } else if (phase === "post" && cur.status !== null) {
+      open(UNNAMED, "run", -1, at);
+    } else if (phase === "setup" && cur.status !== null) {
+      phase = "main";
+      next(at);
+    }
     if (drop.some((d) => d !== "" && line.includes(d))) continue;
     cur.lines.push(line.length > LINE_CHARS ? line.slice(0, LINE_CHARS) : line);
+    if (phase === "trailer") continue;
     const x = EXIT.exec(line);
-    if (x && cur.name !== "Complete job") end(at, x[1] === "3" && held ? "waiting" : "failure");
+    if (x) end(at, x[1] === "3" && held ? "waiting" : "failure");
+    else if (cur.kind === "checkout" && CHECKOUT_END.test(line)) end(at, "success");
+    else if (cur.kind === "download" && DOWNLOAD_END.test(line)) end(at, "success");
+    else if (cur.kind === "upload" && UPLOAD_END.test(line)) end(at, "success");
   }
   // The step open at the end of the log: running while the job runs, else the job's end.
   if (cur.status === null) {
     if (!ENDED.has(jobStatus)) cur.status = "running";
     else {
-      cur.status = jobStatus;
+      cur.status = cur.name === "Complete job" && jobStatus === "waiting" ? "success" : jobStatus;
       cur.ended_at = last;
     }
   }
   // A log that starts on a step has no set-up lines to show.
-  return all.filter((s) => s.lines.length > 0 || s.name !== "Set up job").map((s) => ({
-    name: s.name,
-    status: s.status ?? "success",
-    started_at: s.started_at,
-    ended_at: s.ended_at,
-    log: s.lines.slice(-STEP_LINES),
-    truncated: Math.max(0, s.lines.length - STEP_LINES),
-  }));
+  return all
+    .filter((s) => s.lines.length > 0 || s.name !== "Set up job")
+    .map((s) => ({
+      name: s.name,
+      status: s.status ?? "success",
+      started_at: s.started_at,
+      ended_at: s.ended_at,
+      log: s.lines.slice(-STEP_LINES),
+      truncated: Math.max(0, s.lines.length - STEP_LINES),
+    }));
 }
 
 /** The first and last stamp of a log. */
@@ -250,7 +419,7 @@ export function logSpan(log: string): { first: string | null; last: string | nul
 }
 
 /** One job: its status (waiting when a gate held it), times from its log, and its steps. */
-export function buildJob(job: ForgeJob, log: string | null, drop: string[] = []): Job {
+export function buildJob(job: ForgeJob, log: string | null, drop: string[] = [], steps: WorkflowStep[] | null = null): Job {
   const text = log ?? "";
   const status = mapStatus(job.status, job.status === "failure" && gateHeld(text));
   const span = logSpan(text);
@@ -261,7 +430,7 @@ export function buildJob(job: ForgeJob, log: string | null, drop: string[] = [])
     status,
     started_at: span.first,
     ended_at: ENDED.has(status) ? span.last : null,
-    steps: text ? parseSteps(text, status, drop) : [],
+    steps: text ? parseSteps(text, status, drop, steps) : [],
   };
 }
 

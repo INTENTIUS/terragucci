@@ -7,7 +7,8 @@
 // Everything comes from the environment the driver sets:
 //   DEMO_RUNS_FORGE_URL, DEMO_RUNS_TOKEN, DEMO_RUNS_REPO   Forgejo and the demo repo
 //   DEMO_RUNS_BUCKET_URL, DEMO_RUNS_PREFIX                 the reports bucket's URL in floci, and the prefix
-//   DEMO_RUNS_STATE                                        a directory: marks.jsonl (the driver's) and cache.json
+//   DEMO_RUNS_STATE                                        a directory: marks.jsonl (the driver's), cache.json,
+//                                                         and workflows/ (each run commit's workflow file, for step names)
 //   DEMO_RUNS_CYCLE, DEMO_RUNS_SCENARIO, DEMO_RUNS_CYCLE_STARTED
 //                                                         the driver's cycle, to place runs it did not mark
 //   DEMO_RUNS_DROP                                         more strings no line written may hold, one a line
@@ -30,6 +31,8 @@ import {
   keptIds,
   type Mark,
   readMarks,
+  type WorkflowStep,
+  workflowSteps,
   runKeys,
   toPrune,
 } from "./demo-runs-lib";
@@ -108,8 +111,33 @@ function writeAtomic(p: string, text: string): void {
   renameSync(`${p}.new`, p);
 }
 
+// The workflow file at a commit, kept under <state>/workflows/ once read: it
+// names the steps the log's markers leave out. Null when it can't be read.
+async function workflowAt(sha: string, file: string): Promise<Map<string, WorkflowStep[]> | null> {
+  if (!/^[0-9a-f]{7,64}$/.test(sha) || !/^[\w.-]+\.ya?ml$/.test(file)) return null;
+  const dir = join(state, "workflows");
+  const path = join(dir, `${sha}-${file}`);
+  let text = readText(path);
+  if (!text) {
+    try {
+      const res = await fetch(`${forge}/${repo}/raw/commit/${sha}/.forgejo/workflows/${file}`, {
+        headers: auth,
+        signal: AbortSignal.timeout(TIMEOUT),
+      });
+      if (!res.ok) return null;
+      text = await res.text();
+      mkdirSync(dir, { recursive: true });
+      writeAtomic(path, text);
+    } catch {
+      return null;
+    }
+  }
+  return workflowSteps(text);
+}
+
 async function exportRun(run: ForgeRun, mark: Mark | undefined): Promise<{ doc: string; entry: IndexEntry; body: string }> {
   const detail = (await (await forgeGet(`/actions/runs/${run.id}`)).json()) as ForgeRun;
+  const workflow = await workflowAt(detail.commit_sha, detail.workflow_id || "terragucci.yml");
   const forgeJobs = (await (await forgeGet(`/actions/runs/${run.id}/jobs`)).json()) as ForgeJob[] | null;
   const jobs: Job[] = [];
   for (const j of forgeJobs ?? []) {
@@ -121,7 +149,7 @@ async function exportRun(run: ForgeRun, mark: Mark | undefined): Promise<{ doc: 
         log = null; // a job with no log yet
       }
     }
-    jobs.push(buildJob(j, log, drop));
+    jobs.push(buildJob(j, log, drop, workflow?.get(j.name) ?? null));
   }
   const { doc, entry } = buildRun(detail, jobs, mark);
   const body = JSON.stringify(doc);

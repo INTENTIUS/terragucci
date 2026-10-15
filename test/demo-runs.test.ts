@@ -25,6 +25,7 @@ import {
   type RunDoc,
   toPrune,
   UNNAMED,
+  workflowSteps,
 } from "../scripts/demo-runs-lib";
 
 const root = join(__dirname, "..");
@@ -32,7 +33,11 @@ const fx = join(__dirname, "fixtures", "demo-runs");
 const text = (f: string) => readFileSync(join(fx, f), "utf8");
 const json = <T>(f: string) => JSON.parse(text(f)) as T;
 
-function jobsOf(run: number): Job[] {
+// The demo's workflow at run 444's commit; 443 and 445 ran the same one.
+const workflow = workflowSteps(text("workflow-444.yml"));
+
+/** The run's jobs, steps named from the workflow, or from the log alone with `bare`. */
+function jobsOf(run: number, bare = false): Job[] {
   return json<ForgeJob[]>(`jobs-${run}.json`).map((j) => {
     let log: string | null = null;
     try {
@@ -40,9 +45,33 @@ function jobsOf(run: number): Job[] {
     } catch {
       log = null;
     }
-    return buildJob(j, log);
+    return buildJob(j, log, [], bare ? null : (workflow.get(j.name) ?? null));
   });
 }
+
+describe("the workflow's steps", () => {
+  it("names each job's steps by name, else uses", () => {
+    expect(workflow.get("apply-wave-2")).toEqual([
+      { name: "https://code.forgejo.org/actions/checkout@v4", uses: "https://code.forgejo.org/actions/checkout@v4" },
+      { name: "Apply wave 2 of 3", uses: null },
+      { name: "Keep the apply report", uses: "https://code.forgejo.org/actions/upload-artifact@v3" },
+    ]);
+    // Steps whose first key is if: or id:.
+    expect(workflow.get("replan")?.map((s) => s.name)).toEqual([
+      "https://code.forgejo.org/actions/checkout@v4",
+      "Read the comment and decide whether it re-plans",
+      "https://code.forgejo.org/actions/checkout@v4",
+      "Re-plan the pull request on request and write the plan report",
+      "Keep the plan report",
+    ]);
+    expect(workflow.size).toBe(11);
+  });
+
+  it("names a step with neither by the first line of its run", () => {
+    const w = workflowSteps("on: push\njobs:\n  a:\n    steps:\n      - run: |\n          echo one\n          echo two\n      - run: echo three\n");
+    expect(w.get("a")?.map((s) => s.name)).toEqual(["echo one", "echo three"]);
+  });
+});
 
 describe("statuses", () => {
   it("maps Forgejo's queued states to queued, and a gate's failure to waiting", () => {
@@ -65,24 +94,42 @@ describe("steps of run 444's apply-wave-2, held at the gate", () => {
     expect(job.ended_at).toBe("2026-10-15T04:09:45.039Z");
   });
 
-  it("splits on the runner's markers, the exit line ending the step that held", () => {
+  it("puts the gate's output and the wait on the workflow's run step", () => {
     expect(job.steps.map((s) => [s.name, s.status])).toEqual([
       ["Set up job", "success"],
-      ["https://code.forgejo.org/actions/checkout@v4", "waiting"],
-      [UNNAMED, "success"],
+      ["https://code.forgejo.org/actions/checkout@v4", "success"],
+      ["Apply wave 2 of 3", "waiting"],
+      ["Keep the apply report", "success"],
       ["Post https://code.forgejo.org/actions/checkout@v4", "success"],
-      ["Complete job", "waiting"],
+      ["Complete job", "success"],
     ]);
-    const [setup, held, after, , done] = job.steps;
+    const [setup, checkout, held, keep, , done] = job.steps;
     expect(setup.log[0]).toMatch(/^Runner .* received task 1588 of job apply-wave-2/);
     expect(setup.log.some((l) => l.startsWith("⭐"))).toBe(false);
+    expect(checkout.log.at(-1)).toBe("::remove-matcher owner=checkout-git::");
+    expect(checkout.log.some((l) => l.startsWith("wave "))).toBe(false);
+    expect(held.log[0]).toBe("wave 2 of 3: planning app");
     expect(held.log.some((l) => l.includes("wave 2 of 3 waits for an approval of digest"))).toBe(true);
     expect(held.log.at(-1)).toBe("⚙️ [runner]: exitcode '3': failure");
     expect(held.ended_at).toBe("2026-10-15T04:09:44.488Z");
-    expect(after.log[0]).toBe("With the provided path, there will be 7 files uploaded");
+    expect(keep.log[0]).toBe("With the provided path, there will be 7 files uploaded");
+    expect(keep.log.at(-1)).toBe("Artifact terragucci-report-apply-wave-2 has been successfully uploaded!");
     expect(done.log).toEqual(["🏁  Job failed", "Job 'apply-wave-2' failed"]);
     // Stamps are gone from every line.
     for (const s of job.steps) for (const l of s.log) expect(l).not.toMatch(/^\d{4}-\d\d-\d\dT/);
+  });
+
+  it("without the workflow, splits the same places and names the unmarked steps Run", () => {
+    const bare = jobsOf(444, true).find((j) => j.name === "apply-wave-2") as Job;
+    expect(UNNAMED).toBe("Run");
+    expect(bare.steps.map((s) => [s.name, s.status])).toEqual([
+      ["Set up job", "success"],
+      ["https://code.forgejo.org/actions/checkout@v4", "success"],
+      ["Run", "waiting"],
+      ["Run", "success"],
+      ["Post https://code.forgejo.org/actions/checkout@v4", "success"],
+      ["Complete job", "success"],
+    ]);
   });
 
   it("makes the run waiting", () => {
@@ -108,10 +155,15 @@ describe("the other samples", () => {
     expect(plan.steps.map((s) => [s.name, s.status])).toEqual([
       ["Set up job", "success"],
       ["Say on the head that the plan started", "success"],
-      [UNNAMED, "success"],
+      ["https://code.forgejo.org/actions/checkout@v4", "success"],
+      ["Plan the roots the change reaches and write the plan report", "success"],
+      ["Keep the plan report", "success"],
       ["Post https://code.forgejo.org/actions/checkout@v4", "success"],
       ["Complete job", "success"],
     ]);
+    const note = jobs.find((j) => j.name === "plan-note") as Job;
+    expect(note.steps.map((s) => s.name)).toEqual(["Set up job", "Fetch the plan report", "Post the plan note and terragucci/plan", "Complete job"]);
+    expect(note.steps[2].log[0]).toBe("terragucci plan-note: posted the plan note on pull request 278");
     const { doc, entry } = buildRun(json<ForgeRun>("run-443.json"), jobs, undefined);
     expect(doc).toMatchObject({ schema: "demo.run/v1", status: "success", trigger: "plan", pull: 278, cycle: null });
     expect(entry.ref).toBeNull();
@@ -120,6 +172,14 @@ describe("the other samples", () => {
   it("shows the resume run as a success", () => {
     const { doc } = buildRun(json<ForgeRun>("run-445.json"), jobsOf(445), { id: 445, trigger: "resume" });
     expect(doc.status).toBe("success");
+    expect(doc.jobs.find((j) => j.name === "apply-comment")?.steps.map((s) => s.name)).toEqual([
+      "Set up job",
+      "https://code.forgejo.org/actions/checkout@v4",
+      "Apply a merged pull request on request, from its merge commit",
+      "Keep the apply report",
+      "Post https://code.forgejo.org/actions/checkout@v4",
+      "Complete job",
+    ]);
     expect(doc.trigger).toBe("resume");
   });
 });
@@ -206,6 +266,9 @@ describe("scripts/demo-runs.ts", () => {
           res.writeHead(code);
           res.end(out);
         };
+        if (url.pathname === `/admin/demo/raw/commit/${json<ForgeRun>("run-444.json").commit_sha}/.forgejo/workflows/terragucci.yml`) {
+          return req.headers.authorization === "token sekrit" ? send(200, text("workflow-444.yml")) : send(404, "");
+        }
         const api = "/api/v1/repos/admin/demo";
         if (url.pathname.startsWith(api)) {
           if (req.headers.authorization !== "token sekrit") return send(401, "");
@@ -268,7 +331,9 @@ describe("scripts/demo-runs.ts", () => {
       expect(index.runs.at(-1)?.id).toBe(417);
       expect(index.runs.find((r) => r.id === 444)).toMatchObject({ status: "waiting", cycle: 90, scenario: "a-output", trigger: "push" });
       const r444 = JSON.parse(bucket.get("demo/runs/444.json") ?? "{}") as RunDoc;
-      expect(r444.jobs.find((j) => j.name === "apply-wave-2")?.status).toBe("waiting");
+      const wave2 = r444.jobs.find((j) => j.name === "apply-wave-2");
+      expect(wave2?.status).toBe("waiting");
+      expect(wave2?.steps.find((s) => s.status === "waiting")?.name).toBe("Apply wave 2 of 3");
       expect([...bucket.keys()].filter((k) => /runs\/\d+\.json$/.test(k))).toHaveLength(30);
       expect(bucket.has("demo/runs/400.json")).toBe(false);
       expect(bucket.has("demo/runs/416.json")).toBe(false);
