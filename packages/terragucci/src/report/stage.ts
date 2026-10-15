@@ -65,7 +65,9 @@ import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportBlast, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
+import type { Report, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
+import { applyGroups } from "../groups";
+import { ComposedRun, compositionFor, composeTarget, type ComposedPlan, type ComposeFallback, type Composition } from "../compose";
 import { blastRadius } from "./graph";
 import { blastRootsOf, resourceBlast } from "./resource-blast";
 import { branchCheckouts } from "../branch-checkouts";
@@ -1375,10 +1377,38 @@ export async function runStage(stage: string, repo: string, options: StageOption
     redacted += o.redacted ?? 0;
   };
 
+  // waves.compose: the roots the change reaches, and the roots they read, plan as one composed run (../compose.ts), opt-in beside the waves.
+  let composition: Composition | undefined;
+  let composedPlan: ComposedPlan | undefined;
+  if (!drift && !options.root && settings.waves?.compose === true && roots.length > 0) {
+    // One apply job per identity: the composed run's roots must be in one group, as the apply checks (../groups.ts).
+    const groups = applyGroups(settings, all);
+    const c = compositionFor(repo, { all, ...(selected ? { selected } : {}), waves: applyOrder, max: settings.waves.compose_max, env: binEnv, binary: (r) => binaries.expected(r), deps: rootDependencies(repo, all), after, ...(groups ? { groupOf: (r: string) => groups.find((g) => g.roots.includes(r))?.name ?? "" } : {}) });
+    composition = c;
+    const refusedMember = c.fallback ? undefined : c.roots.find((r) => pinRefusals.has(r) || sourceRefusals.has(r));
+    if (refusedMember) composition = { ...c, wave: undefined, fallback: { kind: "plan-failed", root: refusedMember, reason: `\`${refusedMember}\` is refused before its init, so the roots plan one by one and the refusal shows against it` } };
+    else if (c.wave !== undefined) {
+      const planned = await planComposedStage(repo, c, { binaries, binEnv, work, initTurn, steps, sourcesOf, log, planner });
+      if ("fallback" in planned) composition = { ...c, wave: undefined, fallback: planned.fallback };
+      else {
+        composedPlan = planned.plan;
+        for (const o of planned.outcomes) {
+          take({ ...o, input: { ...o.input!, ...unaddressedOf.get(o.root) } });
+          upstreamPlans.set(o.root, o.input!.plan);
+        }
+      }
+    }
+    if (composition.fallback) log(`compose: ${composition.fallback.reason}, so the change applies in waves`);
+    else log(`compose: ${composition.roots.join(", ")} plan as one composed run in wave ${composition.wave}`);
+  }
+  const inRun = composedPlan && composition?.wave !== undefined ? new Set(composition.roots) : undefined;
+
   try {
     let index = 0;
     // Roots in one layer read none of each other's state, so they plan at once. A later layer waits for the layers it reads.
-    for (const layer of planLayers) {
+    for (const whole of planLayers) {
+      // A root of the composed run planned in it.
+      const layer = inRun ? whole.filter((r) => !inRun.has(r)) : whole;
       // The upstreams this layer reads, each read once, before any root of the layer plans.
       const ups = [...new Set(layer.flatMap((r) => [...(readsOf.get(r) ?? [])]))].filter((up) => !upstreamState.has(up)).sort();
       await eachLimited(ups, limit.value, async (up) => {
@@ -1401,16 +1431,23 @@ export async function runStage(stage: string, repo: string, options: StageOption
     rmSync(work, { recursive: true, force: true });
   }
 
+  // A composed run sits in the earliest wave its roots are in, and the later waves no longer list its roots.
+  const runWave = inRun ? composition!.wave! : undefined;
+  const waveOfRun = inRun ? new Map([...waveOf].map(([r, n]) => [r, inRun.has(r) ? runWave! : n] as const)) : waveOf;
   const waves: WaveInput[] = applyOrder
-    .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
+    .map((w, i) => ({ number: i + 1, roots: inRun ? [...w.filter((r) => roots.includes(r) && !held.has(r) && !inRun.has(r)), ...(i + 1 === runWave ? composition!.order : [])] : w.filter((r) => roots.includes(r) && !held.has(r)) }))
     .filter((w) => w.roots.length > 0)
     .map((w) => {
       const holding = w.roots.filter((r) => heldBySteps.has(r));
-      const reads = wavesOf(waveOf, w.roots.flatMap((r) => [...(orderOf.get(r) ?? [])]), w.number);
+      const reads = wavesOf(waveOfRun, w.roots.flatMap((r) => [...(orderOf.get(r) ?? [])]), w.number);
       // A root whose upstream's output is unknown until that upstream applies replans after it, planned in the run or not.
-      const replansAfter = wavesOf(waveOf, applyOrder[w.number - 1]!.flatMap((r) => unknownFrom.get(r) ?? []), w.number);
+      const replansAfter = wavesOf(waveOfRun, applyOrder[w.number - 1]!.flatMap((r) => unknownFrom.get(r) ?? []), w.number);
+      const composed = w.number === runWave && composedPlan
+        ? { composed: { target: composeTarget(runWave), planDigest: composedPlan.digest || null, plan: composedPlan.plan, members: composition!.order.map((r) => ({ root: r, module: `module.${composition!.modules.get(r)}` })), ...(composedPlan.unknown.length ? { heldByUnknown: composedPlan.unknown } : {}) } }
+        : {};
       return {
         ...w,
+        ...composed,
         state: "planned" as const,
         ...(holding.length ? { heldBySteps: holding } : {}),
         ...(reads.length ? { reads } : {}),
@@ -1426,7 +1463,100 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const blast = radius ? { ...radius, ...(byResource.length ? { resources: byResource } : {}) } : undefined;
   // A plain root's dependencies in the report: the roots waves.after puts before it (its reads are in roots[].reads).
   const dependencies = explicit.size ? new Map([...explicit].map(([r, ups]) => [r, [...ups].sort()])) : undefined;
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}), ...(dependencies ? { dependencies } : {}) });
+  const compose = composition ? reportCompose(composition) : undefined;
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}), ...(dependencies ? { dependencies } : {}), ...(compose ? { compose } : {}) });
+}
+
+/** What the composed plan of a tf-plan needs from the stage: the binaries, the provider cache and its turns, the steps, the sources check. */
+interface ComposeStageContext {
+  binaries: RootBinaries;
+  binEnv: NodeJS.ProcessEnv;
+  work: string;
+  initTurn: Turn;
+  steps: StepSettings[];
+  sourcesOf: SourceChecker | undefined;
+  log: (line: string) => void;
+  planner: ReturnType<typeof plannerForBinary>;
+}
+
+/**
+ * A tf-plan's composed run: planned once, taking no lock, then cut back into
+ * each root's part, which the report and the note show under the root's own
+ * name. A plan that fails falls back (`plan-failed`): the roots then plan one
+ * by one, so the error shows against the root it is in.
+ */
+async function planComposedStage(repo: string, c: Composition, ctx: ComposeStageContext): Promise<{ plan: ComposedPlan; outcomes: RootOutcome[] } | { fallback: ComposeFallback }> {
+  const { binaries, binEnv, work, initTurn, steps, sourcesOf, log, planner } = ctx;
+  const first = c.order[0]!;
+  let resolved;
+  try {
+    resolved = await binaries.resolve(first);
+  } catch (e) {
+    return { fallback: { kind: "plan-failed", root: first, reason: `the binary of \`${first}\` could not be installed (${(e as Error).message.split("\n")[0]}), so the roots plan one by one` } };
+  }
+  const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
+  const ran = new Map<string, ReportStep[]>();
+  const holds = new Map<string, string[]>();
+  const run = new ComposedRun({
+    repo,
+    composition: c,
+    binary: { path: resolved.path, name: resolved.name },
+    env: binEnv,
+    work: mkdtempSync(join(work, "compose-")),
+    lock: false,
+    initTurn,
+    hooks: {
+      log,
+      step: async (root, when, file) => {
+        if (steps.length === 0) return undefined;
+        const o = await runSteps(steps, when, { repo, root, stage: "tf-plan", env: rootRoleEnv(binEnv, root), ...(file ? { planFile: file } : {}), log });
+        ran.set(root, [...(ran.get(root) ?? []), ...o.runs]);
+        if (o.holds.length) holds.set(root, [...(holds.get(root) ?? []), ...o.holds]);
+        return o.error;
+      },
+      afterInit: async (root, renv) => {
+        if (!sourcesOf) return undefined;
+        try {
+          const fetched = await sourcesOf.afterInit(root, repo, renv);
+          return fetched.length ? `refused by sources after init, so it was not planned\n${fetched.join("\n")}` : undefined;
+        } catch (e) {
+          return (e as Error).message;
+        }
+      },
+    },
+  });
+  let plan: ComposedPlan;
+  try {
+    plan = await run.plan();
+  } finally {
+    await run.release();
+  }
+  if (plan.error) {
+    for (const l of plan.error.split("\n").slice(0, 20)) log(`compose: ${l}`);
+    return { fallback: { kind: "plan-failed", ...(plan.root ? { root: plan.root } : {}), reason: `the composed plan failed${plan.root ? ` at \`${plan.root}\`` : ""}, so the roots plan one by one and the error shows against the root it is in` } };
+  }
+  log(`compose: ${plan.summary} across ${c.roots.length} roots, digest ${plan.digest}`);
+  const outcomes: RootOutcome[] = c.order.map((root) => {
+    const slice = plan.slices.get(root);
+    const module = `module.${c.modules.get(root)}`;
+    const safe = redactPlan(slice);
+    const reads = plan.reads.get(root) ?? [];
+    const lines = [`${root}: in the composed run as ${module}: ${plan.texts.get(root)?.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`, ...reads.map((r) => plannedReadLine(root, r))];
+    return {
+      root,
+      lines,
+      redacted: safe.values,
+      ...(holds.get(root)?.length ? { holds: holds.get(root) } : {}),
+      plan: { text: scrubPlanText(plan.texts.get(root) ?? "", slice).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
+      input: { path: root, plan: slice, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(join(repo, root)), ...(ran.get(root)?.length ? { steps: ran.get(root) } : {}), ...(reads.length ? { reads } : {}), composed: { wave: c.wave!, module } },
+    };
+  });
+  return { plan, outcomes };
+}
+
+/** `Report.compose` from a composition. */
+export function reportCompose(c: Composition): ReportCompose {
+  return { roots: c.roots, max: c.max, ...(c.wave !== undefined && !c.fallback ? { wave: c.wave } : {}), ...(c.fallback ? { fallback: c.fallback } : {}) };
 }
 
 interface Planned {
@@ -1456,6 +1586,8 @@ interface Planned {
   blast?: ReportBlast;
   /** A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads. A plain root's: the roots waves.after puts before it. */
   dependencies?: ReadonlyMap<string, string[]>;
+  /** `waves.compose`: the roots a composed run covers, and its wave or why the change applies in waves. */
+  compose?: ReportCompose;
 }
 
 /**
@@ -1767,7 +1899,7 @@ function outsideFiles(repo: string, root: string, paths: string[], files: string
  * the files count there. A base config that cannot be read selects nothing
  * for its settings, and the log says so.
  */
-async function outsideRoots(
+export async function outsideRoots(
   repo: string,
   base: string,
   configPath: string | undefined,
@@ -1905,7 +2037,7 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast, dependencies }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast, dependencies, compose }: Planned,
 ): Promise<StageResult> {
   let inputs = dependencies ? planned.map((i) => ({ ...i, ...(dependencies.get(i.path)?.length ? { dependencies: dependencies.get(i.path) } : {}) })) : planned;
   let policy: ReportPolicy | undefined;
@@ -1976,6 +2108,7 @@ async function finish(
     ...(policy ? { policy } : {}),
   });
   if (blast) report.blast = blast;
+  if (compose) report.compose = compose;
   // Tips are advice: they read the repo and the finished report, and change neither.
   if (settings.tips) {
     const parser = await loadHclParser().catch(() => undefined);

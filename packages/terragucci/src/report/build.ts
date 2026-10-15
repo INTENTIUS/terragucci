@@ -30,6 +30,7 @@ import {
   type ReportStep,
   type ReportRead,
   type ReportUnknownRead,
+  type ReportComposedMember,
   type WaveState,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost,
 } from "./schema";
@@ -79,6 +80,8 @@ export interface RootInput {
   environment?: string;
   /** A choudoufu plan run with `-cone`: the cone it planned, whose targets join its plan digest, or why it planned in full (../cone.ts). */
   cone?: PlanCone;
+  /** A root in a composed run: the wave that runs it and its module there. Its plan is its part of the composed plan (../compose.ts). */
+  composed?: { wave: number; module: string };
 }
 
 /** A root's input with its environment, when it is in one. */
@@ -114,6 +117,21 @@ export interface WaveInput {
   environments?: string[];
   /** A `tf-plan` wave's own gate policy, with `environments:` set (the strictest of its roots'), in place of BuildInput.gate. */
   policy?: Gate;
+  /** The wave that carries a composed run (../compose.ts): its digests take the composed plan as one member in place of its members' parts. */
+  composed?: WaveComposedInput;
+}
+
+/** A wave's composed run, for its row. */
+export interface WaveComposedInput {
+  /** The run's target as chant knows it: `compose:wave-<k>`. */
+  target: string;
+  /** The composed plan's digest, null when it failed to plan. */
+  planDigest: string | null;
+  /** The composed plan, for whether it changes or destroys something. */
+  plan?: unknown;
+  members: ReportComposedMember[];
+  heldByUnknown?: string[];
+  error?: string;
 }
 
 export interface BuildInput {
@@ -344,6 +362,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.unaddressed ? { unaddressed: src.unaddressed } : {}),
       ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
       ...(src.cone ? { cone: reportCone(src.cone) } : {}),
+      ...(src.composed ? { composed: src.composed } : {}),
     };
   });
 
@@ -377,30 +396,35 @@ export function buildReport(input: BuildInput): Report {
   named.sort((a, b) => order[a.action] - order[b.action] || (a.root < b.root ? -1 : a.root > b.root ? 1 : 0) || ((a.address ?? "") < (b.address ?? "") ? -1 : 1));
 
   const waves: ReportWave[] = (input.waves ?? []).map((w) => {
-    // A provisional member is a preview: no wave's set digest covers it.
-    const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional);
-    const failed = members.some((m) => m.planDigest === null);
+    // A provisional member is a preview: no wave's set digest covers it. A composed run is one member in place of its roots' parts.
+    const comp = w.composed;
+    const inRun = new Set(comp?.members.map((m) => m.root) ?? []);
+    const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional && !inRun.has(m.member));
+    const run = comp?.planDigest ? [{ member: comp.target, planDigest: comp.planDigest }] : [];
+    const failed = members.some((m) => m.planDigest === null) || (comp !== undefined && !comp.planDigest);
     // With cost.approve_above the wave's cost is one more member of its digests, as the wave's gate takes it.
     const cost = costMember(w.cost);
     const extra = cost ? [cost] : [];
     let review: Pick<ReportWave, "review_digest" | "waits"> = {};
     if (input.gate) {
       const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
-      const changing = members.filter((m) => changesSomething(plans.get(m.member)));
-      const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
+      const changing = [...members.filter((m) => changesSomething(plans.get(m.member))), ...(changesSomething(comp?.plan) ? run : [])];
+      const destroys = changing.some((m) => destroysSomething(plans.get(m.member))) || (comp !== undefined && destroysSomething(comp.plan));
+      // A composed run in which a root reads another's value unknown at plan time applies values nobody reviewed: it waits under every gate but never.
+      const unknownHold = (comp?.heldByUnknown?.length ?? 0) > 0;
       const gate = w.policy ?? input.gate;
       const replans = (w.replansAfter?.length ?? 0) > 0;
       review = {
         // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
         review_digest: failed || changing.length === 0 || replans ? null : changeSetDigest([...changing, ...extra]),
         // Nobody reviews the plan it makes then, so its gate holds it under every policy but never (#1012).
-        waits: (replans && gate !== "never") || (changing.length > 0 && (gate === "always" || (gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0)),
+        waits: (replans && gate !== "never") || (changing.length > 0 && (gate === "always" || (gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0 || (unknownHold && gate !== "never"))),
       };
     }
     return {
       number: w.number,
       roots: w.roots,
-      set_digest: w.setDigest ?? (failed || members.length === 0 ? null : changeSetDigest([...members, ...extra])),
+      set_digest: w.setDigest ?? (failed || members.length + run.length === 0 ? null : changeSetDigest([...members, ...run, ...extra])),
       approval: w.approval ?? "not-requested",
       ...review,
       ...(w.gate ? { gate: w.gate } : {}),
@@ -414,6 +438,9 @@ export function buildReport(input: BuildInput): Report {
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
       ...(w.preview ? { preview: w.preview } : {}),
       ...(w.environments?.length ? { environments: w.environments } : {}),
+      ...(comp
+        ? { composed: { plan_digest: comp.planDigest, members: comp.members, ...(comp.heldByUnknown?.length ? { held_by_unknown: [...comp.heldByUnknown].sort() } : {}), ...(comp.error ? { error: comp.error } : {}) } }
+        : {}),
     };
   });
 

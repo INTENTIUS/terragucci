@@ -37,6 +37,30 @@ export function waveStateText(w: Report["waves"][number]): string {
   return `${w.state ?? ""}${again}`.replace(/^; /, "");
 }
 
+/**
+ * What `waves.compose` came to: the composed run's roots, each one's module
+ * and changes, the values read before they were known, and on a tf-apply
+ * wave how each root's part ended and its state; or why the change applies
+ * in waves.
+ */
+function composeSection(report: Report): string {
+  const c = report.compose;
+  if (!c) return "";
+  if (c.fallback || c.wave === undefined) return `<section id="compose" data-fallback="${esc(c.fallback?.kind ?? "")}"><h3>Applies in waves</h3><p><code>waves.compose</code>: ${esc(c.fallback?.reason ?? "no wave runs the composed run")}.</p></section>`;
+  const w = report.waves.find((x) => x.number === c.wave && x.composed);
+  if (!w?.composed) return "";
+  const rows = w.composed.members.map((m) => {
+    const r = report.roots.find((x) => x.path === m.root);
+    const n = r?.counts ?? {};
+    const changes = r ? `${(n.create ?? 0) + (n.replace ?? 0)} to add, ${n.update ?? 0} to change, ${(n.delete ?? 0) + (n.replace ?? 0)} to destroy` : "did not plan";
+    const applied = m.apply ? `${esc(m.apply)}${m.changes ? `, ${m.changes.done} of ${m.changes.planned}` : ""}${m.error ? `: ${esc(m.error)}` : ""}` : "";
+    const state = m.state === "not-written" ? `not written: kept at ${esc(m.kept ?? "the job's artifacts")}${m.lock_held ? ", its lock still held" : ""}` : esc(m.state ?? "");
+    return `<tr data-root="${esc(m.root)}"><td><code>${esc(m.root)}</code></td><td><code>${esc(m.module)}</code></td><td>${changes}</td><td>${applied}</td><td>${state}</td></tr>`;
+  });
+  const unknown = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.composed && x.unknown?.length).map((x) => `<li><code>${esc(r.path)}</code> reads ${x.unknown!.map((u) => `<code>${esc(u)}</code>`).join(", ")} from <code>${esc(x.upstream)}</code></li>`));
+  return `<section id="compose" data-wave="${c.wave}"><h3>One composed run, in wave ${c.wave}</h3><p>These roots plan as one plan and apply as one apply (<code>waves.compose</code>). Each keeps its own state: the run locks each state, applies, and writes each state back with what applied to it. If the apply fails part way, what applied stays applied.</p><table><tr><th>Root</th><th>In the run as</th><th>Planned</th><th>Its apply</th><th>State</th></tr>${rows.join("")}</table>${unknown.length ? `<p>Read before they were known, so the run waits for an approval under any gate but never:</p><ul>${unknown.join("")}</ul>` : ""}</section>`;
+}
+
 /** Which roots read which, and on what outputs: the edges of the run's graph. */
 function readsList(report: Report): string {
   const rows = report.roots.flatMap((r) => (r.reads ?? []).map((x) => {
@@ -286,8 +310,8 @@ export function renderHtml(report: Report): string {
   const filters = `<form class="filters" onsubmit="return false"><label>Group <select id="f-group">${opt("", "all")}${report.groups.map((g) => opt(g.id, `${g.id} (${g.units.length})`)).join("")}</select></label><label>Root <input id="f-root" placeholder="path contains" size="18"></label><label>Action <select id="f-action">${opt("", "all")}${actions.map((a) => opt(a, a)).join("")}</select></label>${report.waves.length ? `<label>Wave <select id="f-wave">${opt("", "all")}${report.waves.map((w) => opt(String(w.number), String(w.number))).join("")}</select></label>` : ""}<span id="shown" class="counts"></span></form>`;
 
   const waves = report.waves.length
-    ? `<h2>Waves</h2><table id="waves"><tr><th>Wave</th><th>Roots</th><th>After</th><th>State</th><th>Set digest</th><th>Approval</th><th>Record</th></tr>${report.waves.map((w) => `<tr data-wave="${w.number}" data-state="${esc(w.state ?? "")}"><td>${w.number}</td><td>${w.roots.length}</td><td>${w.reads?.length ? `wave ${w.reads.join(", ")}` : ""}</td><td>${esc(waveStateText(w))}</td><td><code class="digest">${esc(w.set_digest ?? "none: a root did not plan")}</code></td><td>${esc(w.approval)}</td><td>${w.gate ? `<code>${esc(w.gate.branch)}:${esc(w.gate.path)}</code>` : ""}</td></tr>`).join("")}</table>${readsList(report)}`
-    : "";
+    ? `<h2>Waves</h2><table id="waves"><tr><th>Wave</th><th>Roots</th><th>After</th><th>State</th><th>Set digest</th><th>Approval</th><th>Record</th></tr>${report.waves.map((w) => `<tr data-wave="${w.number}" data-state="${esc(w.state ?? "")}"><td>${w.number}</td><td>${w.roots.length}${w.composed ? ", composed" : ""}</td><td>${w.reads?.length ? `wave ${w.reads.join(", ")}` : ""}</td><td>${esc(waveStateText(w))}</td><td><code class="digest">${esc(w.set_digest ?? "none: a root did not plan")}</code></td><td>${esc(w.approval)}</td><td>${w.gate ? `<code>${esc(w.gate.branch)}:${esc(w.gate.path)}</code>` : ""}</td></tr>`).join("")}</table>${composeSection(report)}${readsList(report)}`
+    : composeSection(report);
 
   const holes = report.holes.length ? `<h2>Holes (${report.holes.length})</h2><ul>${report.holes.map((h) => `<li><code>${esc(h.root)}: ${esc(h.address)}</code> ${esc(h.reason)}</li>`).join("")}</ul>` : "";
 

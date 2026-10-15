@@ -422,7 +422,8 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
   const project = report.run.project;
   const run = runPath(report);
   const key = writableRunKey(report, top);
-  const files = walk(dir);
+  // A state a composed run could not write stays with the job's artifacts and never goes to the bucket (../compose.ts).
+  const files = walk(dir).filter((f) => !relative(dir, f).split("\\").join("/").startsWith("unwritten/"));
   for (const f of files) await s3.put(join2(key, relative(dir, f).split("\\").join("/")), readFileSync(f), typeOf(f));
   if (report.run.trace_id) await s3.put(traceKey(report.run.trace_id, top), renderTracePage(report), TYPES.html);
   const indexes: string[] = [];
