@@ -1,0 +1,118 @@
+2026-10-15T04:09:34.0385204Z Runner 21cf0d8f-45d6-4033-b5a1-cd3658e964d4 (version:v13.2.0) received task 1587 of job apply-wave-1, triggered by event: push
+2026-10-15T04:09:34.0413723Z workflow prepared
+2026-10-15T04:09:34.0476381Z 🚀  Start image=ghcr.io/intentius/terragucci-tofu:0.4.11-tofu1.13.1
+2026-10-15T04:09:34.0986990Z   🐳  docker create image=ghcr.io/intentius/terragucci-tofu:0.4.11-tofu1.13.1 platform=linux/amd64 entrypoint=["tail" "-f" "/dev/null"] cmd=[] network="terragucci"
+2026-10-15T04:09:34.1869413Z   🐳  docker run image=ghcr.io/intentius/terragucci-tofu:0.4.11-tofu1.13.1 platform=linux/amd64 entrypoint=["tail" "-f" "/dev/null"] cmd=[] network="terragucci"
+2026-10-15T04:09:34.3758896Z   ☁️  git fetch 'https://code.forgejo.org/actions/checkout' # ref=v4
+2026-10-15T04:09:35.0505146Z   ☁️  git fetch 'https://code.forgejo.org/actions/upload-artifact' # ref=v3
+2026-10-15T04:09:35.7132338Z ⭐ Run Main https://code.forgejo.org/actions/checkout@v4
+2026-10-15T04:09:35.7155516Z   🐳  docker cp src=/data/.cache/act/c6/5915d4aae063d16333e892c66d41ac357e9704f148c42c627dc725059375de/ dst=/var/run/act/actions/c6/5915d4aae063d16333e892c66d41ac357e9704f148c42c627dc725059375de/
+2026-10-15T04:09:35.7272312Z   🐳  docker exec cmd=[node /var/run/act/actions/c6/5915d4aae063d16333e892c66d41ac357e9704f148c42c627dc725059375de/dist/index.js] user= workdir=
+2026-10-15T04:09:35.8479988Z   ❓ add-matcher /run/act/actions/c6/5915d4aae063d16333e892c66d41ac357e9704f148c42c627dc725059375de/dist/problem-matcher.json
+2026-10-15T04:09:35.8480162Z ::add-matcher::/run/act/actions/c6/5915d4aae063d16333e892c66d41ac357e9704f148c42c627dc725059375de/dist/problem-matcher.json
+2026-10-15T04:09:35.8482904Z Syncing repository: terragucci-admin/demo
+2026-10-15T04:09:35.8485466Z ##[group]Getting Git version info
+2026-10-15T04:09:35.8485914Z Working directory is '/workspace/terragucci-admin/demo'
+2026-10-15T04:09:35.8512135Z [command]/usr/bin/git version
+2026-10-15T04:09:35.8551967Z git version 2.39.5
+2026-10-15T04:09:35.8570068Z ##[endgroup]
+2026-10-15T04:09:35.8581247Z Temporarily overriding HOME='/tmp/0a0b5f24-49e5-4c8d-b747-a774d6f1bdfa' before making global git config changes
+2026-10-15T04:09:35.8582071Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-15T04:09:35.8585790Z [command]/usr/bin/git config --global --add safe.directory /workspace/terragucci-admin/demo
+2026-10-15T04:09:35.8613833Z Deleting the contents of '/workspace/terragucci-admin/demo'
+2026-10-15T04:09:35.8620261Z ##[group]Initializing the repository
+2026-10-15T04:09:35.8623259Z [command]/usr/bin/git init /workspace/terragucci-admin/demo
+2026-10-15T04:09:35.8648354Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-15T04:09:35.8648669Z hint: is subject to change. To configure the initial branch name to use in all
+2026-10-15T04:09:35.8648757Z hint: of your new repositories, which will suppress this warning, call:
+2026-10-15T04:09:35.8648823Z hint: 
+2026-10-15T04:09:35.8648878Z hint: 	git config --global init.defaultBranch <name>
+2026-10-15T04:09:35.8648937Z hint: 
+2026-10-15T04:09:35.8648993Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-15T04:09:35.8649048Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-15T04:09:35.8649107Z hint: 
+2026-10-15T04:09:35.8649169Z hint: 	git branch -m <name>
+2026-10-15T04:09:35.8660622Z Initialized empty Git repository in /workspace/terragucci-admin/demo/.git/
+2026-10-15T04:09:35.8670274Z [command]/usr/bin/git remote add origin http://forgejo:3000/terragucci-admin/demo
+2026-10-15T04:09:35.8703008Z ##[endgroup]
+2026-10-15T04:09:35.8703206Z ##[group]Disabling automatic garbage collection
+2026-10-15T04:09:35.8706391Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-15T04:09:35.8728188Z ##[endgroup]
+2026-10-15T04:09:35.8728358Z ##[group]Setting up auth
+2026-10-15T04:09:35.8733673Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-15T04:09:35.8757464Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-15T04:09:35.8946764Z [command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/forgejo\:3000\/\.extraheader
+2026-10-15T04:09:35.8969962Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/forgejo\:3000\/\.extraheader' && git config --local --unset-all 'http.http://forgejo:3000/.extraheader' || :"
+2026-10-15T04:09:35.9158363Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-15T04:09:35.9183301Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-15T04:09:35.9369676Z [command]/usr/bin/git config --local http.http://forgejo:3000/.extraheader AUTHORIZATION: basic ***
+2026-10-15T04:09:35.9399955Z ##[endgroup]
+2026-10-15T04:09:35.9400141Z ##[group]Fetching the repository
+2026-10-15T04:09:35.9407718Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ef959409b8d590f4c3b05f0b7154cd576c9e1abf:refs/remotes/origin/main
+2026-10-15T04:09:35.9721212Z From http://forgejo:3000/terragucci-admin/demo
+2026-10-15T04:09:35.9721493Z  * [new ref]         ef959409b8d590f4c3b05f0b7154cd576c9e1abf -> origin/main
+2026-10-15T04:09:35.9737285Z ##[endgroup]
+2026-10-15T04:09:35.9737449Z ##[group]Determining the checkout info
+2026-10-15T04:09:35.9739035Z ##[endgroup]
+2026-10-15T04:09:35.9742700Z [command]/usr/bin/git sparse-checkout disable
+2026-10-15T04:09:35.9779138Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-15T04:09:35.9800844Z ##[group]Checking out the ref
+2026-10-15T04:09:35.9803867Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-10-15T04:09:35.9845942Z Switched to a new branch 'main'
+2026-10-15T04:09:35.9846171Z branch 'main' set up to track 'origin/main'.
+2026-10-15T04:09:35.9849711Z ##[endgroup]
+2026-10-15T04:09:35.9876579Z [command]/usr/bin/git log -1 --format=%H
+2026-10-15T04:09:35.9895732Z ef959409b8d590f4c3b05f0b7154cd576c9e1abf
+2026-10-15T04:09:35.9905634Z ::remove-matcher owner=checkout-git::
+2026-10-15T04:09:36.8546635Z wave 1 of 3: planning network, other
+2026-10-15T04:09:36.8760757Z wave 1 of 3: planning up to 4 roots at once (the s3 backend)
+2026-10-15T04:09:37.0873203Z network: Plan: 0 to add, 1 to change, 0 to destroy.
+2026-10-15T04:09:37.0873675Z other: No changes. Your infrastructure matches the configuration.
+2026-10-15T04:09:37.1344387Z wave 1 of 3: cost: network: 0.00 USD a month
+2026-10-15T04:09:37.1634547Z wave 1 of 3: cost: other: 0.00 USD a month
+2026-10-15T04:09:37.1636160Z wave 1 of 3: cost: 0.00 USD a month over 2 of 2 roots
+2026-10-15T04:09:37.1642795Z wave 1 of 3: set digest jcs1-sha256:f8851fb619215c0eab373fd9af26b8d46169f350f4b59317c426ea53f070f4c5, 1 change, 0 destroys
+2026-10-15T04:09:37.2260055Z wave 1 (wave-1): gate on-destructive (read at 255866bf1bc2), digest jcs1-sha256:f8851fb619215c0eab373fd9af26b8d46169f350f4b59317c426ea53f070f4c5: not-required
+2026-10-15T04:09:37.6111993Z wave 1: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:09:37.6820954Z applied other: Resources: 0 added, 0 changed, 0 destroyed
+2026-10-15T04:09:37.6822527Z applied network: Resources: 0 added, 1 changed, 0 destroyed
+2026-10-15T04:09:37.6886537Z network: state s3://demo-terraform-state/network.tfstate, versions off (bucket versioning is off for demo-terraform-state, so it keeps only the latest state)
+2026-10-15T04:09:37.6886947Z other: state s3://demo-terraform-state/other.tfstate, versions off (bucket versioning is off for demo-terraform-state, so it keeps only the latest state)
+2026-10-15T04:09:37.6888247Z wave 1 of 3 applied
+2026-10-15T04:09:37.7078650Z wave 1: report in terragucci-report/, slowest root network (0.23s)
+2026-10-15T04:09:37.7803655Z wave 1: report copied to demo/forgejo:3000/terragucci-admin/demo/2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-1
+2026-10-15T04:09:37.7868022Z wave 1: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:09:37.7979622Z wave 1 of 3 applied
+2026-10-15T04:09:37.9134888Z With the provided path, there will be 9 files uploaded
+2026-10-15T04:09:37.9136974Z Starting artifact upload
+2026-10-15T04:09:37.9137108Z For more detailed logs during the artifact upload process, enable step-debugging: https://docs.github.com/actions/monitoring-and-troubleshooting-workflows/enabling-debug-logging#enabling-step-debug-logging
+2026-10-15T04:09:37.9137507Z Artifact name is valid!
+2026-10-15T04:09:37.9293790Z Container for artifact "terragucci-report-apply-wave-1" successfully created. Starting upload of file(s)
+2026-10-15T04:09:37.9554158Z Total size of all the files uploaded is 10011 bytes
+2026-10-15T04:09:37.9554486Z File upload process has finished. Finalizing the artifact upload
+2026-10-15T04:09:37.9588562Z Artifact has been finalized. All files have been successfully uploaded!
+2026-10-15T04:09:37.9588662Z 
+2026-10-15T04:09:37.9588756Z The raw size of all the files that were specified for upload is 38546 bytes
+2026-10-15T04:09:37.9588873Z The size of all the files that were uploaded is 10011 bytes. This takes into account any gzip compression used to reduce the upload size, time and storage
+2026-10-15T04:09:37.9588997Z 
+2026-10-15T04:09:37.9589109Z Note: The size of downloaded zips can differ significantly from the reported size. For more information see: https://github.com/actions/upload-artifact#zipped-artifact-downloads 
+2026-10-15T04:09:37.9589184Z 
+2026-10-15T04:09:37.9589298Z Artifact terragucci-report-apply-wave-1 has been successfully uploaded!
+2026-10-15T04:09:37.9766033Z ⭐ Run Post https://code.forgejo.org/actions/checkout@v4
+2026-10-15T04:09:37.9784854Z   🐳  docker exec cmd=[node /var/run/act/actions/c6/5915d4aae063d16333e892c66d41ac357e9704f148c42c627dc725059375de/dist/index.js] user= workdir=
+2026-10-15T04:09:38.1012857Z [command]/usr/bin/git version
+2026-10-15T04:09:38.1050859Z git version 2.39.5
+2026-10-15T04:09:38.1070279Z   ⚙  ***
+2026-10-15T04:09:38.1083222Z Temporarily overriding HOME='/tmp/b0ce011d-d952-498e-a68a-8f84e1c6eee5' before making global git config changes
+2026-10-15T04:09:38.1084197Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-15T04:09:38.1099251Z [command]/usr/bin/git config --global --add safe.directory /workspace/terragucci-admin/demo
+2026-10-15T04:09:38.1132376Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-15T04:09:38.1161797Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-15T04:09:38.1369117Z [command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/forgejo\:3000\/\.extraheader
+2026-10-15T04:09:38.1389761Z http.http://forgejo:3000/.extraheader
+2026-10-15T04:09:38.1398688Z [command]/usr/bin/git config --local --unset-all http.http://forgejo:3000/.extraheader
+2026-10-15T04:09:38.1427324Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/forgejo\:3000\/\.extraheader' && git config --local --unset-all 'http.http://forgejo:3000/.extraheader' || :"
+2026-10-15T04:09:38.1656436Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-15T04:09:38.1682842Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-15T04:09:38.1949278Z   ✅  Success - Post https://code.forgejo.org/actions/checkout@v4
+2026-10-15T04:09:38.2063802Z 🏁  Job succeeded
