@@ -1,6 +1,8 @@
 # edge: routes to app on the port app's state holds.
 
 terraform {
+  required_version = ">= 1.13"
+
   backend "s3" {
     bucket         = "demo-terraform-state"
     key            = "edge.tfstate"

@@ -2,6 +2,8 @@
 # app's output.
 
 terraform {
+  required_version = ">= 1.13"
+
   backend "s3" {
     bucket         = "demo-terraform-state"
     key            = "app.tfstate"
