@@ -263,7 +263,7 @@ example-gitlab *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
-[doc("The looping demo behold shows (example-demo/): up once, then loop [--once] [scenario...] (b-waves then failure by default, or DEMO_SCENARIOS) writes demo.json at every step; down removes the stack.")]
+[doc("The looping demo behold shows, one repo per tool (example-demo/ and the other example-demo-* trees): up once, then loop [--once] [scenario...] (b-waves then failure by default, or DEMO_SCENARIOS) writes demo.json at every step; down removes the stack.")]
 demo *args="up":
     stack/demo.sh {{args}}
 

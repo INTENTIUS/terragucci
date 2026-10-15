@@ -3,10 +3,19 @@
 # The looping demo behold shows: one change across several Terraform states,
 # run through the real pipeline on the stack's Forgejo and floci.
 #
-#   stack/demo.sh up                  boot the forgejo profile, push example-demo/
-#                                     to <admin>/demo, apply its four roots, and
+# Each scenario belongs to a tool, and each tool has its own forge repo pushed
+# from its own example tree: terraform's scenarios run on <admin>/demo, from
+# example-demo/ (roots network, app, edge and other); terragrunt's on
+# <admin>/demo-terragrunt, from example-demo-terragrunt/. A loop walks its
+# scenarios and switches repos between them. The roots and their state keys
+# come from each tree: a Terraform root's backend key, and a Terragrunt unit's
+# key from root.hcl's remote_state.
+#
+#   stack/demo.sh up                  boot the forgejo profile, and for each
+#                                     tool whose tree is in the checkout push
+#                                     the tree to its repo, apply its roots, and
 #                                     keep the base commit and each root's state
-#                                     as the base snapshot. Run once.
+#                                     as that repo's base snapshot. Run once.
 #   stack/demo.sh loop [--once] [scenario...]
 #                                     run the scenarios one after another and
 #                                     reset to the base after each, forever (one
@@ -28,6 +37,7 @@
 # step:
 #
 #   { "intro": "Big Terraform setups are split into separate states, ...",
+#     "tool": "terraform", "repo": "<admin>/demo",
 #     "cycle": 12, "scenario": "b-waves", "name": "a new subnet", "title": "...",
 #     "index": 1, "scenarios": 2,
 #     "step": "waiting", "label": "Wave 2 stops and waits for a person to approve it. ...",
@@ -40,7 +50,7 @@
 # failed, resumed, applied, reset and stalled. next is null at stalled; next.at
 # is null while the driver waits on the pipeline rather than on its own clock.
 # pull and commit are null until the cycle has them. about is the scenario's
-# card, read from example-demo/scenarios/<scenario>/about.json at the start of
+# card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
 # null when the scenario has none (the base). just lint-docs lints its text.
 #
@@ -51,12 +61,33 @@
 # scenarios is how many that list holds, so "1 of 2". index is null for the
 # base, and scenarios is 0 when up writes it, before any loop.
 #
-# Beside it, <prefix>/runs/index.json and <prefix>/runs/<id>.json hold the demo
-# repo's last 30 pipeline runs with their jobs, steps and logs, copied while
-# they run and when they end (runs_export, scripts/demo-runs.ts), so behold's
-# kiosk shows them without reaching Forgejo. Each reset deletes the demo repo's
-# runs in Forgejo past the newest DEMO_FORGE_RUNS (100) that have ended, so its
-# database stays the same size however long the loop runs.
+# tool is the tool the scenario shows (terraform, terragrunt) and repo the forge
+# repo its cycle runs on (<admin>/demo, <admin>/demo-terragrunt): the repo whose
+# commit, pull request and runs the step names. Every write has both.
+#
+# Every write is also appended, with an at time, to the cycle's timeline. When
+# a cycle ends with reset, the driver publishes it as its tool's latest:
+#
+#   <prefix>/cycles/<tool>/latest.json and <prefix>/cycles/<tool>/<cycle>.json
+#   { "schema": "demo.cycle/v1", "tool": "terragrunt", "repo": "<admin>/demo-terragrunt",
+#     "scenario": "tg-planned-outputs", "cycle": 14,
+#     "started": "2026-10-20T10:00:00Z", "ended": "2026-10-20T10:02:10Z",
+#     "steps": [ { <demo.json as written>, "at": "2026-10-20T10:00:01Z" }, ... ],
+#     "runs": [ <the ids of the runs the cycle started, oldest first> ] }
+#
+# started is the cycle's started_at and ended the reset's at. runs are the ids
+# in <prefix>/runs/ that the driver marked (or placed) in the cycle, so a page
+# can show the same runs. Each tool keeps its newest 5 <cycle>.json; a publish
+# deletes older ones. A cycle that stalled at any step is never published, so
+# latest.json is always a cycle that ran to its reset (scripts/demo-cycles.ts).
+#
+# Beside it, <prefix>/runs/index.json and <prefix>/runs/<id>.json hold the last
+# 30 pipeline runs of the repos the loop uses, with their jobs, steps and logs,
+# each run with its repo and tool, copied while they run and when they end
+# (runs_export, scripts/demo-runs.ts), so behold's kiosk shows them without
+# reaching Forgejo. Each reset deletes each of those repos' runs in Forgejo past
+# the newest DEMO_FORGE_RUNS (100) that have ended, so its database stays the
+# same size however long the loop runs.
 #
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
@@ -84,8 +115,32 @@ esac
 ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed)
 SCENARIOS=(b-waves failure)
 
-ROOTS=(network app edge other)
-STATE_BUCKET=demo-terraform-state
+# Each scenario runs on its tool's repo: one forge repo per tool, pushed from
+# that tool's example tree. A tool whose tree is not in the checkout has no
+# repo; up skips it.
+TOOLS=(terraform terragrunt)
+scenario_tool() { # scenario -> its tool
+  case "$1" in
+    a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
+    *) return 1 ;;
+  esac
+}
+tool_repo() { # tool -> the repo's name under the admin
+  case "$1" in
+    terraform) echo demo ;;
+    terragrunt) echo demo-terragrunt ;;
+    *) return 1 ;;
+  esac
+}
+tool_tree() { # tool -> its example tree, from the checkout's root
+  case "$1" in
+    terraform) echo example-demo ;;
+    terragrunt) echo example-demo-terragrunt ;;
+    *) return 1 ;;
+  esac
+}
+tool_present() { [ -d "$HERE/../$(tool_tree "$1")" ]; }
+
 REPORT_BUCKET=demo-reports
 REPORT_PREFIX=demo
 CONTROL_BUCKET=demo-control
@@ -107,10 +162,16 @@ if [ "$CMD" = up ]; then
   # The tag names the version, not the commit, so a checkout that moved within
   # one version would keep running the images of an older commit: they are
   # built again whenever the checkout's commit differs from the one they came from.
-  ref="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  # Each tool's repo runs in its own image: tofu's, and terragrunt's when that tree is here.
+  refs="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" || $1 == "terragrunt" { print $1, $2 }')"
   built_from="$HERE/.state/ci-images.commit"
   head="$(git -C "$HERE/.." rev-parse HEAD)"
-  if ! docker image inspect "$ref" >/dev/null 2>&1 || [ "$(cat "$built_from" 2>/dev/null || true)" != "$head" ]; then
+  missing=""
+  while read -r name ref; do
+    [ "$name" = tofu ] || tool_present terragrunt || continue
+    docker image inspect "$ref" >/dev/null 2>&1 || missing=1
+  done <<<"$refs"
+  if [ -n "$missing" ] || [ "$(cat "$built_from" 2>/dev/null || true)" != "$head" ]; then
     log "building the CI images at ${head:0:8} (a few minutes the first time)…"
     (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null && npx tsx scripts/images.ts build >/dev/null 2>&1) \
       || fail "the CI images did not build; run 'just images' to see why"
@@ -127,8 +188,6 @@ fi
 
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
-REPO="$USER/demo"
-REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
 DEMO_STATE="$TG_STATE/demo"
 mkdir -p "$DEMO_STATE"
 
@@ -156,7 +215,85 @@ REVIEWER="$(person_var TERRAGUCCI_FORGEJO_REVIEWER)"
 REVIEWER_TOKEN="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_TOKEN)"
 REVIEWER_KEY="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_KEY)"
 [ -f "$REVIEWER_KEY" ] || fail "the reviewer's key $REVIEWER_KEY is missing; run 'just demo up' again"
-REVIEWER_REMOTE="${URL/#http:\/\//http://${REVIEWER}:${REVIEWER_TOKEN}@}/$REPO.git"
+
+# ── the repos, one per tool ──────────────────────────────────────────────────
+
+# "<root> <state key>" for each root of a tree: a Terraform root's backend key,
+# or a Terragrunt unit's key from the remote_state in root.hcl (the tree's own,
+# or the one given, for a scenario's files). A root is a directory one level
+# down with a .tf file whose backend names a key, or any directory below with a
+# terragrunt.hcl.
+tree_keys() { # dir, tool, [root.hcl]
+  local dir="$1" f root key template
+  case "$2" in
+    terraform)
+      for f in "$dir"/*/*.tf; do
+        [ -f "$f" ] || continue
+        key="$(awk '/backend "s3"/ { b = 1 } b && /^[[:space:]]*key[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f")"
+        [ -z "$key" ] || { root="${f#"$dir"/}"; echo "${root%/*} $key"; }
+      done | sort -u ;;
+    terragrunt)
+      template="$(sed -n 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${3:-$dir/root.hcl}" 2>/dev/null | head -1)"
+      [ -n "$template" ] || return 0
+      (cd "$dir" && find . -name terragrunt.hcl -not -path '*/.terragrunt-cache/*' -not -path './scenarios/*' | sed 's#^\./##; s#/terragrunt.hcl$##' | sort) \
+        | while read -r root; do echo "$root ${template//\$\{path_relative_to_include()\}/$root}"; done ;;
+  esac
+}
+
+# The state bucket a tree's roots name: the first bucket in a backend or remote_state.
+tree_bucket() { # dir
+  local f
+  for f in "$1"/root.hcl "$1"/*/*.tf; do
+    [ -f "$f" ] || continue
+    awk '/backend "s3"|remote_state/ { b = 1 } b && /^[[:space:]]*bucket[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f"
+  done | head -1
+}
+
+# Point the driver at a tool's repo: REPO, its remotes, its example tree, the
+# directory that keeps its base (the terraform repo's is DEMO_STATE itself, as
+# before there were several), its state bucket, BASE_KEYS ("<root> <key>" of
+# the roots the base applies), EXTRA_KEYS (those only a scenario's files add,
+# which a reset deletes) and ROOTS. INIT_PULL is set when a scenario's pull
+# request runs terragucci init after its files, as an author adding units does.
+use_repo() { # tool
+  local d keys=""
+  TOOL="$1"
+  REPO="$USER/$(tool_repo "$1")" || fail "unknown tool '$1'"
+  TREE="$(cd "$HERE/../$(tool_tree "$1")" 2>/dev/null && pwd)" || fail "the $1 demo's tree $(tool_tree "$1")/ is not in this checkout"
+  REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
+  REVIEWER_REMOTE="${URL/#http:\/\//http://${REVIEWER}:${REVIEWER_TOKEN}@}/$REPO.git"
+  if [ "$1" = terraform ]; then RSTATE="$DEMO_STATE"; else RSTATE="$DEMO_STATE/repos/${REPO#*/}"; fi
+  STATE_BUCKET="$(tree_bucket "$TREE")"
+  [ -n "$STATE_BUCKET" ] || fail "no state bucket is named in $TREE"
+  BASE_KEYS="$(tree_keys "$TREE" "$1")"
+  [ -n "$BASE_KEYS" ] || fail "no root with a state key in $TREE"
+  for d in "$TREE"/scenarios/*/pull "$TREE"/scenarios/*/push; do
+    [ -d "$d" ] && keys="$keys$(tree_keys "$d" "$1" "$TREE/root.hcl")"$'\n'
+  done
+  EXTRA_KEYS="$(grep -v '^$' <<<"$keys" | sort -u | grep -vxF -f <(printf '%s\n' "$BASE_KEYS") || true)"
+  read -r -a ROOTS <<<"$(awk '{ print $1 }' <<<"$BASE_KEYS" | tr '\n' ' ')"
+  INIT_PULL=""
+  [ "$1" != terragrunt ] || INIT_PULL=1
+}
+
+root_key() { # root -> its state key in this repo
+  awk -v r="$1" '$1 == r { print $2; exit }' <<<"$BASE_KEYS"
+}
+
+# The file of a root's base state: its name with each / as __.
+snapshot() { # root
+  echo "$RSTATE/base/${1//\//__}.tfstate"
+}
+
+# The repos this driver works on, as "<repo> <tool>" lines, for the runs copy:
+# up's, or the loop's scenarios'.
+LOOP_TOOLS=()
+loop_repos() {
+  local t
+  for t in ${LOOP_TOOLS[@]+"${LOOP_TOOLS[@]}"}; do echo "$USER/$(tool_repo "$t") $t"; done
+}
+
+use_repo terraform
 as_author() { curl -fsS -H "Authorization: token $AUTHOR_TOKEN" "$@"; }
 
 # Both people may write to the demo repo: the author pushes, merges and asks for
@@ -184,9 +321,31 @@ iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-
 CYCLE=0 SCENARIO="" TITLE="" STARTED="" PULL="" COMMIT="" INDEX="" COUNT=0
 RUN_ID="" RUN_STATUS="" RUN_URL="" OUTCOME="" WAVE="" CYCLE_DONE="" ATTEMPT=0
 
-demo_put() { # the local demo.json to <reports bucket>/<prefix>/demo.json
+demo_put() { # the local demo.json to <reports bucket>/<prefix>/demo.json, and onto the cycle's timeline
   curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @"$DEMO_STATE/demo.json" \
     "$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/demo.json" || log "could not write demo.json to floci"
+  jq -c --arg at "$(iso "$(now)")" '. + {at: $at}' "$DEMO_STATE/demo.json" >> "$DEMO_STATE/timeline.jsonl" 2>/dev/null \
+    || log "could not add the step to the cycle's timeline"
+}
+
+# The cycle's timeline: every demo.json it wrote, each with the time it was
+# written (at), one a line in <state>/timeline.jsonl. It starts empty with each
+# cycle, and with each repo's reset when a loop starts.
+timeline_start() { : > "$DEMO_STATE/timeline.jsonl"; }
+
+# Publish the cycle that just wrote reset as its tool's latest
+# (scripts/demo-cycles.ts): <prefix>/cycles/<tool>/latest.json and
+# <prefix>/cycles/<tool>/<cycle>.json, keeping the newest 5 per tool. The
+# script publishes nothing for the base or for a cycle whose timeline holds a
+# stalled step, so a stalled cycle never replaces latest. A publish that fails
+# is logged, and the loop goes on.
+cycle_publish() {
+  runs_wait
+  (cd "$HERE/.." && DEMO_CYCLES_TIMELINE="$DEMO_STATE/timeline.jsonl" DEMO_CYCLES_MARKS="$RUNS_STATE/marks.jsonl" \
+    DEMO_CYCLES_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_CYCLES_PREFIX="$REPORT_PREFIX" \
+    DEMO_CYCLES_TOOL="$TOOL" DEMO_CYCLES_REPO="$REPO" DEMO_CYCLES_CYCLE="$CYCLE" DEMO_CYCLES_SCENARIO="$SCENARIO" \
+    node_modules/.bin/tsx scripts/demo-cycles.ts) || log "cycles: cycle $CYCLE was not published to floci; the loop goes on"
+  return 0
 }
 
 demo_write() { # step, label, [next action], [next at, epoch seconds]
@@ -209,7 +368,8 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
 # scenario's short name, and its place in this loop's list.
 demo_where() {
   jq -cn --arg intro "$INTRO" --arg name "$(scenario_name "$SCENARIO")" --arg index "$INDEX" --argjson count "$COUNT" \
-    '{intro: (if $intro == "" then null else $intro end), name: $name,
+    --arg tool "$TOOL" --arg repo "$REPO" \
+    '{intro: (if $intro == "" then null else $intro end), name: $name, tool: $tool, repo: $repo,
       index: (if $index == "" then null else ($index | tonumber) end), scenarios: $count}'
 }
 
@@ -218,7 +378,8 @@ INTRO="$(jq -r '.problem // empty' "$DEMO/scenarios/intro.json" 2>/dev/null || t
 
 # The scenario's card from its about.json, compact; null when it has none.
 scenario_about() { # scenario
-  local f="$DEMO/scenarios/$1/about.json"
+  local f
+  f="$HERE/../$(tool_tree "$(scenario_tool "$1")")/scenarios/$1/about.json"
   [ -f "$f" ] && jq -ce '{changes, watch, shows}' "$f" 2>/dev/null || echo null
 }
 
@@ -262,7 +423,7 @@ RUNS_STATE="$DEMO_STATE/runs"
 RUNS_PID="$RUNS_STATE/export.pid"
 RUNS_AT=0
 runs_copy() { # [keep: delete the runs Forgejo holds past the newest this many that ended]
-  (cd "$HERE/.." && DEMO_RUNS_FORGE_URL="$URL" DEMO_RUNS_TOKEN="$TOKEN" DEMO_RUNS_REPO="$REPO" \
+  (cd "$HERE/.." && DEMO_RUNS_FORGE_URL="$URL" DEMO_RUNS_TOKEN="$TOKEN" DEMO_RUNS_REPOS="$(loop_repos)" \
     DEMO_RUNS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_RUNS_PREFIX="$REPORT_PREFIX" DEMO_RUNS_STATE="$RUNS_STATE" \
     DEMO_RUNS_CYCLE="$CYCLE" DEMO_RUNS_SCENARIO="$SCENARIO" DEMO_RUNS_CYCLE_STARTED="${STARTED:-}" DEMO_RUNS_DROP="$REVIEWER_KEY"$'\n'"$AUTHOR_TOKEN"$'\n'"$REVIEWER_TOKEN" \
     DEMO_RUNS_PRUNE_KEEP="${1:-}" node_modules/.bin/tsx scripts/demo-runs.ts) || log "runs: the runs were not all copied to floci; the cycle goes on"
@@ -317,7 +478,7 @@ runs_mark() { # trigger, [pull request], [ref]
 # resource's, not an output's: a root whose apply failed may not have written
 # its outputs.
 state_input() { # root, resource name
-  curl -fsS "$FLOCI/$STATE_BUCKET/$1.tfstate" 2>/dev/null \
+  curl -fsS "$FLOCI/$STATE_BUCKET/$(root_key "$1")" 2>/dev/null \
     | jq -r --arg n "$2" '[.resources[]? | select(.mode == "managed" and .name == $n) | .instances[]?.attributes.input | if type == "object" then .value else . end][0] // "nothing" | tostring' 2>/dev/null \
     || echo nothing
 }
@@ -325,7 +486,7 @@ state_input() { # root, resource name
 # A terraform_data's id in the root's state: the value terraform_data picks
 # when it creates the resource, unknown to any plan before that.
 state_id() { # root, resource name
-  curl -fsS "$FLOCI/$STATE_BUCKET/$1.tfstate" 2>/dev/null \
+  curl -fsS "$FLOCI/$STATE_BUCKET/$(root_key "$1")" 2>/dev/null \
     | jq -r --arg n "$2" '[.resources[]? | select(.mode == "managed" and .name == $n) | .instances[]?.attributes.id][0] // "nothing" | tostring' 2>/dev/null \
     || echo nothing
 }
@@ -542,7 +703,11 @@ say() { # step
 open_pull() {
   local tree="$WORK/c$CYCLE/pull" sha before
   clone_main "$tree"
-  overlay "$DEMO/scenarios/$SCENARIO/pull" "$tree"
+  overlay "$TREE/scenarios/$SCENARIO/pull" "$tree"
+  # A pull request that adds units writes their pipeline as an author would: terragucci init.
+  if [ -n "$INIT_PULL" ]; then
+    (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on the $SCENARIO pull request"
+  fi
   before="$(last_run_id)"
   sha="$(push_as_author "$tree" "$REPO" "demo-$SCENARIO" "$TITLE (cycle $CYCLE)")"
   PULL="$(pr_open "demo-$SCENARIO" "$TITLE")"
@@ -703,7 +868,7 @@ stale_waiting() {
   demo_write approved "Wave 1 approved for the plan it showed. Before it resumes, the driver pushes another change to network on main" "push to main"
   local tree="$WORK/c$CYCLE/push" before
   clone_main "$tree"
-  overlay "$DEMO/scenarios/stale-plan/push" "$tree"
+  overlay "$TREE/scenarios/stale-plan/push" "$tree"
   before="$(last_run_id)"
   COMMIT="$(DEMO_PUSH_WHILE_HELD=1 push_as_author "$tree" "$REPO" main "network: http_proxy_port 8080 -> 9090 (cycle $CYCLE)")"
   run_started "$before" push "$COMMIT"
@@ -867,6 +1032,35 @@ audit_trail() {
   fi
 }
 
+# Every root's state back to the base snapshot, and the states of the roots
+# only a scenario adds deleted. A composed run (scenario 6) that stopped part
+# way may leave its lock on a state, or a state it could not write kept beside
+# it, which the next composed run would write before it plans
+# (packages/terragucci/src/compose.ts); a Terragrunt unit's lock is the same
+# file. No run is in progress here (quiet, or up before its push), so none
+# belongs to a live run. With "missing-ok", a root with no snapshot is skipped.
+states_back() { # [missing-ok]
+  local root key
+  for root in "${ROOTS[@]}"; do
+    key="$(root_key "$root")"
+    if [ -f "$(snapshot "$root")" ]; then
+      curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @"$(snapshot "$root")" \
+        "$FLOCI/$STATE_BUCKET/$key" || fail "could not write $root's base state back"
+    elif [ -z "${1:-}" ]; then
+      fail "$root has no base state in $RSTATE/base; run 'just demo up' again"
+    fi
+  done
+  while read -r root key; do
+    [ -n "$key" ] || continue
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key" || true
+  done <<<"$EXTRA_KEYS"
+  while read -r root key; do
+    [ -n "$key" ] || continue
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.tflock" || true
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.terragucci-unwritten" || true
+  done <<<"$BASE_KEYS"$'\n'"$EXTRA_KEYS"
+}
+
 # ── reset, out of band ───────────────────────────────────────────────────────
 
 # After the last wave ended: close the pull requests, write each root's state
@@ -881,29 +1075,18 @@ reset_base() {
 }
 
 reset_work() {
-  local base n root before
-  base="$(cat "$DEMO_STATE/base.sha")"
+  local base n before
+  base="$(cat "$RSTATE/base.sha")"
   HELD=""
   quiet
   for n in $(api "$URL/api/v1/repos/$REPO/pulls?state=open&limit=50" | jq -r '.[].number'); do
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$REPO/pulls/$n" || true
   done
-  for root in "${ROOTS[@]}"; do
-    curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @"$DEMO_STATE/base/$root.tfstate" \
-      "$FLOCI/$STATE_BUCKET/$root.tfstate" || fail "could not write $root's base state back"
-  done
+  states_back
   marker_clear
-  # A composed run (scenario 6) that stopped part way may leave its lock on a
-  # state, or a state it could not write kept beside it, which the next
-  # composed run would write before it plans (packages/terragucci/src/compose.ts).
-  # No run is in progress here (quiet), so neither belongs to a live run.
-  for root in "${ROOTS[@]}"; do
-    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.tflock" || true
-    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.terragucci-unwritten" || true
-  done
   if [ "$(remote_head "$REPO" main)" != "$base" ]; then
     before="$(last_run_id)"
-    git -C "$DEMO_STATE/base-tree" push -q --force "$REMOTE" "$base:refs/heads/main" 2>/dev/null || fail "could not force main back to ${base:0:8}"
+    git -C "$RSTATE/base-tree" push -q --force "$REMOTE" "$base:refs/heads/main" 2>/dev/null || fail "could not force main back to ${base:0:8}"
     # The push back starts a run on the base, which has nothing to apply; wait
     # for it, so the next cycle's first push finds no run in progress.
     if RUN_SOFT=1 run_started "$before" push "$base"; then
@@ -922,9 +1105,10 @@ reset_work() {
 
 reset_written() {
   local base
-  base="$(cat "$DEMO_STATE/base.sha")"
+  base="$(cat "$RSTATE/base.sha")"
   PULL="" COMMIT="$base"
   demo_write reset "Outside the pipeline, the driver resets every state to how it started. It also moves main back to ${base:0:8} for the next scenario." "start the next cycle"
+  cycle_publish
 }
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -939,68 +1123,108 @@ attempt() {
   set -e
 }
 
+# The base of the repo use_repo points at: its tree less its scenarios, the
+# pipeline init writes, and the reviewer's key in .chant/allowed_signers. It is
+# the commit every reset forces main back to. The admin pushes it, out of band:
+# no wave judges it as a change, because each wave's rule is read at the commit
+# before the one it applies, and the base is never in the range after it.
+up_repo() {
+  local sha root
+  if ! api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null; then
+    api -o /dev/null -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg n "${REPO#*/}" --arg d "$(repo_description)" '{name: $n, description: $d, private: false, auto_init: false, default_branch: "main"}')" \
+      "$URL/api/v1/user/repos"
+  fi
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
+  people_join
+  rm -rf "$RSTATE/base-tree"
+  mkdir -p "$RSTATE/base-tree"
+  (cd "$TREE" && tar cf - --exclude ./scenarios .) | (cd "$RSTATE/base-tree" && tar xf -)
+  (cd "$RSTATE/base-tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $(tool_tree "$TOOL")"
+  mkdir -p "$RSTATE/base-tree/.chant"
+  echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$RSTATE/base-tree/.chant/allowed_signers"
+  # floci may still hold the states of a cycle the driver left part way (a
+  # restart after the checkout moved): writing the last base snapshot back
+  # first, as the reset does, leaves the base's pipeline nothing to destroy,
+  # which gate: on-destructive would otherwise hold for an approval.
+  if [ -d "$RSTATE/base" ]; then
+    states_back missing-ok
+    marker_clear
+    log "wrote the last base snapshot of $REPO back to floci before pushing the base"
+  fi
+  sha="$(push_tree "$RSTATE/base-tree" "$REPO" main "The demo's base: $(roots_words)")"
+  log "pushed the base to $REPO's main at ${sha:0:8}; the pipeline applies every root…"
+  wait_run "$REPO" "$sha"
+  if [ "$RUN_STATUS" != success ]; then
+    print_logs "$REPO" "$RUN_ID"
+    fail "the base's pipeline on $REPO ended '$RUN_STATUS'"
+  fi
+  mkdir -p "$RSTATE/base"
+  for root in "${ROOTS[@]}"; do
+    curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
+  done
+  echo "$sha" > "$RSTATE/base.sha"
+  COMMIT="$sha"
+  runs_mark base
+  demo_write reset "$(base_label)" "start the first cycle"
+}
+
+repo_description() {
+  case "$TOOL" in
+    terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
+    *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
+  esac
+}
+
+# "network, app, edge and other": the base's roots, by their last path part.
+roots_words() {
+  local r out=()
+  for r in "${ROOTS[@]}"; do out+=("${r##*/}"); done
+  printf '%s, ' "${out[@]}" | sed -E 's/, $//; s/, ([^,]*)$/ and \1/'
+}
+
+base_label() {
+  case "$TOOL" in
+    terraform) echo "The base is applied: $(applied_values), and other" ;;
+    *) echo "The base is applied: $(roots_words), each with its own state" ;;
+  esac
+}
+
+# A loop's repo is ready: it has a base, and the base names the reviewer.
+loop_ready() {
+  [ -f "$RSTATE/base.sha" ] || fail "no base snapshot of $REPO; run 'just demo up' first"
+  # A base pushed before the driver played two people names the driver's key
+  # in .chant/allowed_signers, so the reviewer's seal would not verify.
+  git -C "$RSTATE/base-tree" show "$(cat "$RSTATE/base.sha"):.chant/allowed_signers" 2>/dev/null | grep -q "^$REVIEWER " \
+    || fail "the base of $REPO: .chant/allowed_signers does not name $REVIEWER; run 'just demo up' again"
+  people_join
+}
+
 case "$CMD" in
   up)
     started=$(now)
-    if ! api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null; then
-      api -o /dev/null -H 'content-type: application/json' -X POST \
-        -d "{\"name\":\"${REPO#*/}\",\"description\":\"The terragucci demo: four roots of terraform_data, a change across their states\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" \
-        "$URL/api/v1/user/repos"
-    fi
-    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
-    for b in "$STATE_BUCKET" "$REPORT_BUCKET" "$CONTROL_BUCKET"; do curl -fsS -o /dev/null -X PUT "$FLOCI/$b" || true; done
+    for b in "$REPORT_BUCKET" "$CONTROL_BUCKET"; do curl -fsS -o /dev/null -X PUT "$FLOCI/$b" || true; done
     marker_clear
-    people_join
-    # The base: example-demo/ less its scenarios, the pipeline init writes, and
-    # the reviewer's key in .chant/allowed_signers. It is the commit every reset
-    # forces main back to. The admin pushes it, out of band: no wave judges it
-    # as a change, because each wave's rule is read at the commit before the one
-    # it applies, and the base is never in the range after it.
-    rm -rf "$DEMO_STATE/base-tree"
-    mkdir -p "$DEMO_STATE/base-tree"
-    (cd "$DEMO" && tar cf - --exclude ./scenarios .) | (cd "$DEMO_STATE/base-tree" && tar xf -)
-    (cd "$DEMO_STATE/base-tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on example-demo"
-    mkdir -p "$DEMO_STATE/base-tree/.chant"
-    echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$DEMO_STATE/base-tree/.chant/allowed_signers"
-    # floci may still hold the states of a cycle the driver left part way (a
-    # restart after the checkout moved): writing the last base snapshot back
-    # first, as the reset does, leaves the base's pipeline nothing to destroy,
-    # which gate: on-destructive would otherwise hold for an approval.
-    if [ -d "$DEMO_STATE/base" ]; then
-      for root in "${ROOTS[@]}"; do
-        [ -f "$DEMO_STATE/base/$root.tfstate" ] || continue
-        curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @"$DEMO_STATE/base/$root.tfstate" \
-          "$FLOCI/$STATE_BUCKET/$root.tfstate" || fail "could not write $root's base state back"
-        curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.tflock" || true
-        curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.terragucci-unwritten" || true
-      done
-      marker_clear
-      log "wrote the last base snapshot back to floci before pushing the base"
-    fi
-    sha="$(push_tree "$DEMO_STATE/base-tree" "$REPO" main "The demo's base: network, app, edge and other")"
-    log "pushed the base to main at ${sha:0:8}; the pipeline applies every root…"
-    wait_run "$REPO" "$sha"
-    if [ "$RUN_STATUS" != success ]; then
-      print_logs "$REPO" "$RUN_ID"
-      fail "the base's pipeline ended '$RUN_STATUS'"
-    fi
-    mkdir -p "$DEMO_STATE/base"
-    for root in "${ROOTS[@]}"; do
-      curl -fsS -o "$DEMO_STATE/base/$root.tfstate" "$FLOCI/$STATE_BUCKET/$root.tfstate" || fail "$root has no state in floci after the base applied"
-    done
-    echo "$sha" > "$DEMO_STATE/base.sha"
+    LOOP_TOOLS=()
+    for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
     [ -f "$DEMO_STATE/cycle" ] || echo 0 > "$DEMO_STATE/cycle"
-    CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" ABOUT=null STARTED="$started" COMMIT="$sha"
-    runs_mark base
-    demo_write reset "The base is applied: $(applied_values), and other" "start the first cycle"
+    CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" ABOUT=null STARTED="$started"
+    timeline_start
+    : > "$WORK/ready"
+    for t in "${LOOP_TOOLS[@]}"; do
+      use_repo "$t"
+      curl -fsS -o /dev/null -X PUT "$FLOCI/$STATE_BUCKET" || true
+      up_repo
+      printf '  %-12s %s/%s\n  %-12s %s\n' "$TOOL" "$URL" "$REPO" "" "$RUN_URL" >> "$WORK/ready"
+    done
     log "ready in $(( $(now) - started ))s"
     cat <<OUT
 
-  The demo's base is applied.
+  The demo's bases are applied.
 
-  Forgejo     $URL/$REPO
-  Pipeline    $RUN_URL
-  demo.json   $FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/demo.json
+$(cat "$WORK/ready")
+
+  demo.json    $FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/demo.json
 
   Next: just demo loop
 OUT
@@ -1015,7 +1239,7 @@ OUT
         *) scenario_title "$a" >/dev/null || fail "unknown scenario '$a' (${ALL_SCENARIOS[*]})"; list+=("$a") ;;
       esac
     done
-    # No scenario named: DEMO_SCENARIOS, checked like the arguments, or the default two.
+    # No scenario named: DEMO_SCENARIOS, checked like the arguments, or the default list.
     if [ "${#list[@]}" -eq 0 ] && [ -n "${DEMO_SCENARIOS:-}" ]; then
       read -r -a named <<<"$DEMO_SCENARIOS"
       for a in ${named[@]+"${named[@]}"}; do
@@ -1025,20 +1249,25 @@ OUT
     fi
     [ "${#list[@]}" -gt 0 ] || list=("${SCENARIOS[@]}")
     COUNT="${#list[@]}"
-    [ -f "$DEMO_STATE/base.sha" ] || fail "no base snapshot; run 'just demo up' first"
-    # A base pushed before the driver played two people names the driver's key
-    # in .chant/allowed_signers, so the reviewer's seal would not verify.
-    git -C "$DEMO_STATE/base-tree" show "$(cat "$DEMO_STATE/base.sha"):.chant/allowed_signers" 2>/dev/null | grep -q "^$REVIEWER " \
-      || fail "the base's .chant/allowed_signers does not name $REVIEWER; run 'just demo up' again"
-    people_join
+    # The tools the list's scenarios run on, each once, in the order they first come.
+    LOOP_TOOLS=()
+    for a in "${list[@]}"; do
+      t="$(scenario_tool "$a")"
+      case " ${LOOP_TOOLS[*]-} " in *" $t "*) ;; *) LOOP_TOOLS+=("$t") ;; esac
+    done
+    for t in "${LOOP_TOOLS[@]}"; do use_repo "$t"; loop_ready; done
     echo "$$" > "$DEMO_STATE/driver.pid"
     # An earlier driver's background copy is not this one's to wait on.
     mkdir -p "$RUNS_STATE" && : > "$RUNS_PID"
     CYCLE="$(cat "$DEMO_STATE/cycle" 2>/dev/null || echo 0)"
     SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)" INDEX=""
-    # A driver the watchdog restarted may have left a cycle half done.
-    attempt reset_base
-    [ "$ATTEMPT" = 0 ] || demo_stalled
+    # A driver the watchdog restarted may have left a cycle half done, in any of the loop's repos.
+    for t in "${LOOP_TOOLS[@]}"; do
+      use_repo "$t"
+      timeline_start
+      attempt reset_base
+      [ "$ATTEMPT" = 0 ] || demo_stalled
+    done
     while :; do
       INDEX=0
       for s in "${list[@]}"; do
@@ -1046,7 +1275,9 @@ OUT
         CYCLE=$((CYCLE + 1))
         echo "$CYCLE" > "$DEMO_STATE/cycle"
         : > "$DEMO_STATE/reason"
+        use_repo "$(scenario_tool "$s")"
         SCENARIO="$s" TITLE="$(scenario_title "$s")" ABOUT="$(scenario_about "$s")" STARTED="$(now)" PULL="" COMMIT="" OUTCOME=""
+        timeline_start
         # A step that fails or passes its limit ends the cycle's subshell; the
         # loop writes stalled and resets.
         attempt run_cycle "$s"
