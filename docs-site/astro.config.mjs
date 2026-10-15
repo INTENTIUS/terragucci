@@ -267,7 +267,7 @@ export default defineConfig({
 						{ label: 'Access and identity', slug: 'standards/access-and-identity' },
 					],
 				},
-				{ label: 'Changes in 0.4.14', slug: 'reference/whats-new' },
+				{ label: 'Changes in 0.4.15', slug: 'reference/whats-new' },
 				{ label: 'The launch party', slug: 'launch-party' },
 			],
 		}),
