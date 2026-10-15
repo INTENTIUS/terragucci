@@ -13,12 +13,17 @@
  *
  * The apply learns it from the first carrier it can read:
  *
- * 1. the upstream wave's plans in this push's pipeline that change the
- *    upstream: an output the reader reads that is `after_unknown` in any of
- *    them was unknown when the change was reviewed. A plan of the upstream
- *    that changes nothing (a comment's apply or a re-run after the upstream
- *    applied) has every output known and says nothing of what was reviewed,
- *    so it is skipped;
+ * 1. the upstream wave's plans in this push's pipeline: an output the
+ *    reader reads that is `after_unknown` in any plan that changes the
+ *    upstream was unknown when the change was reviewed. A plan that changes
+ *    nothing has every output known. As the first run of this commit, that
+ *    is what the change left the upstream with, so the reads were known;
+ *    but a run of this commit after an earlier one applied the upstream (a
+ *    comment's apply, the resume job, a re-run) plans it again with the
+ *    change already applied, and that plan says nothing of what was
+ *    reviewed. So a plan that changes nothing counts only when the caller
+ *    finds no record of an earlier apply of the upstream at this commit
+ *    (`appliedBefore`), and is skipped otherwise;
  * 2. the report of the pull request that merged as this commit: its rows'
  *    reads with `unknown` outputs, and its waves' `replans_after`;
  * 3. with neither, every read counts as unknown: the wave is held, and the
@@ -65,6 +70,14 @@ export interface ReadCarriers {
   upstreamPlans(upstream: string, wave: number): Promise<{ plan: unknown; from: string }[]>;
   /** The report of the pull request that made this commit. Called at most once. */
   pullReport(): Promise<PullReport>;
+  /**
+   * Whether an earlier run of this commit applied a change to the upstream
+   * in its wave: where that is recorded, or why the caller cannot tell; or
+   * undefined when the records show none, so this run's plans of the
+   * upstream are the first of this commit. Absent, or failing, counts as
+   * cannot tell: a plan that changes nothing is then skipped.
+   */
+  appliedBefore?(upstream: string, wave: number): Promise<string | undefined>;
 }
 
 /** What the gate learns: the reads that hold the wave, and the lines that say how each read was settled. */
@@ -88,20 +101,37 @@ export async function unknownReads(reads: readonly WaveRead[], carriers: ReadCar
     if (!plans.has(key)) plans.set(key, carriers.upstreamPlans(r.upstream, r.wave).catch(() => []));
     return plans.get(key)!;
   };
+  const earlier = new Map<string, Promise<string | undefined>>();
+  const earlierOf = (r: WaveRead) => {
+    const key = `${r.wave}\n${r.upstream}`;
+    if (!earlier.has(key)) {
+      const asked = carriers.appliedBefore ? carriers.appliedBefore(r.upstream, r.wave) : Promise.resolve("nothing here reads whether an earlier run of this commit applied it");
+      earlier.set(key, asked.catch((e: Error) => `whether an earlier run of this commit applied it could not be read (${e.message.split("\n")[0]})`));
+    }
+    return earlier.get(key)!;
+  };
   const left: WaveRead[] = [];
-  const skipped = new Set<string>();
+  const said = new Set<string>();
   for (const r of reads) {
     const got = await planOf(r);
-    // Only a plan that changes the upstream is the one whose outputs the change's reviewers could not see.
+    // A plan that changes the upstream is one whose outputs the change's reviewers could not see; one that changes nothing
+    // counts only as the first plan of the upstream at this commit, which leaves its outputs as they were applied before.
     const changing: { from: string; outputs: NonNullable<ReturnType<typeof plannedOutputs>> }[] = [];
     for (const g of got) {
       const outputs = plannedOutputs(g.plan);
       if (!changesSomething(g.plan)) {
-        if (!skipped.has(g.from)) lines.push(`${g.from} changes nothing, so it says nothing of what was unknown when the change was reviewed`);
-        skipped.add(g.from);
-      } else if (outputs) {
-        changing.push({ from: g.from, outputs });
+        const why = await earlierOf(r);
+        if (why !== undefined) {
+          if (!said.has(g.from)) lines.push(`${g.from} changes nothing, and ${why}, so it says nothing of what was unknown when the change was reviewed`);
+          said.add(g.from);
+          continue;
+        }
+        if (!said.has(g.from)) lines.push(`${g.from} changes nothing, and no earlier run of this commit applied ${r.upstream}, so its outputs were known when the change was reviewed`);
+        said.add(g.from);
+        changing.push({ from: g.from, outputs: outputs ?? { outputs: new Map(), changed: false } });
+        continue;
       }
+      if (outputs) changing.push({ from: g.from, outputs });
     }
     if (changing.length === 0) {
       left.push(r);
