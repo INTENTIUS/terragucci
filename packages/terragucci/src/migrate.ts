@@ -1001,7 +1001,7 @@ export async function takeLocks(
     const take = f.source && "external" in f.source ? f.source.external.lock : undefined;
     if (!take) continue;
     try {
-      held.push({ root, release: await take(`${op.operation}: ${op.info}`) });
+      held.push({ root, release: await take(op === MIGRATE_LOCK ? "terragucci migrate: a state migration is reading this state" : `${op.operation}: ${op.info}`) });
     } catch (e) {
       for (const h of held) await h.release().catch(() => {});
       throw new ConfigError(`${root}: ${(e as Error).message}`);

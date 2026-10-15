@@ -66,6 +66,7 @@ import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
+import { applyGroups } from "../groups";
 import { ComposedRun, compositionFor, composeTarget, type ComposedPlan, type ComposeFallback, type Composition } from "../compose";
 import { blastRadius } from "./graph";
 import { blastRootsOf, resourceBlast } from "./resource-blast";
@@ -1380,7 +1381,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
   let composition: Composition | undefined;
   let composedPlan: ComposedPlan | undefined;
   if (!drift && !options.root && settings.waves?.compose === true && roots.length > 0) {
-    const c = compositionFor(repo, { all, ...(selected ? { selected } : {}), waves: applyOrder, max: settings.waves.compose_max, env: binEnv, binary: (r) => binaries.expected(r), deps: rootDependencies(repo, all), after });
+    // One apply job per identity: the composed run's roots must be in one group, as the apply checks (../groups.ts).
+    const groups = applyGroups(settings, all);
+    const c = compositionFor(repo, { all, ...(selected ? { selected } : {}), waves: applyOrder, max: settings.waves.compose_max, env: binEnv, binary: (r) => binaries.expected(r), deps: rootDependencies(repo, all), after, ...(groups ? { groupOf: (r: string) => groups.find((g) => g.roots.includes(r))?.name ?? "" } : {}) });
     composition = c;
     const refusedMember = c.fallback ? undefined : c.roots.find((r) => pinRefusals.has(r) || sourceRefusals.has(r));
     if (refusedMember) composition = { ...c, wave: undefined, fallback: { kind: "plan-failed", root: refusedMember, reason: `\`${refusedMember}\` is refused before its init, so the roots plan one by one and the refusal shows against it` } };
