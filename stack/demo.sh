@@ -43,7 +43,9 @@
 # Beside it, <prefix>/runs/index.json and <prefix>/runs/<id>.json hold the demo
 # repo's last 30 pipeline runs with their jobs, steps and logs, copied while
 # they run and when they end (runs_export, scripts/demo-runs.ts), so behold's
-# kiosk shows them without reaching Forgejo.
+# kiosk shows them without reaching Forgejo. Each reset deletes the demo repo's
+# runs in Forgejo past the newest DEMO_FORGE_RUNS (100) that have ended, so its
+# database stays the same size however long the loop runs.
 #
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
@@ -84,6 +86,8 @@ LIMIT_RUN="${DEMO_LIMIT_RUN:-900}"      # one apply run, from the push or commen
 LIMIT_START="${DEMO_LIMIT_START:-180}"  # for Forgejo to start a run after a push, merge or comment
 LIMIT_QUIET="${DEMO_LIMIT_QUIET:-900}"  # for no run to be in progress before a push
 RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may take
+FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
+POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
 
 if [ "$CMD" = up ]; then
   # The pipeline runs in terragucci's CI image. Before an image is published,
@@ -191,18 +195,48 @@ demo_stalled() {
 # per run with its jobs, steps and the tail of each step's log. It keeps the
 # newest 30 runs and deletes the objects of older ones. behold's kiosk reads
 # these and never talks to Forgejo. Each poll of a wait calls runs_export, which
-# copies at most every 5 s; a run the driver marks or sees end is copied at
-# once. An export that fails is logged, and the cycle goes on.
+# copies at most every 5 s, in the background so the poll goes on; a run the
+# driver marks or sees end is copied at once, after any copy in the background
+# has finished. One copy runs at a time: its pid is in <runs state>/export.pid.
+# An export that fails is logged, and the cycle goes on.
 RUNS_STATE="$DEMO_STATE/runs"
+RUNS_PID="$RUNS_STATE/export.pid"
 RUNS_AT=0
-runs_export() { # [force]
-  [ -n "${1:-}" ] || [ $(( $(now) - RUNS_AT )) -ge 5 ] || return 0
-  RUNS_AT="$(now)"
+runs_copy() { # [keep: delete the runs Forgejo holds past the newest this many that ended]
   (cd "$HERE/.." && DEMO_RUNS_FORGE_URL="$URL" DEMO_RUNS_TOKEN="$TOKEN" DEMO_RUNS_REPO="$REPO" \
     DEMO_RUNS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_RUNS_PREFIX="$REPORT_PREFIX" DEMO_RUNS_STATE="$RUNS_STATE" \
     DEMO_RUNS_CYCLE="$CYCLE" DEMO_RUNS_SCENARIO="$SCENARIO" DEMO_RUNS_CYCLE_STARTED="${STARTED:-}" DEMO_RUNS_DROP="$DRIVER_KEY" \
-    npx tsx scripts/demo-runs.ts) || log "runs: the runs were not all copied to floci; the cycle goes on"
+    DEMO_RUNS_PRUNE_KEEP="${1:-}" node_modules/.bin/tsx scripts/demo-runs.ts) || log "runs: the runs were not all copied to floci; the cycle goes on"
   return 0
+}
+
+# Wait for a copy in the background to finish, from this shell or an earlier
+# cycle's. A copy rewrites marks.jsonl from what it read when it started, so a
+# mark is appended only once none runs. A copy stops itself after 60 s, so a
+# pid that lives longer is not one.
+runs_wait() {
+  local pid deadline=$(( $(now) + 70 ))
+  read -r pid 2>/dev/null <"$RUNS_PID" || return 0
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  while kill -0 "$pid" 2>/dev/null && [ "$(now)" -lt "$deadline" ]; do sleep 0.2; done
+  return 0
+}
+
+runs_export() { # [force], [keep: as runs_copy]
+  if [ -z "${1:-}" ]; then
+    [ $(( $(now) - RUNS_AT )) -ge 5 ] || return 0
+    local pid=""
+    read -r pid 2>/dev/null <"$RUNS_PID" || true
+    case "$pid" in ''|*[!0-9]*) ;; *) ! kill -0 "$pid" 2>/dev/null || return 0 ;; esac
+    RUNS_AT="$(now)"
+    mkdir -p "$RUNS_STATE" 2>/dev/null || true
+    runs_copy &
+    echo "$!" > "$RUNS_PID" 2>/dev/null || true
+    return 0
+  fi
+  runs_wait
+  RUNS_AT="$(now)"
+  runs_copy "${2:-}"
 }
 
 # What the driver did to start run RUN_ID (plan, merge, resume, reset, base or
@@ -210,6 +244,7 @@ runs_export() { # [force]
 # in the bucket. Then copy the runs at once.
 runs_mark() { # trigger, [pull request], [ref]
   mkdir -p "$RUNS_STATE" 2>/dev/null || true
+  runs_wait
   jq -cn --argjson id "${RUN_ID:-null}" --arg t "$1" --argjson c "${CYCLE:-null}" --arg s "$SCENARIO" --arg p "${2:-}" --arg r "${3:-}" \
     '{id: $id, trigger: $t, cycle: $c, scenario: (if $s == "" then null else $s end),
       pull: (if $p == "" then null else ($p | tonumber) end)} + (if $r == "" then {} else {ref: $r} end)' \
@@ -266,7 +301,7 @@ quiet() {
     busy="$(runs | jq -r '[.[] | select(.status == "running" or .status == "waiting" or .status == "blocked" or .status == "unknown")] | length' || true)"
     [ "$busy" = 0 ] && return 0
     [ "$(now)" -lt "$deadline" ] || fail "a run was still in progress after ${LIMIT_QUIET}s, so nothing was pushed"
-    sleep 3
+    sleep "$POLL"
   done
 }
 
@@ -294,7 +329,7 @@ run_started() { # before id, event, [sha]
       [ -z "${RUN_SOFT:-}" ] || return 1
       fail "no $event run started within ${LIMIT_START}s"
     fi
-    sleep 3
+    sleep "$POLL"
   done
 }
 
@@ -308,7 +343,7 @@ run_ended() { # limit
     status="$(jq -r '.status // empty' <<<"$run" 2>/dev/null || true)"
     case "$status" in success|failure|cancelled|skipped) break ;; esac
     [ "$(now)" -lt "$deadline" ] || fail "run $RUN_ID did not end within ${1}s (last status: ${status:-none})"
-    sleep 3
+    sleep "$POLL"
   done
   runs_export force
   RUN_STATUS="$status"
@@ -435,7 +470,7 @@ open_pull() {
   local deadline=$(( $(now) + 60 ))
   until api "$URL/api/v1/repos/$REPO/issues/$PULL/comments?limit=50" | jq -e '[.[] | select(.body | contains("terragucci tf-plan"))] | length > 0' >/dev/null; do
     [ "$(now)" -lt "$deadline" ] || fail "the plan run passed but no plan note is on pull request $PULL"
-    sleep 3
+    sleep "$POLL"
   done
 }
 
@@ -450,9 +485,9 @@ overlay() { # from, to: copy the scenario's files over the tree, with @CYCLE@ fi
 
 pr_open() { # branch, title -> prints the number of the pull request into main
   local n=""
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 60); do
     api -o /dev/null "$URL/api/v1/repos/$REPO/branches/$1" 2>/dev/null && break
-    sleep 2
+    sleep "$POLL"
   done
   n="$(api -H 'content-type: application/json' -X POST \
     -d "$(jq -cn --arg h "$1" --arg t "$2" --argjson c "$CYCLE" '{head: $h, base: "main", title: $t, body: "Cycle \($c) of the terragucci demo (stack/demo.sh)."}')" \
@@ -471,10 +506,10 @@ merge_pull() { # -> COMMIT is the merge commit, RUN_ID its push run
   done
   [ -n "$merged" ] || fail "pull request $PULL did not merge"
   COMMIT=""
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 60); do
     COMMIT="$(api "$URL/api/v1/repos/$REPO/pulls/$PULL" | jq -r '.merge_commit_sha // empty' || true)"
     [ -z "$COMMIT" ] || break
-    sleep 2
+    sleep "$POLL"
   done
   [ -n "$COMMIT" ] || fail "pull request $PULL merged, but Forgejo names no merge commit"
   demo_write merged "$(say merged)" "follow the waves"
@@ -591,7 +626,8 @@ stale_waiting() {
   run_outcome
   [ "$OUTCOME" = refused ] || fail "the push's wave 1 did not refuse the stale plan: it ended $OUTCOME ($RUN_URL)"
   HELD=""
-  demo_hold failed "Wave 1 refused the stale plan: network planned differently from the approved plan, so nothing applied. network still holds $(state_input network http_proxy_port)" "reset"
+  LAST_STEP=failed
+  LAST_LABEL="Wave 1 refused the stale plan: network planned differently from the approved plan, so nothing applied. network still holds $(state_input network http_proxy_port)"
   CYCLE_DONE=1
 }
 
@@ -676,7 +712,7 @@ run_cycle() {
   SCENARIO="$1"
   TITLE="$(scenario_title "$1")" || fail "unknown scenario '$1' (${SCENARIOS[*]})"
   ABOUT="$(scenario_about "$1")"
-  PULL="" COMMIT="" HELD=""
+  PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL=""
   on_waiting() { default_waiting; }
   on_failed() { default_failed; }
   on_refused() { default_refused; }
@@ -688,11 +724,38 @@ run_cycle() {
     failure) scenario_failure ;;
     stale-plan) scenario_stale_plan ;;
   esac
-  # A scenario that ends on a refusal holds its own last step; the rest end applied.
+  # A scenario that ends on a refusal names its own last step; the rest end applied.
   if [ "$OUTCOME" = applied ]; then
-    demo_hold applied "$(say applied)" "reset"
+    LAST_STEP=applied LAST_LABEL="$(say applied)"
   fi
+  if [ -n "$LAST_STEP" ]; then
+    cycle_end
+  else
+    audit_trail
+  fi
+}
+
+# The cycle's last step, held HOLD seconds while the audit and the reset's work
+# go on behind it, then reset once both are done. The label is read from the
+# states before the reset writes them back, and what behold's kiosk shows does
+# not move until reset is written: it narrates demo.json, and draws the reports
+# pinned to this cycle's commit (runPin in behold's web/kiosk.js), never the
+# live states. The runs pane shows the reset's run as it starts, as it did when
+# the run started after the hold. reset is written after the push back's run
+# has ended, so the next cycle's first push finds no run in progress.
+cycle_end() {
+  local at=$(( $(now) + HOLD )) left
+  demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
   audit_trail
+  reset_work
+  left=$(( at - $(now) ))
+  [ "$left" -le 0 ] || sleep "$left"
+  reset_written
+}
+
+# The cycle at hand ended with its own reset written (cycle_end).
+cycle_reset() {
+  jq -e --argjson c "$CYCLE" '.cycle == $c and .step == "reset"' "$DEMO_STATE/demo.json" >/dev/null 2>&1
 }
 
 # The history: terragucci audit appends this cycle's approvals (from
@@ -723,7 +786,14 @@ audit_trail() {
 # back to the base snapshot, clear the failure marker and force main back to
 # the base commit. Never through a gated wave: the push back to base plans
 # against the base states, which match it, so its waves have nothing to apply.
+# reset_work does it all and waits for the push back's run; reset_written
+# writes the step.
 reset_base() {
+  reset_work
+  reset_written
+}
+
+reset_work() {
   local base n root before
   base="$(cat "$DEMO_STATE/base.sha")"
   HELD=""
@@ -751,11 +821,21 @@ reset_base() {
     # for it, so the next cycle's first push finds no run in progress.
     if RUN_SOFT=1 run_started "$before" push "$base"; then
       runs_mark reset
+      # While that run plans: delete the runs Forgejo holds past the newest
+      # FORGE_RUNS that have ended. The copy keeps the newest 30 of the newest
+      # 50 it lists, so it never reads a run this deletes.
+      runs_export force "$FORGE_RUNS"
       run_ended "$LIMIT_RUN"
-    else
-      log "no run started for the push back to ${base:0:8}"
+      return 0
     fi
+    log "no run started for the push back to ${base:0:8}"
   fi
+  runs_export force "$FORGE_RUNS"
+}
+
+reset_written() {
+  local base
+  base="$(cat "$DEMO_STATE/base.sha")"
   PULL="" COMMIT="$base"
   demo_write reset "Reset out of band: each root's state written back to the base snapshot, and main forced back to the base commit ${base:0:8}" "start the next cycle"
 }
@@ -849,6 +929,8 @@ OUT
     [ "${#list[@]}" -gt 0 ] || list=("${SCENARIOS[@]}")
     [ -f "$DEMO_STATE/base.sha" ] || fail "no base snapshot; run 'just demo up' first"
     echo "$$" > "$DEMO_STATE/driver.pid"
+    # An earlier driver's background copy is not this one's to wait on.
+    mkdir -p "$RUNS_STATE" && : > "$RUNS_PID"
     CYCLE="$(cat "$DEMO_STATE/cycle" 2>/dev/null || echo 0)"
     SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)"
     # A driver the watchdog restarted may have left a cycle half done.
@@ -863,9 +945,11 @@ OUT
         # A step that fails or passes its limit ends the cycle's subshell; the
         # loop writes stalled and resets.
         attempt run_cycle "$s"
-        [ "$ATTEMPT" = 0 ] || demo_stalled
+        cycled="$ATTEMPT"
+        [ "$cycled" = 0 ] || demo_stalled
         rm -rf "$WORK/c$CYCLE"
-        attempt reset_base
+        # A cycle that ended on its last step has reset behind it (cycle_end).
+        if [ "$cycled" = 0 ] && cycle_reset; then ATTEMPT=0; else attempt reset_base; fi
         while [ "$ATTEMPT" != 0 ]; do
           demo_stalled
           sleep "$HOLD"
