@@ -17,6 +17,19 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Each workspace becomes a root with its own state in your bucket. The jobs `init` writes run in your forge's CI; there is no account and no server, and every record lands in your git and bucket.
 
+## Staying on HCP Terraform
+
+HCP Terraform already does some of this with less setup:
+
+| Feature | What it does |
+|---|---|
+| [Run triggers](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/run-triggers) | queue a run in a workspace when a source workspace applies |
+| Stacks, with [deferred changes](https://developer.hashicorp.com/terraform/cloud-docs/stacks/deploy/runs) and [deployment groups](https://developer.hashicorp.com/terraform/language/stacks/deploy/conditions) | order components by their dependencies and defer a step until the values it needs exist; a deployment group sets auto-approve rules for several deployments at once |
+| [Cost estimation](https://developer.hashicorp.com/terraform/cloud-docs/cost-estimation) | built in; terragucci's [`cost`](/terragucci/guides/estimate-cost/) needs Infracost |
+| [Health assessments](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/health) | drift detection and continuous validation of `check` blocks; terragucci's [`drift`](/terragucci/guides/turn-on-drift-checks/) runs on a cron schedule you set |
+
+Staying is reasonable when your workspaces depend on Stacks' deferred changes, or when built-in cost estimates and health assessments matter more to you than keeping state and records in your own bucket. A team that relies on no-code provisioning or the workspace UI has the same reason, since terragucci has [neither](#limits).
+
 ## Concepts
 
 | HCP Terraform, Scalr, OTF | terragucci |

@@ -16,6 +16,13 @@ export type Room = {
 	works: string[];
 	differs: string[];
 	first: Link;
+	/**
+	 * For a tool's room: what the tool already does that overlaps terragucci,
+	 * each linked to the tool's own docs, when to use that instead, and what
+	 * terragucci adds on top. Each line holds to what those docs and terragucci's
+	 * source say.
+	 */
+	native?: { tool: string; has: Link[]; choose: string; adds: string[] };
 	howto: Link[];
 	explain: Link[];
 	reference: Link[];
@@ -159,6 +166,19 @@ export const ROOMS: Room[] = [
 		],
 		differs: [],
 		first: { label: 'Get your first plan note', href: '/getting-started/' },
+		native: {
+			tool: 'OpenTofu',
+			has: [
+				{ label: 'The core workflow of write, plan and apply, with team CI left to other tools', href: 'https://opentofu.org/docs/intro/core-workflow/' },
+				{ label: 'TACOS, the tools that run that workflow for a team', href: 'https://opentofu.org/docs/intro/tacos/' },
+				{ label: 'State and plan encryption, set in your roots', href: 'https://opentofu.org/docs/language/state/encryption/' },
+			],
+			choose: 'OpenTofu leaves CI to other tools on purpose, and that is the part terragucci does. Encryption of state and plans is OpenTofu\'s own feature; terragucci adds none.',
+			adds: [
+				'Every wave waits at a gate for an approval of its plan digest by someone who had no hand in the change',
+				'A wave whose plans moved since the approval applies nothing',
+			],
+		},
 		howto: [
 			{ label: 'Add terragucci to a repo', href: '/guides/add-to-a-repo/' },
 			{ label: 'Choose your binary', href: '/guides/use-a-binary/' },
@@ -189,6 +209,22 @@ export const ROOMS: Room[] = [
 			'CDK Terrain in a Terragrunt repo is not supported.',
 		],
 		first: { label: 'Use Terragrunt', href: '/guides/use-terragrunt/' },
+		native: {
+			tool: 'Terragrunt',
+			has: [
+				{ label: 'run --all in dependency order, with --filter-affected, --queue-ignore-errors and retries', href: 'https://docs.terragrunt.com/reference/cli/commands/run' },
+				{ label: 'The run queue, where each unit waits for its dependencies', href: 'https://docs.terragrunt.com/features/stacks/run-queue/' },
+				{ label: 'Gruntwork Pipelines: plans and applies the units a commit changes, in your own CI', href: 'https://docs.gruntwork.io/2.0/docs/pipelines/guides/running-plan-apply/' },
+				{ label: 'Drift Detected pull requests from Pipelines, on a schedule', href: 'https://docs.gruntwork.io/2.0/docs/pipelines/guides/running-drift-detection/' },
+			],
+			choose: 'If ordering and drift pull requests are what you need, Terragrunt and Pipelines already do them.',
+			adds: [
+				'A pull request plans each unit on its upstream\'s planned outputs in place of mock_outputs, and a plan that would read mocks fails',
+				'A wave waits for an approval when it would apply a value no review saw',
+				'An approval counts only for the plan digest it saw, and only from someone with no hand in the change, where Pipelines relies on branch protection',
+				'A wave whose plans moved since the approval applies nothing, where the Pipelines docs ask for branches kept up to date',
+			],
+		},
 		howto: [
 			{ label: 'Use Terragrunt', href: '/guides/use-terragrunt/' },
 			{ label: 'From Terragrunt Scale', href: '/guides/use-terragrunt/#terragrunt-scale' },
@@ -212,6 +248,22 @@ export const ROOMS: Room[] = [
 			'A change outside a component directory, such as to a stack manifest, locks every instance.',
 		],
 		first: { label: 'Use Atmos', href: '/guides/use-atmos/' },
+		native: {
+			tool: 'Atmos',
+			has: [
+				{ label: 'Ordered deployments in Atmos Pro, parents first on merge', href: 'https://atmos-pro.com/docs/learn/ordered-deployments' },
+				{ label: 'Apply on merge, which plans again and by default fails on drift from the stored plan', href: 'https://atmos.tools/integrations/github-actions/apply-on-merge' },
+				{ label: 'Affected stacks as a CI matrix', href: 'https://atmos.tools/integrations/github-actions/deploy-affected' },
+				{ label: 'Planfile storage with checksums', href: 'https://atmos.tools/ci/planfile-storage' },
+				{ label: 'Scheduled drift checks in Atmos Pro', href: 'https://atmos-pro.com/docs/learn/drift-detection' },
+			],
+			choose: 'If Atmos Pro\'s ordered deployments and apply on merge already fit your team, you may not need terragucci\'s waves or its stale-plan refusal.',
+			adds: [
+				'An approval counts only for the plan digest it saw, and only from someone with no hand in the change',
+				'Every job runs in your own CI, and no hosted service takes part',
+				'Pipelines for GitLab and Forgejo as well as GitHub',
+			],
+		},
 		howto: [{ label: 'Use Atmos', href: '/guides/use-atmos/' }],
 		explain: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
 		reference: [{ label: 'terragucci.yml keys', href: '/reference/config/' }],
@@ -231,6 +283,23 @@ export const ROOMS: Room[] = [
 			'A drift pull request, rollouts and generate are refused, since their edits would land in code terramate generate owns.',
 		],
 		first: { label: 'Use Terramate', href: '/guides/use-terramate/' },
+		native: {
+			tool: 'Terramate',
+			has: [
+				{ label: 'terramate run in order: parents first, then after and before', href: 'https://terramate.io/docs/cli/orchestration/order-of-execution' },
+				{ label: 'Change detection from git with --changed', href: 'https://terramate.io/docs/cli/change-detection' },
+				{ label: 'Preview, deployment and drift check workflows for GitHub, GitLab and Bitbucket', href: 'https://terramate.io/docs/cli/automation/' },
+				{ label: 'Terramate Cloud: deployment history and alerts', href: 'https://terramate.io/docs/cloud/deployments/' },
+				{ label: 'Terramate Cloud: scheduled drift checks, alerts and reconciliation', href: 'https://terramate.io/docs/cloud/drift/' },
+			],
+			choose: 'If ordered runs of the changed stacks and Terramate\'s own workflows already fit your team, you may not need terragucci\'s waves.',
+			adds: [
+				'Each layer waits at its own gate for an approval of its plan digest by someone who had no hand in the change',
+				'A wave whose plans moved since the approval applies nothing',
+				'A stack that reads an input is never planned on its mock; it waits for the upstream\'s state',
+				'Pipelines for Forgejo as well as GitHub and GitLab',
+			],
+		},
 		howto: [{ label: 'Use Terramate', href: '/guides/use-terramate/' }],
 		explain: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
 		reference: [{ label: 'terragucci.yml keys', href: '/reference/config/' }],
@@ -250,6 +319,18 @@ export const ROOMS: Room[] = [
 			'A Terragrunt repo takes no synth, so the two do not mix.',
 		],
 		first: { label: 'Plan CDK Terrain stacks', href: '/guides/plan-cdk-terrain-stacks/' },
+		native: {
+			tool: 'CDK Terrain',
+			has: [
+				{ label: 'cdktn deploy orders the stacks itself and takes several stack ids or globs', href: 'https://cdktn.io/docs/cli-reference/commands' },
+				{ label: 'The CDK Terrain action: one stack per step, with auto-approve modes', href: 'https://github.com/cdktn-io/action' },
+			],
+			choose: 'If one deploy of every stack in order is all you need, cdktn deploy already does it.',
+			adds: [
+				'A pull request plans only the stacks whose synth output differs between base and head',
+				'Each wave waits at its own gate for an approval of its plan digest by someone who had no hand in the change',
+			],
+		},
 		howto: [{ label: 'Plan CDK Terrain stacks', href: '/guides/plan-cdk-terrain-stacks/' }],
 		explain: [{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' }],
 		reference: [{ label: 'terragucci.yml keys', href: '/reference/config/' }],
@@ -257,7 +338,7 @@ export const ROOMS: Room[] = [
 	{
 		id: 'choudoufu',
 		title: 'choudoufu',
-		lede: 'The OpenTofu fork from the team behind terragucci, set with binary: choudoufu.',
+		lede: 'The OpenTofu fork for AWS and Kubernetes from the team behind terragucci, set with binary: choudoufu.',
 		column: 'choudoufu',
 		works: [
 			'One record per resource in an S3 bucket you own, each write conditional, with no lock table',

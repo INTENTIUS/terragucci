@@ -12,9 +12,15 @@ prompt: |
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import TabFromHash from '../../../components/TabFromHash.astro';
 
+## Already in OpenTofu
+
+OpenTofu plans and applies. Its [core workflow](https://opentofu.org/docs/intro/core-workflow/) page leaves building a shared CI environment out of its scope and points teams to [TACOS](https://opentofu.org/docs/intro/tacos/), which build on that workflow for problems unique to teams. That is the part terragucci covers, in your own CI.
+
+Your roots set up [encryption](https://opentofu.org/docs/language/state/encryption/) of state and plan files with OpenTofu itself; terragucci does not provide it.
+
 ## Binary features
 
-Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu, the OpenTofu fork from the team behind terragucci, adds [thirteen features](#choudoufu) on top of OpenTofu's.
+Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu is the OpenTofu fork for AWS and Kubernetes from the team behind terragucci, and it adds [thirteen features](#choudoufu) on top of OpenTofu's.
 
 | | choudoufu | Terraform | OpenTofu | Terragrunt |
 |---|---|---|---|---|
