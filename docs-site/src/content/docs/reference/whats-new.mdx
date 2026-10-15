@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.17
-description: "terragucci 0.4.17, released 2026-10-15."
+title: Changes in 0.4.18
+description: "terragucci 0.4.18, released 2026-10-15."
 ---
 
-Release `0.4.17` is on npm as `@intentius/terragucci@0.4.17`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.17) lists every change.
+Release `0.4.18` is on npm as `@intentius/terragucci@0.4.18`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.18) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.17 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.18 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.18
+
+- The demo's `up` no longer dies of SIGPIPE right after bootstrap, and a failure in `up` prints the file, line and functions where it happened (#1064).
 
 ## In 0.4.17
 
