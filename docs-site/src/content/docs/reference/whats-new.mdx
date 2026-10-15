@@ -1,14 +1,25 @@
 ---
-title: Changes in 0.4.10
-description: "terragucci 0.4.10, released 2026-10-14."
+title: Changes in 0.4.11
+description: "terragucci 0.4.11, released 2026-10-14."
 ---
 
-Release `0.4.10` is on npm as `@intentius/terragucci@0.4.10`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.10) lists every change.
+Release `0.4.11` is on npm as `@intentius/terragucci@0.4.11`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.11) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.10 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.11 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.11
+
+- A wave that applies records the spend of its approval whichever gate let it through, so the next push's waves wait instead of being refused as changed after approval, and on `/terragucci apply` a read unknown at review is judged by the plan that changed the upstream (#1030).
+- With `waves.compose`, a wave the composed run emptied keeps its number in chant's spec, and the merge's apply composes the set the pull request reviewed (#1031).
+- On a commit's first run, a plan of the upstream that changes nothing counts its outputs as known, so a push whose reader changes and whose upstream does not applies without waiting (#1033).
+- `stack/demo.sh` passes the scenario label to jq as `$text`, so it runs under jq 1.6 (#1026).
+- `stack/demo.sh` finds a Forgejo run by `commit_sha` when the runs API leaves `head_sha` empty (#1027).
+- `stack/demo.sh` scenario 2 says each wave that read an output unknown at review waits for the driver's approval (#1029).
+- `stack/demo.sh up` builds the CI images again when the checkout's commit moves (#1032).
+- `stack/demo.sh up` writes the last base snapshot back before it pushes the base (#1034).
 
 ## In 0.4.10
 
