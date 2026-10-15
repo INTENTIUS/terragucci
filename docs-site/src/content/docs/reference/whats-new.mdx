@@ -1,14 +1,25 @@
 ---
-title: Changes in 0.4.9
-description: "terragucci 0.4.9, released 2026-10-13."
+title: Changes in 0.4.10
+description: "terragucci 0.4.10, released 2026-10-14."
 ---
 
-Release `0.4.9` is on npm as `@intentius/terragucci@0.4.9`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.9) lists every change.
+Release `0.4.10` is on npm as `@intentius/terragucci@0.4.10`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.10) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.9 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.10 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.10
+
+| What | Where |
+|---|---|
+| `waves.compose: true`, opt-in beside the waves, plans the roots a change reaches and the roots they read as one plan and applies them as one apply of `tofu` or `terraform`, each root keeping its own state. A value one root reads from another that is known only after apply is computed in that apply. The note names the roots and the wave that runs them, or says in one line why the change applies in waves instead | [A composed run](/terragucci/concepts/waves-and-approvals/#a-composed-run) |
+| Under `gate: on-destructive`, a wave that read an upstream output known only once the upstream applied waits for an approval of the plan it applies, even when that plan destroys nothing, and its log names each read that holds it. Under `gate: never` it applies as before | [Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots) |
+| The plan note has a total line across roots, such as `3 to add, 2 to change, 0 to destroy across 3 roots`; `report.json` carries `totals_roots`, and each wave in `run.json` its `totals` and `totals_roots` | [The plan note](/terragucci/reference/report/#the-plan-note) |
+| Each resource in `blast.resources` reaches carries `depth`, its distance from the changed resource, and the reaches are sorted nearest first | [Fields](/terragucci/reference/report-schema/#fields) |
+
+- Changed under `gate: on-destructive`: a wave that read an output unknown when the change was reviewed used to apply without an approval when it destroyed nothing. It now waits for one.
 
 ## In 0.4.9
 
