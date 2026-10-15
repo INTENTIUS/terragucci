@@ -12,6 +12,9 @@
 //   DEMO_RUNS_CYCLE, DEMO_RUNS_SCENARIO, DEMO_RUNS_CYCLE_STARTED
 //                                                         the driver's cycle, to place runs it did not mark
 //   DEMO_RUNS_DROP                                         more strings no line written may hold, one a line
+//   DEMO_RUNS_PRUNE_KEEP                                   when set, after the copy: delete the demo repo's runs in
+//                                                         Forgejo past the newest this many (at least 50) that have
+//                                                         ended, at most 50 at a time, and print how many
 //
 // Exits 1 when it could not list the runs or write the index; the driver logs
 // that and goes on.
@@ -23,6 +26,8 @@ import {
   buildJob,
   buildRun,
   ENDED,
+  FORGE_KEEP_MIN,
+  forgeRunsToDelete,
   type ForgeJob,
   type ForgeRun,
   type IndexEntry,
@@ -233,6 +238,44 @@ async function main(): Promise<void> {
   }
   writeAtomic(cachePath, JSON.stringify(cache));
   if (failed) console.error(`runs: ${failed} of ${kept.length} runs not written this time`);
+
+  const pruneKeep = Number(process.env.DEMO_RUNS_PRUNE_KEEP || 0);
+  if (pruneKeep > 0) await pruneForge(pruneKeep);
+}
+
+// Every run Forgejo lists for the repo, page by page, newest first. A page
+// that adds no run it has not seen ends the list.
+async function allRuns(): Promise<ForgeRun[]> {
+  const out = new Map<number, ForgeRun>();
+  for (let page = 1; page <= 200; page++) {
+    const runs = ((await (await forgeGet(`/actions/runs?page=${page}&limit=50`)).json()) as { workflow_runs?: ForgeRun[] })
+      .workflow_runs ?? [];
+    const before = out.size;
+    for (const r of runs) out.set(r.id, r);
+    if (out.size === before) break;
+  }
+  return [...out.values()];
+}
+
+// Delete the runs past the newest `keep` that have ended (forgeRunsToDelete),
+// so Forgejo's database does not grow with the loop.
+async function pruneForge(keep: number): Promise<void> {
+  const ids = forgeRunsToDelete(await allRuns(), keep);
+  let deleted = 0;
+  for (const id of ids) {
+    try {
+      const res = await fetch(`${forge}/api/v1/repos/${repo}/actions/runs/${id}`, {
+        method: "DELETE",
+        headers: auth,
+        signal: AbortSignal.timeout(TIMEOUT),
+      });
+      if (!res.ok && res.status !== 404) throw new Error(`${res.status}`);
+      deleted++;
+    } catch (e) {
+      console.error(`runs: could not delete run ${id} in Forgejo: ${(e as Error).message}`);
+    }
+  }
+  console.error(`runs: deleted ${deleted} ended runs of ${repo} in Forgejo past the newest ${Math.max(keep, FORGE_KEEP_MIN)}`);
 }
 
 main().catch((e: Error) => {
