@@ -39,7 +39,7 @@ function repoConfigs(): string[] {
       else if (name === "terragucci.yml") out.push(abs);
     }
   };
-  for (const d of ["example", "example-terragrunt", "example-demo", "stack/fixtures"]) if (existsSync(join(repo, d))) walk(join(repo, d));
+  for (const d of ["example", "example-terragrunt", "example-demo", "example-demo-terragrunt", "stack/fixtures"]) if (existsSync(join(repo, d))) walk(join(repo, d));
   return out.sort();
 }
 

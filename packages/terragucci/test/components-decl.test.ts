@@ -63,7 +63,32 @@ for (const forge of ["github", "forgejo", "gitlab"] as ForgeName[]) {
   CASES.push([`${forge}: environments and waves.jobs 2`, grouped(forge, { waveJobs: 2 })]);
 }
 
+const DEMO_TG = join(__dirname, "..", "..", "..", "example-demo-terragrunt");
+
+/** The Terragrunt demo's base tree in a scratch directory, as stack/demo.sh pushes it; with `pull`, its scenario's files over it. */
+function demoTgRepo(pull?: string): string {
+  const dir = tmp();
+  cpSync(DEMO_TG, dir, { recursive: true, filter: (src) => !src.startsWith(join(DEMO_TG, "scenarios")) });
+  if (pull) cpSync(join(DEMO_TG, "scenarios", pull, "pull"), dir, { recursive: true });
+  return dir;
+}
+
 describe("terragucci.components.json", () => {
+  it("example-demo-terragrunt: init's waves are network / app, and the pull request's are ledger+network / app+billing; the committed file is init's", async () => {
+    // Discovery by the files, as on a host with no terragrunt; the jobs run terragrunt find.
+    const opts = { dryRun: true, terragrunt: join(tmp(), "no-terragrunt") };
+    const r = await init(demoTgRepo(), opts);
+    expect(sortWaves(applyWaves(r.layers))).toEqual([["live/network"], ["live/app"]]);
+    const file = r.files.find((f) => f.path.endsWith(COMPONENTS_PATH))!;
+    const made = JSON.parse(file.content) as ComponentsDecl & { generated_by?: string };
+    const committed = JSON.parse(readFileSync(join(DEMO_TG, COMPONENTS_PATH), "utf-8")) as ComponentsDecl & { generated_by?: string };
+    expect({ ...committed, generated_by: "" }).toEqual({ ...made, generated_by: "" });
+    expect(Object.fromEntries(made.components.map((c) => [c.name, c.dependsOn]))).toEqual({ "live/network": [], "live/app": ["live/network"] });
+
+    const pulled = await init(demoTgRepo("tg-planned-outputs"), opts);
+    expect(sortWaves(applyWaves(pulled.layers))).toEqual([["live/ledger", "live/network"], ["live/app", "live/billing"]]);
+  });
+
   it("example-demo: init writes it beside the workflow, with the waves network+other / app / edge that terragucci computes", async () => {
     const dir = demoRepo();
     const r = await init(dir, { dryRun: true });

@@ -22,7 +22,8 @@
 #                                     pass with --once). With no scenario named,
 #                                     the ones in DEMO_SCENARIOS (space-separated),
 #                                     or else the default two: b-waves, then
-#                                     failure. Any of ALL_SCENARIOS can be named.
+#                                     failure. Any of ALL_SCENARIOS can be named,
+#                                     tg-planned-outputs (Terragrunt) among them.
 #   stack/demo.sh down                remove the stack
 #
 # The roots are network, app (reads network), edge (reads app) and other (reads
@@ -112,7 +113,9 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs)
+# tg-planned-outputs runs by name or DEMO_SCENARIOS, and joins the default list
+# once behold can draw a Terragrunt repo.
 SCENARIOS=(b-waves failure)
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
@@ -122,6 +125,7 @@ TOOLS=(terraform terragrunt)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
+    tg-planned-outputs) echo terragrunt ;;
     *) return 1 ;;
   esac
 }
@@ -276,8 +280,8 @@ use_repo() { # tool
   [ "$1" != terragrunt ] || INIT_PULL=1
 }
 
-root_key() { # root -> its state key in this repo
-  awk -v r="$1" '$1 == r { print $2; exit }' <<<"$BASE_KEYS"
+root_key() { # root -> its state key in this repo, a scenario's own roots too
+  awk -v r="$1" '$1 == r { print $2; exit }' <<<"$BASE_KEYS"$'\n'"$EXTRA_KEYS"
 }
 
 # The file of a root's base state: its name with each / as __.
@@ -635,6 +639,7 @@ scenario_title() {
     stale-plan) echo "main moves after an approval, and the wave refuses the old plan" ;;
     b-waves)    echo "A new subnet, and a value nobody could review" ;;
     b-composed) echo "A new network, read downstream, in one composed run" ;;
+    tg-planned-outputs) echo "A new unit planned on real values, not stand-ins" ;;
     *) return 1 ;;
   esac
 }
@@ -649,6 +654,7 @@ scenario_name() {
     stale-plan) echo "a stale plan" ;;
     b-waves)    echo "a new subnet" ;;
     b-composed) echo "B composed" ;;
+    tg-planned-outputs) echo "a new unit and its reader" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -685,6 +691,15 @@ say() { # step
     failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the migration runs." ;;
     failure:approved)       echo "The driver approves wave $WAVE with the reviewer's signing key, standing in for a person who had no hand in the change, so the re-run can replace the failed migration." ;;
     failure:applied)        echo "Done on the second run. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
+    tg-planned-outputs:pull-request) echo "Pull request $PULL is open. It adds two units. Ledger sets up a storage bucket, and billing reads the bucket's name." ;;
+    tg-planned-outputs:planned) echo "The plan is posted on the pull request. It names ledger's bucket $(tg_value ledger), and billing will keep its invoices there. The stand-in name, $(tg_mock), was never used. Network and app have no change." ;;
+    tg-planned-outputs:applying) echo "Wave 1 builds ledger's bucket. Wave 2 then plans billing again on the name ledger now has." ;;
+    tg-planned-outputs:applied)
+      if [ "$TG_COMPARED" = matched ]; then
+        echo "Done. Wave 2 compared its new plan for billing with the one pull request $PULL showed, and they matched, so it applied. Billing records invoices in $(state_input live/ledger this)."
+      else
+        echo "Done. Wave 2 compared its new plan for billing with the one pull request $PULL showed, and its log names each difference before the apply: $TG_COMPARED. Billing records invoices in $(state_input live/ledger this)."
+      fi ;;
     stale-plan:pull-request) echo "Pull request $PULL: network's release marker goes from r0 to r$CYCLE, which replaces it" ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
@@ -952,6 +967,58 @@ scenario_b_composed() {
   follow
 }
 
+# 7: Terragrunt's planned outputs. The pull request adds ledger and billing,
+# which reads ledger's output through a dependency block whose mock_outputs
+# Terragrunt would hand billing while ledger has no state. The plan job plans
+# billing on the outputs ledger's plan makes instead (tg-preview.ts), and a
+# plan that would read the mock is refused; the driver checks the plan run
+# says billing planned on ledger's planned outputs. On main, wave 1 applies
+# ledger, and wave 2 plans billing on what ledger applied and compares that
+# plan with the one the pull request's note carries before its gate decides
+# (tg-preview-gate.ts). Nothing is destroyed, so no wave waits under gate:
+# on-destructive; the comparison is in wave 2's log, and the driver reads it
+# into the applied label. A wave 2 that compared nothing stalls the cycle.
+TG_READER=live/billing TG_UPSTREAM=live/ledger TG_COMPARED="" MERGE_RUN=""
+
+# A value a unit of the scenario's pull request sets, or the mock billing names, from the files.
+tg_value() { # unit name
+  sed -n 's/^[[:space:]]*value[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$TREE/scenarios/tg-planned-outputs/pull/live/$1/terragrunt.hcl" | tail -1
+}
+tg_mock() {
+  awk '/mock_outputs[[:space:]]*=/ { m = 1 } m && /value[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' \
+    "$TREE/scenarios/tg-planned-outputs/pull/live/billing/terragrunt.hcl"
+}
+
+tg_planned() {
+  run_logs "$REPO" "$RUN_ID" 2>/dev/null | grep -qF "$TG_READER: plans on the planned outputs of $TG_UPSTREAM" \
+    || fail "the pull request's plan did not plan $TG_READER on the planned outputs of $TG_UPSTREAM ($RUN_URL)"
+}
+
+# What wave 2 of the merge's run said when it compared billing's plan with the
+# pull request's preview: matched, or the first difference it named.
+tg_compared() {
+  local logs
+  logs="$(run_logs "$REPO" "$MERGE_RUN" 2>/dev/null || true)"
+  if grep -qF "$TG_READER plans as pull request $PULL previewed it" <<<"$logs"; then
+    TG_COMPARED=matched
+  elif grep -qF "plans differently now:" <<<"$logs"; then
+    TG_COMPARED="$(grep -F ":   $TG_READER: " <<<"$logs" | head -1 | sed "s#^.*:   $TG_READER: #$TG_READER: #")"
+    [ -n "$TG_COMPARED" ] || TG_COMPARED="$TG_READER plans differently"
+  else
+    fail "wave 2 did not compare its plan of $TG_READER with pull request $PULL's ($RUN_URL)"
+  fi
+}
+
+scenario_tg_planned_outputs() {
+  open_pull
+  tg_planned
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  MERGE_RUN="$RUN_ID"
+  follow
+  [ "$OUTCOME" != applied ] || tg_compared
+}
+
 scenario_stale_plan() {
   on_waiting() { stale_waiting; }
   open_pull
@@ -975,6 +1042,7 @@ run_cycle() {
     b-composed) scenario_b_composed ;;
     failure) scenario_failure ;;
     stale-plan) scenario_stale_plan ;;
+    tg-planned-outputs) scenario_tg_planned_outputs ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
   if [ "$OUTCOME" = applied ]; then
@@ -1186,7 +1254,7 @@ roots_words() {
 base_label() {
   case "$TOOL" in
     terraform) echo "The base is applied: $(applied_values), and other" ;;
-    *) echo "The base is applied: $(roots_words), each with its own state" ;;
+    *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
 
