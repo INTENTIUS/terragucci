@@ -682,7 +682,7 @@ say() { # step
     b-waves:approved)       echo "The driver approves wave 2 with the reviewer's key, as a person with no hand in the change would. App's resources go into subnet $(state_id network subnet)." ;;
     b-waves:applied)        echo "Done. Network has subnet $(state_id network subnet), and app's four resources are in it. They landed after a person approved them, since no review showed that id." ;;
     b-composed:pull-request) echo "Pull request $PULL brings the b-waves subnet change and turns on waves.compose for itself alone. The roots it reaches plan as one run and apply as one." ;;
-    b-composed:planned)     echo "One composed plan covers $COMPOSED. Each keeps its own state. App's four new resources are known after apply, since the same run creates the subnet's id. $COST_STUB." ;;
+    b-composed:planned)     echo "One composed plan covers $COMPOSED. Each keeps its own state. App's four new resources are known after apply, since this run creates the subnet's id. $COST_STUB." ;;
     b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
     b-composed:approved)    echo "The driver approves the composed run's digest for wave 1 with the reviewer's key. The re-run plans the composed roots again and applies them in one apply." ;;
     b-composed:applied)     echo "One apply built network's subnet $(state_id network subnet) and app's $(state_input app instance) after the driver's approval. Each state holds what applied to it." ;;
