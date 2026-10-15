@@ -2,7 +2,9 @@
  * A wave that read an upstream output unknown at review (#1012) is judged by
  * the plan that changed the upstream, not by a later plan that changes
  * nothing: a comment's apply (`/terragucci apply`) plans wave 1 again after it
- * applied, and that plan has every output known.
+ * applied, and that plan has every output known. A plan that changes nothing
+ * on the commit's first run still settles the read: a direct push that
+ * changes only the reader applies it.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -69,7 +71,8 @@ describe("a wave that read an output unknown at review, applied again by a comme
     out.mockClear();
     writeFileSync(log, "");
     expect(await applyWave(work, { ...opts, wave: 2, now: T(2) })).toBe(3);
-    expect(said()).toMatch(/wave 1's plan of a in this push \([^)]*\) changes nothing, so it says nothing of what was unknown when the change was reviewed/);
+    // changes.json still holds the merge's rows for a at this commit, so the comment's plan is not the first of this commit.
+    expect(said()).toMatch(/wave 1's plan of a in this push \([^)]*\) changes nothing, and [^\n]*tf-apply-wave-1 applied a at this commit before this run \(terraform_data\.x\), so it says nothing of what was unknown when the change was reviewed/);
     // The comment's run wrote its wave 1 report where the merge's was (one report path per commit and wave), so the plan that
     // changed a is gone from the bucket; the pull request's report is next, and with no forge here the wave holds and says why.
     expect(said()).toContain("b reads the state of a, which wave 1 applied, and nothing says whether the outputs it reads were known when the change was reviewed: this push has no plan that changes a the wave can read");
@@ -83,6 +86,28 @@ describe("a wave that read an output unknown at review, applied again by a comme
     expect(await applyWave(work, { ...opts, wave: 2, now: T(4) })).toBe(0);
     expect(readLog(log)).toContain("applied b");
     expect(parseApplied(git(origin, "show", "chant/lifecycle:_gates/tf-apply/applied.jsonl"))).toEqual([expect.objectContaining({ gate: "wave-2", planDigest: fact.planDigest, approvedAt: T(3) })]);
+  });
+
+  it("a direct push whose upstream changes nothing applies the reader with no hold under on-destructive", async () => {
+    const { work, bin, log } = setup({
+      "terragucci.yml": "reports:\n  bucket: s3://reports\n  endpoint: http://s3.test\n",
+      "a/main.tf": state("a.tfstate"),
+      "b/main.tf": state("b.tfstate") + reads,
+    });
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    bucket();
+    const plans = join(work, "..", "plans");
+    writeFileSync(join(plans, "a.json"), JSON.stringify(settled));
+    writeFileSync(join(plans, "b.json"), JSON.stringify(bPlan));
+    const opts = { layers: [["a"], ["b"]], binary: bin, gate: "on-destructive" as const, env: { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" } };
+    const said = () => out.mock.calls.flat().join("\n");
+
+    // The push's first run: wave 1 plans a and changes nothing, and no earlier run of this commit applied a; wave 2 changes b.
+    expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
+    expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(0);
+    expect(said()).toMatch(/wave 1's plan of a in this push \([^)]*\) changes nothing, and no earlier run of this commit applied a, so its outputs were known when the change was reviewed/);
+    expect(said()).not.toContain("waits for an approval");
+    expect(readLog(log)).toContain("applied b");
   });
 });
 
@@ -104,7 +129,27 @@ describe("unknownReads", () => {
       pullReport: noPull,
     });
     expect(v.unknown).toEqual([expect.objectContaining({ root: "b", outputs: ["id"], carrier: "upstream-plan", from: "the merge's plan" })]);
-    expect(v.lines).toEqual(["the comment's plan changes nothing, so it says nothing of what was unknown when the change was reviewed"]);
+    expect(v.lines).toEqual(["the comment's plan changes nothing, and nothing here reads whether an earlier run of this commit applied it, so it says nothing of what was unknown when the change was reviewed"]);
+  });
+
+  it("takes a plan that changes nothing as known when no earlier run of this commit applied the upstream", async () => {
+    const v = await unknownReads([read], { upstreamPlans: async () => [{ plan: settled, from: "the push's plan" }], pullReport: noPull, appliedBefore: async () => undefined });
+    expect(v.unknown).toEqual([]);
+    expect(v.lines).toEqual(["the push's plan changes nothing, and no earlier run of this commit applied a, so its outputs were known when the change was reviewed", "b reads no output of a that the push's plan left unknown"]);
+  });
+
+  it("skips a plan that changes nothing when an earlier run of this commit applied the upstream, or that cannot be read", async () => {
+    const applied = await unknownReads([read], { upstreamPlans: async () => [{ plan: settled, from: "the resume's plan" }], pullReport: noPull, appliedBefore: async () => "the merge's run applied a" });
+    expect(applied.unknown).toEqual([expect.objectContaining({ carrier: "none" })]);
+    const unread = await unknownReads([read], {
+      upstreamPlans: async () => [{ plan: settled, from: "the resume's plan" }],
+      pullReport: noPull,
+      appliedBefore: async () => {
+        throw new Error("403");
+      },
+    });
+    expect(unread.unknown).toEqual([expect.objectContaining({ carrier: "none" })]);
+    expect(unread.lines[0]).toContain("could not be read (403)");
   });
 
   it("with only plans that change nothing, asks the pull request's report, and holds with no carrier when there is none", async () => {
