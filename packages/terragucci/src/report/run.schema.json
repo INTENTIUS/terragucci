@@ -43,6 +43,16 @@
                 "key": { "type": "string" }
               }
             }
+          },
+          "composed": {
+            "type": "object",
+            "description": "A root in a composed run (waves.compose): wave is the run's, own_wave the wave it would be in on its own, where the dependency order puts it.",
+            "required": ["wave", "module", "own_wave"],
+            "properties": {
+              "wave": { "type": "integer" },
+              "module": { "type": "string" },
+              "own_wave": { "type": "integer" }
+            }
           }
         }
       }
@@ -99,6 +109,29 @@
                     "action": { "enum": ["create", "update", "replace", "delete", "forget"] },
                     "status": { "enum": ["done", "in-flight", "waiting", "not-applied"] },
                     "done_at": { "type": "string", "description": "When a read first found it done." }
+                  }
+                }
+              }
+            }
+          },
+          "composed": {
+            "type": "object",
+            "description": "The wave whose job runs a composed run (waves.compose): its roots, upstreams first; the composed plan's digest once planned; the roots that read a value unknown at plan time; and, once the apply ended, how each root's part of it ended and its state. A wave whose roots all moved into the run keeps its row with no roots.",
+            "required": ["roots"],
+            "properties": {
+              "roots": { "type": "array", "items": { "type": "string" } },
+              "digest": { "type": ["string", "null"] },
+              "unknown": { "type": "array", "items": { "type": "string" } },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "module"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "module": { "type": "string" },
+                    "apply": { "enum": ["applied", "partial", "failed", "not-started", "no-changes"] },
+                    "state": { "enum": ["written", "unchanged", "not-written"] }
                   }
                 }
               }

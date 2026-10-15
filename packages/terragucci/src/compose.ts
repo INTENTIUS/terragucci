@@ -1490,3 +1490,23 @@ export class ComposedRun {
 }
 
 const isStoredBackend = (b: string): boolean => b === "s3" || b === "gcs" || b === "azurerm";
+
+/**
+ * The apply's waves with a composed run in the earliest wave its roots are
+ * in: its roots taken out of every wave, and in that wave either the run's
+ * target (`target`, as chant's spec holds it) or its roots, upstreams first
+ * (as the run view and the gates read them). A wave left with none stays,
+ * empty: it finds nothing to apply.
+ */
+export function wavesWithRun(waves: readonly string[][], c: Composition | undefined, target: boolean): string[][] {
+  if (!c || c.wave === undefined || c.fallback) return waves.map((w) => [...w]);
+  const inRun = new Set(c.roots);
+  return waves.map((w, i) => [...w.filter((r) => !inRun.has(r)), ...(i + 1 === c.wave ? (target ? [composeTarget(c.wave)] : c.order) : [])]);
+}
+
+/** The log line that says what `waves.compose` came to. */
+export function compositionLine(c: Composition): string {
+  return c.fallback || c.wave === undefined
+    ? `compose: ${c.fallback?.reason ?? "no wave runs it"}, so the change applies in waves`
+    : `compose: ${c.order.join(", ")} apply as one composed run in wave ${c.wave} (${composeTarget(c.wave)})`;
+}

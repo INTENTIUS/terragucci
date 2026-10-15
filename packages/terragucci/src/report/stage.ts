@@ -1896,7 +1896,7 @@ function outsideFiles(repo: string, root: string, paths: string[], files: string
  * the files count there. A base config that cannot be read selects nothing
  * for its settings, and the log says so.
  */
-async function outsideRoots(
+export async function outsideRoots(
   repo: string,
   base: string,
   configPath: string | undefined,

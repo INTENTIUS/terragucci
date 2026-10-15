@@ -15,7 +15,7 @@ import { esc } from "./html";
 import { progressCounts, type ProgressStatus, type WaveProgress } from "../apply-progress";
 import { blastRadius, GRAPH_CSS, phaseTotals, renderGraphSvg, renderTimelineSvg, span, type Span } from "./graph";
 import type { ObjectStore } from "./object-store";
-import type { ReportWave, WaveState } from "./schema";
+import type { ReportComposedMember, ReportWave, WaveState } from "./schema";
 import { updateJson, type Wait } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
@@ -52,6 +52,18 @@ export interface RunWave {
   spans?: Span[];
   /** A choudoufu wave's resources, done, in flight or waiting, as its estates' records stood at the last read (../apply-progress.ts). */
   progress?: WaveProgress;
+  /**
+   * The wave whose job runs a composed run (`waves.compose`): its roots,
+   * upstreams first; the composed plan's digest once planned; the roots that
+   * read a value unknown at plan time; and, once the apply ended, how each
+   * root's part of it ended and its state.
+   */
+  composed?: {
+    roots: string[];
+    digest?: string | null;
+    unknown?: string[];
+    members?: { root: string; module: string; apply?: ReportComposedMember["apply"]; state?: ReportComposedMember["state"] }[];
+  };
   updated?: string;
 }
 
@@ -71,6 +83,8 @@ export interface RunRoot {
   state?: RunState;
   /** Its `terraform_remote_state` reads (under choudoufu, `terraform_estate_outputs` reads) of a state no root of the project holds: another project's, when the estate page finds it. */
   external?: (RunState & { data: string })[];
+  /** A root in a composed run: `wave` is the run's, `own_wave` the wave it would be in on its own, where the dependency order puts it. */
+  composed?: { wave: number; module: string; own_wave: number };
 }
 
 /** How many spans a wave keeps, newest last. */
@@ -97,6 +111,7 @@ export function runSkeleton(
   waves: readonly string[][],
   reads: ReadonlyMap<string, ReadonlySet<string>>,
   states: ReadonlyMap<string, { state?: RunState; external: (RunState & { data: string })[] }> = new Map(),
+  composed?: { wave?: number; order: string[]; modules: ReadonlyMap<string, string>; ownWave: ReadonlyMap<string, number> },
 ): RunView {
   const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
   return {
@@ -113,13 +128,14 @@ export function runSkeleton(
           reads: [...(reads.get(root) ?? [])].filter((u) => waveOf.has(u)).sort(),
           ...(s?.state ? { state: s.state } : {}),
           ...(s?.external.length ? { external: s.external } : {}),
+          ...(composed?.wave !== undefined && composed.modules.has(root) ? { composed: { wave: composed.wave, module: `module.${composed.modules.get(root)}`, own_wave: composed.ownWave.get(root) ?? i + 1 } } : {}),
         };
       }),
     ),
     waves: waves.map((roots, i) => {
       const number = i + 1;
       const from = [...new Set(roots.flatMap((r) => [...(reads.get(r) ?? [])]).map((u) => waveOf.get(u)).filter((n): n is number => n !== undefined && n !== number))].sort((a, b) => a - b);
-      return { number, roots: [...roots].sort(), reads: from, state: "not-started", gate: `wave-${number}` };
+      return { number, roots: [...roots].sort(), reads: from, state: "not-started", gate: `wave-${number}`, ...(composed?.wave === number ? { composed: { roots: composed.order } } : {}) };
     }),
   };
 }
