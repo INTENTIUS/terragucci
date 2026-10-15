@@ -56,9 +56,9 @@ case "$CMD" in
   *) sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 
-# The scenarios a loop runs by default, in order. Scenario 3 (b-waves) and
-# scenario 6 (b-composed) join this list when their cases below are written.
-SCENARIOS=(a-known a-output failure stale-plan)
+# The scenarios a loop runs by default, in order. Scenario 6 (b-composed) joins
+# this list when its case below is written.
+SCENARIOS=(a-known a-output b-waves failure stale-plan)
 
 ROOTS=(network app edge other)
 STATE_BUCKET=demo-terraform-state
@@ -166,6 +166,14 @@ demo_stalled() {
 state_input() { # root, resource name
   curl -fsS "$FLOCI/$STATE_BUCKET/$1.tfstate" 2>/dev/null \
     | jq -r --arg n "$2" '[.resources[]? | select(.mode == "managed" and .name == $n) | .instances[]?.attributes.input | if type == "object" then .value else . end][0] // "nothing" | tostring' 2>/dev/null \
+    || echo nothing
+}
+
+# A terraform_data's id in the root's state: the value terraform_data picks
+# when it creates the resource, unknown to any plan before that.
+state_id() { # root, resource name
+  curl -fsS "$FLOCI/$STATE_BUCKET/$1.tfstate" 2>/dev/null \
+    | jq -r --arg n "$2" '[.resources[]? | select(.mode == "managed" and .name == $n) | .instances[]?.attributes.id][0] // "nothing" | tostring' 2>/dev/null \
     || echo nothing
 }
 
@@ -295,8 +303,9 @@ scenario_title() {
     a-output)   echo "The same change, read through .output" ;;
     failure)    echo "app fails mid-apply, and a re-run finishes it" ;;
     stale-plan) echo "main moves after an approval, and the wave refuses the old plan" ;;
-    # b-waves (scenario 3, after terragucci#1012) and b-composed (scenario 6,
-    # after terragucci#1013) go here, with their files under example-demo/scenarios/.
+    b-waves)    echo "A new network, read downstream" ;;
+    # b-composed (scenario 6, after terragucci#1013) goes here, with its files
+    # under example-demo/scenarios/.
     *) return 1 ;;
   esac
 }
@@ -317,6 +326,11 @@ say() { # step
     a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
     a-output:applying)      echo "Wave 1 applies network; app and edge plan again on what it applied and apply with no approval, so their new values apply unreviewed" ;;
     a-output:applied)       echo "Applied: $(applied_values). app's and edge's values applied unreviewed: no review showed them" ;;
+    b-waves:pull-request)   echo "Pull request $PULL: network adds a subnet, and app adds four resources placed in it by reading its id" ;;
+    b-waves:planned)        echo "One plan note: network creates its subnet, and app's four new resources plan as known after apply, since the subnet's id is unknown until network applies: the review does not show the values they will get; other is not planned. $COST_STUB" ;;
+    b-waves:applying)       echo "Wave 1 applies network and creates the subnet; app's wave 2 then plans again on the id wave 1 applied" ;;
+    b-waves:approved)       echo "Wave 2 approved by the driver with its key, not by the pull request's review: app's resources in subnet $(state_id network subnet) apply after this approval" ;;
+    b-waves:applied)        echo "Applied: network's subnet $(state_id network subnet), and app's $(state_input app instance). app's four resources applied after the driver's approval, not the pull request's review: no review showed the subnet id they read" ;;
     failure:pull-request)   echo "Pull request $PULL: network 8080 -> 9090, and app gains a migration that fails while a marker object is in floci" ;;
     failure:planned)        echo "One plan note: network, app with its new migration, and edge; other is not planned. The driver has set the marker, so the migration will fail. $COST_STUB" ;;
     failure:applying)       echo "Wave 1 applies network; wave 2 applies app, whose migration runs after its listener" ;;
@@ -437,6 +451,7 @@ default_waiting() {
 
 waiting_label() {
   case "$SCENARIO:$WAVE" in
+    b-waves:2)    echo "Wave 2 waits for an approval: app read network's subnet id before it was known, and nobody reviewed the plan app made after wave 1. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
     failure:2)    echo "Wave 2 waits for an approval: the failed migration is tainted, so the re-run replaces it, and gate: on-destructive holds a replace" ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
@@ -504,6 +519,28 @@ stale_waiting() {
   CYCLE_DONE=1
 }
 
+# 3: B on waves (#1012). The pull request plans app on network's planned
+# outputs, where the new subnet's id is unknown, so app plans known after
+# apply. On main, wave 1 applies network; app's wave plans again on the id it
+# applied, and holds for an approval because nobody reviewed that plan
+# (apply.ts, byReads: "nobody reviewed the plan it made on those outputs"). The
+# driver checks the run says so, then approves it like any waiting wave: the
+# value applies after the driver's approval, not the pull request's review.
+b_waves_waiting() {
+  [ "$WAVE" = 2 ] || fail "wave $WAVE waits, not app's wave 2 ($RUN_URL)"
+  run_logs "$REPO" "$RUN_ID" 2>/dev/null | grep -q 'nobody reviewed the plan it made on those outputs' \
+    || fail "wave 2 waits, but its run does not say it read an output unknown at review ($RUN_URL)"
+  default_waiting
+}
+
+scenario_b_waves() {
+  on_waiting() { b_waves_waiting; }
+  open_pull
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  follow
+}
+
 scenario_stale_plan() {
   on_waiting() { stale_waiting; }
   open_pull
@@ -522,6 +559,7 @@ run_cycle() {
   mkdir -p "$WORK/c$CYCLE"
   case "$SCENARIO" in
     a-known|a-output) scenario_a ;;
+    b-waves) scenario_b_waves ;;
     failure) scenario_failure ;;
     stale-plan) scenario_stale_plan ;;
   esac
