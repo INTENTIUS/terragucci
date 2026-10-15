@@ -103,6 +103,7 @@ The note comments the plan back to the pull request, grouped. A group of two roo
 | Values that differ | the attributes whose values differ between the group's roots, by name |
 | Each root's plan | the root's whole plan in a collapsed block, with its `Plan:` line as the title and a link to its `plan.txt` |
 | Diff colors | each line's `+`, `-`, `~` or `-/+` moved to the first column, so the forge colors additions and removals |
+| Composed run | with [`waves.compose`](/terragucci/concepts/waves-and-approvals/#a-composed-run): one block naming the roots that plan and apply as one run and the wave that runs them, a table of each root's module and changes, and the values read before they were known; the wave's row says `composed`. On a `tf-apply` wave, once the run ends, what came of each root and its state. When the change applies in waves, one line that says why |
 | Cone plans | with `binary: choudoufu` ([choudoufu](/terragucci/concepts/glossary/#choudoufu)), each root planned with `-cone=<base>`: the cone's blocks and the estate's, or, when choudoufu planned the whole estate, its reason and the guard that tripped ([Cone plans](/terragucci/guides/use-a-binary/#cone-plans)) |
 
 A Terragrunt unit's plan is kept as JSON only, so its group shows the attribute names.

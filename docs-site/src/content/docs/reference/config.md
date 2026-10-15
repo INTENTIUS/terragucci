@@ -146,7 +146,7 @@ dashboards: true
 | `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `branches`: roots that apply from a branch other than the default; see [Apply from other branches](#apply-from-other-branches). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset. `point`: a workspace decision point every wave gate asks instead of waiting for an approval, read at base, with `approval: ledger`; see [A gate that asks a decision point](/terragucci/guides/approve-from-chat/#a-gate-that-asks-a-decision-point) |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
-| `waves` | none | `canary`, a list of roots that go out first, as wave 1; `after`, roots that apply after others they do not read (plain roots; see [Root order](#root-order)); `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
+| `waves` | none | `canary`, a list of roots that go out first, as wave 1; `after`, roots that apply after others they do not read (plain roots; see [Root order](#root-order)); `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)); `compose`, `true` to plan and apply the roots a change reaches as one composed run beside the waves, `false` when unset (plain roots on `tofu` or `terraform`; see [A composed run](#a-composed-run)); `compose_max`, the most roots one composed run covers, a whole number of 2 or more, 10 when unset |
 | `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay`: the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
 | `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift). A choudoufu root under live resource markers plans in full ([Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots)) |
@@ -229,6 +229,20 @@ waves:
 - the report lists the order under `roots[].dependencies`
 
 A root it orders but does not read plans on its own, and is never held back for an upstream with no state yet. A cycle, or a key or root that matches no root, is a config error that names them. A Terragrunt, Atmos or Terramate repo states its order in its own files, so `waves.after` there is a config error naming where. In a control repo, `waves.after` goes in `defaults` or a project's block, and `reconcile` writes it into the project's file.
+
+## A composed run
+
+`waves.compose: true` is opt-in, beside the waves. Without it each root plans and applies in its own run with its own state, in waves, and nothing below happens.
+
+```yaml
+waves:
+  compose: true
+  compose_max: 10
+```
+
+With it, the roots a change reaches and every root they read plan as one plan and apply as one apply, each root a module of a temporary root, each keeping its own state. The run happens in the job of the earliest wave its roots are in, under that wave's gate, and later waves no longer list its roots. The waves, their numbers, their gates and the rendered pipeline stay as they were. [A composed run](/terragucci/concepts/waves-and-approvals/#a-composed-run) says how the states are locked, written and kept, and when a change applies in waves instead.
+
+`config check` refuses `waves.compose: true` with `binary: choudoufu`, whose runs keep no state to split, and in a Terragrunt repo, whose units apply through Terragrunt. With `waves.jobs` above 1 the composed run is one share of its wave; with one apply job per identity its roots must all be in one group, and that group's job applies it.
 
 ## Apply before merge
 
