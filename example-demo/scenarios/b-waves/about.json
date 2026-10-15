@@ -1,5 +1,5 @@
 {
   "changes": "A pull request (a change up for review) adds a subnet to network and four resources to app that need the subnet's id.",
-  "watch": "Wave 1 (the first states to apply) builds the subnet, and only then does it get an id. App's new plan in wave 2 holds that id, which no review saw, so wave 2 waits for a person to approve it.",
+  "watch": "Wave 1 (the first states to apply) builds the subnet, and only then does it get an id. App's new plan (what it will change) in wave 2 holds that id, which no review saw, so wave 2 waits for a person to approve it.",
   "shows": "Nothing lands unseen, even a value that didn't exist at review. The driver, this demo's script, plays that person."
 }

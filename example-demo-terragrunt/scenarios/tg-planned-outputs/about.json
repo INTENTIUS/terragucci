@@ -1,5 +1,5 @@
 {
   "changes": "A pull request (a change up for review) adds two Terragrunt units: ledger makes a bucket, and billing reads its name.",
-  "watch": "Ledger isn't built yet, so Terragrunt alone would plan billing with a stand-in name. Here billing plans on the name from ledger's plan. Wave 2 (the second units to apply) checks that plan again after the merge.",
+  "watch": "Ledger isn't built yet, so Terragrunt alone would plan billing (work out its changes) with a stand-in name. Here billing plans on the name from ledger's plan. Wave 2 (the second units to apply) checks it after merging.",
   "shows": "The review showed what billing would get, and the pipeline checked that plan again before the apply."
 }

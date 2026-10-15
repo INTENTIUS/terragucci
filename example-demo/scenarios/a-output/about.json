@@ -1,5 +1,5 @@
 {
   "changes": "The same port change, but network's output is known only once network has applied.",
-  "watch": "App and edge plan as known after apply. When wave 1, the first states to apply, finishes, wave 2 plans again and holds until the driver, this demo's script, approves that plan.",
+  "watch": "App's and edge's plans (what each will change) show known after apply. When wave 1, the first states to apply, finishes, wave 2 plans again and holds until the driver, this demo's script, approves that plan.",
   "shows": "One expression decides whether a value gets reviewed, and nothing reaches a root without someone signing off."
 }
