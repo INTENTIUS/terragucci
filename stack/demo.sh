@@ -18,7 +18,9 @@
 # nothing), each terraform_data with its own state. terragucci applies them as
 # it applies any repo: one run per root, in waves in dependency order. Nothing
 # here makes the waves one transaction; a wave that applied stays applied when
-# a later one fails.
+# a later one fails. Scenario 6 (b-composed) turns on waves.compose in its own
+# pull request: the roots it reaches plan as one plan and apply as one apply,
+# each keeping its own state, and that is not one transaction either.
 #
 # demo.json is written to <reports bucket>/<prefix>/demo.json in floci at every
 # step:
@@ -56,9 +58,8 @@ case "$CMD" in
   *) sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 
-# The scenarios a loop runs by default, in order. Scenario 6 (b-composed) joins
-# this list when its case below is written.
-SCENARIOS=(a-known a-output b-waves failure stale-plan)
+# The scenarios a loop runs by default, in order.
+SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed)
 
 ROOTS=(network app edge other)
 STATE_BUCKET=demo-terraform-state
@@ -304,8 +305,7 @@ scenario_title() {
     failure)    echo "app fails mid-apply, and a re-run finishes it" ;;
     stale-plan) echo "main moves after an approval, and the wave refuses the old plan" ;;
     b-waves)    echo "A new network, read downstream" ;;
-    # b-composed (scenario 6, after terragucci#1013) goes here, with its files
-    # under example-demo/scenarios/.
+    b-composed) echo "A new network, read downstream, in one composed run" ;;
     *) return 1 ;;
   esac
 }
@@ -331,6 +331,11 @@ say() { # step
     b-waves:applying)       echo "Wave 1 applies network and creates the subnet; app's wave 2 then plans again on the id wave 1 applied" ;;
     b-waves:approved)       echo "Wave 2 approved by the driver with its key, not by the pull request's review: app's resources in subnet $(state_id network subnet) apply after this approval" ;;
     b-waves:applied)        echo "Applied: network's subnet $(state_id network subnet), and app's $(state_input app instance). app's four resources applied after the driver's approval, not the pull request's review: no review showed the subnet id they read" ;;
+    b-composed:pull-request) echo "Pull request $PULL: scenario 3's change, a subnet in network that app's four new resources read, and terragucci.yml turns on waves.compose for this pull request only, so the roots it reaches plan as one plan and apply as one apply. compose is opt-in beside the waves: every other scenario applies in waves" ;;
+    b-composed:planned)     echo "One plan note with one composed plan of $COMPOSED, each a module of the one run and each keeping its own state. app's four new resources plan as known after apply: the subnet's id is unknown until the run creates it, and the same apply computes them. The review does not show the values they will get; other is not planned. $COST_STUB" ;;
+    b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
+    b-composed:approved)    echo "Wave 1 approved by the driver with its key, for the composed run's digest; the pull request's review approved nothing. The re-run plans $COMPOSED again as one run and applies them in one apply" ;;
+    b-composed:applied)     echo "Applied in one apply: network's subnet $(state_id network subnet), and app's $(state_input app instance), computed in the same run after the driver's approval, not the pull request's review. Each state was written with what applied to it. Nothing here is atomic: had the apply failed part way, what applied would stay applied and each state would be written with what applied to it" ;;
     failure:pull-request)   echo "Pull request $PULL: network 8080 -> 9090, and app gains a migration that fails while a marker object is in floci" ;;
     failure:planned)        echo "One plan note: network, app with its new migration, and edge; other is not planned. The driver has set the marker, so the migration will fail. $COST_STUB" ;;
     failure:applying)       echo "Wave 1 applies network; wave 2 applies app, whose migration runs after its listener" ;;
@@ -451,6 +456,7 @@ default_waiting() {
 
 waiting_label() {
   case "$SCENARIO:$WAVE" in
+    b-composed:1) echo "Wave 1 waits for an approval of the composed run: app reads network's subnet id, unknown at plan time and computed in this apply, so no review showed the values app gets. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves the composed run's digest" ;;
     b-waves:2)    echo "Wave 2 waits for an approval: app read network's subnet id before it was known, and nobody reviewed the plan app made after wave 1. Nothing is destroyed, so gate: on-destructive alone would not hold it; the driver approves that plan" ;;
     failure:2)    echo "Wave 2 waits for an approval: the failed migration is tainted, so the re-run replaces it, and gate: on-destructive holds a replace" ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
@@ -541,6 +547,53 @@ scenario_b_waves() {
   follow
 }
 
+# 6: B composed (#1013). Scenario 3's change, with waves.compose: true added to
+# terragucci.yml in the pull request itself. tf-plan reads the config of the
+# head it plans, and a merge's wave reads the merge commit's (the apply job is
+# given no --base, so waveSettings in apply.ts reads the checkout), so the
+# pull request turns compose on for its own plan and apply, and the reset,
+# which forces main back to the base, turns it off. network, app and edge (edge
+# reads app) plan as one run in wave 1, the earliest wave of the three, as the
+# target compose:wave-1. app reads the subnet id unknown at plan time, so the
+# wave holds under gate: on-destructive (apply.ts, byReads), and the driver
+# approves wave-1, the gate chant knows, like any waiting wave.
+COMPOSED="network, app and edge"
+
+# The plan run says which roots it composed (report/stage.ts: "plan as one
+# composed run in wave"), or why the change applies in waves instead; a change
+# that did not compose stalls the cycle rather than show waves as scenario 6.
+b_composed_planned() {
+  local logs line roots
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  if ! line="$(grep -oE 'compose: [^ ].* plan as one composed run in wave [0-9]+' <<<"$logs" | head -1)" || [ -z "$line" ]; then
+    line="$(grep -oE 'compose: .*, so the change applies in waves' <<<"$logs" | head -1 || true)"
+    fail "the pull request's plan did not compose: ${line:-its run does not say} ($RUN_URL)"
+  fi
+  roots="${line#compose: }"
+  roots="${roots% plan as one composed run in wave *}"
+  COMPOSED="$(sed -E 's/, ([^,]*)$/ and \1/' <<<"$roots")"
+}
+
+b_composed_waiting() {
+  local logs
+  [ "$WAVE" = 1 ] || fail "wave $WAVE waits, not wave 1, which carries the composed run ($RUN_URL)"
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  grep -q 'apply as one composed run in wave 1 (compose:wave-1)' <<<"$logs" \
+    || fail "wave 1 waits, but its run does not say it carries the composed run ($RUN_URL)"
+  grep -q 'nobody reviewed the plan it made on those outputs' <<<"$logs" \
+    || fail "wave 1 waits, but its run does not say the composed run read a value unknown at plan time ($RUN_URL)"
+  default_waiting
+}
+
+scenario_b_composed() {
+  on_waiting() { b_composed_waiting; }
+  open_pull
+  b_composed_planned
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  follow
+}
+
 scenario_stale_plan() {
   on_waiting() { stale_waiting; }
   open_pull
@@ -560,6 +613,7 @@ run_cycle() {
   case "$SCENARIO" in
     a-known|a-output) scenario_a ;;
     b-waves) scenario_b_waves ;;
+    b-composed) scenario_b_composed ;;
     failure) scenario_failure ;;
     stale-plan) scenario_stale_plan ;;
   esac
@@ -611,6 +665,14 @@ reset_base() {
       "$FLOCI/$STATE_BUCKET/$root.tfstate" || fail "could not write $root's base state back"
   done
   marker_clear
+  # A composed run (scenario 6) that stopped part way may leave its lock on a
+  # state, or a state it could not write kept beside it, which the next
+  # composed run would write before it plans (packages/terragucci/src/compose.ts).
+  # No run is in progress here (quiet), so neither belongs to a live run.
+  for root in "${ROOTS[@]}"; do
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.tflock" || true
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.terragucci-unwritten" || true
+  done
   if [ "$(remote_head "$REPO" main)" != "$base" ]; then
     before="$(last_run_id)"
     git -C "$DEMO_STATE/base-tree" push -q --force "$REMOTE" "$base:refs/heads/main" 2>/dev/null || fail "could not force main back to ${base:0:8}"
