@@ -576,7 +576,7 @@ export interface ProjectSettings {
    * can comment, push a branch and open a pull request; the agent itself never
    * holds it.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -1075,7 +1075,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment, drift)`);
+      for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, login, comment, drift)`);
+      if (a.login !== undefined && (typeof a.login !== "string" || !AGENT_LOGIN.test(a.login))) problems.push(`${where}.agent.login must be the forge login the agent's token acts as`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
       else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
@@ -1117,7 +1118,20 @@ export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
 export const COST_KEYS = ["key_secret", "command", "approve_above"];
 export const PASS_KEYS = ["secrets", "vars"];
-export const AGENT_KEYS = ["via", "token_env", "comment", "drift"];
+export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift"];
+
+/** A forge login, as `agent.login` takes it. */
+export const AGENT_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$/;
+
+/**
+ * `config check`'s warning when `agent.token_env` is set without
+ * `agent.login`: a pull request's author can use the agent's secret to post a
+ * review as the agent's account, and without its login nothing excludes it.
+ */
+export function agentLoginWarning(agent: { token_env?: unknown; login?: unknown } | undefined): string | undefined {
+  if (!agent || typeof agent.token_env !== "string" || !agent.token_env || (typeof agent.login === "string" && agent.login)) return undefined;
+  return `agent.token_env is set without agent.login, so the agent's account isn't excluded from approving a change: set agent.login to the login ${agent.token_env}'s token acts as`;
+}
 
 function checkSteps(v: unknown, where: string, problems: string[]): void {
   if (!Array.isArray(v)) {

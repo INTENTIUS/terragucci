@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resolutionRefusal, type ResolutionRecord } from "../src/apply";
-import { approvalModeOf, requireSignedOf, validateConfig } from "../src/config";
+import { agentLoginWarning, approvalModeOf, requireSignedOf, validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { countable, forgeCommits, gitChange, involvedIn, judge, noreplyLogin, notCounted, requestedBy, tokenUsers, whyInvolved, type ChangeCommit } from "../src/involved";
+import { AGENT_NOT_EXCLUDED, countable, forgeCommits, pullInvolvement, gitChange, involvedIn, judge, noreplyLogin, notCounted, requestedBy, tokenUsers, whyInvolved, type ChangeCommit } from "../src/involved";
 import { gateSealPayload } from "../src/seal";
 import { git, tmp, write } from "./helpers";
 import { gateSigners, signerLine, sshsig, sshKey } from "./sshsig";
@@ -152,5 +152,40 @@ describe("approval.require_signed", () => {
     expect(approvalModeOf("pr-review")).toBe("pr-review");
     expect(requireSignedOf({ require_signed: true })).toBe(true);
     expect(requireSignedOf("ledger")).toBe(false);
+  });
+});
+
+describe("agent.login", () => {
+  const untouched: ChangeCommit[] = [{ sha: B, message: "alice's own change\n", authorLogin: "alice", authorEmail: "alice@example.com" }];
+
+  it("a review by agent.login on a pull request the agent never touched doesn't count, whatever its case", () => {
+    const inv = involvedIn({ author: "alice", pr: 7, commits: untouched, agentLogin: "acme-agent" });
+    expect(judge(["Acme-Agent", "dave"], inv)).toEqual({ by: ["dave"], excluded: [{ login: "Acme-Agent", reason: "acme-agent is the account the agent's token acts as (agent.login)" }] });
+  });
+
+  it("a ledger approval in agent.login's name doesn't count", () => {
+    const inv = involvedIn({ commits: untouched, agentLogin: "acme-agent" });
+    const r: ResolutionRecord = { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "github:acme-agent", timestamp: "2026-10-04T10:00:00.000Z", planDigest: "sha256:abc" };
+    expect(resolutionRefusal(r, { involved: inv })?.reason).toBe("acme-agent is the account the agent's token acts as (agent.login), so github:acme-agent's approval doesn't count");
+  });
+
+  it("the forge's pull request reads put agent.login in the set, and say so when agent.token_env is set without it", async () => {
+    const calls = { repo: "acme/infra", get: async () => [], post: async () => null };
+    const f: Fetch = async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => "" }) as never;
+    const pr = { number: 7, head: B, author: "alice" };
+    const withLogin = await pullInvolvement({ forge: "github", calls, pr, env: {}, fetch: f, agentTokenEnv: "AGENT_TOKEN", agentLogin: "acme-agent" });
+    expect(judge(["acme-agent"], withLogin).by).toEqual([]);
+    expect(withLogin.notes).not.toContain(AGENT_NOT_EXCLUDED);
+    const without = await pullInvolvement({ forge: "github", calls, pr, env: {}, fetch: f, agentTokenEnv: "AGENT_TOKEN" });
+    expect(without.notes).toContain(AGENT_NOT_EXCLUDED);
+    expect(AGENT_NOT_EXCLUDED).toMatch(/^the agent's account isn't excluded: set agent.login/);
+  });
+
+  it("config check warns when agent.token_env is set without agent.login, and the key takes a login", () => {
+    expect(agentLoginWarning({ token_env: "AGENT_FORGE_TOKEN" })).toBe("agent.token_env is set without agent.login, so the agent's account isn't excluded from approving a change: set agent.login to the login AGENT_FORGE_TOKEN's token acts as");
+    expect(agentLoginWarning({ token_env: "AGENT_FORGE_TOKEN", login: "acme-agent" })).toBeUndefined();
+    expect(agentLoginWarning(undefined)).toBeUndefined();
+    expect(() => validateConfig({ agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", login: "acme-agent" } }, "terragucci.yml")).not.toThrow();
+    expect(() => validateConfig({ agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", login: "$(id)" } }, "terragucci.yml")).toThrow(/agent.login must be the forge login/);
   });
 });

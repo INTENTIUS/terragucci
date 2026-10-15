@@ -55,6 +55,7 @@ An approval counts only from someone who had no hand in the change it approves. 
 | each author, co-author and committer of the commits on the head being applied | git, for the commits after the [rule commit](#rule-commit) (merge commits left out), and the forge's list of the pull request's commits, which keeps them after a squash merge |
 | each person whose `/terragucci agent` comment produced one of those commits | the commit's `Requested-by: <login>` trailer, which the agent's push job writes ([agent](/terragucci/guides/agent-change-a-pull-request/)) |
 | for a drift pull request, the person who started the drift run, when a person did | the same trailer, on the drift agent's commit ([drift agent](/terragucci/guides/agent-fix-drift/)) |
+| the agent's account, on every pull request | [`agent.login`](/terragucci/reference/config/#the-agent-comment) in the config; without it, `config check` warns and the wave log and the plan note say the account isn't excluded |
 | the users the pipeline's token and `agent.token_env`'s token act as | the forge's `GET /user` with each token the job holds, and the `Pushed-by: <login>` trailer the agent's push job writes with its own |
 
 Logins compare without regard to case. A commit's author is known by the login the forge gives for it, by the login in a forge's noreply address, and by the address itself. On GitLab, which gives no login for a commit, an author counts by a noreply address alone.

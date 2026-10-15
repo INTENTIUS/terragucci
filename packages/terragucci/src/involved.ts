@@ -24,6 +24,7 @@
  * the forge gives for the commit.
  */
 import { spawnSync } from "node:child_process";
+import { findConfig, loadConfig } from "./config";
 import type { Fetch } from "./forge";
 import type { ForgeCalls, ReviewedPull } from "./review";
 
@@ -61,6 +62,25 @@ export interface Involved {
 export interface Excluded {
   login: string;
   reason: string;
+}
+
+/** What the log and the plan note say when `agent.token_env` is set and `agent.login` is not. */
+export const AGENT_NOT_EXCLUDED = "the agent's account isn't excluded: set agent.login to the login agent.token_env's token acts as";
+
+/**
+ * `agent.login` and `agent.token_env` from the config in `dir` (the job's
+ * checkout of the default branch), for a job that judges an approval and has
+ * no other way to read them. Empty when there is no config or it can't be read.
+ */
+export async function agentSettingsAt(dir: string): Promise<{ agentLogin?: string; agentTokenEnv?: string }> {
+  try {
+    const path = findConfig(dir);
+    if (!path) return {};
+    const agent = (await loadConfig(path)).agent;
+    return { ...(typeof agent?.login === "string" && agent.login ? { agentLogin: agent.login } : {}), ...(typeof agent?.token_env === "string" && agent.token_env ? { agentTokenEnv: agent.token_env } : {}) };
+  } catch {
+    return {};
+  }
 }
 
 const norm = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
@@ -108,7 +128,7 @@ export function noreplyLogin(email: string): string | undefined {
  * authors, co-authors and committers, the logins their trailers name, and
  * the tokens' users. `what` names the pull request as the forge does.
  */
-export function involvedIn(o: { author?: string; pr?: number; what?: string; commits: readonly ChangeCommit[]; tokens?: readonly TokenUser[]; notes?: string[] }): Involved {
+export function involvedIn(o: { author?: string; pr?: number; what?: string; commits: readonly ChangeCommit[]; tokens?: readonly TokenUser[]; notes?: string[]; agentLogin?: string }): Involved {
   const people: Involvement[] = [];
   const add = (who: string | undefined, why: string): void => {
     if (!who || !who.trim()) return;
@@ -125,6 +145,8 @@ export function involvedIn(o: { author?: string; pr?: number; what?: string; com
     for (const who of committed) if (who) add(who, `${who} committed ${short(c.sha)}`);
     for (const login of trailerValues(c.message, "Pushed-by")) add(login, `${login} is the user the agent's token acts as, and it pushed ${short(c.sha)}`);
   }
+  // agent.login: a pull request's author can post a review as the agent's account with its secret, so it never approves.
+  if (o.agentLogin) add(o.agentLogin, `${o.agentLogin} is the account the agent's token acts as (agent.login)`);
   const notes = [...(o.notes ?? [])];
   for (const t of o.tokens ?? []) {
     if (t.login) add(t.login, `${t.login} is the user ${t.which} acts as`);
@@ -277,6 +299,8 @@ export async function pullInvolvement(o: {
   fetch?: Fetch;
   git?: { repo: string; base?: string; head: string };
   agentTokenEnv?: string;
+  /** `agent.login`: the account the agent's token acts as, never an approver. */
+  agentLogin?: string;
 }): Promise<Involved> {
   const notes: string[] = [];
   const commits: ChangeCommit[] = [];
@@ -293,7 +317,8 @@ export async function pullInvolvement(o: {
     if (got.note) notes.push(got.note);
   }
   const tokens = await tokenUsers({ forge: o.forge, env: o.env, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.agentTokenEnv ? { agentTokenEnv: o.agentTokenEnv } : {}) });
-  return involvedIn({ ...(o.pr?.author ? { author: o.pr.author } : {}), ...(o.pr ? { pr: o.pr.number } : {}), what: o.forge === "gitlab" ? "merge request" : "pull request", commits, tokens, notes });
+  if (o.agentTokenEnv && !o.agentLogin) notes.push(AGENT_NOT_EXCLUDED);
+  return involvedIn({ ...(o.pr?.author ? { author: o.pr.author } : {}), ...(o.pr ? { pr: o.pr.number } : {}), what: o.forge === "gitlab" ? "merge request" : "pull request", commits, tokens, notes, ...(o.agentLogin ? { agentLogin: o.agentLogin } : {}) });
 }
 
 /** Approvers with those the rule leaves out taken away, and the people left out. With no involvement, every approver counts. */

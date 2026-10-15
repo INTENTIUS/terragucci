@@ -32,6 +32,14 @@ describe("config check", () => {
     expect(JSON.parse(ok.out).results.ok).toBe(true);
   });
 
+  it("warns when agent.token_env is set without agent.login, and not once agent.login names the agent's account", async () => {
+    const yml = "binary: terraform\nforge: github\nagent:\n  via: forge\n  token_env: AGENT_FORGE_TOKEN\n";
+    const without = JSON.parse((await check(write(tmp(), { "terragucci.yml": yml }))).out).results;
+    expect(without.warnings).toContain("agent.token_env is set without agent.login, so the agent's account isn't excluded from approving a change: set agent.login to the login AGENT_FORGE_TOKEN's token acts as");
+    const withLogin = JSON.parse((await check(write(tmp(), { "terragucci.yml": `${yml}  login: acme-agent\n` }))).out).results;
+    expect(withLogin.warnings ?? []).not.toContain(expect.stringContaining("agent.login"));
+  });
+
   it("refuses a terragucci.yml that is a list, instead of checking it as the empty config (#803)", async () => {
     const refused = await check(write(tmp(), { "terragucci.yml": "- binary: terraform\n" }));
     expect(refused.code).toBe(2);

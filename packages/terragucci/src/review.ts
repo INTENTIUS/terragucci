@@ -313,7 +313,7 @@ function reviewOf(o: { env: NodeJS.ProcessEnv; forge: "github" | "forgejo" | "gi
  * request's head (`TG_PR`, `TG_SHA`). The waves come from the report in
  * `report` (the plan job) or from the head's plan note (the review job).
  */
-export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo"; report?: string; agentTokenEnv?: string; log?: (line: string) => void }): Promise<{ state: "pending" | "success"; description: string }> {
+export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo"; report?: string; agentTokenEnv?: string; agentLogin?: string; log?: (line: string) => void }): Promise<{ state: "pending" | "success"; description: string }> {
   const env = o.env ?? process.env;
   const f = forgeCalls(env, o.fetch);
   const number = (env.TG_PR ?? "").trim();
@@ -336,7 +336,7 @@ export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch
     description = "no wave waits for an approval";
   } else {
     const reviewed = await reviewsOf(f, pr, o.forge);
-    const involved = await pullInvolvement({ forge: o.forge, calls: f, pr, env, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.agentTokenEnv ? { agentTokenEnv: o.agentTokenEnv } : {}) });
+    const involved = await pullInvolvement({ forge: o.forge, calls: f, pr, env, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.agentTokenEnv ? { agentTokenEnv: o.agentTokenEnv } : {}), ...(o.agentLogin ? { agentLogin: o.agentLogin } : {}) });
     const { by, excluded } = countable(reviewed.by, involved);
     for (const e of excluded) o.log?.(notCounted(e, "review"));
     const which = `wave ${waits.join(", ")}`;

@@ -52,9 +52,9 @@
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
- *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
+ *   terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci post status|note|reply|stale <args> [--forge github|gitlab|forgejo]   (say something on a pull request or commit through chant's forge client; the generated pipeline's tg function runs it)
- *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
+ *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status] [--agent-login <login>]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
  *   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
  *   terragucci review post --dir <dir> [--forge gitlab]   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
@@ -81,7 +81,7 @@ import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
 import { environmentTips } from "./environment-tips";
-import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -178,9 +178,9 @@ const USAGE = `usage:
   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
-  terragucci approval-status [--forge github|forgejo] [--report <dir>]
+  terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]
   terragucci post status|note|reply|stale <args> [--forge github|gitlab|forgejo]
-  terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
+  terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status] [--agent-login <login>]
   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]
   terragucci review post --dir <dir> [--forge gitlab]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
@@ -936,7 +936,7 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("plan-note's --forge is github or forgejo");
         const report = str(flags, "report") ?? "terragucci-report";
         const root = str(flags, "root");
-        const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}) });
+        const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}), ...(str(flags, "agent-login") ? { agentLogin: str(flags, "agent-login") } : {}) });
         for (const line of said) console.log(line);
         return 0;
       }
@@ -989,7 +989,8 @@ export async function main(argv: string[]): Promise<number> {
         const forge = str(flags, "forge") ?? "github";
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("approval-status's --forge is github or forgejo");
         const report = str(flags, "report");
-        const posted = await approvalStatus({ forge, ...(report ? { report: resolve(cwd, report) } : {}), log: (l) => console.log(`terragucci approval-status: ${l}`) });
+        const agentLogin = str(flags, "agent-login");
+        const posted = await approvalStatus({ forge, ...(report ? { report: resolve(cwd, report) } : {}), ...(agentLogin ? { agentLogin } : {}), log: (l) => console.log(`terragucci approval-status: ${l}`) });
         console.log(`terragucci approval-status: ${posted.state}: ${posted.description}`);
         return 0;
       }
@@ -1087,6 +1088,11 @@ export async function main(argv: string[]): Promise<number> {
             } catch {
               // The roots could not be listed (no Atmos on the path): no tip.
             }
+          }
+          // agent.token_env without agent.login: the agent's account can approve a change (./involved.ts).
+          for (const agent of [config.agent, ...Object.values(config.projects ?? {}).map((p) => (p as { agent?: typeof config.agent }).agent)]) {
+            const w = agentLoginWarning(agent);
+            if (w && !warnings.includes(w)) warnings.push(w);
           }
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);

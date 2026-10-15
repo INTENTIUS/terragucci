@@ -172,7 +172,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
+import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -297,6 +297,8 @@ export interface PipelineInput {
   approval?: Approval;
   /** `approval: pr-review`: on GitHub and Forgejo the plan job and a review job post `terragucci/approval` on the pull request's head. */
   prReview?: boolean;
+  /** `agent.login`: the agent's account, which the plan note and `terragucci/approval` never count as an approver (./involved.ts). */
+  agentLogin?: string;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
   /** `policy:` is set; the check job then runs the policy's tests, which read the policy from the default branch, so it clones with full history. */
@@ -1915,10 +1917,10 @@ export function replanDecideScript(layers: string[][], forge: Exclude<ForgeName,
  * and `terragucci/plan` from its report (`terragucci plan-note`), and under
  * `approval: pr-review` `terragucci/approval` from the same report.
  */
-export function planNoteScript(forge: Exclude<ForgeName, "gitlab">, options: { replan?: boolean; prReview?: boolean } = {}): string {
+export function planNoteScript(forge: Exclude<ForgeName, "gitlab">, options: { replan?: boolean; prReview?: boolean; agentLogin?: string } = {}): string {
   return [
     "set -u",
-    `terragucci plan-note --forge ${forge} --report ${REPORT_DIR} --plan-result "\${TG_PLAN_RESULT:-}"${options.replan ? ' ${TG_ROOT:+--root "$TG_ROOT"}' : ""}${options.prReview ? " --approval-status" : ""}`,
+    `terragucci plan-note --forge ${forge} --report ${REPORT_DIR} --plan-result "\${TG_PLAN_RESULT:-}"${options.replan ? ' ${TG_ROOT:+--root "$TG_ROOT"}' : ""}${options.prReview ? " --approval-status" : ""}${options.agentLogin ? ` --agent-login ${options.agentLogin}` : ""}`,
   ].join("\n");
 }
 
@@ -2134,6 +2136,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (ephemeral && forge === "gitlab" && input.gitlabToken === "protected") throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_PROTECTED}`);
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
+  // agent.login is checked against a login's pattern (config.ts), so it is safe on a command line.
+  const agentLogin = input.agentLogin && AGENT_LOGIN.test(input.agentLogin) ? input.agentLogin : undefined;
   // review.agent: an apply job reads the verdict from the review job's artifact in the pull request's run, which takes actions: read on GitHub.
   const reviewRead: Record<string, string> = input.review ? { actions: "read" } : {};
   // A job asks the forge for an OIDC token when it assumes a role, by oidc or by unit path.
@@ -2781,7 +2785,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [
         new Step({ name: "Fetch the plan report", uses: download, "continue-on-error": true, with: { name: artifact, path: REPORT_DIR } } as never),
         // Forgejo ignores continue-on-error, so the post runs whatever the download did: a plan job that failed before its report still fails terragucci/plan.
-        new Step({ name: "Post the plan note and terragucci/plan", if: "always()", shell: "bash", run: planNoteScript(forge, { replan, prReview }) }),
+        new Step({ name: "Post the plan note and terragucci/plan", if: "always()", shell: "bash", run: planNoteScript(forge, { replan, prReview, ...(agentLogin ? { agentLogin } : {}) }) }),
       ],
     } as never);
   const planNote = noteJob("plan", `github.event_name == 'pull_request' && ${sameRepo}`, REPORT_DIR, { TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}" }, false);
@@ -2932,7 +2936,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: `github.event_name == 'pull_request_review' && ${sameRepo}`,
       permissions: { contents: "read", statuses: "write", "pull-requests": "read" },
       env: { TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}" },
-      steps: [new Step({ name: "Say on the head whether its waiting waves are approved", shell: "bash", run: `terragucci approval-status --forge ${forge}` })],
+      steps: [new Step({ name: "Say on the head whether its waiting waves are approved", shell: "bash", run: `terragucci approval-status --forge ${forge}${agentLogin ? ` --agent-login ${agentLogin}` : ""}` })],
     } as never) as never);
   }
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);

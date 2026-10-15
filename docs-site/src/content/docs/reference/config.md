@@ -504,7 +504,16 @@ agent:
     timeout: 30
 ```
 
-`comment: true` takes defaults; `agent.token_env` is the push token's secret name.
+`comment: true` takes defaults; `agent.token_env` is the push token's secret name. Set `agent.login` to the forge login that token acts as:
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  login: acme-agent
+```
+
+No approval by `agent.login` counts, on any pull request, whether the agent touched it or not: a pull request's author can edit the workflow in their own pull request and use the agent's secret to post a review as that account. `terragucci config check` warns when `agent.token_env` is set without `agent.login`, and the wave log and the plan note say the agent's account isn't excluded.
 
 | Key | Default | Meaning |
 |---|---|---|

@@ -56,6 +56,7 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
+import { agentSettingsAt } from "./involved";
 import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
@@ -292,7 +293,7 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     const sha = mr.sha;
     if (typeof sha !== "string" || !SHA.test(sha)) return broke(`!${iid}'s head is not a commit`);
     if (parsed.kind === "apply") {
-      const verdict = await openChecks({ api, id, mr, base, ...(ask.env ? { env: ask.env } : {}), ...(ask.fetch ? { fetch: ask.fetch } : {}), ...(ask.requires ? { requires: ask.requires } : {}), ...(ask.wait ? { wait: ask.wait } : {}) });
+      const verdict = await openChecks({ api, id, mr, base, ...(await agentSettingsAt(process.cwd())), ...(ask.env ? { env: ask.env } : {}), ...(ask.fetch ? { fetch: ask.fetch } : {}), ...(ask.requires ? { requires: ask.requires } : {}), ...(ask.wait ? { wait: ask.wait } : {}) });
       if (verdict && "fail" in verdict) return broke(verdict.fail);
       if (verdict) return reply(verdict.refuse);
     }

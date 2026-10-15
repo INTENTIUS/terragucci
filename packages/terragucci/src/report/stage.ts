@@ -30,7 +30,7 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
-import { approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
@@ -2180,6 +2180,8 @@ async function finish(
   const limit = noteLimit(options.forge ?? settings.forge ?? forgeOfEnv(env), report);
   // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
   const notices: string[] = [...selection];
+  // agent.token_env without agent.login: nothing excludes the agent's account from approving this change (../involved.ts).
+  if (stage === "tf-plan" && agentLoginWarning(settings.agent) && report.waves.some((w) => w.waits === true)) notices.push(`The agent's account isn't excluded from approving this change: set agent.login to the login agent.token_env's token acts as.`);
   // Without a token the stage asks as a reader, which only a public repo answers; the note job asks again with its token.
   let leftSchedule: { cron: string; added?: string } | undefined;
   if (!drift && typeof settings.drift === "string") {

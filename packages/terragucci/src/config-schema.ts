@@ -14,6 +14,7 @@
 import {
   AGENT_COMMENT_KEYS,
   AGENT_KEYS,
+  AGENT_LOGIN,
   AGENT_VIA,
   APPLY_BRANCH,
   POINT_NAME,
@@ -440,6 +441,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       ...map(AGENT_KEYS, {
         via: enumOf(AGENT_VIA),
         token_env: { type: "string", minLength: 1 },
+        login: { type: "string", pattern: AGENT_LOGIN.source, description: "The forge login agent.token_env's token acts as. No approval by it counts." },
         comment: agentRun,
         drift: agentRun,
       }, { required: ["via", "token_env"] }),

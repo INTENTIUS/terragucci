@@ -344,6 +344,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
     ...(approvalModeOf(options.settings?.approval) ? { approval: approvalModeOf(options.settings?.approval) } : {}),
     ...(approval.value === "pr-review" ? { prReview: true } : {}),
+    ...(settings.agent?.login ? { agentLogin: settings.agent.login } : {}),
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),

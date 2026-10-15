@@ -50,7 +50,7 @@ import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDeci
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
-import { countable, notCounted, pullInvolvement } from "./involved";
+import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
 import { poster, type Fetch } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
 import { literalDependencies } from "./terragrunt";
@@ -798,7 +798,7 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
     const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, sha, mayWrite);
     if (approval.changes.length > 0) return refuse(`pull request ${number} is not approved: ${approval.changes.join(", ")} asked for changes, so nothing is applied`);
     // A review counts only from someone who had no hand in the change (./involved.ts).
-    const involved = await pullInvolvement({ forge: i.forge ?? "github", calls: { repo: repoName, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) }, pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}) });
+    const involved = await pullInvolvement({ forge: i.forge ?? "github", calls: { repo: repoName, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) }, pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}), ...(await agentSettingsAt(i.repo ?? process.cwd())) });
     const { by, excluded } = countable(approval.by, involved);
     for (const line of involved.notes) console.log(`terragucci: ${line}`);
     if (by.length === 0) return refuse(`pull request ${number} is not approved: no reviewer other than its author approved its head ${short(sha)}${excluded.map((e) => `; ${notCounted(e, "review")}`).join("")}, so nothing is applied`);
@@ -930,7 +930,7 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
     }
   };
   const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, o.sha, mayWrite);
-  const involved = await pullInvolvement({ forge: o.forge ?? "github", calls: { repo, get: (p) => get(p.replace(`repos/${repo}/`, "")), post: async () => null }, pr: { number: o.pr, head: o.sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env, fetch: doFetch });
+  const involved = await pullInvolvement({ forge: o.forge ?? "github", calls: { repo, get: (p) => get(p.replace(`repos/${repo}/`, "")), post: async () => null }, pr: { number: o.pr, head: o.sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
   const { by, excluded } = countable(approval.by, involved);
   if (approval.changes.length > 0 || by.length === 0) throw new Error(`no reviewer other than its author approved its head ${short(o.sha)}${excluded.map((e) => `; ${notCounted(e, "review")}`).join("")}`);
   // The forge merges only while the head is still `sha`, with apply.merge_token_env's secret when set: Forgejo refuses a merge made with the job's own token.

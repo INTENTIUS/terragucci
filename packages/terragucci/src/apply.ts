@@ -129,7 +129,7 @@ import { overrideCommand } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ForgeCalls, type ReviewedPull, type ReviewOutcome } from "./review";
-import { judge, mergeExcluded, notCounted, pullInvolvement, sameLogin, whyInvolved, type Excluded, type Involved } from "./involved";
+import { AGENT_NOT_EXCLUDED, judge, mergeExcluded, notCounted, pullInvolvement, sameLogin, whyInvolved, type Excluded, type Involved } from "./involved";
 import { gitlabReviewCalls, gitlabReviewOf } from "./gitlab-agent";
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal, type GateSigners } from "./seal";
@@ -2686,7 +2686,7 @@ async function waveInvolvement(repo: string, options: ApplyWaveOptions, rule: Ap
   } catch (e) {
     notes.push(`the pull request that made ${sha.slice(0, 8)} could not be read from the forge (${(e as Error).message}), so only git names the people behind it`);
   }
-  const inv = await pullInvolvement({ forge, ...(calls ? { calls } : {}), ...(pr ? { pr } : {}), env, ...(options.fetch ? { fetch: options.fetch } : {}), git: { repo, base: rule.base, head: sha }, ...(rule.agentTokenEnv ? { agentTokenEnv: rule.agentTokenEnv } : {}) });
+  const inv = await pullInvolvement({ forge, ...(calls ? { calls } : {}), ...(pr ? { pr } : {}), env, ...(options.fetch ? { fetch: options.fetch } : {}), git: { repo, base: rule.base, head: sha }, ...(rule.agentTokenEnv ? { agentTokenEnv: rule.agentTokenEnv } : {}), ...(rule.agentLogin ? { agentLogin: rule.agentLogin } : {}) });
   return { people: inv.people, notes: [...notes, ...inv.notes] };
 }
 
@@ -2737,7 +2737,7 @@ async function beforeGate(
   if (standing.length > 0 || rule.mode === "pr-review") {
     involved = await waveInvolvement(repo, options, rule);
     for (const n of involved.notes) console.log(`${label}: ${n}`);
-  }
+  } else if (rule.agentTokenEnv && !rule.agentLogin) console.log(`${label}: ${AGENT_NOT_EXCLUDED}`);
   const ruled: GateLedger = { ...ledger, resolutions: [] };
   for (const r of ledger.resolutions) {
     const refused = r.gate === name && stamp(r.timestamp) >= since ? resolutionRefusal(r, { ...(involved ? { involved } : {}), signers: rule.signers, ...(rule.requireSigned ? { requireSigned: true } : {}) }) : null;

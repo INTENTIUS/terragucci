@@ -44,6 +44,8 @@ export interface ApprovalRule extends ApprovalMode, SealRule {
   requireSigned?: boolean;
   /** `agent.token_env` at base: the variable holding the agent's token, whose user never approves (./involved.ts). */
   agentTokenEnv?: string;
+  /** `agent.login` at base: the account the agent's token acts as, never an approver. */
+  agentLogin?: string;
 }
 
 /** Whether a value is one of APPROVALS. */
@@ -100,9 +102,10 @@ export async function approvalRule(repo: string, options: { at?: string; config?
   const key = own ? approvalModeOf(read.config.approval) : undefined;
   const requireSigned = own && requireSignedOf(read.config.approval);
   const agentTokenEnv = own && typeof read.config.agent?.token_env === "string" ? read.config.agent.token_env : undefined;
+  const agentLogin = own && typeof read.config.agent?.login === "string" && read.config.agent.login ? read.config.agent.login : undefined;
   const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o) => typeof o === "string") : [];
   const point = own && typeof read.config.apply?.point === "string" ? read.config.apply.point : undefined;
-  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}), ...(requireSigned ? { requireSigned } : {}), ...(agentTokenEnv ? { agentTokenEnv } : {}) };
+  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}), ...(requireSigned ? { requireSigned } : {}), ...(agentTokenEnv ? { agentTokenEnv } : {}), ...(agentLogin ? { agentLogin } : {}) };
 }
 
 /** The mode a repo's checkout holds, as `config check` reports it. */

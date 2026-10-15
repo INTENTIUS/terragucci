@@ -52,6 +52,8 @@ export interface PlanNoteOptions {
   root?: string;
   /** `approval: pr-review`: also post `terragucci/approval` on the head from the report. */
   approval?: boolean;
+  /** `agent.login`, as the pipeline was written with it: the agent's account, whose review never counts. */
+  agentLogin?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
   now?: Date;
@@ -106,7 +108,7 @@ async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: 
  * when a wave of it will wait for an approval: the people who had a hand in
  * the change (./involved.ts). Undefined when no wave waits or nobody is named.
  */
-export async function notCountingNotice(reportText: string | undefined, pr: number, sha: string, forge: "github" | "forgejo", env: NodeJS.ProcessEnv, doFetch: Fetch, log: (l: string) => void): Promise<string | undefined> {
+export async function notCountingNotice(reportText: string | undefined, pr: number, sha: string, forge: "github" | "forgejo", env: NodeJS.ProcessEnv, doFetch: Fetch, log: (l: string) => void, agentLogin?: string): Promise<string | undefined> {
   let waits = false;
   try {
     waits = ((JSON.parse(reportText ?? "null") as { waves?: { waits?: boolean }[] } | null)?.waves ?? []).some((w) => w.waits === true);
@@ -117,7 +119,7 @@ export async function notCountingNotice(reportText: string | undefined, pr: numb
   try {
     const calls = forgeCalls(env, doFetch);
     const raw = await calls.get(`repos/${calls.repo}/pulls/${pr}`);
-    const inv = await pullInvolvement({ forge, calls, pr: { number: pr, head: sha, ...(typeof raw?.user?.login === "string" ? { author: raw.user.login } : {}) }, env, fetch: doFetch });
+    const inv = await pullInvolvement({ forge, calls, pr: { number: pr, head: sha, ...(typeof raw?.user?.login === "string" ? { author: raw.user.login } : {}) }, env, fetch: doFetch, ...(agentLogin ? { agentLogin } : {}) });
     // Logins only: an address from a commit is not repeated on the pull request.
     const named: { who: string; why: string }[] = [];
     for (const p of inv.people) if (!p.who.includes("@") && !named.some((n) => sameLogin(n.who, p.who))) named.push(p);
@@ -171,7 +173,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
       const late = await driftNotice(o, env, doFetch, log);
       if (late) body = withNotice(body, late);
     }
-    const who = await notCountingNotice(read("report.json"), Number(pr), sha, o.forge, env, doFetch, log);
+    const who = await notCountingNotice(read("report.json"), Number(pr), sha, o.forge, env, doFetch, log, o.agentLogin);
     if (who) body = withNotice(body, who);
     try {
       await forge.upsertComment(Number(pr), PLAN_MARK, body);
@@ -194,7 +196,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
   // Under pr-review the head says whether a wave the gate will hold has an approving review of it, so branch protection can require one.
   if (o.approval && noteFile !== undefined && existsSync(join(o.report, "report.json"))) {
     try {
-      const posted = await approvalStatus({ forge: o.forge, report: o.report, env, fetch: doFetch, log: (l) => log(`terragucci approval-status: ${l}`) });
+      const posted = await approvalStatus({ forge: o.forge, report: o.report, env, fetch: doFetch, ...(o.agentLogin ? { agentLogin: o.agentLogin } : {}), log: (l) => log(`terragucci approval-status: ${l}`) });
       log(`terragucci approval-status: ${posted.state}: ${posted.description}`);
     } catch (e) {
       log(`terragucci/approval was not posted: ${(e as Error).message}`);
