@@ -13,9 +13,12 @@
  *
  * The apply learns it from the first carrier it can read:
  *
- * 1. the upstream wave's own plan in this push's pipeline: an output the
- *    reader reads that is `after_unknown` there was unknown when the change
- *    was reviewed;
+ * 1. the upstream wave's plans in this push's pipeline that change the
+ *    upstream: an output the reader reads that is `after_unknown` in any of
+ *    them was unknown when the change was reviewed. A plan of the upstream
+ *    that changes nothing (a comment's apply or a re-run after the upstream
+ *    applied) has every output known and says nothing of what was reviewed,
+ *    so it is skipped;
  * 2. the report of the pull request that merged as this commit: its rows'
  *    reads with `unknown` outputs, and its waves' `replans_after`;
  * 3. with neither, every read counts as unknown: the wave is held, and the
@@ -25,6 +28,7 @@
  * carrier as a function, and this module decides from what they return.
  */
 import { plannedOutputs, unknownOutputs } from "./planned-outputs";
+import { changesSomething } from "./report/changing";
 import type { Report } from "./report/schema";
 
 /** One read of a wave's root: the upstream root, the wave that applies it, and the outputs read (undefined: every one). */
@@ -53,8 +57,12 @@ export type PullReport = { report: Report; from: string } | { missing: string };
 
 /** The carriers, as the caller reads them. Each may fail; a failure counts as the carrier being unavailable. */
 export interface ReadCarriers {
-  /** The upstream's plan JSON in this push's pipeline (its `tf-apply` wave), and where it was read; undefined when the wave cannot read it. */
-  upstreamPlan(upstream: string, wave: number): Promise<{ plan: unknown; from: string } | undefined>;
+  /**
+   * Every plan JSON of the upstream in this push's pipeline (its `tf-apply`
+   * wave) the wave can read, each with where it was read; empty when it can
+   * read none. Plans that change nothing are skipped by the caller.
+   */
+  upstreamPlans(upstream: string, wave: number): Promise<{ plan: unknown; from: string }[]>;
   /** The report of the pull request that made this commit. Called at most once. */
   pullReport(): Promise<PullReport>;
 }
@@ -74,34 +82,45 @@ export async function unknownReads(reads: readonly WaveRead[], carriers: ReadCar
   const unknown: UnknownRead[] = [];
   const lines: string[] = [];
   if (reads.length === 0) return { unknown, lines };
-  const plans = new Map<string, Promise<{ plan: unknown; from: string } | undefined>>();
+  const plans = new Map<string, Promise<{ plan: unknown; from: string }[]>>();
   const planOf = (r: WaveRead) => {
     const key = `${r.wave}\n${r.upstream}`;
-    if (!plans.has(key)) plans.set(key, carriers.upstreamPlan(r.upstream, r.wave).catch(() => undefined));
+    if (!plans.has(key)) plans.set(key, carriers.upstreamPlans(r.upstream, r.wave).catch(() => []));
     return plans.get(key)!;
   };
   const left: WaveRead[] = [];
+  const skipped = new Set<string>();
   for (const r of reads) {
     const got = await planOf(r);
-    const outputs = got ? plannedOutputs(got.plan) : undefined;
-    if (!got || !outputs) {
+    // Only a plan that changes the upstream is the one whose outputs the change's reviewers could not see.
+    const changing: { from: string; outputs: NonNullable<ReturnType<typeof plannedOutputs>> }[] = [];
+    for (const g of got) {
+      const outputs = plannedOutputs(g.plan);
+      if (!changesSomething(g.plan)) {
+        if (!skipped.has(g.from)) lines.push(`${g.from} changes nothing, so it says nothing of what was unknown when the change was reviewed`);
+        skipped.add(g.from);
+      } else if (outputs) {
+        changing.push({ from: g.from, outputs });
+      }
+    }
+    if (changing.length === 0) {
       left.push(r);
       continue;
     }
-    const names = unknownOutputs(outputs.outputs, r.outputs);
-    if (names.length) unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: names, carrier: "upstream-plan", from: got.from });
-    else lines.push(`${r.root} reads no output of ${r.upstream} that ${got.from} left unknown`);
+    const held = changing.map((c) => ({ from: c.from, names: unknownOutputs(c.outputs.outputs, r.outputs) })).filter((c) => c.names.length > 0);
+    if (held.length) unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [...new Set(held.flatMap((c) => c.names))].sort(), carrier: "upstream-plan", from: held.map((c) => c.from).join(", ") });
+    else lines.push(`${r.root} reads no output of ${r.upstream} that ${changing.map((c) => c.from).join(", ")} left unknown`);
   }
   if (left.length === 0) return { unknown, lines };
   const pulled = await carriers.pullReport().catch((e: Error): PullReport => ({ missing: `the pull request's report could not be read (${e.message.split("\n")[0]})` }));
   for (const r of left) {
     if ("missing" in pulled) {
-      unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [], carrier: "none", why: `this push has no plan of ${r.upstream} the wave can read, and ${pulled.missing}` });
+      unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [], carrier: "none", why: `this push has no plan that changes ${r.upstream} the wave can read, and ${pulled.missing}` });
       continue;
     }
     const said = pullRequestSays(pulled.report, r);
     if (said === undefined) {
-      unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [], carrier: "none", why: `this push has no plan of ${r.upstream} the wave can read, and ${pulled.from} did not plan ${r.root}` });
+      unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [], carrier: "none", why: `this push has no plan that changes ${r.upstream} the wave can read, and ${pulled.from} did not plan ${r.root}` });
     } else if (said.unknown) {
       unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: said.outputs, carrier: "pull-request", from: pulled.from });
     } else {

@@ -2479,18 +2479,21 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
     return body === undefined ? undefined : (JSON.parse(body) as Report);
   };
   const verdict = await unknownReads(reads, {
-    async upstreamPlan(upstream, k) {
+    async upstreamPlans(upstream, k) {
+      // Every plan of the upstream at this commit: this job's, then each run's of its wave in the bucket (a comment's apply plans
+      // the upstream again after it applied, and that plan changes nothing; the merge's own plan is the one that was reviewed).
+      const out: { plan: unknown; from: string }[] = [];
       const mine = ctx.planned?.(k)?.find((p) => p.root === upstream && p.plan !== undefined);
-      if (mine) return { plan: mine.plan, from: `wave ${k}'s plan of ${upstream} in this job` };
-      if (!store) return undefined;
-      // The upstream wave's own job: its report in the bucket, with each root's redacted plan, which keeps after_unknown.
+      if (mine) out.push({ plan: mine.plan, from: `wave ${k}'s plan of ${upstream} in this job` });
+      if (!store) return out;
+      // The upstream wave's own jobs: their reports in the bucket, with each root's redacted plan, which keeps after_unknown.
       for (const row of (await indexRows()).filter((r) => r.stage === APPLY_OP && r.commit === facts.commit && r.wave === k)) {
         const root = (await reportAt(row.path))?.roots.find((x) => x.path === upstream);
         if (!root?.plan.json) continue;
         const text = await store.get(key(prefix, facts.project, row.path, root.plan.json));
-        if (text !== undefined) return { plan: JSON.parse(text), from: `wave ${k}'s plan of ${upstream} in this push (${row.path})` };
+        if (text !== undefined) out.push({ plan: JSON.parse(text), from: `wave ${k}'s plan of ${upstream} in this push (${row.path})` });
       }
-      return undefined;
+      return out;
     },
     async pullReport(): Promise<PullReport> {
       if (!store) return { missing: storeError ? `the reports bucket could not be read (${storeError})` : "the config names no reports bucket to read the pull request's report from" };
