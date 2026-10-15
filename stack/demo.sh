@@ -732,6 +732,21 @@ case "$CMD" in
     (cd "$DEMO_STATE/base-tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on example-demo"
     mkdir -p "$DEMO_STATE/base-tree/.chant"
     echo "$USER $(cut -d' ' -f1,2 "$DRIVER_KEY.pub")" > "$DEMO_STATE/base-tree/.chant/allowed_signers"
+    # floci may still hold the states of a cycle the driver left part way (a
+    # restart after the checkout moved): writing the last base snapshot back
+    # first, as the reset does, leaves the base's pipeline nothing to destroy,
+    # which gate: on-destructive would otherwise hold for an approval.
+    if [ -d "$DEMO_STATE/base" ]; then
+      for root in "${ROOTS[@]}"; do
+        [ -f "$DEMO_STATE/base/$root.tfstate" ] || continue
+        curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @"$DEMO_STATE/base/$root.tfstate" \
+          "$FLOCI/$STATE_BUCKET/$root.tfstate" || fail "could not write $root's base state back"
+        curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.tflock" || true
+        curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$root.tfstate.terragucci-unwritten" || true
+      done
+      marker_clear
+      log "wrote the last base snapshot back to floci before pushing the base"
+    fi
     sha="$(push_tree "$DEMO_STATE/base-tree" "$REPO" main "The demo's base: network, app, edge and other")"
     log "pushed the base to main at ${sha:0:8}; the pipeline applies every root…"
     wait_run "$REPO" "$sha"
