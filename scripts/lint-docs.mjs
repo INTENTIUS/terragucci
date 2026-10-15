@@ -7,6 +7,7 @@ import { lintDocument } from "sentences/lint/run";
 import { termProblems } from "./lint-terms.mjs";
 import { promptProblems } from "./lint-prompts.mjs";
 import { DOCS, docPage, prose } from "./docs-pages.mjs";
+import { cardProblems, demoProblems } from "./demo-text.mjs";
 
 const strictness = Number(process.argv[2] ?? 2);
 const limit = Number(process.argv[3] ?? 8);
@@ -194,6 +195,10 @@ for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios"
     if (extra.length) problems.push(`${file}: unknown field ${extra.join(", ")}; the card has changes, watch and shows`);
   }
 }
+
+// The kiosk's top pane (behold#571): the intro, each card field, and every title, name, step line and next action
+// stack/demo.sh writes, each within its length budget (scripts/demo-text.mjs).
+problems.push(...cardProblems(), ...demoProblems(read("stack/demo.sh")));
 
 for (const p of problems) console.log(`FAIL  ${p}`);
 

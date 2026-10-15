@@ -1,5 +1,5 @@
 {
-  "changes": "The network state (the record of what Terraform built for the network) adds a subnet. The app state adds four resources that need the subnet's id.",
-  "watch": "Wave 1 (the first group of states to apply) builds the subnet, and only then does the subnet have an id. App's plan (Terraform's list of what it will change) in wave 2 contains that id, which no review saw, so wave 2 stops and waits for a person to approve it.",
-  "shows": "Nothing lands without a person seeing it, even a value that didn't exist when the change was reviewed."
+  "changes": "A pull request (a change up for review) adds a subnet to network and four resources to app that need the subnet's id.",
+  "watch": "Wave 1 (the first states to apply) builds the subnet, and only then does it get an id. App's new plan (what it will change) in wave 2 holds that id, which no review saw, so wave 2 waits for a person to approve it.",
+  "shows": "Nothing lands unseen, even a value that didn't exist at review. The driver, this demo's script, plays that person."
 }

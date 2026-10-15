@@ -1,5 +1,5 @@
 {
-  "changes": "The change from B on waves, with waves.compose turned on for this pull request.",
-  "watch": "Network, app and edge plan once and land in one run in wave 1, after approval, because app reads a value unknown at plan time.",
-  "shows": "The composed run is opt-in and sits beside the waves. It computes the unknown value in the same run and still waits for approval first. Each state is written with what landed in it."
+  "changes": "The b-waves change, plus waves.compose turned on for this pull request (a change up for review) only.",
+  "watch": "Network, app and edge share one plan (what they will change) and land together in wave 1 (the first states to apply). The driver (this demo's script) approves first, as app reads a value unknown at plan time.",
+  "shows": "Composing is opt-in. The run computes the unknown value itself and still asks for approval before it lands."
 }
