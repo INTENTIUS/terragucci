@@ -114,7 +114,7 @@ On GitLab the `comments` job answers the note and starts a pipeline on the defau
 |---|---|
 | the ask reaches the agent as a prompt file (`TG_AGENT_PROMPT`), never on a command line | the ask running in a shell |
 | the agent's step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables; on GitLab it starts with an empty environment and a checkout whose remote holds no job token; neither agent job has a cloud role, whatever `oidc` says | the agent pushing, commenting or calling the cloud itself |
-| `agent-push` refuses a patch that touches a guarded path: CI files (`.gitlab-ci.yml` and `.gitlab/` among them), `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file, the policy directory, `CODEOWNERS` and agent instruction files | the agent changing the pipeline, the gate, the signers or the policy |
+| `agent-push` refuses a patch that touches a guarded path: CI files (`.gitlab-ci.yml` and `.gitlab/` among them), `terragucci.yml`, `terragucci.components.json`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file, the policy directory, `CODEOWNERS` and agent instruction files | the agent changing the pipeline, the gate, the signers or the policy |
 | `agent-push` pushes to the same head, without force | a lost commit: when the agent fails, hits its turn limit, or the pull request moves, the branch stays as it was |
 | the command below lets the agent edit files and run `terragucci config check` and `terragucci init --dry-run`, and loads no MCP server and none of the repository's Claude Code settings | any other command, web fetches and MCP tools |
 

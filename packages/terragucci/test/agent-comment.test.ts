@@ -66,7 +66,7 @@ describe("forbiddenPaths", () => {
   it("names code owners, agent instructions and git behaviour files, matched exactly", () => {
     const guarded = [
       "CODEOWNERS", "docs/CODEOWNERS", "CLAUDE.md", "AGENTS.md", ".mcp.json", ".claude/settings.json", ".claude/agents/x.md",
-      ".cursor/rules/a.mdc", ".cursorrules", ".gitattributes", ".gitmodules",
+      ".cursor/rules/a.mdc", ".cursorrules", ".gitattributes", ".gitmodules", "terragucci.components.json",
     ];
     expect(forbiddenPaths(guarded)).toEqual(guarded);
     expect(forbiddenPaths([

@@ -344,9 +344,25 @@ export interface PipelineInput {
   applyGroups?: ApplyGroup[];
 }
 
+/**
+ * A job of the pipeline that applies roots, as the rendered workflow names it:
+ * what `terragucci.components.json` lists under `pipeline.jobs` (./components-decl.ts).
+ */
+export interface PipelineApplyJob {
+  name: string;
+  /** Its `needs`, as the workflow has them: wave 1's job needs `check` on GitHub and Forgejo, and nothing on GitLab. */
+  needs: string[];
+  /** The wave it runs; unset for the job that applies every wave of a pull request (`apply-comment`, GitLab's `mr-apply`). */
+  wave?: number;
+  /** The roots it applies: a wave's, a share's or a group's. A job that only decides a split wave, or only says every wave applied, applies none. */
+  applies: string[];
+}
+
 export interface RenderedPipeline {
   path: string;
   content: string;
+  /** The jobs that apply roots, built from the same list the workflow's jobs are. */
+  applyJobs: PipelineApplyJob[];
   /** Further workflow files on GitHub and Forgejo: the resume workflow, the review workflow with `review.agent`, and the rollout workflow with `rollouts`. */
   extra?: { path: string; content: string }[];
 }
@@ -981,6 +997,17 @@ interface ApplyJob {
   runner?: RunnerSpec;
   /** A group's forge environment (GitHub and GitLab). */
   environment?: string;
+  /** The roots it applies (PipelineApplyJob.applies). */
+  applies: string[];
+}
+
+/** Share `share` of `shares` of a wave's roots: sorted, cut into contiguous slices whose sizes differ by at most one, as chant's opWaveShare cuts them. */
+export function shareRoots(roots: readonly string[], share: number, shares: number): string[] {
+  const sorted = [...roots].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const base = Math.floor(sorted.length / shares);
+  const extra = sorted.length % shares;
+  const start = (share - 1) * base + Math.min(share - 1, extra);
+  return sorted.slice(start, start + base + (share <= extra ? 1 : 0));
 }
 
 /** Which wave an apply job runs, and how the waves are cut and gated. */
@@ -2212,7 +2239,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // The wave's job plans every root with the plan identities and decides; then a job per group with roots in the wave.
       const waveInput: ApplyWaveInput = { wave, canary: input.canary, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(waveJobs ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), groups: groupsFlag! };
       const decider = audienceMap(oidc);
-      applyJobs.push({ name, wave, needs: before, step: `Plan wave ${wave} of ${waveCount} and decide its gate`, body: applyScript(binary, layers, forge, decider, { ...waveInput, sharedLock: name }), decides: true, ...(decider !== oidc ? { oidc: decider } : {}) });
+      applyJobs.push({ name, wave, needs: before, step: `Plan wave ${wave} of ${waveCount} and decide its gate`, body: applyScript(binary, layers, forge, decider, { ...waveInput, sharedLock: name }), decides: true, applies: [], ...(decider !== oidc ? { oidc: decider } : {}) });
       before = [];
       for (const g of groups) {
         const mine = cut[i]!.filter((r) => g.roots.includes(r));
@@ -2224,7 +2251,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         const own: Partial<ApplyJob> = { group: g.name, ...(jobOidc ? { oidc: jobOidc } : {}), ...(g.runner !== undefined ? { runner: g.runner } : {}), ...(g.forgeEnvironment !== undefined && forge !== "forgejo" ? { environment: g.forgeEnvironment } : {}) };
         for (let s = 1; s <= n; s++) {
           const job = n > 1 ? `${name}-${g.name}-share-${s}` : `${name}-${g.name}`;
-          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job, ...(checkJob ? { checkJob } : {}) }), ...(n > 1 ? { share: s } : {}) });
+          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job, ...(checkJob ? { checkJob } : {}) }), applies: n > 1 ? shareRoots(mine, s, n) : mine, ...(n > 1 ? { share: s } : {}) });
           before.push(job);
         }
       }
@@ -2232,12 +2259,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     }
     const n = sharesOf(i);
     const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
-    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
+    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), applies: n > 1 ? [] : [...cut[i]!], ...(n > 1 ? { decides: true } : {}) });
     before = [name];
     if (n > 1) {
       before = Array.from({ length: n }, (_, s) => `${name}-share-${s + 1}`);
       for (const [s, share] of before.entries()) {
-        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, ...(sharedLock ? { sharedLock: share } : {}) }) });
+        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, ...(sharedLock ? { sharedLock: share } : {}) }), applies: shareRoots(cut[i]!, s + 1, n) });
       }
     }
   }
@@ -2245,9 +2272,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // also runs, with --rest, any wave Terragrunt's edges cut past the pipeline's, so it applies like a wave's job.
   if (before.length > 1 && tg) {
     const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
-    applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest) });
+    applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest), applies: [] });
   } else if (before.length > 1 || (groups && before.length > 0)) {
-    applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
+    applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true, applies: [] });
   }
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
@@ -2260,6 +2287,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const groupRunners = new Map(pushApplyJobs.filter((j) => j.runner !== undefined).map((j) => [j.name, j.runner!]));
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
+  // The jobs that apply roots, named and ordered as the workflow below writes them: with apply.when: pull-request, the one job that applies
+  // an open pull request's every wave (apply-comment; mr-apply on GitLab); otherwise the push's apply jobs, wave 1's needing check on GitHub and Forgejo.
+  const renderedApplyJobs: PipelineApplyJob[] = prApply
+    ? [{ name: forge === "gitlab" ? "mr-apply" : "apply-comment", needs: [], applies: roots }]
+    : applyJobs.map((j) => ({ name: j.name, needs: j.needs.length === 0 && forge !== "gitlab" && !j.done ? ["check"] : [...j.needs], wave: j.wave, applies: j.applies }));
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
@@ -2612,7 +2644,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
-    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge) };
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs };
   }
 
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -3140,7 +3172,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
   if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv })) });
   if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined)) });
-  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(entities) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), ...(extra.length ? { extra } : {}) };
+  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(entities) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), applyJobs: renderedApplyJobs, ...(extra.length ? { extra } : {}) };
 }
 
 /**

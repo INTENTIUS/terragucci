@@ -483,7 +483,7 @@ describe("init in a Terragrunt repo", () => {
   it("running it twice changes nothing", async () => {
     const repo = liveRepo();
     await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" });
-    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged"]);
+    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 });
 
@@ -881,7 +881,7 @@ describe("the Terragrunt example", () => {
     const r = await init(repo, { dryRun: true });
     expect(r.roots).toHaveLength(15);
     expect(r.layers.map((w) => w.length)).toEqual([1, 4, 2, 7, 1]);
-    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
   });
 
   it("every scenario applies to the example as committed", () => {
