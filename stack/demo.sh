@@ -770,10 +770,10 @@ say() { # step
     b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
     b-composed:approved)    echo "The driver approves the composed run's digest for wave 1 with the reviewer's key. The re-run plans the composed roots again and applies them in one apply." ;;
     b-composed:applied)     echo "One apply built network's subnet $(state_id network subnet) and app's $(state_input app instance) after the driver's approval. Each state holds what applied to it." ;;
-    failure:pull-request)   echo "Pull request $PULL is open. Network's port goes from 8080 to 9090, and app gains a database migration. The driver has switched on a fault, so the migration will fail." ;;
-    failure:planned)        echo "The plan is on the pull request. Network and app each get a new port, and edge follows app's port. App also gets the migration. Other, the fourth state, stays as it is." ;;
-    failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the migration runs." ;;
-    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's key, as a person outside the change would, so the re-run can replace the failed migration." ;;
+    failure:pull-request)   echo "Pull request $PULL is open. Network's port goes from 8080 to 9090, and app gains a one-time setup step. The driver has switched on a fault, so the setup step will fail." ;;
+    failure:planned)        echo "The plan is on the pull request. Network and app each get a new port, and edge follows app's port. App also gets the setup step. Other, the fourth state, stays as it is." ;;
+    failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the setup step runs." ;;
+    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's key, as a person outside the change would, so the re-run can replace the failed setup step." ;;
     failure:applied)        echo "Done on the second run. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
     tg-planned-outputs:pull-request) echo "Pull request $PULL is open. It adds two units. Ledger sets up a storage bucket, and billing reads the bucket's name." ;;
     tg-planned-outputs:planned) echo "The plan is on the pull request. Billing will keep its invoices in $(tg_value ledger), the bucket name from ledger's plan. Network and app stay as they are." ;;
@@ -919,7 +919,7 @@ waiting_label() {
     b-composed:1) echo "Wave 1 waits for a person to approve the composed run, where app reads the subnet's id this apply computes." ;;
     a-output:*)   echo "Wave $WAVE waits for a person to approve the plan it made on the output network just applied." ;;
     b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
-    failure:2)    echo "Wave 2 waits for a person to approve the re-run, which replaces the failed migration. The driver gives that approval here." ;;
+    failure:2)    echo "Wave 2 waits for a person to approve the re-run, which replaces the failed setup step. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
@@ -943,14 +943,14 @@ scenario_a() {
 # 4: app fails mid-apply. The marker is set before the pull request; wave 2
 # fails, wave 1 stays applied. The driver holds, deletes the marker and posts
 # /terragucci apply, and the waves finish (the re-run's replace of the tainted
-# migration waits at the gate first, and is approved like any waiting wave).
+# setup step waits at the gate first, and is approved like any waiting wave).
 failure_failed() {
   [ "${WAVE:-2}" = 2 ] || fail "wave $WAVE failed, not app's wave 2 ($RUN_URL)"
-  demo_hold failed "Wave 2 failed in app's migration. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port), which landed before the migration ran. Edge waits for the re-run." \
+  demo_hold failed "Wave 2 failed in app's setup step. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port), which landed before the setup step ran. Edge waits for the re-run." \
     "clear the fault and run the pipeline again"
   marker_clear
   resume_pull
-  demo_write resumed "The driver clears the fault and comments /terragucci apply on pull request $PULL. On this second run network is already done, and app's migration gets another try." "follow the waves"
+  demo_write resumed "The driver clears the fault and comments /terragucci apply on pull request $PULL. On this second run network is already done, and app's setup step gets another try." "follow the waves"
 }
 
 scenario_failure() {

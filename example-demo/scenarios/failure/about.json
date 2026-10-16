@@ -1,5 +1,5 @@
 {
-  "changes": "A pull request (a change up for review) moves network's port to 9090 and gives app a database migration that fails.",
-  "watch": "Wave 1, the first states to apply, changes network. App's migration fails in wave 2. The driver (this demo's script) clears the fault, and the re-run asks a person before replacing the migration.",
+  "changes": "A pull request (a change up for review) moves network's port to 9090 and gives app a one-time setup step that fails.",
+  "watch": "Wave 1, the first states to apply, changes network. App's setup step fails in wave 2. The driver (this demo's script) clears the fault, and the re-run asks a person before replacing the step.",
   "shows": "Work that landed stays in place. The pipeline shows where it stopped, and a second run completes the change."
 }
