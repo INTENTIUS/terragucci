@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "id": "20261016T0521-unique-email",
+  "parent": "20261016T0521-init",
+  "checksum": "sha256:eac92f7bd4710e6d1f40dc90406293747e09022fcf0d8b06b5811821e3b17bcb",
+  "createdAt": "2026-10-16T05:21:57Z",
+  "dialect": "postgres",
+  "defaultSchema": "public",
+  "major": 18,
+  "refused": false,
+  "hints": [],
+  "steps": [
+    {
+      "kind": "statement",
+      "object": "usersEmail",
+      "type": "Postgres::Index",
+      "name": "app.users_email_key",
+      "class": "concurrently",
+      "precheck": {
+        "detail": "values of (email) held by more than one row, which a unique index fails on",
+        "sql": "SELECT (SELECT count(*) FROM (SELECT 1 FROM app.users WHERE email IS NOT NULL GROUP BY email HAVING count(*) > 1) AS duplicates) AS n"
+      },
+      "rule": "SQLPG240",
+      "sql": "CREATE UNIQUE INDEX CONCURRENTLY users_email_key ON app.users (email)",
+      "transactional": false
+    },
+    {
+      "kind": "statement",
+      "object": "usersEmail",
+      "type": "Postgres::Index",
+      "name": "app.users_email_key",
+      "class": "concurrently",
+      "rule": "SQLPG240",
+      "sql": "COMMENT ON INDEX app.users_email_key IS '[chant managed-by=chant]'",
+      "transactional": true
+    }
+  ],
+  "schema": {
+    "applyOrder": [
+      "app",
+      "users",
+      "usersEmail"
+    ],
+    "dialect": "postgres",
+    "objects": [
+      {
+        "ddl": "CREATE SCHEMA app",
+        "dependsOn": [],
+        "export": "app",
+        "name": "app",
+        "sqlName": "app",
+        "type": "Postgres::Schema"
+      },
+      {
+        "checks": [],
+        "columns": [
+          {
+            "generated": {
+              "always": true,
+              "kind": "identity"
+            },
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "comment": "The address a user signs in with; demo rows only",
+            "name": "email",
+            "notNull": true,
+            "type": "text"
+          },
+          {
+            "name": "name",
+            "notNull": true,
+            "type": "text"
+          }
+        ],
+        "ddl": "CREATE TABLE app.users (\n    id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n    email text NOT NULL,\n    name  text NOT NULL\n  );\n  COMMENT ON COLUMN app.users.email IS 'The address a user signs in with; demo rows only'",
+        "dependsOn": [
+          "app"
+        ],
+        "exclusions": [],
+        "export": "users",
+        "foreignKeys": [],
+        "inherits": [],
+        "like": [],
+        "name": "users",
+        "primaryKey": {
+          "columns": [
+            "id"
+          ]
+        },
+        "schema": "app",
+        "sqlName": "app.users",
+        "type": "Postgres::Table",
+        "uniques": []
+      },
+      {
+        "concurrently": true,
+        "ddl": "CREATE UNIQUE INDEX CONCURRENTLY users_email_key ON app.users (email)",
+        "dependsOn": [
+          "users",
+          "users.email"
+        ],
+        "elements": [
+          {
+            "column": "email",
+            "expr": "email"
+          }
+        ],
+        "export": "usersEmail",
+        "name": "users_email_key",
+        "schema": "app",
+        "sqlName": "app.users_email_key",
+        "table": "users",
+        "tableName": "app.users",
+        "type": "Postgres::Index",
+        "unique": true
+      }
+    ],
+    "postgresMajor": 18
+  }
+}

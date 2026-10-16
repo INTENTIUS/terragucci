@@ -1,5 +1,5 @@
 {
-  "changes": "A pull request (a change up for review) moves network's port to 9090 and gives app a one-time setup step that fails.",
-  "watch": "Wave 1, the first states to apply, changes network. App's setup step fails in wave 2. The driver (this demo's script) clears the fault, and the re-run asks a person before replacing the step.",
-  "shows": "Work that landed stays in place. The pipeline shows where it stopped, and a second run completes the change."
+  "changes": "A pull request moves network's port to 9090 and adds a SQL Yodeler migration: a unique index on email in Postgres.",
+  "watch": "Wave 1 changes network. SQL Yodeler finds two users with one email in wave 2 and applies nothing. The driver (this demo's script) removes one, and the re-run asks a person before the migration runs again.",
+  "shows": "Work that landed stays in place. SQL Yodeler checks the rows first, and a second run completes the change."
 }

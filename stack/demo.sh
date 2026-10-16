@@ -170,8 +170,11 @@ tool_present() { [ -d "$HERE/../$(tool_tree "$1")" ]; }
 
 REPORT_BUCKET=demo-reports
 REPORT_PREFIX=demo
-CONTROL_BUCKET=demo-control
-FAIL_MARKER=app-migration-fails
+# The failure scenario's database: app's schema (example-demo/app/schema), in
+# the stack's demo-postgres (stack/docker-compose.yml, profile demo). Every job
+# of the terraform repo runs in DEMO_IMAGE, the tofu CI image with SQL Yodeler
+# (stack/demo-yodel/Dockerfile), which example-demo/terragucci.yml names.
+DEMO_IMAGE=terragucci-demo-tofu:local
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 HOLD="${DEMO_HOLD:-20}"
@@ -582,8 +585,60 @@ applied_values() { # -> "network 9090, app 9080, edge http://app:9080", from the
     "$(state_input network http_proxy_port)" "$(state_input app listener_port)" "$(state_input edge upstream)"
 }
 
-marker_set()   { printf 'set by stack/demo.sh\n' | curl -fsS -o /dev/null -X PUT --data-binary @- "$FLOCI/$CONTROL_BUCKET/$FAIL_MARKER"; }
-marker_clear() { curl -sS -o /dev/null -X DELETE "$FLOCI/$CONTROL_BUCKET/$FAIL_MARKER" || true; }
+# ── Postgres ─────────────────────────────────────────────────────────────────
+
+# app's database, for a tree whose app root has a schema (the terraform tree).
+# The driver works on it as postgres with docker exec, out of band, as it writes
+# the states in floci. Database demo is the one SQL Yodeler applies to;
+# demo_base is demo as the base left it, which each reset copies back.
+has_db() { [ -f "$TREE/app/schema.tf" ]; }
+pg() { # database: run the SQL on stdin
+  docker exec -i "${TG_PROJECT:-terragucci}-demo-postgres" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$1" >/dev/null
+}
+
+# demo anew, for up: the roles app's schema.tf connects as, a writer that owns
+# the database and a reader that can only read, and no base yet.
+db_fresh() {
+  pg postgres <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'demo_writer') THEN CREATE ROLE demo_writer LOGIN; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'demo_reader') THEN CREATE ROLE demo_reader LOGIN; END IF;
+END $$;
+ALTER ROLE demo_reader SET default_transaction_read_only = on;
+DROP DATABASE IF EXISTS demo WITH (FORCE);
+DROP DATABASE IF EXISTS demo_base WITH (FORCE);
+CREATE DATABASE demo OWNER demo_writer;
+\connect demo
+ALTER DEFAULT PRIVILEGES FOR ROLE demo_writer GRANT USAGE ON SCHEMAS TO demo_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE demo_writer GRANT SELECT ON TABLES TO demo_reader;
+SQL
+}
+
+# After the base applied: keep demo as demo_base.
+db_snapshot() {
+  pg demo <<<'SELECT 1 FROM app.users LIMIT 0' || fail "the base applied, but app.users is not in demo-postgres"
+  pg postgres <<'SQL'
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'demo' AND pid <> pg_backend_pid();
+CREATE DATABASE demo_base TEMPLATE demo;
+SQL
+}
+
+# Each reset: demo back to demo_base, its schema, rows and SQL Yodeler history.
+db_back() {
+  pg postgres <<'SQL'
+DROP DATABASE IF EXISTS demo WITH (FORCE);
+CREATE DATABASE demo OWNER demo_writer TEMPLATE demo_base;
+SQL
+}
+
+# The failure scenario's data: two users with one email, which the pull
+# request's unique index cannot hold. db_dedupe keeps the first of each.
+db_duplicates() {
+  pg demo <<<"INSERT INTO app.users (email, name) VALUES ('ana@example.com', 'Ana'), ('ben@example.com', 'Ben'), ('ana@example.com', 'Ana, signed up twice')"
+}
+db_dedupe() {
+  pg demo <<<'DELETE FROM app.users a USING app.users b WHERE a.email = b.email AND a.id > b.id'
+}
 
 # ── Forgejo ──────────────────────────────────────────────────────────────────
 
@@ -717,7 +772,7 @@ scenario_title() {
   case "$1" in
     a-known)    echo "A port change, known when it plans" ;;
     a-output)   echo "The same change, read through .output" ;;
-    failure)    echo "A failure halfway through, and a re-run that finishes it" ;;
+    failure)    echo "A SQL Yodeler migration finished on a re-run" ;;
     stale-plan) echo "main moves after approval, and the wave refuses its old plan" ;;
     b-waves)    echo "A new subnet, approved once its id exists" ;;
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
@@ -733,7 +788,7 @@ scenario_name() {
     base)       echo "the base" ;;
     a-known)    echo "a known value" ;;
     a-output)   echo "read through .output" ;;
-    failure)    echo "a failure halfway" ;;
+    failure)    echo "a migration re-run" ;;
     stale-plan) echo "a stale plan" ;;
     b-waves)    echo "a new subnet" ;;
     b-composed) echo "one composed run" ;;
@@ -770,11 +825,11 @@ say() { # step
     b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
     b-composed:approved)    echo "The driver approves the composed run's digest for wave 1 with the reviewer's key. The re-run plans the composed roots again and applies them in one apply." ;;
     b-composed:applied)     echo "One apply built network's subnet $(state_id network subnet) and app's $(state_input app instance) after the driver's approval. Each state holds what applied to it." ;;
-    failure:pull-request)   echo "Pull request $PULL is open. Network's port goes from 8080 to 9090, and app gains a one-time setup step. The driver has switched on a fault, so the setup step will fail." ;;
-    failure:planned)        echo "The plan is on the pull request. Network and app each get a new port, and edge follows app's port. App also gets the setup step. Other, the fourth state, stays as it is." ;;
-    failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the setup step runs." ;;
-    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's key, as a person outside the change would, so the re-run can replace the failed setup step." ;;
-    failure:applied)        echo "Done on the second run. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
+    failure:pull-request)   echo "Pull request $PULL is open. Network's port goes from 8080 to 9090, and app adds a unique index on users' email in Postgres. The driver has added two users with one email." ;;
+    failure:planned)        echo "The plan is on the pull request. Network and app each get a new port, and edge follows app's port. App also gets a step that runs the SQL Yodeler migration. Other stays as it is." ;;
+    failure:applying)       echo "Wave 1 changes network's port. In wave 2 app's port changes, then SQL Yodeler applies the migration to Postgres." ;;
+    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's key, as a person outside the change would, so SQL Yodeler runs the migration again." ;;
+    failure:applied)        echo "Done on the second run, and Postgres has the unique index. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
     tg-planned-outputs:pull-request) echo "Pull request $PULL is open. It adds two units. Ledger sets up a storage bucket, and billing reads the bucket's name." ;;
     tg-planned-outputs:planned) echo "The plan is on the pull request. Billing will keep its invoices in $(tg_value ledger), the bucket name from ledger's plan. Network and app stay as they are." ;;
     tg-planned-outputs:applying) echo "Wave 1 builds ledger's bucket. Wave 2 then plans billing again on the name ledger now has." ;;
@@ -919,7 +974,7 @@ waiting_label() {
     b-composed:1) echo "Wave 1 waits for a person to approve the composed run, where app reads the subnet's id this apply computes." ;;
     a-output:*)   echo "Wave $WAVE waits for a person to approve the plan it made on the output network just applied." ;;
     b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
-    failure:2)    echo "Wave 2 waits for a person to approve the re-run, which replaces the failed setup step. The driver gives that approval here." ;;
+    failure:2)    echo "Wave 2 waits for a person to approve the migration's second run. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
@@ -940,21 +995,24 @@ scenario_a() {
   follow
 }
 
-# 4: app fails mid-apply. The marker is set before the pull request; wave 2
-# fails, wave 1 stays applied. The driver holds, deletes the marker and posts
-# /terragucci apply, and the waves finish (the re-run's replace of the tainted
-# setup step waits at the gate first, and is approved like any waiting wave).
+# 4: app's SQL Yodeler migration stops mid-apply. Before the pull request the
+# driver adds two users with one email; the pull request's unique index on
+# email cannot hold them, so in wave 2 SQL Yodeler's pre-check refuses the
+# migration before its first statement, and wave 1 stays applied. The driver
+# holds, removes the duplicate and posts /terragucci apply, and the waves
+# finish (the re-run's replace of the tainted migration waits at the gate
+# first, and is approved like any waiting wave).
 failure_failed() {
   [ "${WAVE:-2}" = 2 ] || fail "wave $WAVE failed, not app's wave 2 ($RUN_URL)"
-  demo_hold failed "Wave 2 failed in app's setup step. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port), which landed before the setup step ran. Edge waits for the re-run." \
-    "clear the fault and run the pipeline again"
-  marker_clear
+  demo_hold failed "Wave 2 failed because SQL Yodeler found two users with one email, so it applied nothing. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port). Edge waits." \
+    "remove the duplicate and run the pipeline again"
+  db_dedupe || fail "could not remove the duplicate user from demo-postgres"
   resume_pull
-  demo_write resumed "The driver clears the fault and comments /terragucci apply on pull request $PULL. On this second run network is already done, and app's setup step gets another try." "follow the waves"
+  demo_write resumed "The driver removes the duplicate user and comments /terragucci apply on pull request $PULL. Network is already done, and app's migration runs again." "follow the waves"
 }
 
 scenario_failure() {
-  marker_set || fail "could not set the failure marker in floci"
+  db_duplicates || fail "could not add the duplicate users to demo-postgres"
   on_failed() { failure_failed; }
   open_pull
   demo_hold planned "$(say planned)" "merge pull request $PULL"
@@ -1317,7 +1375,7 @@ states_back() { # [missing-ok]
 # ── reset, out of band ───────────────────────────────────────────────────────
 
 # After the last wave ended: close the pull requests, write each root's state
-# back to the base snapshot, clear the failure marker and force main back to
+# back to the base snapshot, copy app's database back from its base and force main back to
 # the base commit. Never through a gated wave: the push back to base plans
 # against the base states, which match it, so its waves have nothing to apply.
 # reset_work does it all and waits for the push back's run; reset_written
@@ -1336,7 +1394,7 @@ reset_work() {
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$REPO/pulls/$n" || true
   done
   states_back
-  marker_clear
+  if has_db; then db_back || fail "could not copy database demo back from demo_base"; fi
   if [ "$(remote_head "$REPO" main)" != "$base" ]; then
     before="$(last_run_id)"
     git -C "$RSTATE/base-tree" push -q --force "$REMOTE" "$base:refs/heads/main" 2>/dev/null || fail "could not force main back to ${base:0:8}"
@@ -1408,8 +1466,18 @@ up_repo() {
   # which gate: on-destructive would otherwise hold for an approval.
   if [ -d "$RSTATE/base" ]; then
     states_back missing-ok
-    marker_clear
     log "wrote the last base snapshot of $REPO back to floci before pushing the base"
+  fi
+  # app's database starts anew, and app's state goes with it, so the base's
+  # pipeline creates app's migrations again and SQL Yodeler applies them. The
+  # base gets a parent commit: SQL Yodeler's wave reads its gate (gate never in
+  # app/schema/yodel-waves.json) at the commit before the one it applies.
+  if has_db; then
+    db_fresh || fail "could not make database demo in demo-postgres"
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$(root_key app)" || true
+    (cd "$RSTATE/base-tree" && git init -q -b main && git add -A \
+      && git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "The demo's base, before its pipeline") \
+      || fail "could not commit the base's parent"
   fi
   if [ "$TOOL" = chant ]; then
     chant_base_apply
@@ -1430,6 +1498,7 @@ up_repo() {
   for root in "${ROOTS[@]}"; do
     curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
   done
+  ! has_db || db_snapshot || fail "could not keep database demo as demo_base"
   echo "$sha" > "$RSTATE/base.sha"
   COMMIT="$sha"
   runs_mark base
@@ -1489,16 +1558,29 @@ loop_ready() {
   signers="$(git -C "$RSTATE/base-tree" show "$(cat "$RSTATE/base.sha"):.chant/allowed_signers" 2>/dev/null || true)"
   grep -q "^$REVIEWER " <<<"$signers" \
     || fail "the base of $REPO: .chant/allowed_signers does not name $REVIEWER; run 'just demo up' again"
+  # Each reset copies app's database back from demo_base, which up keeps.
+  if has_db; then
+    pg postgres <<<"DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'demo_base') THEN RAISE 'no demo_base'; END IF; END \$\$" 2>/dev/null \
+      || fail "demo-postgres has no database demo_base for $REPO's resets; run 'just demo up' again"
+  fi
   people_join
 }
 
 case "$CMD" in
   up)
     started=$(now)
-    for b in "$REPORT_BUCKET" "$CONTROL_BUCKET"; do curl -fsS -o /dev/null -X PUT "$FLOCI/$b" || true; done
-    marker_clear
+    curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
     for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
+    if tool_present terraform; then
+      grep -qx "image: $DEMO_IMAGE" "$HERE/../$(tool_tree terraform)/terragucci.yml" \
+        || fail "$(tool_tree terraform)/terragucci.yml does not name $DEMO_IMAGE as its image"
+      log "building $DEMO_IMAGE and starting demo-postgres…"
+      docker build -q -t "$DEMO_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" "$HERE/demo-yodel" >/dev/null \
+        || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
+      docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \
+        || fail "demo-postgres did not start"
+    fi
     [ -f "$DEMO_STATE/cycle" ] || echo 0 > "$DEMO_STATE/cycle"
     CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" ABOUT=null STARTED="$started"
     timeline_start

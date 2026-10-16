@@ -3,6 +3,9 @@
 # the plan reports and run views go to the reports bucket there too.
 forge: forgejo
 binary: tofu
+# Every job runs in the tofu CI image with SQL Yodeler added
+# (stack/demo-yodel/Dockerfile), which app's schema migrations run on.
+image: terragucci-demo-tofu:local
 gate: on-destructive
 reports:
   bucket: s3://demo-reports
