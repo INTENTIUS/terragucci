@@ -31,6 +31,9 @@ export const SAMPLES = {
   "$(state_input live/ledger this)": "demo-ledger-records",
   "$(tg_value ledger)": "demo-ledger-records",
   "$(tg_mock)": "mock-bucket",
+  // chant's plan digest as the chant scenario shows it: its first 20 characters.
+  $PLAN_DIGEST: "jcs1-sha256:3e43a1b2",
+  "$(state_input app health_check)": "http://app:9080/healthz",
   $was: "applying",
   $reason: "the plan run of pull request 1113 ended failure (http://localhost:3000/admin/demo/actions/runs/2509)",
 };
@@ -129,7 +132,7 @@ export function cardProblems(root = ".") {
     }
   };
   check("example-demo/scenarios/intro.json", "problem", read("example-demo/scenarios/intro.json")?.problem);
-  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios"]) {
+  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios"]) {
     for (const d of readdirSync(join(root, dir), { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
       const file = `${dir}/${d.name}/about.json`;
       const about = read(file);
