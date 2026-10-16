@@ -892,3 +892,17 @@ export function actionWord(stage: ReportStage, action: NamedAction): string {
   if (stage === "tf-drift" && action === "delete") return "deleted outside Terraform";
   return { delete: "destroy", replace: "replace", refused: "refused to plan", forget: "forget", import: "import" }[action];
 }
+
+/**
+ * The roots a report failed, by path. A root's status is its plan's. A wave
+ * whose apply failed says so in its state (minor 21) while its roots still
+ * read planned, as SQL Yodeler's refused migration did on the demo
+ * (behold#571); its roots are the ones that failed, since the report names
+ * no root's apply. A provisional preview's failure is not the run's.
+ */
+export function failedRoots(report: Report): string[] {
+  const planFailed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).map((r) => r.path);
+  if (planFailed.length > 0) return planFailed;
+  const wave = report.run.stage === "tf-apply" ? report.waves[0] : undefined;
+  return wave?.state === "failed" ? [...wave.roots] : [];
+}

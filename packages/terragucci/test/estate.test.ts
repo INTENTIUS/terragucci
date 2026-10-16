@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { describeEstate, estate } from "../src/estate";
 import { buildReport } from "../src/report/build";
+import type { Report } from "../src/report/schema";
 import { age, buildEstate, readInlineEstate, renderEstateHtml, type ProjectIndex } from "../src/report/estate";
 import { presign, S3Client, type S3Fetch } from "../src/report/s3";
 import { addToIndex, capIndex, INDEX_DESTROYS, INDEX_ROWS, indexEntry, renderIndexHtml, type IndexEntry } from "../src/report/store";
@@ -86,6 +87,42 @@ describe("the index row", () => {
     expect(e.destroys_total).toBe(n);
     expect(renderIndexHtml(addToIndex(undefined, e), "t")).toContain(`<summary>${n}</summary>`);
     expect(renderIndexHtml(addToIndex(undefined, e), "t")).toContain("5 more in the report");
+  });
+});
+
+// behold#571: the demo's failure cycle (fixtures/demo-failure-cycle). Wave 2's
+// apply failed: its state is failed while app's root status is planned, its
+// plan's. The re-run on the same commit applied waves 1 to 3.
+describe("a failed wave's index row, from the demo's reports", () => {
+  const dir = join(__dirname, "fixtures", "demo-failure-cycle");
+  const rows = readdirSync(dir)
+    .sort()
+    .map((f) => {
+      const report = JSON.parse(readFileSync(join(dir, f), "utf8")) as Report;
+      return indexEntry(report, `2026/10/${report.run.commit}/${f.replace(/\.json$/, "")}`);
+    });
+  const project = rows[0]!.project;
+
+  it("counts the failed wave's roots as failed, though app's root reads planned, and says it did not apply", () => {
+    expect(rows.map((r) => [r.wave, r.failed])).toEqual([
+      [1, 0],
+      [2, 1],
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ]);
+    expect(rows[1]!.approval).toBe("not-required");
+    expect(rows[1]!.applied).toBeUndefined();
+    expect(rows[3]!.applied).toBe(rows[3]!.finished);
+  });
+
+  it("counts them in the estate's roots failed until the re-run applies the wave", () => {
+    const failing = buildEstate([{ project, reports: rows.slice(0, 2).reverse() }], NOW);
+    expect(failing.totals.failed_roots).toBe(1);
+    expect(failing.projects[0]!.failed).toBe(1);
+    expect(renderEstateHtml(failing)).toContain("<b>1</b><span>root failed</span>");
+    const restored = buildEstate([{ project, reports: [...rows].reverse() }], NOW);
+    expect(restored.totals.failed_roots).toBe(0);
   });
 });
 
