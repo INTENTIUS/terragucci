@@ -65,6 +65,8 @@ interface RootTiming {
 }
 
 const seconds = (from: bigint, to: bigint): number => Number(to - from) / 1e9;
+/** Seconds to the millisecond. */
+const ms = (secs: number): number => Math.round(secs * 1000) / 1000;
 
 /** Each gauge with the run's `commit` and `run` labels, when `TERRAGUCCI_METRICS_PER_RUN` asked for them; otherwise as given. */
 export function perRunLabels(gauges: Gauge[], perRun: { run?: string } | undefined, commit: string): Gauge[] {
@@ -87,7 +89,7 @@ export function binaryVersion(binary: string, env: NodeJS.ProcessEnv): string | 
 export class StageObserver {
   readonly trace?: Trace;
   private readonly stageSpan?: Span;
-  private readonly start = nowNanos();
+  private readonly start: bigint;
   private readonly roots: RootTiming[] = [];
   private receiver?: SpanReceiver;
   /** Terragrunt units' times from its run report, by unit, in seconds. */
@@ -112,7 +114,9 @@ export class StageObserver {
    */
   readonly perRun?: { run?: string };
 
-  constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv) {
+  /** `start`: when the stage began, Unix nanoseconds, when that was before the observer was made (a tf-apply wave's job); now otherwise. */
+  constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv, start: bigint = nowNanos()) {
+    this.start = start;
     const pr = env.TG_PR?.trim();
     if (pr) this.pullRequest = pr;
     if (env.TERRAGUCCI_METRICS_PER_RUN?.trim().toLowerCase() === "true") {
@@ -273,8 +277,8 @@ export class StageObserver {
   }
 
   /**
-   * The metrics a tf-apply wave sends: how long each root's plan and apply
-   * took in the wave, and the wave's own gauges (report/wave-telemetry.ts), which the Rollouts and
+   * The metrics a tf-apply wave sends: how long the wave's job ran, how long
+   * each root's init, plan and apply took in it, and the wave's own gauges (report/wave-telemetry.ts), which the Rollouts and
    * waves dashboard and the waiting-wave alert read.
    */
   applyGauges(report: Report, end: bigint): Gauge[] {
@@ -283,12 +287,19 @@ export class StageObserver {
     const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>): Gauge => ({ name, unit, description, value, attributes: { project, stage, ...attributes } });
     const wave: Record<string, string> = this.wave ? { wave: String(this.wave.number) } : {};
     const out: Gauge[] = [];
+    // The wave job's own time, from when the stage started to when it sends: the first number a reader wants.
+    if (this.wave) out.push(g(METRIC.stageDuration, "s", "How long the stage ran", ms(seconds(this.start, end)), { ...wave, result: waveResult(this.wave.code ?? 1, this.wave.facts) }));
     for (const r of report.roots) {
-      const plan = r.timings?.plan_seconds;
-      if (plan !== undefined) out.push(g(METRIC.rootPlan, "s", "How long one root took to plan", plan, { ...wave, root: r.path }));
-      const seconds = r.timings?.apply_seconds;
-      if (seconds === undefined) continue;
-      out.push(g(METRIC.rootApply, "s", "How long one root took to apply", seconds, { ...wave, root: r.path }));
+      // Each run of the binary as terragucci timed it, to the millisecond; the report's timings, rounded to 10 ms, where it ran none (a Terragrunt unit).
+      const t = this.roots.find((x) => x.path === r.path);
+      const ran = (c: string) => t?.commands.filter((x) => x.command === c).reduce<number | undefined>((n, x) => (n ?? 0) + x.seconds, undefined);
+      const init = ran("init");
+      if (init !== undefined) out.push(g(METRIC.rootInit, "s", "How long one root's init took", ms(init), { ...wave, root: r.path }));
+      const plan = ran("plan") ?? r.timings?.plan_seconds;
+      if (plan !== undefined) out.push(g(METRIC.rootPlan, "s", "How long one root took to plan", ms(plan), { ...wave, root: r.path }));
+      const apply = ran("apply") ?? r.timings?.apply_seconds;
+      if (apply === undefined) continue;
+      out.push(g(METRIC.rootApply, "s", "How long one root took to apply", ms(apply), { ...wave, root: r.path }));
     }
     out.push(...this.initAndLockGauges(report, g));
     if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, Number(end / 1_000_000n) / 1000, g, report.totals));

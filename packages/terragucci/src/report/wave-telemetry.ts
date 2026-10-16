@@ -52,7 +52,7 @@ export function waveGauges(wave: number, code: number, facts: WaveFacts, at: num
     if (Number.isFinite(held) && held >= 0) out.push(g(METRIC.waveHeld, "s", "How long the wave was held at its gate before its approval", held, attrs));
   }
   if (result === "applied") {
-    for (const [action, n] of Object.entries(totals)) if (n > 0) out.push(g(METRIC.waveChanges, "{change}", "Changes the wave applied, by action", n, { ...attrs, action }));
+    for (const [action, n] of Object.entries(totals)) if (n > 0 && action !== "no-op" && action !== "read") out.push(g(METRIC.waveChanges, "{change}", "Changes the wave applied, by action", n, { ...attrs, action }));
   }
   return out;
 }
