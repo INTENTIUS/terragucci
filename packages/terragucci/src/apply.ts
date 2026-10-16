@@ -122,7 +122,7 @@ import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
-import { telemetryFromEnv } from "./telemetry";
+import { nowNanos, telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
 import { overrideCommand } from "./override";
@@ -1041,13 +1041,15 @@ interface RunsFile {
 async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> {
   let options = given;
   const env = options.env ?? process.env;
+  // When the job's run of the stage began: each wave's stage duration counts from here.
+  const began = nowNanos();
   const work = mkdtempSync(join(tmpdir(), "terragucci-apply-"));
   const jobs = new Map<number, WaveJob>();
   const jobOf = (k: number): WaveJob => {
     let j = jobs.get(k);
     if (!j) {
       const facts: WaveFacts = {};
-      const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env);
+      const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env, began);
       observer.wave = { number: k, facts };
       j = { k, w: { observer }, facts, label: `wave ${k}` };
       jobs.set(k, j);
