@@ -113,7 +113,11 @@
 # (runs_export, scripts/demo-runs.ts), so behold's kiosk shows them without
 # reaching Forgejo. Each reset deletes each of those repos' runs in Forgejo past
 # the newest DEMO_FORGE_RUNS (100) that have ended, so its database stays the
-# same size however long the loop runs.
+# same size however long the loop runs. Each reset also deletes each repo's
+# closed pull requests, and their refs/pull/<n>/head, past the newest
+# DEMO_FORGE_PULLS (50), never an open one, the newest, or one the bucket's
+# cycles or runs name, and has Forgejo run git gc and its Actions cleanup at
+# most hourly (scripts/demo-pulls.ts, behold#603).
 #
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
@@ -196,6 +200,7 @@ LIMIT_QUIET="${DEMO_LIMIT_QUIET:-900}"  # for no run to be in progress before a 
 LIMIT_ESTATE="${DEMO_LIMIT_ESTATE:-120}" # terragucci estate after a cycle's audit; past it, it is stopped and the cycle goes on
 RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may take
 FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
+FORGE_PULLS="${DEMO_FORGE_PULLS:-50}"   # the closed pull requests Forgejo keeps of each demo repo; each reset deletes older ones
 POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
 # behold#571: a directory of checkouts the driver keeps at each step's commit,
 # for a viewer that draws the change (behold's demo host sets it to /view).
@@ -563,6 +568,19 @@ runs_copy() { # [keep: delete the runs Forgejo holds past the newest this many t
     DEMO_RUNS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_RUNS_PREFIX="$REPORT_PREFIX" DEMO_RUNS_STATE="$RUNS_STATE" \
     DEMO_RUNS_CYCLE="$CYCLE" DEMO_RUNS_SCENARIO="$SCENARIO" DEMO_RUNS_CYCLE_STARTED="${STARTED:-}" DEMO_RUNS_DROP="$REVIEWER_KEY"$'\n'"$AUTHOR_TOKEN"$'\n'"$REVIEWER_TOKEN" \
     DEMO_RUNS_PRUNE_KEEP="${1:-}" node_modules/.bin/tsx scripts/demo-runs.ts) || log "runs: the runs were not all copied to floci; the cycle goes on"
+  return 0
+}
+
+# Delete each loop repo's closed pull requests past the newest FORGE_PULLS,
+# with their refs/pull/<n>/head, and have Forgejo gc its repos and clear the
+# deleted runs' artifacts at most hourly (scripts/demo-pulls.ts). It keeps
+# every open pull request, the newest, and any the bucket's cycles or runs
+# name. A prune that fails is logged, and the reset goes on.
+pulls_prune() {
+  (cd "$HERE/.." && DEMO_PULLS_FORGE_URL="$URL" DEMO_PULLS_TOKEN="$TOKEN" DEMO_PULLS_REPOS="$(loop_repos)" \
+    DEMO_PULLS_KEEP="$FORGE_PULLS" DEMO_PULLS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_PULLS_PREFIX="$REPORT_PREFIX" \
+    DEMO_PULLS_STATE="$DEMO_STATE/pulls" node_modules/.bin/tsx scripts/demo-pulls.ts) \
+    || log "pulls: the old pull requests were not all pruned; the reset goes on"
   return 0
 }
 
@@ -1513,12 +1531,14 @@ reset_work() {
       # FORGE_RUNS that have ended. The copy keeps the newest 30 of the newest
       # 50 it lists, so it never reads a run this deletes.
       runs_export force "$FORGE_RUNS"
+      pulls_prune
       run_ended "$LIMIT_RUN"
       return 0
     fi
     [ -z "$BASE_RUN" ] || log "no run started for the push back to ${base:0:8}"
   fi
   runs_export force "$FORGE_RUNS"
+  pulls_prune
 }
 
 reset_written() {
