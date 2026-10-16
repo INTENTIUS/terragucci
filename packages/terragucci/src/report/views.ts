@@ -379,9 +379,13 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
         ? `${again}${w.waits ? "waits for an approval of that plan" : "applies"}`
         : w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
       const unknownBy = w.composed?.held_by_unknown?.length ? w.composed.held_by_unknown : [];
+      // The policy's hold and allow_unattended rules, by id.
+      const policyRules = (w.policy_gate?.rules ?? []).map(code).join(", ");
       const by = w.waits && unknownBy.length
         ? ` (since ${joinAnd(unknownBy.map(code))} ${unknownBy.length === 1 ? "reads" : "read"} a value unknown at plan time)`
-        : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
+        : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)`
+        : w.waits && w.policy_gate?.outcome === "held" ? ` (held by ${policyRules})`
+        : w.policy_gate?.outcome === "unattended" ? (w.waits ? ` (the policy allows it unattended, ${policyRules}, and something else holds it)` : ` without an approval: allowed unattended by ${policyRules}`) : "";
       // approval_rules at base: what the approval takes, rule by rule.
       const rules = w.waits && w.approval_rules?.length ? `; approval_rules: ${w.approval_rules.map((r) => `${r.roots.map(code).join(", ")} ${ruleAsks(r)}`).join("; ")}` : "";
       t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by}${rules} |\n`;

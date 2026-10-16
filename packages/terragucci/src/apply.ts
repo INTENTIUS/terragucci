@@ -111,7 +111,7 @@ import { readsOf, unitTexts } from "./tg-preview";
 import { rootOutputsRead } from "./linked";
 import { unknownReadLine, unknownReads, type PullReport, type UnknownRead, type WaveRead } from "./unknown-reads";
 import { runPath, type IndexEntry } from "./report/store";
-import { buildReport, planFiles, planTotals, withEnvironment, type RootInput } from "./report/build";
+import { buildReport, planFiles, planTotals, policyGate, withEnvironment, type RootInput } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
@@ -1146,15 +1146,18 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       console.log(`wave ${options.wave}: gate ${gates[0]}, the strictest of the environments at base, since a Terragrunt wave finds its units when it plans`);
       options = { ...options, gate: gates[0]! };
     }
-    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned };
+    // allow_unattended at base: the gate is decided once the policy has read the plans, so chant's gate is never and the held hook holds (decideWaveGate).
+    const unattended = rule?.policyOutcomes?.includes("allow_unattended") === true;
+    if (unattended) console.log(`wave ${options.wave}: policy.outcomes at base names allow_unattended, so the wave's gate (${options.gate}) is decided once the policy reads its plans, and holds the wave through its held hook`);
+    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned, ...(unattended ? { unattended } : {}) };
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
       const spec = wavesSpec({
         waves: specWaves,
         ...(options.rest ? { rest: true } : {}),
-        gate: options.gate,
-        ...(typeof specWaves !== "number" && gates.some((g) => g !== options.gate) ? { gates } : {}),
+        gate: unattended ? "never" : options.gate,
+        ...(!unattended && typeof specWaves !== "number" && gates.some((g) => g !== options.gate) ? { gates } : {}),
         approval: rule?.mode ?? "ledger",
         ...(grouped
           ? { jobs: { wave: options.wave, groups: grouped.map((g) => ({ name: g.name, runs: g.roots, shares: g.shares })) } }
@@ -1264,6 +1267,12 @@ interface WavesContext {
   part?: number;
   /** The plans of a wave this job planned earlier (`--rest`), by wave number: the first carrier of an unknown read (./unknown-reads.ts). */
   planned?: (k: number) => WavePlan[] | undefined;
+  /**
+   * `allow_unattended` in `policy.outcomes` at base: the spec gives chant
+   * `gate: never`, and terragucci holds a wave its gate would hold through
+   * the `held` hook, unless the policy lets every changing root through.
+   */
+  unattended?: boolean;
 }
 
 /** One call chant makes back into the wave's job. Returns the call's exit code. */
@@ -1372,6 +1381,8 @@ export interface WaveRun {
   excluded?: Excluded[];
   /** Where each `approval_rules` entry the wave takes stands, with the approvers it counted (./approval-rules.ts). */
   approvalRules?: RuleProgress[];
+  /** What the policy's hold and allow_unattended rules made of the wave's gate, and the commit the policy was read at. */
+  policyGate?: ReportWave["policy_gate"];
   /** The approval mode in force at the wave's gate. */
   mode?: Approval;
   /** The command that approves the wave's digest, when it waits or its plans moved after an approval or a review. */
@@ -1574,7 +1585,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -1833,11 +1844,13 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   // In a composed run, a root that reads another root's value unknown at plan time applies a value nobody reviewed: the same hold.
   const linkedReads = deciding && changes > 0 && gate !== "never" ? [...rootReads(repo, waves, wave, w.reads, changing), ...toolReads(repo, waves, wave, changing), ...(composed?.reads ?? [])] : [];
   const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads)).length > 0;
-  // A step that asks for an approval, or a change over cost.approve_above at base, holds the wave whatever the gate policy says.
-  const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0 || byReads;
+  // The policy's hold and allow_unattended rules, over the plans that change something (policy.outcomes at base).
+  const ruled = deciding && changes > 0 ? waveRules(repo, ctx, j, (composed ? w.planned! : planned).filter((p) => changesSomething(p.plan)), gate, destroys > 0) : undefined;
+  // A step that asks for an approval, a change over cost.approve_above at base, or a hold rule, holds the wave whatever the gate policy says.
+  const byGate = (ruled?.outcome === "unattended" ? false : gate === "always" || (gate === "on-destructive" && destroys > 0)) || heldBySteps.length > 0 || byReads || ruled?.outcome === "held";
   const byCost = w.waveCost?.over === true;
   if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);
-  j.held = changes > 0 && (heldBySteps.length > 0 || byCost || byReads);
+  j.held = changes > 0 && (heldBySteps.length > 0 || byCost || byReads || (ruled?.held ?? false));
   const plans = planned.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary }));
   w.digest = digest;
   if (deciding) {
@@ -2641,6 +2654,29 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
 }
 
 /**
+ * What the policy's `hold` and `allow_unattended` rules make of a wave
+ * (policy.outcomes at base), over its plans that change something: `held`
+ * waits for an approval whatever `gate` says, `unattended` lets a wave its
+ * gate would hold through. `held` on the answer says whether the wave's
+ * `held` hook holds it for them: for a hold rule, and with `allow_unattended`
+ * (where chant's own gate is never) whenever `gate` holds it and the rules do
+ * not let it through. A step, cost.approve_above and an unknown read hold the
+ * wave as before, whatever the rules say.
+ */
+function waveRules(repo: string, ctx: WavesContext, j: WaveJob, changing: readonly WavePlan[], gate: Gate, destroys: boolean): { outcome?: "held" | "unattended"; held: boolean } {
+  const { w, label } = j;
+  const found = policyGate(changing);
+  const gateHolds = gate === "always" || (gate === "on-destructive" && destroys);
+  if (found) {
+    const commit = ctx.rule ? git(repo, ["rev-parse", "--verify", "-q", `${ctx.rule.base}^{commit}`]).stdout.trim() : "";
+    w.policyGate = { ...found, ...(commit ? { commit } : {}) };
+    if (found.outcome === "held") console.log(`${label}: the policy holds it for an approval (${found.rules.join(", ")})${gate === "never" ? ", although gate is never" : ""}`);
+    else if (gateHolds) console.log(`${label}: the policy allows every root that changes something to apply without an approval (${found.rules.join(", ")}), so gate ${gate} does not hold it`);
+  }
+  return { ...(found ? { outcome: found.outcome } : {}), held: found?.outcome === "held" || (ctx.unattended === true && gateHolds && found?.outcome !== "unattended") };
+}
+
+/**
  * Run the policy over a wave's plans, when `policy` is on. A root the policy
  * denies with rule ids goes to chant as a denial (`denied` in `{plans}`), and
  * chant lets it through only under an override on `_gates/policy-override.jsonl`
@@ -2661,10 +2697,14 @@ async function policyCheck(
   const out = new Map<string, { rules: string[]; reason?: string }>();
   // Policy is opt-in. With a base, the base's policy key decides whether it runs, as in tf-plan.
   const policyEnv = options.env ?? process.env;
-  const policyBaseRef = options.base ?? (policyEnv.TG_BASE || undefined);
+  // hold and allow_unattended, read at base, judge the policy at the base the approval rule is read at, so a change cannot add a rule that lets itself through.
+  const outcomes = ctx.rule?.policyOutcomes;
+  const policyBaseRef = outcomes ? ctx.rule!.base : options.base ?? (policyEnv.TG_BASE || undefined);
   const governing = await governingPolicy(repo, settings.policy, policyBaseRef, ctx.configPath ? { config: ctx.configPath } : {});
   if (governing.note) console.log(governing.note);
   if (!governing.policy) return out;
+  // The outcomes are the base's alone: a checkout's own outcomes key turns nothing on.
+  governing.policy = { ...governing.policy, outcomes: outcomes ?? ["deny"] };
   const runAt = runFacts(repo, policyEnv, settings.forge);
   // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
   const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
@@ -3630,10 +3670,11 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   // A unit that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
   const linkedReads = deciding && changing.length > 0 && options.gate !== "never" ? unitReads(repo, cut, wave, w.units?.edges ?? new Map(), changing.map((p) => p.root)) : [];
   const byReads = (await unknownReadHold(repo, options, ctx, w, label, options.gate, linkedReads)).length > 0;
-  const byGate = options.gate === "always" || (options.gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0 || byReads;
+  const ruled = deciding && changing.length > 0 ? waveRules(repo, ctx, j, changing, options.gate, destroys > 0) : undefined;
+  const byGate = (ruled?.outcome === "unattended" ? false : options.gate === "always" || (options.gate === "on-destructive" && destroys > 0)) || heldBySteps.length > 0 || byReads || ruled?.outcome === "held";
   const byCost = w.waveCost?.over === true;
   if (changing.length > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${options.gate}`}`);
-  j.held = changing.length > 0 && (heldBySteps.length > 0 || byCost || byReads);
+  j.held = changing.length > 0 && (heldBySteps.length > 0 || byCost || byReads || (ruled?.held ?? false));
   if (deciding && changing.length > 0) {
     w.preview = await comparePreview({ repo, env, wave, binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
     if (byGate || byCost) {

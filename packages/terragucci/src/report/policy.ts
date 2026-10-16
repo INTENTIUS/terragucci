@@ -84,6 +84,10 @@ export interface PolicyVerdict {
   warnings?: string[];
   /** Set when the engine did not run or did not answer; the root fails all the same. */
   error?: string;
+  /** With `hold` in `policy.outcomes`: each `hold` rule that matched, and its message. Its wave waits for an approval. */
+  holds?: { rule: string; message: string }[];
+  /** With `allow_unattended` in `policy.outcomes`: the ids of the `allow_unattended` rules that matched, sorted. */
+  allows?: string[];
 }
 
 export interface PolicyOptions {
@@ -143,6 +147,10 @@ async function fetchBytes(url: string): Promise<Buffer> {
 export const DENY_RULE = /^(deny|violation)(_[A-Za-z0-9]+)*$/;
 /** A rule whose messages are advice, as conftest counts them: `warn`, `warn_<name>`. */
 export const WARN_RULE = /^warn(_[A-Za-z0-9]+)*$/;
+/** A rule that holds the root's wave for an approval (`policy.outcomes`): `hold`, `hold_<name>`. */
+export const HOLD_RULE = /^hold(_[A-Za-z0-9]+)*$/;
+/** A rule that lets the root's plan apply without an approval (`policy.outcomes`): `allow_unattended`, `allow_unattended_<name>`. */
+export const ALLOW_RULE = /^allow_unattended(_[A-Za-z0-9]+)*$/;
 
 /** What an engine's answer holds: messages that fail the root, and advice that does not. */
 export interface PolicyFindings {
@@ -150,6 +158,10 @@ export interface PolicyFindings {
   warnings: string[];
   /** The id of the rule behind each violation, in the same order. */
   rules: string[];
+  /** Each `hold` rule that holds and its message (opa only). */
+  holds?: { rule: string; message: string }[];
+  /** The id of each `allow_unattended` rule that holds (opa only). */
+  allows?: string[];
 }
 
 /**
@@ -203,6 +215,16 @@ function packageFindings(doc: Record<string, unknown>, out: PolicyFindings, nest
       else if (value === true) into.push(name);
       else if (typeof value === "string") into.push(value);
       if (deny) for (let i = before; i < into.length; i++) out.rules.push(`${pkg}.${name}`);
+      continue;
+    }
+    // A hold or an allow holds when its value is true, a message, or a non-empty set of messages.
+    const said = Array.isArray(value) ? value.map(messageOf) : value === true ? [name] : typeof value === "string" && value !== "" ? [value] : [];
+    if (HOLD_RULE.test(name)) {
+      for (const message of said) (out.holds ??= []).push({ rule: `${pkg}.${name}`, message });
+      continue;
+    }
+    if (ALLOW_RULE.test(name)) {
+      if (said.length > 0) (out.allows ??= []).push(`${pkg}.${name}`);
       continue;
     }
     if (nested && value !== null && typeof value === "object" && !Array.isArray(value)) packageFindings(value as Record<string, unknown>, out, false, `${pkg}.${name}`);
@@ -428,6 +450,7 @@ export async function checkPlan(binary: string, policy: PolicySettings, repo: st
     if (opa && policy.input === "hcp") {
       const set = hcpPolicySet(path);
       if (typeof set === "string") return { violations: [], error: set };
+      if (set && outcomesBeyondDeny(policy)) return { violations: [], error: `policy.outcomes names ${outcomesBeyondDeny(policy)}, read from the namespace's package, and ${HCP_POLICY_FILE} runs each policy's own query; keep hold and allow_unattended rules out of a policy set, or drop them from outcomes` };
       if (set) return await checkHcpSet(binary, set, policy, path, file, repo, exec);
     }
     const r = await exec(binary, policyArgs(policy, path, file), repo);
@@ -436,11 +459,20 @@ export async function checkPlan(binary: string, policy: PolicySettings, repo: st
     if (found === undefined) return { violations: [], error: `${engine} gave no verdict (exit ${r.status}): ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}` };
     // conftest exits 1 on a denial and 2 or more when it could not run; opa exits 0 or 1 on a query it ran.
     if (found.violations.length === 0 && r.status !== 0) return { violations: [], error: `${engine} exited ${r.status}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}` };
-    return { violations: found.violations, ...ruleList(found.rules), ...(found.warnings.length > 0 ? { warnings: found.warnings } : {}) };
+    // hold and allow_unattended count only when policy.outcomes, read at base, names them.
+    const holds = policy.outcomes?.includes("hold") && found.holds?.length ? { holds: found.holds } : {};
+    const allows = policy.outcomes?.includes("allow_unattended") && found.allows?.length ? { allows: [...new Set(found.allows)].sort() } : {};
+    return { violations: found.violations, ...ruleList(found.rules), ...(found.warnings.length > 0 ? { warnings: found.warnings } : {}), ...holds, ...allows };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** The outcomes besides deny that `policy.outcomes` names, in words, or undefined when it names none. */
+const outcomesBeyondDeny = (policy: PolicySettings): string | undefined => {
+  const more = (policy.outcomes ?? []).filter((o) => o !== "deny");
+  return more.length ? more.join(" and ") : undefined;
+};
 
 /** A verdict's `rules`: each id once, sorted; nothing when no rule denied. */
 const ruleList = (rules: string[]): { rules?: string[] } => (rules.length > 0 ? { rules: [...new Set(rules)].sort() } : {});
@@ -454,7 +486,16 @@ export function describeVerdict(engine: string, v: PolicyVerdict): string {
 /** A verdict as the report keeps it under the root. */
 export function rootPolicy(v: PolicyVerdict): ReportRootPolicy {
   const result = v.error !== undefined ? "error" : v.violations.length > 0 ? "denied" : "passed";
-  return { result, denials: v.violations, ...(v.rules?.length ? { rules: v.rules } : {}), warnings: v.warnings ?? [], ...(v.error !== undefined ? { error: v.error } : {}) };
+  const held = [...new Set((v.holds ?? []).map((h) => h.rule))].sort();
+  return {
+    result,
+    denials: v.violations,
+    ...(v.rules?.length ? { rules: v.rules } : {}),
+    warnings: v.warnings ?? [],
+    ...(v.error !== undefined ? { error: v.error } : {}),
+    ...(held.length ? { held_by: held, holds: (v.holds ?? []).map((h) => h.message) } : {}),
+    ...(v.allows?.length ? { allowed_by: v.allows } : {}),
+  };
 }
 
 /** Every `.rego` file under `dir` that is not a test, with its text. */
@@ -473,6 +514,8 @@ function regoFiles(dir: string): { file: string; text: string }[] {
 
 /** A rule head that counts: `deny`, `violation`, `warn` and their `_<name>` forms, at the start of a line. */
 const COUNTED_HEAD = /^\s*(?:default\s+)?(deny|violation|warn)(_[A-Za-z0-9]+)*\b/m;
+/** With `hold` or `allow_unattended` in `policy.outcomes`, their rule heads count too. */
+const OUTCOME_HEAD = /^\s*(?:default\s+)?(hold|allow_unattended)(_[A-Za-z0-9]+)*\b/m;
 
 /**
  * Why the namespace the engine reads matches nothing: no Rego file under
@@ -493,7 +536,8 @@ export function namespaceProblem(policy: PolicySettings, dir: string, shown: str
     const m = /^\s*package\s+(\S+)/m.exec(text);
     if (!m) continue;
     if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(m[1])) return undefined;
-    packages.set(m[1], (packages.get(m[1]) ?? false) || COUNTED_HEAD.test(text));
+    const counts = COUNTED_HEAD.test(text) || (policy.outcomes?.some((o) => o !== "deny") === true && OUTCOME_HEAD.test(text));
+    packages.set(m[1], (packages.get(m[1]) ?? false) || counts);
   }
   const matched = [...packages.keys()].filter((p) => p === target || (nested && p.startsWith(`${target}.`)));
   const named = nested ? `package ${target} or a package under it` : `package ${target}`;
@@ -542,6 +586,8 @@ export function redactVerdict(v: PolicyVerdict, plan: unknown): PolicyVerdict {
     ...(v.rules ? { rules: v.rules } : {}),
     ...(v.warnings ? { warnings: v.warnings.map(clean) } : {}),
     ...(v.error !== undefined ? { error: clean(v.error) } : {}),
+    ...(v.holds ? { holds: v.holds.map((h) => ({ rule: h.rule, message: clean(h.message) })) } : {}),
+    ...(v.allows ? { allows: v.allows } : {}),
   };
 }
 
@@ -903,6 +949,8 @@ export async function checkPlans(
         : redactVerdict(await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...run, root: item.path, ...(item.cost ? { cost: item.cost } : {}) }), item.plan);
       roots.set(item.path, rootPolicy(verdict));
       for (const w of verdict.warnings ?? []) log(`${item.path}: policy warns: ${w}`);
+      for (const h of verdict.holds ?? []) log(`${item.path}: policy holds its wave for an approval (${h.rule}): ${h.message}`);
+      if (verdict.allows?.length) log(`${item.path}: policy allows its plan to apply without an approval (${verdict.allows.join(", ")})`);
       if (verdict.error === undefined && verdict.violations.length === 0) {
         log(`${item.path}: policy passed`);
         continue;

@@ -159,6 +159,8 @@ deny contains msg if {
 |---|---|
 | `deny`, `violation`, `deny_<name>`, `violation_<name>` | fail the root |
 | `warn`, `warn_<name>` | warn |
+| `hold`, `hold_<name>` | with `hold` in [`outcomes`](#holding-or-releasing-a-wave): the root's wave waits for an approval |
+| `allow_unattended`, `allow_unattended_<name>` | with `allow_unattended` in [`outcomes`](#holding-or-releasing-a-wave): the root's plan may apply without an approval |
 
 A message is the rule's string or its object's `msg`. Both engines give the same verdict.
 
@@ -174,7 +176,7 @@ The job's log and `roots[].policy.rules` in the report list them.
 
 ### Namespace matching
 
-If no Rego file outside the tests declares the namespace and has a `deny`, `violation` or `warn` rule, every planned root is refused and the message lists the packages found.
+If no Rego file outside the tests declares the namespace and has a `deny`, `violation` or `warn` rule (or, with them in [`outcomes`](#holding-or-releasing-a-wave), a `hold` or `allow_unattended` rule), every planned root is refused and the message lists the packages found.
 
 ## Denials
 
@@ -242,6 +244,61 @@ Base is the applied commit's first parent, or the pull request's base with `appl
 | the pull request's plan note, and the wave's `note.md` | the override that stands for each denied root, or the command to write one; the plan job still fails the root |
 | the estate page | the roots the newest apply waves applied under an override |
 
+## Holding or releasing a wave
+
+`outcomes` lets the policy's rules hold a wave for an approval or let it apply without one, beside denying a root. It needs `engine: opa`: `conftest test` reports only `deny`, `violation` and `warn` rules.
+
+```yaml
+gate: always            # for the plans no rule speaks to
+policy:
+  engine: opa
+  path: policy
+  outcomes: [deny, hold, allow_unattended]
+```
+
+| Outcome | A rule that matches |
+|---|---|
+| `deny` | fails the root, as without `outcomes`; always on |
+| `hold` | `hold` or `hold_<name>`: the root's wave waits for an approval whatever `gate` says |
+| `allow_unattended` | `allow_unattended` or `allow_unattended_<name>`: the root's plan is safe to apply without an approval |
+
+A rule matches when its value is `true`, a message, or a non-empty set of messages. Unset, `outcomes` is `[deny]` and nothing changes.
+
+```rego
+package main
+
+import rego.v1
+
+# Rotating a launch template or a certificate is routine.
+allow_unattended_routine if {
+  every rc in input.resource_changes {
+    rc.type in {"aws_launch_template", "aws_acm_certificate"}
+  }
+}
+
+hold_iam contains msg if {
+  some rc in input.resource_changes
+  startswith(rc.type, "aws_iam_")
+  rc.change.actions != ["no-op"]
+  msg := sprintf("%s changes IAM", [rc.address])
+}
+```
+
+Each wave combines its roots that change something:
+
+| Rules matched | Wave |
+|---|---|
+| any `deny` | refused, unless an [override](#overriding-a-denial) stands |
+| any `hold` | waits for an approval |
+| an `allow_unattended` for every root that changes something, and no `hold` | applies without an approval, whatever `gate` says |
+| otherwise | `gate` decides |
+
+`cost.approve_above`, a step with `on_failure: approve` and a root that read an output unknown at review still hold a wave the rules allow.
+
+`outcomes` is read from the config at base, and with `hold` or `allow_unattended` in it `tf-apply` reads the policy itself at base too, so a pull request that adds an `allow_unattended` rule is decided by the base branch's rules. The pull request's plan note says what each wave will do and which rules decide it: "applies without an approval: allowed unattended by `main.allow_unattended_routine`", or "waits for an approval (held by `main.hold_iam`)". The job's log names each rule that held or released the wave, and the wave's report carries them in `waves[].policy_gate` with the commit the policy was read at, as does its `apply` entry in the [audit trail](/terragucci/reference/audit-trail/). Each root's report lists the rules it matched in `roots[].policy.held_by` and `roots[].policy.allowed_by`.
+
+Test the rules as you test a denial: `tf-check` runs `opa test` on them.
+
 ## The base branch decides
 
 A pull request's plan is checked against the `policy` key and directory at the base branch, so editing, deleting or renaming them, or `terragucci.yml`, changes nothing until merged.
@@ -284,7 +341,7 @@ terragucci reads `origin/<branch>`, and the checkout needs that ref fetched. `TG
 
 ### tf-apply
 
-`tf-apply` checks each wave's plans before gating them. A denied wave applies nothing and records no approval; with `override` set it records the denial for an [override](#overriding-a-denial), and a root an override stands for goes on to the gate. The policy comes from the default branch, or from `TG_BASE` when set.
+`tf-apply` checks each wave's plans before gating them. A denied wave applies nothing and records no approval; with `override` set it records the denial for an [override](#overriding-a-denial), and a root an override stands for goes on to the gate. The policy comes from the default branch, or from `TG_BASE` when set; with `hold` or `allow_unattended` in [`outcomes`](#holding-or-releasing-a-wave), from the base the approval mode is read at.
 
 ### The engines
 

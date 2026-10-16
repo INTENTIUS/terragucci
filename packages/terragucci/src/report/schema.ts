@@ -484,6 +484,12 @@ export interface ReportRootPolicy {
   warnings: string[];
   /** Why the policy could not be checked, with `result: error`. */
   error?: string;
+  /** With `hold` in `policy.outcomes` at base (minor 40): the ids of the `hold` rules that matched, sorted. Its wave waits for an approval. */
+  held_by?: string[];
+  /** The messages of those `hold` rules (minor 40). */
+  holds?: string[];
+  /** With `allow_unattended` in `policy.outcomes` at base (minor 40): the ids of the `allow_unattended` rules that matched, sorted. */
+  allowed_by?: string[];
   /**
    * The override that stands for this root's plan and rules (minor 10). On a
    * `tf-apply` wave the root then applies, and is `planned` with its denial
@@ -582,6 +588,16 @@ export interface ReportWave {
    * counted and whether it is met. Absent when no rule applies to the wave.
    */
   approval_rules?: ReportApprovalRule[];
+  /**
+   * What the policy's `hold` and `allow_unattended` rules did to the wave's
+   * gate (minor 40): `held`, a root that changes something matched a `hold`
+   * rule, so it waits for an approval whatever `gate` says; `unattended`,
+   * every root that changes something matched an `allow_unattended` rule and
+   * none holds, so `gate` does not hold it. `rules` are those rules' ids, and
+   * on a `tf-apply` wave `commit` is the commit the policy was read at.
+   * Absent when no such rule decided anything.
+   */
+  policy_gate?: { outcome: "held" | "unattended"; rules: string[]; commit?: string };
   /**
    * The roots whose `on_failure: approve` step failed (minor 17): the gate
    * holds the wave whatever the gate policy says, when it changes anything.

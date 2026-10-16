@@ -413,7 +413,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     kind: "apply",
     who: approval?.who ?? (overrides.length > 0 ? overrides.map((o) => o.by).join(", ") : null),
     result,
-    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, approvals: counted.length > 0 ? counted.map((a) => a.id) : undefined, approvers: ruled.size > 0 ? [...new Set((wave.approval_rules ?? []).flatMap((r) => r.approvers))] : undefined, excluded: excludedOf(wave.excluded_approvers), changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
+    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, approvals: counted.length > 0 ? counted.map((a) => a.id) : undefined, approvers: ruled.size > 0 ? [...new Set((wave.approval_rules ?? []).flatMap((r) => r.approvers))] : undefined, policy: wave.policy_gate ? { outcome: wave.policy_gate.outcome, rules: wave.policy_gate.rules, commit: wave.policy_gate.commit } : undefined, excluded: excludedOf(wave.excluded_approvers), changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
   };
 }
 

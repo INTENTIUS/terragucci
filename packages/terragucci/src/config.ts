@@ -89,6 +89,14 @@ export const DEPENDENTS = ["follow", "plan"] as const;
 /** What a pull request does with the dependents of a changed unit when terragrunt.dependents is unset. */
 export const DEFAULT_DEPENDENTS: Dependents = "plan";
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
+/**
+ * What a policy rule can do to a root's wave (./report/policy.ts): `deny`
+ * fails the root, `hold` makes its wave wait for an approval whatever `gate`
+ * says, `allow_unattended` lets a wave whose every changing root it allows
+ * apply without one.
+ */
+export const POLICY_OUTCOMES = ["deny", "hold", "allow_unattended"] as const;
+export type PolicyOutcome = (typeof POLICY_OUTCOMES)[number];
 export const POLICY_INPUTS = ["plan", "hcp"] as const;
 /**
  * When a pull request takes its root locks (`locks:`). `apply` (the default):
@@ -234,6 +242,13 @@ export interface PolicySettings {
    * Read at base, like `approval:`. Unset, no override counts.
    */
   override?: string[];
+  /**
+   * The rule outcomes the policy has: `deny` always, and `hold` and
+   * `allow_unattended` when listed, read from `hold`, `hold_*`,
+   * `allow_unattended` and `allow_unattended_*` rules (engine `opa`). Read
+   * at base. Default `[deny]`.
+   */
+  outcomes?: PolicyOutcome[];
 }
 
 /**
@@ -1127,7 +1142,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
-export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override"];
+export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes"];
 export const SOURCES_KEYS = ["modules", "providers"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
@@ -1527,7 +1542,7 @@ function checkApprovalRules(v: unknown, where: string, problems: string[], mode:
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
-    problems.push(`${where} must be a map (settings: engine, path, namespace, input, source, override)`);
+    problems.push(`${where} must be a map (settings: ${POLICY_KEYS.join(", ")})`);
     return;
   }
   for (const k of Object.keys(p)) if (!POLICY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${POLICY_KEYS.join(", ")})`);
@@ -1536,6 +1551,13 @@ function checkPolicy(p: unknown, where: string, problems: string[]): void {
   }
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
   oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
+  if (p.outcomes !== undefined) {
+    const o = p.outcomes;
+    if (!Array.isArray(o) || o.length === 0 || !o.every((x) => (POLICY_OUTCOMES as readonly unknown[]).includes(x))) problems.push(`${where}.outcomes must be a list of ${POLICY_OUTCOMES.join(", ")}`);
+    else if (new Set(o).size !== o.length) problems.push(`${where}.outcomes names an outcome twice`);
+    else if (!o.includes("deny")) problems.push(`${where}.outcomes leaves out deny, and a deny rule always fails its root; list deny first, such as [deny, hold]`);
+    else if (o.some((x) => x !== "deny") && p.engine !== "opa") problems.push(`${where}.outcomes names ${o.filter((x) => x !== "deny").join(" and ")}, which only engine: opa reads (conftest reports deny, violation and warn rules alone); set engine to opa`);
+  }
   if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
     problems.push(`${where}.path must be a directory inside the repo, such as policy`);
   }

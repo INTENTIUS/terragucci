@@ -89,6 +89,20 @@ export function withEnvironment<T extends { environment?: string }>(input: T, en
   return environment ? { ...input, environment } : input;
 }
 
+/**
+ * What the policy's `hold` and `allow_unattended` rules make of a wave's
+ * gate, from the verdicts of its roots that change something: `held` when
+ * any of them matched a `hold` rule, `unattended` when every one matched an
+ * `allow_unattended` rule and none holds. Undefined otherwise: `gate`
+ * decides, as with no such rule.
+ */
+export function policyGate(changing: readonly { policy?: ReportRootPolicy }[]): { outcome: "held" | "unattended"; rules: string[] } | undefined {
+  const held = [...new Set(changing.flatMap((p) => p.policy?.held_by ?? []))].sort();
+  if (held.length > 0) return { outcome: "held", rules: held };
+  if (changing.length > 0 && changing.every((p) => (p.policy?.allowed_by?.length ?? 0) > 0)) return { outcome: "unattended", rules: [...new Set(changing.flatMap((p) => p.policy!.allowed_by!))].sort() };
+  return undefined;
+}
+
 export interface WaveInput {
   number: number;
   roots: string[];
@@ -107,6 +121,8 @@ export interface WaveInput {
   heldBySteps?: string[];
   /** The `approval_rules` entries its roots take, and where each stands (../approval-rules.ts). */
   approvalRules?: ReportApprovalRule[];
+  /** A `tf-apply` wave: what the policy's hold and allow_unattended rules made of its gate. A plan's wave works it out from its roots' verdicts. */
+  policyGate?: ReportWave["policy_gate"];
   /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
   cost?: ReportWaveCost;
   /** Where the wave stands. */
@@ -409,7 +425,7 @@ export function buildReport(input: BuildInput): Report {
     // With cost.approve_above the wave's cost is one more member of its digests, as the wave's gate takes it.
     const cost = costMember(w.cost);
     const extra = cost ? [cost] : [];
-    let review: Pick<ReportWave, "review_digest" | "waits"> = {};
+    let review: Pick<ReportWave, "review_digest" | "waits" | "policy_gate"> = {};
     if (input.gate) {
       const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
       const changing = [...members.filter((m) => changesSomething(plans.get(m.member))), ...(changesSomething(comp?.plan) ? run : [])];
@@ -418,11 +434,16 @@ export function buildReport(input: BuildInput): Report {
       const unknownHold = (comp?.heldByUnknown?.length ?? 0) > 0;
       const gate = w.policy ?? input.gate;
       const replans = (w.replansAfter?.length ?? 0) > 0;
+      // The policy's hold and allow_unattended rules: a hold waits whatever gate says, and an allow of every changing root lifts gate alone.
+      const verdicts = new Map(input.roots.map((r) => [r.path, r.policy]));
+      const ruled = replans ? undefined : policyGate(changing.filter((m) => verdicts.has(m.member)).length === changing.length ? changing.map((m) => ({ policy: verdicts.get(m.member) })) : []);
+      const gateHolds = ruled?.outcome === "unattended" ? false : gate === "always" || (gate === "on-destructive" && destroys);
       review = {
         // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
         review_digest: failed || changing.length === 0 || replans ? null : changeSetDigest([...changing, ...extra]),
         // Nobody reviews the plan it makes then, so its gate holds it under every policy but never (#1012).
-        waits: (replans && gate !== "never") || (changing.length > 0 && (gate === "always" || (gate === "on-destructive" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0 || (unknownHold && gate !== "never"))),
+        waits: (replans && gate !== "never") || (changing.length > 0 && (gateHolds || ruled?.outcome === "held" || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0 || (unknownHold && gate !== "never"))),
+        ...(ruled && changing.length > 0 ? { policy_gate: ruled } : {}),
       };
     }
     return {
@@ -437,6 +458,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
       ...(w.excluded?.length ? { excluded_approvers: w.excluded.map((e) => ({ login: e.login, reason: e.reason })) } : {}),
       ...(w.approvalRules?.length ? { approval_rules: w.approvalRules.map((r) => ({ ...r, roots: [...r.roots], approvers: [...r.approvers] })) } : {}),
+      ...(w.policyGate ? { policy_gate: w.policyGate } : {}),
       ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
       ...(w.cost ? { cost: w.cost } : {}),
       ...(w.state ? { state: w.state } : {}),

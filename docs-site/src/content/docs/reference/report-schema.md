@@ -76,6 +76,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `waiting_since` | a waiting wave | when it began waiting for an approval of this digest |
 | `refused` | a `tf-apply` wave that planned but applied nothing | the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied |
 | `review` | a waiting `tf-apply` wave under `approval: pr-review` | the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
+| `policy_gate` | a wave the policy's `hold` or `allow_unattended` rules decided (minor 40) | the `outcome`, `held` or `unattended`, the `rules` that decided it and, on a `tf-apply` wave, the `commit` the policy was read at |
 | `approval_rules` | a wave whose roots `approval_rules` at base names (minor 40) | each rule it takes: its `roots`, `count`, `roles` and `not_author`, and on a `tf-apply` wave the `approvers` of its digest the rule counted and whether it is `met` |
 | `excluded_approvers` | a `tf-apply` wave whose approval left someone out (minor 39) | each person whose approval of the wave's digest did not count because they had a hand in the change: their `login`, and the `reason`, such as `bob asked for abc1234` |
 | `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |

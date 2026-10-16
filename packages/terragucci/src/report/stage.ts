@@ -2129,7 +2129,9 @@ async function finish(
   if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
     const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
-    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
+    // hold and allow_unattended come from the base's policy key alone: a pull request's own outcomes key turns nothing on.
+    const settled = governing.from === "base" || !(options.base ?? baseRef(env)) ? governing.policy : { ...governing.policy, outcomes: undefined };
+    ({ inputs, policy } = await applyPolicy(repo, settled, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
     if (governing.policy.override?.length) inputs = await planOverrides(repo, options, env, inputs, policy, log);
   }
   // With environments, each root names its environment, and each wave its roots' environments and the gate they give it (../environments.ts).

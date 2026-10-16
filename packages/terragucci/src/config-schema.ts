@@ -52,6 +52,7 @@ import {
   PASS_RESERVED_PREFIXES,
   POLICY_ENGINES,
   POLICY_INPUTS,
+  POLICY_OUTCOMES,
   POLICY_KEYS,
   QUESTION_TYPES,
   REGISTRY_KEYS,
@@ -244,6 +245,7 @@ const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
   namespace: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_.]*$" },
   input: enumOf(POLICY_INPUTS),
   override: { type: "array", minItems: 1, items: oneLine },
+  outcomes: { type: "array", minItems: 1, uniqueItems: true, items: enumOf(POLICY_OUTCOMES) },
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
 const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };
