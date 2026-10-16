@@ -1,0 +1,304 @@
+{
+  "schema": "terragucci.report/v1",
+  "minor": 39,
+  "run": {
+    "project": "forgejo:3000/terragucci-admin/demo",
+    "commit": "59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+    "commit_url": "http://forgejo:3000/terragucci-admin/demo/commit/59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "pull_request": "1557",
+    "pull_request_url": "http://forgejo:3000/terragucci-admin/demo/pulls/1557",
+    "stage": "tf-apply",
+    "wave": 2,
+    "binary": "tofu",
+    "runtime": "forge",
+    "started": "2026-10-16T09:20:48.261Z",
+    "finished": "2026-10-16T09:20:57.878Z",
+    "terragucci": "0.4.28"
+  },
+  "change_set": "jcs1-sha256:fff68f2f3aaeb75eb1a16ba96147d114e48892b36544120a0f99ac105391396b",
+  "unit": "instance",
+  "units": 1,
+  "totals": {
+    "create": 0,
+    "update": 0,
+    "replace": 1,
+    "delete": 0,
+    "read": 0,
+    "no-op": 2,
+    "forget": 0
+  },
+  "totals_roots": 1,
+  "groups": [
+    {
+      "id": "ca953e8ebd0a",
+      "resource": "terraform_data.migration",
+      "units": [
+        "terraform_data.migration[\"20261016T0521-unique-email\"]"
+      ],
+      "outlier": false,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "-/+ terraform_data.migration: id, output",
+          "action": "replace",
+          "count": 1
+        }
+      ],
+      "destroys": 1,
+      "varies": [],
+      "fold": "open",
+      "why": [
+        "1 destroy or replacement"
+      ]
+    }
+  ],
+  "roots": [
+    {
+      "path": "app",
+      "binary": {
+        "name": "tofu",
+        "version": "1.13.1"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:07d5267f18fa69d69b9bfbd86ed3f3bdf24512178b386591f86c2812dc12281d",
+      "counts": {
+        "no-op": 2,
+        "replace": 1
+      },
+      "plan": {
+        "json": "roots/app/plan.json"
+      },
+      "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+      "changes": [
+        {
+          "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+          "type": "terraform_data",
+          "action": "replace",
+          "disruption": "destroy",
+          "index": "20261016T0521-unique-email",
+          "attributes": [
+            {
+              "path": "id",
+              "before": "371f7d62-b5bb-5456-0c81-6002e69e25a9",
+              "unknown": true
+            },
+            {
+              "path": "output",
+              "before": "20261016T0521-unique-email",
+              "unknown": true
+            }
+          ],
+          "fold": "open",
+          "why": "replaces"
+        }
+      ],
+      "highlights": [
+        {
+          "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+          "type": "terraform_data",
+          "action": "replace",
+          "why": "replaces"
+        }
+      ],
+      "fold": "open",
+      "why": [
+        "replaces"
+      ],
+      "resources": [
+        {
+          "address": "terraform_data.listener_port",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        },
+        {
+          "address": "terraform_data.migration[\"20261016T0521-init\"]",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        },
+        {
+          "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        }
+      ],
+      "applied_changes": [
+        {
+          "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+          "type": "terraform_data",
+          "actions": [
+            "replace"
+          ],
+          "attributes": [
+            "id",
+            "output"
+          ]
+        }
+      ],
+      "state": {
+        "backend": "s3",
+        "location": "s3://demo-terraform-state/app.tfstate",
+        "versioning": "off",
+        "note": "bucket versioning is off for demo-terraform-state, so it keeps only the latest state"
+      },
+      "reads": [
+        {
+          "upstream": "network",
+          "data": "network",
+          "outputs": "applied"
+        }
+      ],
+      "timings": {
+        "seconds": 8.57,
+        "plan_seconds": 0.06,
+        "apply_seconds": 8.38,
+        "spans": 18,
+        "detail": "resources",
+        "resources": [
+          {
+            "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 8328
+          },
+          {
+            "address": "data.terraform_remote_state.network",
+            "type": "terraform_remote_state",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 7.8
+          },
+          {
+            "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.9
+          },
+          {
+            "address": "terraform_data.listener_port",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.7
+          },
+          {
+            "address": "terraform_data.migration[\"20261016T0521-init\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.7
+          },
+          {
+            "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.5
+          }
+        ],
+        "provider_calls": [],
+        "provider_init": [],
+        "lock_waits": [],
+        "aggregates": []
+      }
+    }
+  ],
+  "waves": [
+    {
+      "number": 2,
+      "roots": [
+        "app"
+      ],
+      "set_digest": "jcs1-sha256:588e28f34c6fc2cad979c1f4e469f13cda2068ab61323bae098c8d75545a057c",
+      "approval": "approved",
+      "gate": {
+        "branch": "chant/lifecycle",
+        "path": "_gates/tf-apply.jsonl"
+      },
+      "cost": {
+        "currency": "USD",
+        "monthly_delta": 0,
+        "monthly_total": 25,
+        "past_monthly_total": 25
+      },
+      "state": "applied",
+      "reads": [
+        1
+      ]
+    }
+  ],
+  "named": [
+    {
+      "root": "app",
+      "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+      "type": "terraform_data",
+      "action": "replace"
+    }
+  ],
+  "holes": [],
+  "redaction": {
+    "marker": "(sensitive, redacted by terragucci)",
+    "values": 0
+  },
+  "cost": {
+    "estimator": "cost-stub",
+    "currency": "USD",
+    "monthly_delta": 0,
+    "monthly_total": 25,
+    "past_monthly_total": 25,
+    "roots": [
+      {
+        "root": "app",
+        "monthly_delta": 0,
+        "monthly_total": 25,
+        "past_monthly_total": 25,
+        "output": "roots/app/cost.json"
+      }
+    ]
+  },
+  "timings": {
+    "roots": [
+      {
+        "root": "app",
+        "seconds": 8.57,
+        "plan_seconds": 0.06,
+        "apply_seconds": 8.38,
+        "detail": "resources"
+      }
+    ],
+    "resources": [
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+        "type": "terraform_data",
+        "ms": 8328
+      },
+      {
+        "root": "app",
+        "address": "data.terraform_remote_state.network",
+        "type": "terraform_remote_state",
+        "ms": 7.8
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+        "type": "terraform_data",
+        "ms": 0.9
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.listener_port",
+        "type": "terraform_data",
+        "ms": 0.7
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-init\"]",
+        "type": "terraform_data",
+        "ms": 0.7
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+        "type": "terraform_data",
+        "ms": 0.5
+      }
+    ]
+  }
+}
