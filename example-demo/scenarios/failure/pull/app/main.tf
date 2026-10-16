@@ -31,7 +31,7 @@ output "listener_port" {
   value = terraform_data.listener_port.input
 }
 
-# A migration that runs once, when it is created. It exits 1 while the object
+# A one-time setup step (a stand-in for a migration) that runs once, when it is created. It exits 1 while the object
 # demo-control/app-migration-fails exists in floci: the demo's driver sets it
 # before the cycle and deletes it before the re-run.
 resource "terraform_data" "migration" {
@@ -43,7 +43,7 @@ resource "terraform_data" "migration" {
     command     = <<-EOT
       const url = (process.env.AWS_ENDPOINT_URL_S3 || process.env.AWS_ENDPOINT_URL) + "/demo-control/app-migration-fails";
       fetch(url).then(
-        (r) => { if (r.ok) { console.error("the migration fails while " + url + " exists"); process.exit(1); } console.log("the migration ran"); },
+        (r) => { if (r.ok) { console.error("the setup step fails while " + url + " exists"); process.exit(1); } console.log("the setup step ran"); },
         (e) => { console.error("could not reach " + url + ": " + e.message); process.exit(1); },
       );
     EOT
