@@ -121,7 +121,18 @@
 # closed pull requests, and their refs/pull/<n>/head, past the newest
 # DEMO_FORGE_PULLS (50), never an open one, the newest, or one the bucket's
 # cycles or runs name, and has Forgejo run git gc and its Actions cleanup at
-# most hourly (scripts/demo-pulls.ts, behold#603).
+# most hourly (scripts/demo-pulls.ts, behold#603). And it deletes each
+# project's wave reports in the bucket past the newest DEMO_REPORTS_KEEP (50)
+# commits, never a commit the indexes' newest rows, the inventory, the state
+# edges or versions, a stored cycle or demo.json name, after dropping those
+# runs from index.json, changes.json, states.json, history.json and the report
+# entries of audit.jsonl (scripts/demo-reports.ts). Each cycle starts by
+# putting its repo's chant/lifecycle back to its base, which up never writes:
+# the branch is deleted, as a fresh repo has none, and the cycle's approvals
+# make it again. It holds that cycle's gate lines until the repo's next cycle,
+# so behold's kiosk can replay them, and the reset's prune drops the
+# audit.jsonl ledger entries it no longer holds that are older than the
+# project's oldest kept report.
 #
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
@@ -205,6 +216,7 @@ LIMIT_ESTATE="${DEMO_LIMIT_ESTATE:-120}" # terragucci estate after a cycle's aud
 RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may take
 FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
 FORGE_PULLS="${DEMO_FORGE_PULLS:-50}"   # the closed pull requests Forgejo keeps of each demo repo; each reset deletes older ones
+REPORTS_KEEP="${DEMO_REPORTS_KEEP:-50}" # the commits whose wave reports the bucket keeps per project; each reset deletes older ones
 POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
 # behold#571: a directory of checkouts the driver keeps at each step's commit,
 # for a viewer that draws the change (behold's demo host sets it to /view).
@@ -596,6 +608,54 @@ pulls_prune() {
     DEMO_PULLS_KEEP="$FORGE_PULLS" DEMO_PULLS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_PULLS_PREFIX="$REPORT_PREFIX" \
     DEMO_PULLS_STATE="$DEMO_STATE/pulls" node_modules/.bin/tsx scripts/demo-pulls.ts) \
     || log "pulls: the old pull requests were not all pruned; the reset goes on"
+  return 0
+}
+
+# Delete each project's wave reports and run views in the bucket past the
+# newest REPORTS_KEEP commits, and the runs they held from the indexes,
+# changes.json, states.json, the history and audit.jsonl's report entries
+# (scripts/demo-reports.ts). It keeps every commit those documents' newest
+# rows, a stored cycle or demo.json name. The estate page that reads them is
+# waited for first. A prune that fails is logged, and the reset goes on.
+reports_prune() {
+  local held="$WORK/c$CYCLE/lifecycle-commits"
+  estate_wait
+  mkdir -p "$WORK/c$CYCLE" 2>/dev/null || true
+  lifecycle_commits > "$held" 2>/dev/null || : > "$held"
+  (cd "$HERE/.." && DEMO_REPORTS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_REPORTS_PREFIX="$REPORT_PREFIX" \
+    DEMO_REPORTS_KEEP="$REPORTS_KEEP" DEMO_REPORTS_LEDGER="$held" node_modules/.bin/tsx scripts/demo-reports.ts) \
+    || log "reports: the old reports were not all pruned; the reset goes on"
+  return 0
+}
+
+# The commits each loop repo's chant/lifecycle holds, "<repo> <sha>" a line,
+# and a line of the repo alone when it has no such branch, for the prune's
+# audit.jsonl ledger entries. A repo whose branch cannot be read prints
+# nothing, and the prune keeps its entries.
+lifecycle_commits() {
+  local repo tool remote heads dir ref
+  dir="$(mktemp -d "$WORK/c$CYCLE/lifecycle.XXXXXX")" && git init -q --bare "$dir" || return 1
+  while read -r repo tool; do
+    [ -n "$repo" ] || continue
+    remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+    heads="$(git ls-remote --heads "$remote" chant/lifecycle 2>/dev/null)" || continue
+    if [ -z "$heads" ]; then echo "$repo"; continue; fi
+    ref="refs/lifecycle/${repo//\//-}"
+    git -C "$dir" fetch -q --no-tags "$remote" "+refs/heads/chant/lifecycle:$ref" 2>/dev/null || continue
+    git -C "$dir" rev-list "$ref" | sed "s|^|$repo |"
+  done <<<"$(loop_repos)"
+}
+
+# Put the repo's chant/lifecycle back to its base before a cycle, as the reset
+# puts main back: up writes no such branch, so it is deleted, and the cycle's
+# first approval makes it again. Nothing runs on the repo here: the reset
+# before waited for its push back's run. The cycle before's gate lines stay
+# until now, so behold's kiosk replays them while that cycle is the tool's
+# latest. A delete that fails is logged, and the cycle goes on.
+lifecycle_back() {
+  [ -n "$(remote_head "$REPO" chant/lifecycle)" ] || return 0
+  git push -q "$REMOTE" ":refs/heads/chant/lifecycle" 2>/dev/null \
+    || log "lifecycle: could not put $REPO's chant/lifecycle back to its base; the cycle goes on"
   return 0
 }
 
@@ -1364,6 +1424,7 @@ run_cycle() {
   on_failed() { default_failed; }
   on_refused() { default_refused; }
   mkdir -p "$WORK/c$CYCLE"
+  lifecycle_back
   case "$SCENARIO" in
     a-known|a-output) scenario_a ;;
     b-waves) scenario_b_waves ;;
@@ -1548,12 +1609,15 @@ reset_work() {
       runs_export force "$FORGE_RUNS"
       pulls_prune
       run_ended "$LIMIT_RUN"
+      # Once the push back's run has written its reports, so no write meets the prune's.
+      reports_prune
       return 0
     fi
     [ -z "$BASE_RUN" ] || log "no run started for the push back to ${base:0:8}"
   fi
   runs_export force "$FORGE_RUNS"
   pulls_prune
+  reports_prune
 }
 
 reset_written() {
