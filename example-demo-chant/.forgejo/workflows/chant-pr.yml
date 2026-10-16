@@ -15,14 +15,11 @@ jobs:
   plan:
     if: github.event_name == 'pull_request'
     runs-on: docker
-    container: public.ecr.aws/docker/library/node:22-bookworm
+    container: terragucci-demo-chant:local
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
           fetch-depth: 0
-      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
-      - run: npm ci --no-audit --no-fund
-      - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Plan the members this pull request reaches
         env:
           BASE_SHA: '${{ github.event.pull_request.base.sha }}'
@@ -40,7 +37,7 @@ jobs:
   apply:
     if: github.event_name == 'push'
     runs-on: docker
-    container: public.ecr.aws/docker/library/node:22-bookworm
+    container: terragucci-demo-chant:local
     concurrency:
       group: chant-apply-demo
       cancel-in-progress: false
@@ -48,9 +45,6 @@ jobs:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
           fetch-depth: 0
-      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
-      - run: npm ci --no-audit --no-fund
-      - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Restore the record of an earlier attempt at this commit
         uses: https://code.forgejo.org/actions/cache/restore@v4
         with:
