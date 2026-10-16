@@ -1,0 +1,284 @@
+{
+  "schema": "terragucci.report/v1",
+  "minor": 39,
+  "run": {
+    "project": "forgejo:3000/terragucci-admin/demo",
+    "commit": "59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3963",
+    "commit_url": "http://forgejo:3000/terragucci-admin/demo/commit/59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "stage": "tf-apply",
+    "wave": 2,
+    "binary": "tofu",
+    "runtime": "forge",
+    "started": "2026-10-16T09:19:35.716Z",
+    "finished": "2026-10-16T09:19:45.893Z",
+    "terragucci": "0.4.28"
+  },
+  "change_set": "jcs1-sha256:f99a4c47a9fc18e9c63cbe2630997498d54971e14bf3cc9e656a47f193ac6ac7",
+  "unit": "instance",
+  "units": 2,
+  "totals": {
+    "create": 1,
+    "update": 1,
+    "replace": 0,
+    "delete": 0,
+    "read": 0,
+    "no-op": 1,
+    "forget": 0
+  },
+  "totals_roots": 1,
+  "groups": [
+    {
+      "id": "f2c15823d0df",
+      "resource": "terraform_data.listener_port",
+      "units": [
+        "terraform_data.listener_port"
+      ],
+      "outlier": false,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "~ terraform_data.listener_port: input, output",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "folded",
+      "why": []
+    },
+    {
+      "id": "c9039b7cc0fe",
+      "resource": "terraform_data.migration",
+      "units": [
+        "terraform_data.migration[\"20261016T0521-unique-email\"]"
+      ],
+      "outlier": false,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "+ terraform_data.migration",
+          "action": "create",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "folded",
+      "why": []
+    }
+  ],
+  "roots": [
+    {
+      "path": "app",
+      "binary": {
+        "name": "tofu",
+        "version": "1.13.1"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:de08941ec16cd17a5b300ce76e92cd0d1f8626c8dae6755780f7485cd0ae4c53",
+      "counts": {
+        "update": 1,
+        "no-op": 1,
+        "create": 1
+      },
+      "plan": {
+        "json": "roots/app/plan.json"
+      },
+      "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3963",
+      "changes": [
+        {
+          "address": "terraform_data.listener_port",
+          "type": "terraform_data",
+          "action": "update",
+          "disruption": "in-place",
+          "attributes": [
+            {
+              "path": "input",
+              "before": 8070,
+              "after": 9080
+            },
+            {
+              "path": "output",
+              "before": 8070,
+              "unknown": true
+            }
+          ],
+          "fold": "open"
+        },
+        {
+          "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+          "type": "terraform_data",
+          "action": "create",
+          "index": "20261016T0521-unique-email",
+          "attributes": [
+            {
+              "path": "id",
+              "unknown": true
+            },
+            {
+              "path": "input",
+              "after": "20261016T0521-unique-email"
+            },
+            {
+              "path": "output",
+              "unknown": true
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "folded",
+      "why": [],
+      "reads": [
+        {
+          "upstream": "network",
+          "data": "network",
+          "outputs": "applied"
+        }
+      ],
+      "timings": {
+        "seconds": 8.68,
+        "plan_seconds": 0.06,
+        "apply_seconds": 8.49,
+        "spans": 18,
+        "detail": "resources",
+        "resources": [
+          {
+            "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 8434
+          },
+          {
+            "address": "data.terraform_remote_state.network",
+            "type": "terraform_remote_state",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 8.6
+          },
+          {
+            "address": "terraform_data.listener_port",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 1
+          },
+          {
+            "address": "terraform_data.migration[\"20261016T0521-init\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.9
+          },
+          {
+            "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.8
+          },
+          {
+            "address": "terraform_data.listener_port",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.7
+          }
+        ],
+        "provider_calls": [],
+        "provider_init": [],
+        "lock_waits": [],
+        "aggregates": []
+      }
+    }
+  ],
+  "waves": [
+    {
+      "number": 2,
+      "roots": [
+        "app"
+      ],
+      "set_digest": "jcs1-sha256:154b8a00e93406ec874053f836604006e38d980b10c6eda3c19febb8a79fb5d7",
+      "approval": "not-required",
+      "cost": {
+        "currency": "USD",
+        "monthly_delta": 2.5,
+        "monthly_total": 25,
+        "past_monthly_total": 22.5
+      },
+      "state": "failed",
+      "reads": [
+        1
+      ]
+    }
+  ],
+  "named": [],
+  "holes": [],
+  "redaction": {
+    "marker": "(sensitive, redacted by terragucci)",
+    "values": 0
+  },
+  "cost": {
+    "estimator": "cost-stub",
+    "currency": "USD",
+    "monthly_delta": 2.5,
+    "monthly_total": 25,
+    "past_monthly_total": 22.5,
+    "roots": [
+      {
+        "root": "app",
+        "monthly_delta": 2.5,
+        "monthly_total": 25,
+        "past_monthly_total": 22.5,
+        "output": "roots/app/cost.json"
+      }
+    ]
+  },
+  "timings": {
+    "roots": [
+      {
+        "root": "app",
+        "seconds": 8.68,
+        "plan_seconds": 0.06,
+        "apply_seconds": 8.49,
+        "detail": "resources"
+      }
+    ],
+    "resources": [
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+        "type": "terraform_data",
+        "ms": 8434
+      },
+      {
+        "root": "app",
+        "address": "data.terraform_remote_state.network",
+        "type": "terraform_remote_state",
+        "ms": 8.6
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.listener_port",
+        "type": "terraform_data",
+        "ms": 1
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-init\"]",
+        "type": "terraform_data",
+        "ms": 0.9
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.migration[\"20261016T0521-unique-email\"]",
+        "type": "terraform_data",
+        "ms": 0.8
+      },
+      {
+        "root": "app",
+        "address": "terraform_data.listener_port",
+        "type": "terraform_data",
+        "ms": 0.7
+      }
+    ]
+  }
+}

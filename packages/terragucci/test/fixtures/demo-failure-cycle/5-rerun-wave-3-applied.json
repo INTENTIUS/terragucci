@@ -1,0 +1,233 @@
+{
+  "schema": "terragucci.report/v1",
+  "minor": 39,
+  "run": {
+    "project": "forgejo:3000/terragucci-admin/demo",
+    "commit": "59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+    "commit_url": "http://forgejo:3000/terragucci-admin/demo/commit/59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "pull_request": "1557",
+    "pull_request_url": "http://forgejo:3000/terragucci-admin/demo/pulls/1557",
+    "stage": "tf-apply",
+    "wave": 3,
+    "binary": "tofu",
+    "runtime": "forge",
+    "started": "2026-10-16T09:20:58.363Z",
+    "finished": "2026-10-16T09:20:58.860Z",
+    "terragucci": "0.4.28"
+  },
+  "change_set": "jcs1-sha256:f1ddc79827804413bd4bb31b721365da1a67b9c53e53e3f1ee3c3ce4ac90728e",
+  "unit": "instance",
+  "units": 1,
+  "totals": {
+    "create": 0,
+    "update": 1,
+    "replace": 0,
+    "delete": 0,
+    "read": 0,
+    "no-op": 0,
+    "forget": 0
+  },
+  "totals_roots": 1,
+  "groups": [
+    {
+      "id": "37ed7481e6e3",
+      "resource": "terraform_data.upstream",
+      "units": [
+        "terraform_data.upstream"
+      ],
+      "outlier": false,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "~ terraform_data.upstream: input, output",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "folded",
+      "why": []
+    }
+  ],
+  "roots": [
+    {
+      "path": "edge",
+      "binary": {
+        "name": "tofu",
+        "version": "1.13.1"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:524987986e0310b27d170b77a73f1083520f19b09368ebb93b11cf07a3394197",
+      "counts": {
+        "update": 1
+      },
+      "plan": {
+        "json": "roots/edge/plan.json"
+      },
+      "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+      "changes": [
+        {
+          "address": "terraform_data.upstream",
+          "type": "terraform_data",
+          "action": "update",
+          "disruption": "in-place",
+          "attributes": [
+            {
+              "path": "input",
+              "before": "http://app:8070",
+              "after": "http://app:9080"
+            },
+            {
+              "path": "output",
+              "before": "http://app:8070",
+              "unknown": true
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "folded",
+      "why": [],
+      "resources": [
+        {
+          "address": "terraform_data.upstream",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        }
+      ],
+      "applied_changes": [
+        {
+          "address": "terraform_data.upstream",
+          "type": "terraform_data",
+          "actions": [
+            "update"
+          ],
+          "attributes": [
+            "input",
+            "output"
+          ]
+        }
+      ],
+      "state": {
+        "backend": "s3",
+        "location": "s3://demo-terraform-state/edge.tfstate",
+        "versioning": "off",
+        "note": "bucket versioning is off for demo-terraform-state, so it keeps only the latest state"
+      },
+      "reads": [
+        {
+          "upstream": "app",
+          "data": "app",
+          "outputs": "applied"
+        }
+      ],
+      "timings": {
+        "seconds": 0.23,
+        "plan_seconds": 0.06,
+        "apply_seconds": 0.05,
+        "spans": 14,
+        "detail": "resources",
+        "resources": [
+          {
+            "address": "data.terraform_remote_state.app",
+            "type": "terraform_remote_state",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 7.9
+          },
+          {
+            "address": "terraform_data.upstream",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 1.6
+          },
+          {
+            "address": "terraform_data.upstream",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.8
+          }
+        ],
+        "provider_calls": [],
+        "provider_init": [],
+        "lock_waits": [],
+        "aggregates": []
+      }
+    }
+  ],
+  "waves": [
+    {
+      "number": 3,
+      "roots": [
+        "edge"
+      ],
+      "set_digest": "jcs1-sha256:f584a4e83096fbaf4403579e5ea1abfecc03abbc20ec59c897c439531990ca21",
+      "approval": "not-required",
+      "cost": {
+        "currency": "USD",
+        "monthly_delta": 0,
+        "monthly_total": 8,
+        "past_monthly_total": 8
+      },
+      "state": "applied",
+      "reads": [
+        2
+      ]
+    }
+  ],
+  "named": [],
+  "holes": [],
+  "redaction": {
+    "marker": "(sensitive, redacted by terragucci)",
+    "values": 0
+  },
+  "cost": {
+    "estimator": "cost-stub",
+    "currency": "USD",
+    "monthly_delta": 0,
+    "monthly_total": 8,
+    "past_monthly_total": 8,
+    "roots": [
+      {
+        "root": "edge",
+        "monthly_delta": 0,
+        "monthly_total": 8,
+        "past_monthly_total": 8,
+        "output": "roots/edge/cost.json"
+      }
+    ]
+  },
+  "timings": {
+    "roots": [
+      {
+        "root": "edge",
+        "seconds": 0.23,
+        "plan_seconds": 0.06,
+        "apply_seconds": 0.05,
+        "detail": "resources"
+      }
+    ],
+    "resources": [
+      {
+        "root": "edge",
+        "address": "data.terraform_remote_state.app",
+        "type": "terraform_remote_state",
+        "ms": 7.9
+      },
+      {
+        "root": "edge",
+        "address": "terraform_data.upstream",
+        "type": "terraform_data",
+        "ms": 1.6
+      },
+      {
+        "root": "edge",
+        "address": "terraform_data.upstream",
+        "type": "terraform_data",
+        "ms": 0.8
+      }
+    ]
+  }
+}

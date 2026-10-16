@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { AUDIT_SCHEMA, appendEntries, readRecord, type AuditEntry } from "../src/report/audit";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { AUDIT_SCHEMA, appendEntries, readRecord, reportEntry, type AuditEntry, type AuditEvidence } from "../src/report/audit";
+import type { Report } from "../src/report/schema";
 import { buildDora, DORA_METRIC, DORA_WEEKS, doraGauges, driftIncidents, duration, median, renderDoraSection, spanLabel, weekStart, type DoraSource } from "../src/report/dora";
 import { describeEstate, estate } from "../src/estate";
 import { readInlineEstate } from "../src/report/estate";
@@ -315,5 +318,39 @@ describe("terragucci estate and the DORA metrics", () => {
     const r = await estate(tmp(), { reports: { bucket: "s3://acme", endpoint: "http://minio:9000", prefix: "r" } }, { fetch: bucket(objects), otlpFetch, env: ENV, now: NOW });
     expect(r.metrics).toBeUndefined();
     expect(r.dora.audit).toBe(false);
+  });
+});
+
+// behold#571: one cycle of the demo's failure scenario, from the five wave
+// reports it wrote (fixtures/demo-failure-cycle, cycle 795 on the demo host).
+// SQL Yodeler refused the migration in wave 2: the report's wave state is
+// failed while app's root status is planned, its plan's. The driver fixed the
+// data and the re-run applied waves 1 to 3.
+describe("a failure cycle on the demo, from its real reports", () => {
+  const dir = join(__dirname, "fixtures", "demo-failure-cycle");
+  const reports = readdirSync(dir).sort().map((f) => ({ f, report: JSON.parse(readFileSync(join(dir, f), "utf8")) as Report }));
+  const entries = reports.map(({ f, report }) => reportEntry(report, `${report.run.project}/2026/10/${report.run.commit}/${f}`, { source: "report" } as AuditEvidence, [])!);
+  const project = reports[0]!.report.run.project;
+
+  it("records the failed wave as a failed apply on app, though app's root reads planned", () => {
+    expect(reports[1]!.report.roots.map((r) => r.status)).toEqual(["planned"]);
+    expect(entries.map((e) => [e.what, e.result])).toEqual([
+      ["wave-1", "applied"],
+      ["wave-2", "failed"],
+      ["wave-1", "applied"],
+      ["wave-2", "applied"],
+      ["wave-3", "applied"],
+    ]);
+    expect(entries[1]!.detail).toMatchObject({ roots: ["app"], failed: ["app"] });
+  });
+
+  it("counts one failed change of five applies, restored by the re-run's wave 2", () => {
+    const dora = buildDora([{ project, rows: [] }], entries, new Date("2026-10-16T09:30:00.000Z"));
+    const p = dora.projects[0]!;
+    expect(p.deployments).toBe(4);
+    expect(p.change_failure).toEqual({ applies: 5, failed: 1, drifted: 0, rate: 0.2 });
+    // 09:19:45.893, the failed wave 2, to 09:20:57.878, the re-run's wave 2.
+    expect(p.restore).toEqual({ restored: 1, open: 0, median_seconds: 72, apply_restored: 1, drift_restored: 0 });
+    expect(dora.estate.change_failure.failed).toBe(1);
   });
 });
