@@ -1,0 +1,37 @@
+{
+  "name": "yodel-apply",
+  "op": "migrate-dev",
+  "plan": [
+    "yodel",
+    "apply",
+    "{target}",
+    "--wave-plan",
+    "{plan}",
+    "--spec",
+    "yodel-waves.json"
+  ],
+  "apply": [
+    "yodel",
+    "apply",
+    "{target}",
+    "--wave-apply",
+    "{plan}",
+    "--spec",
+    "yodel-waves.json"
+  ],
+  "branches": [
+    "main"
+  ],
+  "waves": [
+    {
+      "name": "dev",
+      "runs": [
+        {
+          "target": "dev",
+          "op": "migrate-dev"
+        }
+      ],
+      "gate": "never"
+    }
+  ]
+}
