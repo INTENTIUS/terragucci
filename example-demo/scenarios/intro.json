@@ -1,3 +1,3 @@
 {
-  "problem": "Terraform keeps what it built in records called states, and big setups have many. A value one state reads may not exist until apply, so no review shows it. This pipeline applies states in order and asks a person first."
+  "problem": "Big Terraform setups split what they build across many states. This pipeline applies them in order. A person approves each plan that uses a value another state just created."
 }
