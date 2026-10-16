@@ -160,6 +160,13 @@ LIMIT_QUIET="${DEMO_LIMIT_QUIET:-900}"  # for no run to be in progress before a 
 RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may take
 FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
 POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
+# behold#571: a directory of checkouts the driver keeps at each step's commit,
+# for a viewer that draws the change (behold's demo host sets it to /view).
+# <DEMO_VIEWS>/<repo name>.change is checked out at the step's commit (a pull
+# request's head, then its merge) before the step is written, and owned by
+# DEMO_VIEW_OWNER (user:group) when that is set. Unset, nothing is checked out.
+VIEWS="${DEMO_VIEWS:-}"
+VIEW_OWNER="${DEMO_VIEW_OWNER:-}"
 
 # up fails loudly: any command that fails, in up or a function it calls,
 # prints its file, line, function and command, and any non-zero exit prints
@@ -377,8 +384,31 @@ cycle_publish() {
   return 0
 }
 
+# Check out the step's commit in <VIEWS>/<repo name>.change, once per commit.
+# The fetch names the admin's remote on the command line only: no FETCH_HEAD
+# and no reflog, so its token is written nowhere in the checkout. A checkout
+# that is missing or fails is logged, and the step is written all the same.
+VIEW_AT=""
+view_follow() {
+  [ -n "$VIEWS" ] && [ -n "$COMMIT" ] && [ "$REPO:$COMMIT" != "$VIEW_AT" ] || return 0
+  VIEW_AT="$REPO:$COMMIT"
+  local dir="$VIEWS/${REPO##*/}.change"
+  if [ ! -d "$dir/.git" ]; then
+    log "view: no checkout $dir to put ${COMMIT:0:8} in"
+    return 0
+  fi
+  if GIT_REFLOG_ACTION="demo view" git -C "$dir" -c core.logAllRefUpdates=false fetch -q --no-write-fetch-head "$REMOTE" '+refs/heads/*:refs/demo-view/*' 2>/dev/null \
+    && git -C "$dir" -c core.logAllRefUpdates=false checkout -q -f --detach "$COMMIT" 2>/dev/null; then
+    [ -z "$VIEW_OWNER" ] || chown -R "$VIEW_OWNER" "$dir" 2>/dev/null || log "view: could not give $dir to $VIEW_OWNER"
+    log "view: $dir at ${COMMIT:0:8}"
+  else
+    log "view: could not check out ${COMMIT:0:8} in $dir"
+  fi
+}
+
 demo_write() { # step, label, [next action], [next at, epoch seconds]
   local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null
+  view_follow
   [ -z "$at" ] || at_iso="$(iso "$at")"
   [ -z "$action" ] || next="$(jq -cn --arg a "$action" --arg t "$at_iso" '{action: $a, at: (if $t == "" then null else $t end)}')"
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
