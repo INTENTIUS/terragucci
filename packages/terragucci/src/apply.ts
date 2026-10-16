@@ -1268,8 +1268,11 @@ async function waveCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   try {
     return (code = await waveCallIn(repo, options, ctx, r, j, what, runs, plansPath));
   } finally {
-    j.callEnded = nowNanos();
+    const ended = nowNanos();
+    j.callEnded = ended;
     const gate = what === "gate" ? gatePhaseAttrs(r.env, j) : {};
+    // A gate an approval let through in this run spans the wait (behold#571).
+    if (what === "gate" && j.facts.held) j.w.observer.holdGate(phase, j.facts.held, ended);
     j.w.observer.endPhase(phase, { ...gate, ...(code !== undefined ? { "terragucci.exit_code": code } : {}) }, code === undefined ? "the call threw" : code === EXIT.failed ? `exit ${code}` : undefined);
   }
 }

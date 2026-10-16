@@ -96,6 +96,8 @@ export class StageObserver {
   private current?: Span;
   /** Whether the stage was timed in phases: its roots then hang under the phases, not under wave spans. */
   private phased = false;
+  /** The phase spans, so a root's span under the apply phase can say how its apply came out. */
+  private readonly phases: Span[] = [];
   /** The forge's pipeline run and job this stage runs in, put on the trace's resource so a reader finds a run's traces. */
   private readonly pipeline: { run?: string; job?: string };
   private readonly start: bigint;
@@ -163,6 +165,34 @@ export class StageObserver {
     if (start !== undefined) span.start = start;
     this.phased = true;
     this.current = span;
+    this.phases.push(span);
+    return span;
+  }
+
+  /**
+   * A gate an approval let through in this run (behold#571): its span starts
+   * when the wave began waiting, holds a `held` span from the pending record
+   * to the approval, and a `check` span for the decision this job made, from
+   * the gate span's own start to `end`. Its bar then shows the hold its
+   * words name.
+   */
+  holdGate(gate: Span | undefined, held: { since: string; approvedAt: string }, end: bigint): void {
+    if (!gate) return;
+    const since = Date.parse(held.since);
+    const approved = Date.parse(held.approvedAt);
+    if (!Number.isFinite(since) || !Number.isFinite(approved) || approved < since) return;
+    const ns = (ms: number): bigint => BigInt(Math.round(ms)) * 1_000_000n;
+    this.spanAt("held", gate, ns(since), ns(approved), { "terragucci.wait": "approval", "terragucci.gate.held_seconds": (approved - since) / 1000 });
+    this.spanAt("check", gate, gate.start, end);
+    if (ns(since) < gate.start) gate.start = ns(since);
+  }
+
+  /** A span under `parent` that ran from `start` to `end` (Unix nanoseconds), such as the hold before a gate's approval. */
+  spanAt(name: string, parent: Span | undefined, start: bigint, end: bigint, attributes: Attrs = {}): Span | undefined {
+    if (!this.trace || !parent) return undefined;
+    const span = this.trace.start(name, parent, attributes);
+    span.start = start;
+    span.end = end;
     return span;
   }
 
@@ -442,11 +472,17 @@ export class StageObserver {
         span.end = held.reduce((m, t) => (t.span.end! > m ? t.span.end! : m), held[0].span.end!);
         for (const t of held) t.span.parentSpanId = span.spanId;
       }
+      // A root's status is its plan's. Under the apply phase it is how the apply came out: applied when the report
+      // lists what it applied, failed when the root or its wave failed (the rule the audit reads, report/audit.ts).
+      const applyPhases = new Set(this.phases.filter((p) => p.name === "apply").map((p) => p.spanId));
+      const waveFailed = report.waves.some((w) => w.state === "failed");
+      const applyStatus = (r: (typeof report.roots)[number]): string =>
+        r.status === "failed" || r.error ? "failed" : r.applied_changes !== undefined ? "applied" : waveFailed ? "failed" : r.status;
       for (const t of spans) {
         const r = report.roots.find((x) => x.path === t.path);
         if (!r) continue;
         Object.assign(t.span.attributes, {
-          "terragucci.status": r.status,
+          "terragucci.status": t.span.parentSpanId && applyPhases.has(t.span.parentSpanId) ? applyStatus(r) : r.status,
           "terragucci.plan_digest": r.plan_digest ?? undefined,
           ...Object.fromEntries(Object.entries(r.counts).map(([a, n]) => [`terragucci.plan.${a}`, n])),
         });
