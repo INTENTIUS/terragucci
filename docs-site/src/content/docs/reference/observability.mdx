@@ -63,9 +63,11 @@ terragucci tf-apply         project, commit, wave, result
     root network
       tofu init
       tofu plan             the binary's own spans, under this one
-  gate                      the gate's decision, and how long an approval held the wave
+  gate                      the gate's decision; after an approval, from when the wave began waiting
+    held                    from the pending record to the approval
+    check                   the decision this job made
   apply
-    root network
+    root network            applied, or failed
       tofu apply
   report
   upload                    the report's copy in the reports bucket
