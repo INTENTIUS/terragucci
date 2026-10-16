@@ -63,6 +63,23 @@ export function unknownOutputs(outputs: ReadonlyMap<string, PlannedOutput>, read
   return [...outputs].filter(([n, o]) => (read === undefined || read.has(n)) && anyTrue(o.unknown)).map(([n]) => n).sort();
 }
 
+/**
+ * The outputs among `read` (every output when undefined) that an upstream's
+ * plan changes, deletes or leaves unknown, sorted: what a downstream planned
+ * on the upstream's applied state did not see. A plan without
+ * `output_changes` cannot say which, so every output read counts.
+ */
+export function changedOutputs(plan: unknown, read?: ReadonlySet<string>): string[] {
+  const p = plan as { output_changes?: Record<string, OutputChange>; planned_values?: { outputs?: Record<string, PlannedValue> } } | undefined;
+  if (p?.output_changes && typeof p.output_changes === "object") {
+    return Object.entries(p.output_changes)
+      .filter(([n, c]) => (read === undefined || read.has(n)) && ((c.actions ?? []).some((a) => a !== "no-op") || anyTrue(c.after_unknown)))
+      .map(([n]) => n)
+      .sort();
+  }
+  return [...(read ?? Object.keys(p?.planned_values?.outputs ?? {}))].sort();
+}
+
 /** The report's read of one block planned on an upstream's planned outputs. */
 export function plannedRead(upstream: string, label: string, outputs: ReadonlyMap<string, PlannedOutput>, read?: ReadonlySet<string>): ReportRead {
   const unknown = unknownOutputs(outputs, read);
