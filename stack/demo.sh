@@ -442,24 +442,42 @@ cycle_publish() {
 
 # Check out the step's commit in <VIEWS>/<repo name>.change, once per commit.
 # The fetch names the admin's remote on the command line only: no FETCH_HEAD
-# and no reflog, so its token is written nowhere in the checkout. A checkout
-# that is missing or fails is logged, and the step is written all the same.
+# and no reflog, so its token is written nowhere in the checkout. --prune drops
+# refs/demo-view/* of branches the repo no longer has, so a deleted branch never
+# blocks a new one whose name extends it. A checkout that is missing or fails is
+# logged, and the step is written all the same.
+#
+# A commit counts as checked out (VIEW_AT) only once it is. A failed checkout
+# used to count, so every later step on the same commit skipped it: the chant
+# scenario's four pull-request steps share one commit, and one failure at the
+# first left demo-chant.change on the base through all of them (behold#571).
+# behold reads a chant checkout by running chant in it, so the driver's checkout
+# can meet git's lock there; each step tries a few times, a second apart, and
+# the next step tries again. The log line carries git's own reason.
 VIEW_AT=""
+VIEW_TRIES="${DEMO_VIEW_TRIES:-3}"
 view_follow() {
   [ -n "$VIEWS" ] && [ -n "$COMMIT" ] && [ "$REPO:$COMMIT" != "$VIEW_AT" ] || return 0
-  VIEW_AT="$REPO:$COMMIT"
-  local dir="$VIEWS/${REPO##*/}.change"
+  local dir="$VIEWS/${REPO##*/}.change" err="" try=0
   if [ ! -d "$dir/.git" ]; then
     log "view: no checkout $dir to put ${COMMIT:0:8} in"
     return 0
   fi
-  if GIT_REFLOG_ACTION="demo view" git -C "$dir" -c core.logAllRefUpdates=false fetch -q --no-write-fetch-head "$REMOTE" '+refs/heads/*:refs/demo-view/*' 2>/dev/null \
-    && git -C "$dir" -c core.logAllRefUpdates=false checkout -q -f --detach "$COMMIT" 2>/dev/null; then
-    [ -z "$VIEW_OWNER" ] || chown -R "$VIEW_OWNER" "$dir" 2>/dev/null || log "view: could not give $dir to $VIEW_OWNER"
-    log "view: $dir at ${COMMIT:0:8}"
-  else
-    log "view: could not check out ${COMMIT:0:8} in $dir"
-  fi
+  while :; do
+    try=$((try + 1))
+    if err="$({ GIT_REFLOG_ACTION="demo view" git -C "$dir" -c core.logAllRefUpdates=false fetch -q --prune --no-write-fetch-head "$REMOTE" '+refs/heads/*:refs/demo-view/*' \
+        && git -C "$dir" -c core.logAllRefUpdates=false checkout -q -f --detach "$COMMIT"; } 2>&1)"; then
+      VIEW_AT="$REPO:$COMMIT"
+      [ -z "$VIEW_OWNER" ] || chown -R "$VIEW_OWNER" "$dir" 2>/dev/null || log "view: could not give $dir to $VIEW_OWNER"
+      log "view: $dir at ${COMMIT:0:8}"
+      return 0
+    fi
+    [ "$try" -lt "$VIEW_TRIES" ] || break
+    sleep 1
+  done
+  # git may name the remote, token and all: the log never shows it.
+  [ -z "${TOKEN:-}" ] || err="${err//$TOKEN/***}"
+  log "view: could not check out ${COMMIT:0:8} in $dir after $try tries; the next step tries again: $(awk '/^(fatal|error):/ && !f { f = $0 } NF { l = $0 } END { print (f != "" ? f : l) }' <<<"$err")"
 }
 
 demo_write() { # step, label, [next action], [next at, epoch seconds]
