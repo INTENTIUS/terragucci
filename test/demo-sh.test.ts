@@ -112,7 +112,7 @@ describe("view_follow", () => {
     const head = sh(`cd origin && ${git} checkout -qb pull && mkdir live && echo b > live/b.tf && ${git} add . && ${git} commit -qm pull && git rev-parse HEAD`, tmp);
     // The admin's remote, by another path than the checkout's origin: nothing in .git may name it.
     sh(`ln -s origin admin-remote`, tmp);
-    const body = `log() { echo "$*" >&2; }\nVIEWS=${tmp}/views VIEW_OWNER="" REPO=admin/demo REMOTE=${tmp}/admin-remote COMMIT=${head}\n${fn("view_follow").replace(/^VIEW_AT=""\n/, "")}\nVIEW_AT=""\nview_follow`;
+    const body = `log() { echo "$*" >&2; }\nVIEWS=${tmp}/views VIEW_OWNER="" VIEW_TRIES=1 REPO=admin/demo REMOTE=${tmp}/admin-remote COMMIT=${head}\n${fn("view_follow").replace(/^VIEW_AT=""\n/, "")}\nVIEW_AT=""\nview_follow`;
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     const dir = join(tmp, "views", "demo.change");
@@ -123,13 +123,107 @@ describe("view_follow", () => {
   });
 
   it("does nothing without DEMO_VIEWS, and logs a missing checkout", () => {
-    const body = `log() { echo "$*" >&2; }\nREPO=admin/demo REMOTE=/nowhere COMMIT=abc VIEW_OWNER=""\n${fn("view_follow")}`;
+    const body = `log() { echo "$*" >&2; }\nREPO=admin/demo REMOTE=/nowhere COMMIT=abc VIEW_OWNER="" VIEW_TRIES=1\n${fn("view_follow")}`;
     const off = spawnSync("bash", ["-c", `set -euo pipefail\nVIEWS=""\nVIEW_AT=""\n${body}\nview_follow`], { cwd: root, encoding: "utf8" });
     expect(off.status).toBe(0);
     expect(off.stderr).toBe("");
     const missing = spawnSync("bash", ["-c", `set -euo pipefail\nVIEWS=/nowhere\nVIEW_AT=""\n${body}\nview_follow`], { cwd: root, encoding: "utf8" });
     expect(missing.status).toBe(0);
     expect(missing.stderr).toContain("view: no checkout /nowhere/demo.change");
+  });
+});
+
+// behold#571: the chant scenario writes its steps through demo_write like the
+// others, so its .change checkout follows the pull request's head, then the
+// merge. A checkout that fails is not remembered as done: the next step on the
+// same commit tries again.
+describe("view_follow in the chant scenario", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const sh = (cmd: string, cwd: string) => {
+    const r = spawnSync("bash", ["-c", cmd], { cwd, encoding: "utf8" });
+    expect(r.status, `${cmd}: ${r.stderr}`).toBe(0);
+    return r.stdout.trim();
+  };
+
+  /** A demo-chant remote with a base, a pull request's head and its merge, and a .change checkout at the base. */
+  function fixture() {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-view-chant-"));
+    made.push(tmp);
+    const git = "git -c user.name=t -c user.email=t@t -c init.defaultBranch=main";
+    const base = sh(`${git} init -q origin && cd origin && mkdir app && echo a > app/main.tf && ${git} add . && ${git} commit -qm 'base [skip ci]' && git rev-parse HEAD`, tmp);
+    sh(`cd origin && ${git} branch chant/lifecycle`, tmp);
+    sh(`git clone -q origin views/demo-chant.change`, tmp);
+    const head = sh(`cd origin && ${git} checkout -qb demo-chant-pr-loop && echo b >> app/main.tf && ${git} commit -qam pull && git rev-parse HEAD`, tmp);
+    const merge = sh(`cd origin && ${git} checkout -q main && ${git} merge -q --no-ff demo-chant-pr-loop -m merge && git rev-parse HEAD`, tmp);
+    return { tmp, base, head, merge };
+  }
+
+  /** Run scenario_chant_pr_loop and the applied step with the forge stubbed, and list "<step> <.change HEAD>" as each step was written. */
+  function cycle(tmp: string, merge: string, head: string, afterPlan = "") {
+    const stubs = [
+      'log() { echo "$*" >&2; }',
+      `VIEWS=${tmp}/views VIEW_OWNER="" VIEW_TRIES=1 REPO=admin/demo-chant REMOTE=${tmp}/origin TOKEN=""`,
+      `DEMO_STATE=${tmp}/state CYCLE=797 SCENARIO=chant-pr-loop TITLE=t STARTED="" PULL="" COMMIT="" ABOUT=null HOLD=0 TOOL=chant`,
+      `TREE=${tmp} WORK=${tmp}/work INIT_PULL="" HELD="" VIEW_AT="" RUN_STATUS="" RUN_URL="" OUTCOME="" LIMIT_PLAN=1 LIMIT_RUN=1 URL=http://forge POLL=0`,
+      `mkdir -p ${tmp}/state`,
+      "now() { date +%s; }",
+      'iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }',
+      "demo_where() { echo '{}'; }",
+      `demo_put() { echo "$(jq -r .step "$DEMO_STATE/demo.json") $(git -C ${tmp}/views/demo-chant.change rev-parse HEAD)" >> ${tmp}/steps; }`,
+      'say() { echo "$1"; }',
+      'clone_main() { mkdir -p "$1"; }',
+      "overlay() { :; }",
+      "last_run_id() { echo 0; }",
+      `push_as_author() { echo ${head}; }`,
+      "pr_open() { echo 20; }",
+      "run_started() { :; }",
+      "runs_mark() { :; }",
+      `run_ended() { RUN_STATUS=success; ${afterPlan} }`,
+      "chant_note() { :; }",
+      "chant_approve() { :; }",
+      "quiet() { :; }",
+      "as_author() { :; }",
+      `api() { echo '{"merge_commit_sha":"${merge}"}'; }`,
+    ].join("\n");
+    const fns = ["view_follow", "demo_write", "demo_hold", "open_pull", "merge_pull", "scenario_chant_pr_loop"].map(fn).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\n${fns}\nscenario_chant_pr_loop\ndemo_write applied done reset`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return { steps: readFileSync(join(tmp, "steps"), "utf8").trim().split("\n"), log: r.stderr };
+  }
+
+  it("moves demo-chant.change to the pull request's head, then to the merge", () => {
+    const { tmp, head, merge } = fixture();
+    const { steps } = cycle(tmp, merge, head);
+    expect(steps).toEqual([
+      `pull-request ${head}`,
+      `planned ${head}`,
+      `waiting ${head}`,
+      `approved ${head}`,
+      `merged ${merge}`,
+      `applying ${merge}`,
+      `applied ${merge}`,
+    ]);
+  });
+
+  it("tries again at the next step when a checkout fails, rather than leaving the base through every step", () => {
+    const { tmp, base, head, merge } = fixture();
+    // git's lock is held at the first step, as when something else is in the checkout, and let go before the second.
+    const lock = join(tmp, "views", "demo-chant.change", ".git", "index.lock");
+    sh(`touch ${lock}`, tmp);
+    const { steps, log } = cycle(tmp, merge, head, `[ ! -e ${lock} ] || mv ${lock} ${lock}.gone;`);
+    expect(steps).toEqual([
+      `pull-request ${base}`,
+      `planned ${head}`,
+      `waiting ${head}`,
+      `approved ${head}`,
+      `merged ${merge}`,
+      `applying ${merge}`,
+      `applied ${merge}`,
+    ]);
+    expect(log).toMatch(/view: could not check out \w+ in \S+ after 1 tries; the next step tries again: .*index\.lock/);
   });
 });
 
