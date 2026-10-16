@@ -21,9 +21,10 @@
 #                                     reset to the base after each, forever (one
 #                                     pass with --once). With no scenario named,
 #                                     the ones in DEMO_SCENARIOS (space-separated),
-#                                     or else the default two: b-waves, then
-#                                     failure. Any of ALL_SCENARIOS can be named,
-#                                     tg-planned-outputs (Terragrunt) among them.
+#                                     or else the default three: b-waves, then
+#                                     failure, then tg-planned-outputs
+#                                     (Terragrunt). Any of ALL_SCENARIOS can be
+#                                     named.
 #   stack/demo.sh down                remove the stack
 #
 # The roots are network, app (reads network), edge (reads app) and other (reads
@@ -59,7 +60,7 @@
 # problem field of example-demo/scenarios/intro.json, which just lint-docs lints
 # too. name is the scenario's short label ("a new subnet"); title is its
 # headline. index is the scenario's 1-based place in this loop's list and
-# scenarios is how many that list holds, so "1 of 2". index is null for the
+# scenarios is how many that list holds, so "1 of 3". index is null for the
 # base, and scenarios is 0 when up writes it, before any loop.
 #
 # tool is the tool the scenario shows (terraform, terragrunt) and repo the forge
@@ -114,9 +115,9 @@ esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
 ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs)
-# tg-planned-outputs runs by name or DEMO_SCENARIOS, and joins the default list
-# once behold can draw a Terragrunt repo.
-SCENARIOS=(b-waves failure)
+# The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
+# draws since behold 0.29.8 (#611).
+SCENARIOS=(b-waves failure tg-planned-outputs)
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
@@ -668,7 +669,7 @@ scenario_title() {
   esac
 }
 
-# The scenario's short label, beside its place in the loop ("1 of 2 · a new subnet").
+# The scenario's short label, beside its place in the loop ("1 of 3 · a new subnet").
 scenario_name() {
   case "$1" in
     base)       echo "the base" ;;
