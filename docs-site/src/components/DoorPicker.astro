@@ -11,7 +11,7 @@ import { BINARIES, FORGES, FROM, ROLES, ROOMS, SHAPES } from '../data/rooms';
 import { provenFor } from '../data/coverage';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const shapes = SHAPES.map((s) => {
+const shapes = SHAPES.filter((s) => s.picker !== false).map((s) => {
 	const r = ROOMS.find((x) => x.id === s.room)!;
 	return { ...s, title: r.title, works: r.works, differs: r.differs, first: r.first, proven: provenFor(s.label) };
 });
@@ -24,7 +24,7 @@ const fromLabel = (label: string, id: string) => (id === 'none' ? 'Coming from a
 const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, ${binaries[0].proven} on ${binaries[0].label} and ${forges[0].proven} on ${forges[0].label}. Each count covers one choice.`;
 ---
 <section class="tg-doors not-content" aria-label="Your setup" style={`--tg-taco: url(${taco}); --tg-diamond: url(${base}/brand/diamond.svg)`}>
-	<div class="tiles" role="group" aria-label="Your repo">
+	<div class="tiles" role="group" aria-label="Your repo" style={`--tg-tiles: ${shapes.length}`}>
 		{shapes.map((s, i) => (
 			<button type="button" class="tile" data-pick="shape" value={s.id} aria-pressed={String(i === 0)}>
 				<img src={taco} width="34" height="21" alt="" />
@@ -153,7 +153,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	}
 	.tiles {
 		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
+		grid-template-columns: repeat(var(--tg-tiles), minmax(0, 1fr));
 		gap: 0.5rem;
 	}
 	.tile {
