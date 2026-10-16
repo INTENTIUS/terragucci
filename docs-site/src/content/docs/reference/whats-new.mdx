@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.22
-description: "terragucci 0.4.22, released 2026-10-15."
+title: Changes in 0.4.23
+description: "terragucci 0.4.23, released 2026-10-15."
 ---
 
-Release `0.4.22` is on npm as `@intentius/terragucci@0.4.22`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.22) lists every change.
+Release `0.4.23` is on npm as `@intentius/terragucci@0.4.23`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.23) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.22 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.23 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.23
+
+- The demo's failure scenario runs a real SQL Yodeler migration on Postgres, which fails on duplicate rows until the driver removes them (#1080).
 
 ## In 0.4.22
 
