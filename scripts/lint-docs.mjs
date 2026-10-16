@@ -156,7 +156,7 @@ const missing = (what, expected, found, page) => {
 
 // The demo kiosk's scenario cards (<tree>/scenarios/<id>/about.json in each tool's tree, behold reads them
 // through demo.json's about): three fields of prose shown on a TV, linted at the top strictness with no finding
-// allowed. The intro is example-demo's alone.
+// allowed. The intro, with its delivery line, is example-demo's alone.
 for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios"]) {
   // intro.json: the problem the whole demo is about, written into demo.json as intro on every step.
   if (dir === "example-demo/scenarios") {
@@ -168,10 +168,13 @@ for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios"
       problems.push(`${file}: the demo has an intro.json with its problem (${e.message})`);
     }
     if (intro) {
-      if (typeof intro.problem !== "string" || !intro.problem.trim()) problems.push(`${file}: problem is missing or empty`);
-      else for (const f of lintDocument(intro.problem, { strictness: 3 }).findings) problems.push(`${file}: problem [${f.ruleId}/${f.severity}] ${f.message}`);
-      const extra = Object.keys(intro).filter((k) => k !== "problem");
-      if (extra.length) problems.push(`${file}: unknown field ${extra.join(", ")}; the intro has problem`);
+      // delivery: the line behold's kiosk shows over the delivery (DORA) numbers, written into demo.json as delivery.
+      for (const field of ["problem", "delivery"]) {
+        if (typeof intro[field] !== "string" || !intro[field].trim()) problems.push(`${file}: ${field} is missing or empty`);
+        else for (const f of lintDocument(intro[field], { strictness: 3 }).findings) problems.push(`${file}: ${field} [${f.ruleId}/${f.severity}] ${f.message}`);
+      }
+      const extra = Object.keys(intro).filter((k) => k !== "problem" && k !== "delivery");
+      if (extra.length) problems.push(`${file}: unknown field ${extra.join(", ")}; the intro has problem and delivery`);
     }
   }
   for (const id of readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()) {
