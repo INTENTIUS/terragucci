@@ -1597,6 +1597,17 @@ case "$CMD" in
       docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \
         || fail "demo-postgres did not start"
     fi
+    # behold#571: the pipeline's metrics. The demo trees' terragucci.yml send
+    # each job's metrics over OTLP to otel-collector:4318 on the stack's
+    # network, and Prometheus keeps them for behold's kiosk (prometheus:9090).
+    # Profile observability-lite: the collector and Prometheus, no Tempo or
+    # Grafana. When they do not start, the jobs run as before: a stage that
+    # cannot send its metrics says so in its log and carries on.
+    if docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile observability-lite up -d --wait otel-collector-lite prometheus >/dev/null 2>&1; then
+      log "metrics: the collector and Prometheus are up"
+    else
+      log "metrics: the collector or Prometheus did not start; each job logs that its metrics were not sent"
+    fi
     [ -f "$DEMO_STATE/cycle" ] || echo 0 > "$DEMO_STATE/cycle"
     CYCLE="$(cat "$DEMO_STATE/cycle")" SCENARIO=base TITLE="The base" ABOUT=null STARTED="$started"
     timeline_start

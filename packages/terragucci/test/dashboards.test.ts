@@ -20,7 +20,7 @@ import { emitYaml } from "@intentius/chant-lexicon-prometheus/build";
 import { durationMs } from "@intentius/chant-lexicon-prometheus/duration";
 import { init } from "../src/init";
 import { buildReport } from "../src/report/build";
-import { modulePins, StageObserver } from "../src/report/observe";
+import { modulePins, perRunLabels, StageObserver } from "../src/report/observe";
 import { waveGauges, waveResult } from "../src/report/wave-telemetry";
 import { git, twoRootRepo, write } from "./helpers";
 import { RUN, smallFixture } from "./report-fixtures";
@@ -292,6 +292,42 @@ describe("dashboards: what a stage sends", () => {
     expect(g.find((x) => x.name === METRIC.waveRoots)).toMatchObject({ value: 1, attributes: { project: RUN.project, stage: "tf-apply", wave: "1" } });
     expect(g.find((x) => x.name === METRIC.waveWaitingSince)).toMatchObject({ value: Date.parse("2026-10-04T00:00:00Z") / 1000, attributes: { project: RUN.project, wave: "1" } });
     expect(g.some((x) => x.name === METRIC.waveSettled)).toBe(false);
+  });
+
+  it("a wave that applied after an approval says how long its gate held it and what it applied", () => {
+    const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>) => ({ name, unit, description, value, attributes });
+    const held = { since: "2026-10-04T00:00:00Z", approvedAt: "2026-10-04T00:02:30Z" };
+    const applied = waveGauges(2, 0, { roots: ["a"], held }, 2_000_000_000, g, { create: 1, update: 2 });
+    expect(applied.find((x) => x.name === METRIC.waveHeld)).toMatchObject({ value: 150, attributes: { wave: "2" } });
+    expect(applied.filter((x) => x.name === METRIC.waveChanges).map((x) => [x.attributes.action, x.value])).toEqual([["create", 1], ["update", 2]]);
+    // Waiting, or with nothing to change, it applied nothing; a refusal ends no wait.
+    for (const [code, facts] of [[3, { held }], [0, { held, nothing: true }], [4, { held }]] as const) {
+      const none = waveGauges(2, code, { roots: ["a"], ...facts }, 2_000_000_000, g, { create: 1 });
+      expect(none.some((x) => x.name === METRIC.waveChanges), String(code)).toBe(false);
+    }
+    expect(waveGauges(2, 3, { roots: ["a"], held }, 2_000_000_000, g).some((x) => x.name === METRIC.waveHeld)).toBe(false);
+  });
+
+  it("a tf-apply wave sends each root's plan time in the wave beside its apply time", () => {
+    const observer = new StageObserver(undefined, "tf-apply", {});
+    observer.wave = { number: 2, facts: { roots: ["gate"] }, code: 0 };
+    const report = buildReport({ run: { ...RUN, stage: "tf-apply" as never }, roots: smallFixture() });
+    report.roots[0].timings = { seconds: 9, plan_seconds: 4.5, apply_seconds: 3, spans: 0, detail: "none", resources: [], provider_calls: [], aggregates: [], provider_init: [], lock_waits: [] };
+    const g = observer.applyGauges(report, 1_759_572_000_000_000_000n);
+    const root = report.roots[0].path;
+    expect(g.find((x) => x.name === METRIC.rootPlan)).toMatchObject({ value: 4.5, attributes: { project: RUN.project, stage: "tf-apply", wave: "2", root } });
+    expect(g.find((x) => x.name === METRIC.rootApply)).toMatchObject({ value: 3, attributes: { wave: "2", root } });
+  });
+
+  it("with TERRAGUCCI_METRICS_PER_RUN, every gauge names its commit and run; without it, none does", () => {
+    const gauges = [{ name: METRIC.waveRoots, unit: "", description: "", value: 1, attributes: { project: "p", stage: "tf-apply" } }];
+    const on = new StageObserver(undefined, "tf-apply", { TERRAGUCCI_METRICS_PER_RUN: "true", GITHUB_RUN_ID: "381" });
+    expect(perRunLabels(gauges, on.perRun, "abc123")[0].attributes).toEqual({ project: "p", stage: "tf-apply", commit: "abc123", run: "381" });
+    const gitlab = new StageObserver(undefined, "tf-plan", { TERRAGUCCI_METRICS_PER_RUN: "TRUE", CI_PIPELINE_ID: "77" });
+    expect(perRunLabels(gauges, gitlab.perRun, "unknown")[0].attributes).toEqual({ project: "p", stage: "tf-apply", run: "77" });
+    const off = new StageObserver(undefined, "tf-apply", { GITHUB_RUN_ID: "381" });
+    expect(off.perRun).toBeUndefined();
+    expect(perRunLabels(gauges, off.perRun, "abc123")).toBe(gauges);
   });
 
   it("a tf-apply wave and a plan send a root's provider start-up and lock wait", () => {
