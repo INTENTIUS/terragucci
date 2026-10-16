@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.23
-description: "terragucci 0.4.23, released 2026-10-15."
+title: Changes in 0.4.24
+description: "terragucci 0.4.24, released 2026-10-16."
 ---
 
-Release `0.4.23` is on npm as `@intentius/terragucci@0.4.23`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.23) lists every change.
+Release `0.4.24` is on npm as `@intentius/terragucci@0.4.24`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.24) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.23 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.24 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.24
+
+- The demo's migration step runs in a shallow checkout; a failed `up` keeps the last base (#1083).
 
 ## In 0.4.23
 
