@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 39;
+export const REPORT_MINOR = 40;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -529,6 +529,20 @@ export interface ReportPolicy {
   overriders?: string[];
 }
 
+/** One `approval_rules` entry a wave takes, and where it stands (minor 40). */
+export interface ReportApprovalRule {
+  roots: string[];
+  /** How many distinct approvers it asks for. */
+  count: number;
+  /** The roles of `.chant/trust.json` at base an approver counted holds one of. */
+  roles?: string[];
+  /** At least one approver counted is not the change's author. */
+  not_author?: boolean;
+  /** A `tf-apply` wave's: the approvers of its digest the rule counted, oldest first. Empty on a plan. */
+  approvers: string[];
+  met: boolean;
+}
+
 export interface ReportWave {
   number: number;
   roots: string[];
@@ -562,6 +576,12 @@ export interface ReportWave {
    * as `bob asked for abc1234`. Absent when nobody was left out.
    */
   excluded_approvers?: { login: string; reason: string }[];
+  /**
+   * The `approval_rules` entries at base its roots take (minor 40): what each
+   * asks for and, on a `tf-apply` wave, the approvers of its digest it
+   * counted and whether it is met. Absent when no rule applies to the wave.
+   */
+  approval_rules?: ReportApprovalRule[];
   /**
    * The roots whose `on_failure: approve` step failed (minor 17): the gate
    * holds the wave whatever the gate policy says, when it changes anything.

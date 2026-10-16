@@ -23,6 +23,7 @@ import {
   APPLY_REQUIRES,
   APPLY_WHEN,
   APPROVALS,
+  APPROVAL_RULE_KEYS,
   ATMOS_KEYS,
   AUDIENCE_STAGES,
   BINARIES,
@@ -68,6 +69,7 @@ import {
   STEP_STAGES,
   TELEMETRY_KEYS,
   TERRAGRUNT_KEYS,
+  TRUST_ROLE,
   TOKEN_PROTECTIONS,
   WIF_PROVIDER,
   type ApplySettings,
@@ -300,6 +302,13 @@ const dashboards: JsonSchema = {
   ],
 };
 
+const approvalRule = map(APPROVAL_RULE_KEYS, {
+  roots: { type: "array", minItems: 1, items: glob, description: "Root globs: a wave with a root one matches takes the rule." },
+  count: { ...whole(1), description: "How many distinct people approve the wave's set digest. Default 1." },
+  roles: { type: "array", minItems: 1, items: pat(TRUST_ROLE), description: "Each approver counted holds one of these roles in .chant/trust.json at base." },
+  not_author: { ...bool, description: "At least one approver counted is not the change's author." },
+} satisfies Record<(typeof APPROVAL_RULE_KEYS)[number], JsonSchema>, { required: ["roots"] });
+
 const ephemeral = map(EPHEMERAL_KEYS as (keyof EphemeralSettings)[], {
   roots: { type: "array", minItems: 1, items: glob },
   ttl: { type: "string", pattern: "^[1-9]\\d*[mhd]$" },
@@ -353,6 +362,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       ],
       description: "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed.",
     },
+    approval_rules: { type: "array", minItems: 1, items: approvalRule, description: "More approvers, or approvers with a role, for the waves whose roots a glob names." },
     apply: { ...apply, description: "When a change applies." },
     locks: { ...enumOf(LOCKS), description: "When a pull request takes its root locks." },
     waves: {

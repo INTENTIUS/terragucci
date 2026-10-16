@@ -66,6 +66,23 @@ export function approvalModeOf(v: Approval | ApprovalSettings | undefined): Appr
 export function requireSignedOf(v: Approval | ApprovalSettings | undefined): boolean {
   return !!v && typeof v === "object" && v.require_signed === true;
 }
+
+/** The keys of one `approval_rules` entry. */
+export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author"] as const;
+
+/**
+ * One `approval_rules` entry (./approval-rules.ts): a wave with a root a glob
+ * of `roots` matches waits for `count` distinct approvers of its set digest
+ * (default 1), each holding one of `roles` in `.chant/trust.json` at base when
+ * `roles` is set, and with `not_author` at least one who is not the change's
+ * author. Read at base, like `approval:`.
+ */
+export interface ApprovalRuleSettings {
+  roots: string[];
+  count?: number;
+  roles?: string[];
+  not_author?: boolean;
+}
 /** Every stage runs on the forge's CI. */
 export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
@@ -446,6 +463,8 @@ export interface ProjectSettings {
   gate?: GateName;
   /** What counts as a waiting wave's approval; see APPROVALS, or a map with the mode and `require_signed` (ApprovalSettings). Read from the config at base, never the applied commit's own. */
   approval?: Approval | ApprovalSettings;
+  /** More approvers, or approvers with a role, for the waves whose roots a glob names; see ApprovalRuleSettings. Read from the config at base. */
+  approval_rules?: ApprovalRuleSettings[];
   /** When a change applies; see ApplySettings. */
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
@@ -796,6 +815,7 @@ export const PROJECT_FILE_KEYS = [
   "sources",
   "reports",
   "approval",
+  "approval_rules",
   "gate",
   "roots",
   "waves",
@@ -847,7 +867,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 export const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments",
 ]);
 
@@ -909,6 +929,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   } else oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   const mode = isObject(s.approval) ? s.approval.mode : s.approval;
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, mode);
+  if (s.approval_rules !== undefined) checkApprovalRules(s.approval_rules, `${where}.approval_rules`, problems, mode, isObject(s.apply) && s.apply.point !== undefined);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
@@ -1469,6 +1490,39 @@ function checkApplyBranches(b: unknown, where: string, problems: string[], when:
       else seen.set(g, branch);
     }
   }
+}
+
+/** A role name, as `.chant/trust.json` names one under `roles`. */
+export const TRUST_ROLE = /^[a-z][a-z0-9-]*$/;
+
+/** Why `roles` and `not_author` need a mode that proves who approved. */
+export const LEDGER_PROVES_NOBODY = "approval: ledger does not prove who wrote an approval, so it cannot tell a role or the author; set approval to sealed or pr-review";
+
+function checkApprovalRules(v: unknown, where: string, problems: string[], mode: unknown, point: boolean): void {
+  if (!Array.isArray(v) || v.length === 0) {
+    problems.push(`${where} must be a list of rules, each with roots and count, roles or not_author, such as - roots: ["envs/prod/**"]`);
+    return;
+  }
+  if (point) problems.push(`${where} is set, and apply.point is too: a wave gate that asks a decision point takes its deciders and quorum from the point; drop one of them`);
+  const proves = mode === "sealed" || mode === "pr-review";
+  v.forEach((r, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(r)) {
+      problems.push(`${at} must be a map (keys: ${APPROVAL_RULE_KEYS.join(", ")})`);
+      return;
+    }
+    for (const k of Object.keys(r)) if (!(APPROVAL_RULE_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a key of an approval rule (keys: ${APPROVAL_RULE_KEYS.join(", ")})`);
+    if (!Array.isArray(r.roots) || r.roots.length === 0 || !r.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+      problems.push(`${at}.roots must be a list of root globs, such as ["envs/prod/**"]`);
+    }
+    if (r.count !== undefined && !(Number.isInteger(r.count) && (r.count as number) >= 1)) problems.push(`${at}.count must be a whole number of 1 or more: how many distinct people approve the wave`);
+    if (r.roles !== undefined && !(Array.isArray(r.roles) && r.roles.length > 0 && r.roles.every((x) => typeof x === "string" && TRUST_ROLE.test(x)))) {
+      problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
+    }
+    if (r.not_author !== undefined && typeof r.not_author !== "boolean") problems.push(`${at}.not_author must be true or false`);
+    if (r.count === undefined && r.roles === undefined && r.not_author !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
+    if (!proves && (r.roles !== undefined || r.not_author === true)) problems.push(`${at}: ${LEDGER_PROVES_NOBODY}`);
+  });
 }
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {

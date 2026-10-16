@@ -84,6 +84,48 @@ On GitHub and Forgejo, a pull request's plan note names the people whose review 
 
 A drift pull request opened on a schedule has no person behind it. A review from any writer counts there, and the review of the bot whose token opened it never does.
 
+## More than one approver
+
+`approval_rules` in `terragucci.yml` asks more of the waves whose roots a glob names: a number of distinct approvers, approvers with a role, or an approver who is not the change's author.
+
+```yaml
+approval: sealed
+approval_rules:
+  - roots: ["envs/prod/**"]
+    count: 2
+    roles: [platform]
+    not_author: true
+  - roots: ["envs/staging/**"]
+    roles: [platform, app-leads]
+```
+
+| Key | Means |
+|---|---|
+| `roots` | root globs; a wave with a root one matches takes the rule |
+| `count` | how many distinct people approve the wave's digest, 1 when unset |
+| `roles` | each approver counted holds one of these roles in `.chant/trust.json` at base |
+| `not_author` | at least one approver counted is proven not to be the change's author |
+
+A wave takes every rule a root of it matches and applies once each is met by approvals of its set digest. A root no rule matches needs what the approval mode needs. The rules decide who approves a wave its gate holds: a wave its gate lets through applies as before. An approval of another digest counts toward nothing, and once a wave applies, every approval of its digest it counted is spent.
+
+Roles come from `roles` in `.chant/trust.json` at base, which maps a role to the principals that hold it:
+
+```json
+{ "schema": 1, "signers": ".chant/allowed_signers", "roles": { "platform": ["github:alice", "github:carol"] } }
+```
+
+An approval counts toward `roles`, and as one by someone who is not the author, only when it proves who made it: under `sealed`, a seal that verifies against the signers file at base; under `pr-review`, the forge login of a reviewer of the merged pull request, or a sealed `terragucci approve`. A role an approver names for themselves never counts. Under `ledger` nothing proves an approval's name, so `terragucci config check` refuses `roles` and `not_author` there and asks for `sealed` or `pr-review`, and refuses `approval_rules` beside `apply.point`, whose decision point has its own deciders and quorum. The rules, the roles and the signers are read at base, so a pull request that edits them is decided by the default branch's.
+
+An approval by someone behind the change never counts ([Eligible approvers](#eligible-approvers)), so `not_author` holds once one approval counted proves its approver.
+
+A wave that has fewer approvals than a rule asks for waits, and says where each rule stands:
+
+```text
+wave 2 of 3: approval_rules: envs/prod/**: 1 of 2 approvals (alice), needs 1 more from platform
+```
+
+`terragucci approve` prints where each rule stood when the wave recorded the pending fact it waits on, and the plan note says what each wave's approval will take. After the first approval the wave runs again, records a new pending fact and waits; approve it again, as a second person, and it applies. The wave's report lists each rule and the approvers it counted in `approval_rules`, and its `apply` entry in the [audit trail](/terragucci/guides/read-the-audit-trail/) lists every approval it applied under.
+
 ## Approve by review (`approval: pr-review`)
 
 Works on every forge. GitLab's merge request approvals name no commit, so there an approval counts only after the merge request's latest push.

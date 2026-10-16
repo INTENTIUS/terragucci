@@ -29,8 +29,9 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
+import { ruleProgress, rulesFor } from "../approval-rules";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
-import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ApprovalRuleSettings, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
@@ -2058,6 +2059,18 @@ export async function planOverrides(repo: string, options: StageOptions, env: No
   }
 }
 
+/** `approval_rules` in the config at base, for a plan's waves; none for a control repo's project, or when the base cannot be read. */
+async function baseApprovalRules(repo: string, options: StageOptions, env: NodeJS.ProcessEnv): Promise<ApprovalRuleSettings[] | undefined> {
+  if (options.project) return undefined;
+  const base = options.base ?? baseRef(env);
+  const configPath = options.config ?? findConfig(repo);
+  try {
+    return (await approvalRule(repo, { ...(base ? { at: base } : {}), ...(configPath ? { config: configPath } : {}) })).approvalRules;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Where the policy key is read: the config file and the project the run reads. */
 function policyTrust(repo: string, options: StageOptions): TrustedOptions {
   const configPath = options.config ?? findConfig(repo);
@@ -2124,15 +2137,21 @@ async function finish(
   const envs = settings.environments;
   const terragruntRun = inputs.some((i) => i.terragrunt !== undefined);
   const envNames = (roots: readonly string[]): string[] => [...new Set(roots.map((r) => environmentOf(r, settings)).filter((e): e is string => e !== undefined))].sort();
+  // approval_rules at base: what each wave's approval will take, as the base's config has it.
+  const approvalRules = drift ? undefined : await baseApprovalRules(repo, options, env);
+  const ruled = <W extends { roots: string[] }>(w: W): W & { approvalRules?: ReturnType<typeof ruleProgress>[] } => {
+    const rules = rulesFor(approvalRules, w.roots);
+    return rules.length ? { ...w, approvalRules: rules.map((r) => ruleProgress(r, [])) } : w;
+  };
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: envs ? inputs.map((i) => withEnvironment(i, environmentOf(i.path, settings))) : inputs,
     waves: envs
       ? costWaves.map((w) => {
           const names = envNames(w.roots);
-          return { ...w, ...(drift ? {} : { policy: terragruntRun ? anyRootGate(settings, settings.gate) : rootsGate(w.roots, settings, settings.gate) }), ...(names.length ? { environments: names } : {}) };
+          return ruled({ ...w, ...(drift ? {} : { policy: terragruntRun ? anyRootGate(settings, settings.gate) : rootsGate(w.roots, settings, settings.gate) }), ...(names.length ? { environments: names } : {}) });
         })
-      : costWaves,
+      : costWaves.map(ruled),
     redacted,
     // The waves of a plan say which the gate will hold, and carry the digest approval: pr-review binds a review to.
     ...(drift ? {} : { gate: settings.gate }),

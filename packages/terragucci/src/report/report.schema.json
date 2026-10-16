@@ -357,6 +357,22 @@
               }
             }
           },
+          "approval_rules": {
+            "type": "array",
+            "description": "The approval_rules entries at base the wave's roots take: what each asks for and, on a tf-apply wave, the approvers of its digest it counted and whether it is met (minor 40).",
+            "items": {
+              "type": "object",
+              "required": ["roots", "count", "approvers", "met"],
+              "properties": {
+                "roots": { "type": "array", "items": { "type": "string" } },
+                "count": { "type": "integer", "minimum": 1 },
+                "roles": { "type": "array", "items": { "type": "string" } },
+                "not_author": { "type": "boolean" },
+                "approvers": { "type": "array", "items": { "type": "string" } },
+                "met": { "type": "boolean" }
+              }
+            }
+          },
           "held_by_steps": {
             "type": "array",
             "items": { "type": "string" },

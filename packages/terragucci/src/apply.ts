@@ -100,7 +100,7 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
+import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
 import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
@@ -125,6 +125,7 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { nowNanos, telemetryFromEnv, type Attrs } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
+import { rolesOf, ruleLine, ruleProgress, rulesFor, rulesMet, rulesWaiting, trustRolesAt, type RuleApprover, type RuleProgress } from "./approval-rules";
 import { overrideCommand } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
@@ -285,6 +286,8 @@ export interface PendingRecord {
   approvalMode?: string;
   /** terragucci's addition: on a fact a wave recorded because no approval of its digest counted under the rule (./involved.ts), the people it left out. */
   excluded?: Excluded[];
+  /** terragucci's addition: where each `approval_rules` entry the wave takes stood when it recorded the fact (./approval-rules.ts). */
+  approval_rules?: RuleProgress[];
 }
 
 /** The run a pending fact names: its `runId`, or, for one chant's op waves recorded, the run of its `resume` locator. */
@@ -1011,6 +1014,11 @@ interface WaveJob {
   counted?: string;
   /** This wave recorded the pending fact chant waits on, because no approval of its digest counted under the rule. */
   ruleRecorded?: boolean;
+  /** The people behind the change, once the gate asked (./involved.ts). */
+  involved?: Involved;
+  /** Where each `approval_rules` entry the wave takes stands (./approval-rules.ts), and the roots it was judged for. */
+  quorum?: RuleProgress[];
+  quorumRoots?: string[];
   /** The migration wave 1 is held on, so a refusal names the roots that moved. */
   migration?: HeldMigration;
   /** A composed run's: let go of its locks and put its roots' files back, when it planned and did not apply. */
@@ -1126,6 +1134,8 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       if (options.gate !== "never") throw e;
     }
     if (rule?.point && rule.mode !== "ledger") throw new ConfigError(`apply.point is set at base and approval is ${rule.mode}; a wave gate that asks a decision point takes its quorum from the point, so set approval to ledger or drop apply.point`);
+    if (rule?.point && rule.approvalRules) throw new ConfigError("apply.point and approval_rules are both set at base; a wave gate that asks a decision point takes its deciders and quorum from the point, so drop one of them");
+    if (rule?.mode === "ledger" && rule.approvalRules?.some((r) => r.roles?.length || r.not_author)) throw new ConfigError(`approval_rules at base names roles or not_author, and approval is ledger (${rule.source}): ${LEDGER_PROVES_NOBODY}`);
     // Each wave's gate: the pipeline's --gate, or with `environments` at base the strictest gate of the wave's roots (./environments.ts).
     // A composed run's wave takes the strictest gate of its own roots and the run's.
     const gates = await environmentWaveGates(repo, base, configPath, options, options.composition && typeof specWaves !== "number" ? wavesWithRun(applyWaves(options.layers, options.canary), options.composition, false) : specWaves);
@@ -1301,7 +1311,7 @@ async function waveCallIn(repo: string, options: ApplyWaveOptions, ctx: WavesCon
         const observer = j.w.observer;
         j.w = { observer };
         for (const key of Object.keys(j.facts)) delete (j.facts as Record<string, unknown>)[key];
-        for (const key of ["code", "apply", "held", "denials", "overriders", "reviewMoved", "resumes", "changes", "stored"] as const) delete j[key];
+        for (const key of ["code", "apply", "held", "denials", "overriders", "reviewMoved", "resumes", "changes", "stored", "quorum", "quorumRoots"] as const) delete j[key];
       }
       const plans = join(r.cwd, plansPath);
       const c = options.terragrunt ? await planUnits(repo, options, ctx, j, runs, plans) : await planRoots(repo, options, ctx, j, runs, plans);
@@ -1360,6 +1370,8 @@ export interface WaveRun {
   review?: ReportWave["review"];
   /** The people whose approval of the wave's digest the rule left out, and why (./involved.ts). */
   excluded?: Excluded[];
+  /** Where each `approval_rules` entry the wave takes stands, with the approvers it counted (./approval-rules.ts). */
+  approvalRules?: RuleProgress[];
   /** The approval mode in force at the wave's gate. */
   mode?: Approval;
   /** The command that approves the wave's digest, when it waits or its plans moved after an approval or a review. */
@@ -1562,7 +1574,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -1843,7 +1855,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   writePlans(plansPath, {
     runs: planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))),
     ...(priced ? { members: [priced] } : {}),
-    pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members },
+    pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });
 
@@ -2761,15 +2773,30 @@ async function waveInvolvement(repo: string, options: ApplyWaveOptions, rule: Ap
  * which its approval covers (./remainder.ts), and under `approval:
  * pr-review`, the merged pull request's approving review of these plans.
  * Nothing is recorded when an approval of the digest already stands, nor
- * under `apply.point`, whose gate chant asks the decision point for.
+ * under `apply.point`, whose gate chant asks the decision point for. Then,
+ * with `approval_rules` at base, the rules the wave's roots take
+ * (approvalQuorum).
  */
-async function beforeGate(
-  repo: string,
-  options: ApplyWaveOptions,
-  ctx: WavesContext,
-  j: WaveJob,
-  at: { label: string; digest: string; planned: WavePlan[]; plans: RootPlan[]; resume: boolean; members?: WaveMember[]; roots?: string[] },
-): Promise<number | undefined> {
+async function beforeGate(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, at: GateInput): Promise<number | undefined> {
+  const stop = await beforeGateRules(repo, options, ctx, j, at);
+  if (stop !== undefined || j.resumes || !ctx.rule || ctx.rule.point) return stop;
+  await approvalQuorum(repo, options, ctx, j, at);
+  return undefined;
+}
+
+/** What a gated wave hands beforeGate: its plans and the digest the gate decides. */
+interface GateInput {
+  label: string;
+  digest: string;
+  planned: WavePlan[];
+  plans: RootPlan[];
+  resume: boolean;
+  members?: WaveMember[];
+  roots?: string[];
+}
+
+/** The rule that an approval comes from someone who had no hand in the change, the rest of a stopped apply, and the pull request's review. */
+async function beforeGateRules(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, at: GateInput): Promise<number | undefined> {
   const { k: wave, w, facts } = j;
   const { label, digest, planned, plans } = at;
   const rule = ctx.rule;
@@ -2801,6 +2828,7 @@ async function beforeGate(
   let involved: Involved | undefined;
   if (standing.length > 0 || rule.mode === "pr-review") {
     involved = await waveInvolvement(repo, options, rule);
+    j.involved = involved;
     for (const n of involved.notes) console.log(`${label}: ${n}`);
   } else if (rule.agentTokenEnv && !rule.agentLogin) console.log(`${label}: ${AGENT_NOT_EXCLUDED}`);
   const ruled: GateLedger = { ...ledger, resolutions: [] };
@@ -2870,7 +2898,13 @@ async function beforeGate(
       for (const e of r.excluded) console.log(`${label}: ${notCounted(e, "review")}`);
       w.excluded = mergeExcluded(w.excluded ?? [], r.excluded);
     }
-    if (r.kind === "approved") {
+    // Under approval_rules a wave that waits for more approvers asks again each run: the review it already recorded for this wait stands.
+    const recorded = r.kind === "approved" && rulesFor(rule.approvalRules, at.roots ?? planned.map((p) => p.root)).length > 0
+      ? ledger.resolutions.some((x) => x.gate === name && x.via === "pr-review" && x.head === r.head && samePlanDigest(x.planDigest, digest) && stamp(x.timestamp) >= quorumSince(ledger, name, digest))
+      : false;
+    if (r.kind === "approved" && recorded) {
+      console.log(`${label}: the review of pull request ${r.pr} on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")} is already recorded for these plans`);
+    } else if (r.kind === "approved") {
       appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by, ...(r.excluded?.length ? { excluded: r.excluded } : {}) }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
       console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
     } else if (r.kind === "moved") {
@@ -2884,6 +2918,124 @@ async function beforeGate(
     }
   }
   return undefined;
+}
+
+/**
+ * When the approvals that count toward `approval_rules` begin: the first of
+ * the gate's newest pending facts that are all for `digest`, so the facts a
+ * wave records while it waits for more approvers keep the approvals made
+ * before them. With the newest fact for another digest, that fact; with none,
+ * the start of the ledger.
+ */
+export function quorumSince(ledger: GateLedger, gate: string, digest: string): number {
+  const facts = ledger.pending.filter((p) => p.gate === gate).sort((a, b) => at(a.timestamp) - at(b.timestamp));
+  if (facts.length === 0) return 0;
+  let i = facts.length - 1;
+  if (samePlanDigest(facts[i]!.planDigest, digest)) while (i > 0 && samePlanDigest(facts[i - 1]!.planDigest, digest)) i--;
+  return at(facts[i]!.timestamp);
+}
+
+/**
+ * The approvers of `digest` on wave gate `gate` that `approval_rules` count
+ * (./approval-rules.ts): approvals made since quorumSince, not spent, that
+ * the approval mode and the rule on the people behind the change count. A
+ * pull request's review counts each reviewer, by their forge login; any
+ * other approval names its approver, proven when its seal verifies against
+ * the signers at base.
+ */
+export function ruleApprovers(
+  ledger: GateLedger,
+  gate: string,
+  digest: string,
+  o: { mode: Approval; signers: GateSigners; requireSigned?: boolean; involved?: Involved; roles: Record<string, string[]>; forge: string },
+): RuleApprover[] {
+  const since = quorumSince(ledger, gate, digest);
+  const spent = (r: ResolutionRecord): boolean => (ledger.applied ?? []).some((a) => a.kind === "applied" && a.gate === gate && samePlanDigest(a.planDigest, r.planDigest) && at(a.approvedAt) >= at(r.timestamp));
+  const out: RuleApprover[] = [];
+  for (const r of ledger.resolutions) {
+    if (r.gate !== gate || !samePlanDigest(r.planDigest, digest) || at(r.timestamp) < since || spent(r)) continue;
+    const verified = r.seal !== undefined && r.seal !== null && sealRefusal(o.signers, r) === null;
+    if (o.mode === "sealed" && !verified) continue;
+    if (resolutionRefusal(r, { ...(o.involved ? { involved: o.involved } : {}), signers: o.signers, ...(o.requireSigned ? { requireSigned: true } : {}) })) continue;
+    if (r.via === "pr-review" && r.reviewers?.length) {
+      const by = o.involved ? judge(r.reviewers, o.involved).by : r.reviewers;
+      for (const login of by) out.push({ who: login, at: r.timestamp, proven: o.mode === "pr-review", roles: o.mode === "pr-review" ? rolesOf(login, o.roles, o.forge) : [], author: false });
+      continue;
+    }
+    out.push({ who: r.resolvedBy, at: r.timestamp, proven: verified, roles: verified ? rolesOf(r.resolvedBy, o.roles) : [], author: o.involved ? whyInvolved(o.involved, r.resolvedBy) !== undefined : false });
+  }
+  return out;
+}
+
+/**
+ * Where each `approval_rules` entry the wave's `roots` take stands for
+ * `digest`, from the ledger as it is now, kept on the job and the wave's
+ * report. Undefined when no rule applies to the wave.
+ */
+async function quorumProgress(repo: string, options: ApplyWaveOptions, rule: ApprovalRule, j: WaveJob, roots: readonly string[], digest: string, log = false): Promise<{ ledger: GateLedger; progress: RuleProgress[] } | undefined> {
+  const rules = rulesFor(rule.approvalRules, roots);
+  if (rules.length === 0) return undefined;
+  const trust = rules.some((r) => r.roles?.length) ? trustRolesAt(repo, rule.base) : { roles: {} };
+  if (log && "problem" in trust && trust.problem) console.log(`${j.label}: ${trust.problem}`);
+  if (!j.involved) {
+    j.involved = await waveInvolvement(repo, options, rule);
+    if (log) for (const n of j.involved.notes) console.log(`${j.label}: ${n}`);
+  }
+  const ledger = readLedger(repo);
+  const approvers = ruleApprovers(ledger, waveGate(j.k), digest, { mode: rule.mode, signers: rule.signers, ...(rule.requireSigned ? { requireSigned: true } : {}), involved: j.involved, roles: trust.roles, forge: forgeOfEnv(options.env ?? process.env) });
+  const progress = rules.map((r) => ruleProgress(r, approvers));
+  j.quorum = progress;
+  j.quorumRoots = [...roots];
+  j.w.approvalRules = progress;
+  return { ledger, progress };
+}
+
+/**
+ * `approval_rules` at base, for a gated wave: each rule a root of the wave
+ * matches is met by distinct approvers of its digest (ruleApprovers), or the
+ * wave waits. chant lets the wave through on one approval of the digest newer
+ * than the gate's newest pending fact, so while a rule is not met and chant
+ * would let it through, the wave records a pending fact for the digest newer
+ * than that approval, carrying where each rule stands: chant then waits, and
+ * the next approval of the digest answers it.
+ */
+async function approvalQuorum(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, at: GateInput): Promise<void> {
+  const rule = ctx.rule!;
+  const roots = at.roots ?? at.planned.map((p) => p.root);
+  const { w } = j;
+  const { label, digest } = at;
+  const env = options.env ?? process.env;
+  const name = waveGate(j.k);
+  const now = options.now ?? new Date().toISOString();
+  const read = await quorumProgress(repo, options, rule, j, roots, digest, true);
+  if (!read) return;
+  const { ledger, progress } = read;
+  for (const p of progress) console.log(`${label}: approval_rules: ${ruleLine(p)}`);
+  if (rulesMet(progress) || j.ruleRecorded) return;
+  // What chant counts: under sealed only a sealed approval; then the newest approval of the digest after the newest pending fact passes.
+  const seen: GateLedger = rule.mode === "sealed" ? { ...ledger, resolutions: ledger.resolutions.filter((r) => r.gate !== name || sealRefusal(rule.signers, r) === null) } : ledger;
+  if (decideGate(seen, name, digest, now).status !== "approved") return;
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const locator = resolveGateRunLocator(env);
+  appendPending(repo, {
+    version: 1,
+    kind: "pending",
+    op: APPLY_OP,
+    gate: name,
+    timestamp: now,
+    expiresAt: new Date(Date.parse(now) + 48 * 3600 * 1000).toISOString(),
+    planDigest: digest,
+    description: `${label}: ${roots.join(", ")}`,
+    ...(commit ? { commit } : {}),
+    ...(at.members ? { members: at.members } : {}),
+    ...(locator ? { resume: locator } : {}),
+    neverOverMcp: true,
+    approvalMode: rule.mode,
+    ...(w.excluded?.length ? { excluded: w.excluded } : {}),
+    approval_rules: progress,
+  });
+  j.ruleRecorded = true;
+  console.log(`${label}: approval_rules at base are not met (${rulesWaiting(progress)}), so it waits for more approvals of ${digest}`);
 }
 
 /**
@@ -2976,11 +3128,23 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   w.mode = mode;
   if (ctx.rule) console.log(`${label}: approval ${ctx.rule.mode} (${ctx.rule.source})`);
   if (ctx.rule?.note) console.log(`${label}: note: ${ctx.rule.note}`);
+  if (status === "approved" && j.quorum?.length && ctx.rule) {
+    // chant passed the gate on one approval; an approval made after the wave counted (a second one by the same person) is not a second approver.
+    const now = await quorumProgress(repo, options, ctx.rule, j, j.quorumRoots ?? w.roots ?? [], digest);
+    if (now && !rulesMet(now.progress)) {
+      const rules = rulesWaiting(now.progress);
+      console.log(`${label}: chant counted the approval by ${d?.approvedBy ?? "someone"}, and approval_rules at base are not met (${rules}), so nothing in it was applied. Run this job again; it waits for more approvals of ${digest}`);
+      writeOutcome(options.env, `wave ${wave}: approval_rules not met (${rules})`, w);
+      j.code = EXIT.failed;
+      return EXIT.failed;
+    }
+  }
   if (status === "approved") {
     w.approval = "approved";
     j.approvedBy = d?.approvedBy;
     j.approvedAt = d?.approvedAt;
     console.log(`${label}: approved by ${d?.approvedBy ?? "an approval"} for this digest`);
+    if (j.quorum?.length) console.log(`${label}: approval_rules at base are met: ${j.quorum.map((p) => `${p.roots.join(", ")} by ${p.approvers.join(", ")}`).join("; ")}`);
     if (j.counted && d?.approvedBy && !sameLogin(j.counted, d.approvedBy)) console.log(`${label}: the rule counts the approval by ${j.counted}; ${d.approvedBy} had a hand in the change, and an approval of the same plans by someone who did not stands`);
     // The wait the approval ended: from the newest pending record of the gate made before it.
     if (d?.approvedAt) {
@@ -3063,7 +3227,9 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
     j.code = EXIT.refused;
     return EXIT.applied;
   }
-  console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
+  const rules = j.quorum && !rulesMet(j.quorum) ? rulesWaiting(j.quorum) : undefined;
+  console.log(`${label} waits for ${rules ? "more approvals" : "an approval"} of digest ${digest}. Read its plans above, then approve it with:`);
+  if (rules) console.log(`${label}: approval_rules at base: ${rules}`);
   if (w.excluded?.length) console.log(`${label}: an approval counts only from someone who had no hand in the change, so not from ${w.excluded.map((e) => e.login).join(", ")}`);
   console.log(`  ${approveLine(wave, digest, mode)}`);
   // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
@@ -3072,7 +3238,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
     : "terragucci approve records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
   console.log("Then run this job again.");
   w.command = approveLine(wave, digest, mode);
-  writeOutcome(options.env, `wave ${wave} waits: ${w.command}`, w);
+  writeOutcome(options.env, `wave ${wave} waits${rules ? ` (${rules})` : ""}: ${w.command}`, w);
   j.code = EXIT.waiting;
   return EXIT.applied;
 }
@@ -3481,7 +3647,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     runs: units.map((p) => planEntry(p.root, p.member!.planDigest, !(p.changes > 0 || p.outputs), p.destroys, denied.get(p.root))),
     ...(priced ? { members: [priced] } : {}),
     waves: cut.length,
-    pending: { description: `${label}: ${changing.map((p) => p.root).join(", ")}`, ...(commit ? { commit } : {}), members },
+    pending: { description: `${label}: ${changing.map((p) => p.root).join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });
 

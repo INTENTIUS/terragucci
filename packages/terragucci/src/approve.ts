@@ -51,6 +51,7 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { checkoutApproval } from "./approval";
+import { ruleLine, type RuleProgress } from "./approval-rules";
 import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { originOf, resumeAfterApproval } from "./resume";
@@ -76,6 +77,8 @@ export interface WaitingWave {
   resume?: GateRunLocator;
   /** The decision point question the wave waits on, when its gate asks one (./point-gate.ts): an answer passes it, not an approval. */
   question?: string;
+  /** Where each `approval_rules` entry the wave takes stood when it last ran (./approval-rules.ts). */
+  rules?: RuleProgress[];
 }
 
 const at = (iso: string): number => new Date(iso).getTime();
@@ -91,7 +94,7 @@ export function waitingWaves(ledger: GateLedger): WaitingWave[] {
   for (const [gate, p] of newest) {
     const answered = ledger.resolutions.some((r) => r.gate === gate && r.planDigest === p.planDigest && at(r.timestamp) >= at(p.timestamp));
     if (answered) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.resume ? { resume: p.resume } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}) });
+    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(runOf(p) ? { runId: runOf(p) } : {}), ...(p.commit ? { commit: p.commit } : {}), ...(p.resume ? { resume: p.resume } : {}), ...(p.answer?.id ? { question: p.answer.id } : {}), ...(p.approval_rules?.length ? { rules: p.approval_rules } : {}) });
   }
   return out.sort((a, b) => a.wave - b.wave);
 }
@@ -189,6 +192,8 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
   const mode: Approval = checkoutApproval(repo, configPath ? await loadConfig(configPath) : {})?.mode ?? "ledger";
   log(`${waveGate(wave.wave)} waits for an approval of ${wave.digest}${wave.description ? ` (${wave.description})` : ""}, since ${wave.since}`);
   for (const l of describeStored(storedReport(repo, wave.wave, wave.digest))) log(l);
+  // approval_rules: how many approvals the wave had and who it still needs, as it said when it last ran.
+  for (const r of wave.rules ?? []) log(`  approval_rules when it last ran: ${ruleLine(r)}`);
   if (at(wave.expiresAt) < Date.now()) log(`  its pending fact expired at ${wave.expiresAt}; the approval still counts if the next run plans the same digest`);
   const sign = o.sign ?? (mode === "sealed" ? true : undefined);
   const args = ["approve", "tf-apply", waveGate(wave.wave), "--plan", wave.digest, ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];

@@ -11,6 +11,7 @@ import { groupAnchor, planFiles, rootAnchor } from "./build";
 import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
+import { ruleAsks } from "../approval-rules";
 import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
@@ -381,7 +382,9 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const by = w.waits && unknownBy.length
         ? ` (since ${joinAnd(unknownBy.map(code))} ${unknownBy.length === 1 ? "reads" : "read"} a value unknown at plan time)`
         : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
-      t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
+      // approval_rules at base: what the approval takes, rule by rule.
+      const rules = w.waits && w.approval_rules?.length ? `; approval_rules: ${w.approval_rules.map((r) => `${r.roots.map(code).join(", ")} ${ruleAsks(r)}`).join("; ")}` : "";
+      t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by}${rules} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     const previews = notePreviews(report.roots);
