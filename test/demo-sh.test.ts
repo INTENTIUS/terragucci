@@ -56,6 +56,24 @@ describe("stack/demo.sh under pipefail", () => {
     expect(r.stdout.trim().split("\n")).toEqual(["demo-chant-state", "app app.tfstate", "edge edge.tfstate", "network network.tfstate"]);
   });
 
+  it("runs the chant repo's jobs in the image up builds, with full history and no install step", () => {
+    const image = /^CHANT_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1];
+    expect(image).toBe("terragucci-demo-chant:local");
+    const pipeline = readFileSync(join(root, "example-demo-chant", ".forgejo", "workflows", "chant-pr.yml"), "utf8");
+    // Both jobs, plan and apply.
+    expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
+    // chant measures the change from a base commit, so each checkout has the whole history.
+    expect(pipeline.match(/^ *fetch-depth: 0$/gm)).toHaveLength(2);
+    // Every run step is chant's own command: nothing installs OpenTofu, chant or packages at job time.
+    const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
+    expect(runs.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
+    expect(pipeline).not.toMatch(/opentofu|npm |curl /);
+    // The image carries chant and OpenTofu, at the version the tree's lockfile pins.
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant.Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/npm ci --omit=dev/);
+    expect(demo).toContain(`-f "$HERE/demo-chant.Dockerfile" "$HERE/../$(tool_tree chant)"`);
+  });
+
   it("has no pipeline whose reader exits before its writer is done", () => {
     for (const f of ["demo.sh", "bootstrap.sh", "lib.sh"]) {
       const text = readFileSync(join(root, "stack", f), "utf8");
