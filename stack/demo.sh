@@ -662,9 +662,9 @@ scenario_title() {
     a-output)   echo "The same change, read through .output" ;;
     failure)    echo "A failure halfway through, and a re-run that finishes it" ;;
     stale-plan) echo "main moves after approval, and the wave refuses its old plan" ;;
-    b-waves)    echo "A new subnet, and a value nobody could review" ;;
+    b-waves)    echo "A new subnet, approved once its id exists" ;;
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
-    tg-planned-outputs) echo "A new unit planned on real values, not stand-ins" ;;
+    tg-planned-outputs) echo "A new unit planned on real values" ;;
     *) return 1 ;;
   esac
 }
@@ -697,27 +697,27 @@ say() { # step
     a-known:planned)        echo "The plan note shows network going 8080 -> 9090. App's listener 9080 and edge's upstream http://app:9080 follow it. Other has no change. $COST_STUB." ;;
     a-known:applying)       echo "Wave 1 applies network, then wave 2 app and wave 3 edge, each in its own state; nothing is destroyed, so no wave waits" ;;
     a-output:pull-request)  echo "Pull request $PULL: the same 8080 -> 9090, but network's output reads terraform_data.http_proxy_port.output, which is unknown until it applies" ;;
-    a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply, so the review can't see their values. Other has no change. $COST_STUB." ;;
+    a-output:planned)       echo "The plan note shows app's listener and edge's upstream as known after apply; their values arrive when network applies. Other stays as it is. $COST_STUB." ;;
     a-output:applying)      echo "Wave 1 applies network. App and edge read its output before it was known. Each plans again on what applied and waits for approval of that plan." ;;
     a-output:approved)      echo "The driver approves wave $WAVE with the reviewer's key. No review of the pull request showed the values it now applies." ;;
-    a-output:applied)       echo "App's and edge's values landed after the driver's approvals, since no review showed them. The states now hold $(applied_values)." ;;
+    a-output:applied)       echo "App's and edge's values landed after the driver's approvals. The states now hold $(applied_values)." ;;
     b-waves:pull-request)   echo "Pull request $PULL is open. Network adds a subnet, and app adds four resources that use the subnet's id." ;;
-    b-waves:planned)        echo "The plan is on the pull request. App's four resources say \"known after apply\", because the subnet has no id until network builds it. Other, the fourth state, has no change." ;;
+    b-waves:planned)        echo "The plan is on the pull request. App's four resources say \"known after apply\": the subnet gets its id when network builds it. Other, the fourth state, stays as it is." ;;
     b-waves:applying)       echo "Wave 1 builds network's subnet, and now the subnet has an id. App, in wave 2, makes a new plan with that id." ;;
-    b-waves:approved)       echo "The driver approves wave 2 with the reviewer's key, as a person with no hand in the change would. App's resources go into subnet $(state_id network subnet)." ;;
-    b-waves:applied)        echo "Done. Network has subnet $(state_id network subnet), and app's four resources are in it. They landed after a person approved them, since no review showed that id." ;;
+    b-waves:approved)       echo "The driver approves wave 2 with the reviewer's key, as a person outside the change would. App's resources go into subnet $(state_id network subnet)." ;;
+    b-waves:applied)        echo "Done. Network has subnet $(state_id network subnet), and app's four resources are in it, approved with that id." ;;
     b-composed:pull-request) echo "Pull request $PULL brings the b-waves subnet change and turns on waves.compose for itself alone. The roots it reaches plan as one run and apply as one." ;;
     b-composed:planned)     echo "One composed plan covers $COMPOSED. Each keeps its own state. App's four new resources are known after apply, since this run creates the subnet's id. $COST_STUB." ;;
     b-composed:applying)    echo "Wave 1 carries the composed run (compose:wave-1): it locks the states of $COMPOSED, pulls them and plans them once. The later waves have nothing of their own to apply" ;;
     b-composed:approved)    echo "The driver approves the composed run's digest for wave 1 with the reviewer's key. The re-run plans the composed roots again and applies them in one apply." ;;
     b-composed:applied)     echo "One apply built network's subnet $(state_id network subnet) and app's $(state_input app instance) after the driver's approval. Each state holds what applied to it." ;;
     failure:pull-request)   echo "Pull request $PULL is open. Network's port goes from 8080 to 9090, and app gains a database migration. The driver has switched on a fault, so the migration will fail." ;;
-    failure:planned)        echo "The plan is on the pull request. Network and app each get a new port, and edge follows app's port. App also gets the migration. Other, the fourth state, has no change." ;;
+    failure:planned)        echo "The plan is on the pull request. Network and app each get a new port, and edge follows app's port. App also gets the migration. Other, the fourth state, stays as it is." ;;
     failure:applying)       echo "Wave 1 changes network's port. App is in wave 2, where its port changes before the migration runs." ;;
-    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's key, as a person with no hand in the change would, so the re-run can replace the failed migration." ;;
+    failure:approved)       echo "The driver approves wave $WAVE with the reviewer's key, as a person outside the change would, so the re-run can replace the failed migration." ;;
     failure:applied)        echo "Done on the second run. Network's port is now $(state_input network http_proxy_port) and app's is $(state_input app listener_port). Edge points at $(state_input edge upstream)." ;;
     tg-planned-outputs:pull-request) echo "Pull request $PULL is open. It adds two units. Ledger sets up a storage bucket, and billing reads the bucket's name." ;;
-    tg-planned-outputs:planned) echo "The plan is on the pull request. Billing will keep its invoices in the bucket ledger names $(tg_value ledger). The stand-in name, $(tg_mock), was never used. Network and app have no change." ;;
+    tg-planned-outputs:planned) echo "The plan is on the pull request. Billing will keep its invoices in $(tg_value ledger), the bucket name from ledger's plan. Network and app stay as they are." ;;
     tg-planned-outputs:applying) echo "Wave 1 builds ledger's bucket. Wave 2 then plans billing again on the name ledger now has." ;;
     tg-planned-outputs:applied)
       if [ "$TG_COMPARED" = matched ]; then
@@ -733,7 +733,7 @@ say() { # step
       values="$(applied_values)"
       echo "Applied: $values" ;;
     *:approved)             echo "Wave $WAVE approved, sealed with the reviewer's key" ;;
-    *:resumed)              echo "The driver comments /terragucci apply on pull request $PULL, and the pipeline runs the waves again. A wave that already landed has nothing left to do." ;;
+    *:resumed)              echo "The driver comments /terragucci apply on pull request $PULL, and the pipeline runs the waves again. Waves that already landed are done." ;;
     *) echo "$1" ;;
   esac
 }
@@ -849,10 +849,10 @@ default_waiting() {
 
 waiting_label() {
   case "$SCENARIO:$WAVE" in
-    b-composed:1) echo "Wave 1 waits for approval of the composed run. App reads the subnet's id, which this apply computes, so no review showed app's values. Nothing is destroyed, and the wave still waits." ;;
-    a-output:*)   echo "Wave $WAVE waits for approval. It read an output unknown at review, and nobody reviewed the plan it made once that output applied. Nothing is destroyed, and it still waits." ;;
-    b-waves:2)    echo "Wave 2 waits for a person to approve it. App's new plan holds the subnet's id, which no review saw. Nothing is destroyed, and the pipeline still asks." ;;
-    failure:2)    echo "Wave 2 waits for a person to approve it. The re-run replaces the failed migration, which destroys something, so it asks first. The driver gives that approval here." ;;
+    b-composed:1) echo "Wave 1 waits for a person to approve the composed run, where app reads the subnet's id this apply computes." ;;
+    a-output:*)   echo "Wave $WAVE waits for a person to approve the plan it made on the output network just applied." ;;
+    b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
+    failure:2)    echo "Wave 2 waits for a person to approve the re-run, which replaces the failed migration. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
@@ -879,11 +879,11 @@ scenario_a() {
 # migration waits at the gate first, and is approved like any waiting wave).
 failure_failed() {
   [ "${WAVE:-2}" = 2 ] || fail "wave $WAVE failed, not app's wave 2 ($RUN_URL)"
-  demo_hold failed "Wave 2 failed in app's migration. Nothing is undone. Network keeps port $(state_input network http_proxy_port), and app's state keeps port $(state_input app listener_port), which landed before the migration ran. Edge did not run." \
+  demo_hold failed "Wave 2 failed in app's migration. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port), which landed before the migration ran. Edge waits for the re-run." \
     "clear the fault and run the pipeline again"
   marker_clear
   resume_pull
-  demo_write resumed "The driver clears the fault and comments /terragucci apply on pull request $PULL. On this second run network has nothing left to change, and app's migration gets another try." "follow the waves"
+  demo_write resumed "The driver clears the fault and comments /terragucci apply on pull request $PULL. On this second run network is already done, and app's migration gets another try." "follow the waves"
 }
 
 scenario_failure() {
