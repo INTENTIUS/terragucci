@@ -1,0 +1,39 @@
+# Tempo for the observability-lite profile, which stack/demo.sh up starts on
+# the demo host beside Forgejo, its runner, floci, Postgres, behold, the
+# collector and Prometheus: one process, OTLP over gRPC from the collector,
+# traces on local disk inside the container for 24 hours. behold's kiosk reads
+# a run's traces from it on :3200 inside the network.
+stream_over_http_enabled: true
+server:
+  http_listen_port: 3200
+  log_level: warn
+memory:
+  # The Go heap is held under the container's limit (mem_limit in docker-compose.yml).
+  automemlimit_enabled: true
+  automemlimit_ratio: 0.6
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+live_store:
+  # A wave's trace is searchable soon after its job ends.
+  max_block_duration: 30s
+  # A demo run's traces are a few hundred spans; the default holds 250 MB of live traces.
+  max_live_traces_bytes: 33554432
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 24h
+backend_worker:
+  compaction:
+    block_retention: 24h
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

@@ -122,7 +122,7 @@ import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
-import { nowNanos, telemetryFromEnv } from "./telemetry";
+import { nowNanos, telemetryFromEnv, type Attrs } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
 import { overrideCommand } from "./override";
@@ -1015,6 +1015,8 @@ interface WaveJob {
   migration?: HeldMigration;
   /** A composed run's: let go of its locks and put its roots' files back, when it planned and did not apply. */
   release?: () => Promise<void>;
+  /** When the wave's last call back from chant ended, Unix nanoseconds: its gate's span starts there, so it holds chant's decision too. */
+  callEnded?: bigint;
 }
 
 /** A migration wave 1 is held on: its roots, and each one's state as its pending fact names it. */
@@ -1259,6 +1261,32 @@ async function waveCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   const [what, runsPath, plansPath] = r.args as [WaveCall, string | undefined, string | undefined];
   const runs = readCallFile<RunsFile>(r.cwd, runsPath);
   const j = jobOf(runs?.number ?? options.wave);
+  // Each call is a phase of the wave's trace (behold#571): the gate's starts where the call before it ended.
+  const name = what === "migrate-check" ? "migrate check" : what;
+  const phase = j.w.observer.phase(name, {}, what === "gate" ? j.callEnded : undefined);
+  let code: number | undefined;
+  try {
+    return (code = await waveCallIn(repo, options, ctx, r, j, what, runs, plansPath));
+  } finally {
+    j.callEnded = nowNanos();
+    const gate = what === "gate" ? gatePhaseAttrs(r.env, j) : {};
+    j.w.observer.endPhase(phase, { ...gate, ...(code !== undefined ? { "terragucci.exit_code": code } : {}) }, code === undefined ? "the call threw" : code === EXIT.failed ? `exit ${code}` : undefined);
+  }
+}
+
+/** What a wave's gate span says: how chant decided it, and the wait an approval ended in this run. */
+function gatePhaseAttrs(env: Record<string, string>, j: WaveJob): Attrs {
+  const held = j.facts.held;
+  const heldSeconds = held ? (Date.parse(held.approvedAt) - Date.parse(held.since)) / 1000 : NaN;
+  return {
+    "terragucci.gate.status": j.w.approval ?? env.CHANT_GATE_STATUS,
+    "terragucci.gate.digest": j.w.digest,
+    ...(j.facts.waitingSince ? { "terragucci.gate.waiting_since": j.facts.waitingSince } : {}),
+    ...(held && Number.isFinite(heldSeconds) && heldSeconds >= 0 ? { "terragucci.gate.held_seconds": heldSeconds, "terragucci.gate.approved_at": held.approvedAt } : {}),
+  };
+}
+
+async function waveCallIn(repo: string, options: ApplyWaveOptions, ctx: WavesContext, r: WaveRequest, j: WaveJob, what: WaveCall, runs: RunsFile | undefined, plansPath: string | undefined): Promise<number> {
   switch (what) {
     case "plan": {
       if (!runs || !plansPath) throw new Error("chant called the plan with no runs file");
@@ -1511,6 +1539,8 @@ function runComposed(c: WaveComposedInput | undefined): Partial<RunWave> {
 async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Required<WaveRun>, env: NodeJS.ProcessEnv): Promise<void> {
   const { wave, binary } = options;
   const settings = w.settings;
+  // The report and its upload are phases of the wave's trace (behold#571); the trace is sent once both end.
+  const reporting = w.observer.phase("report");
   const plans = new Map<string, { json?: string }>();
   let redacted = 0;
   for (const p of w.planned) {
@@ -1560,6 +1590,9 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   if (w.costOutputs) writeCostFiles(dir, w.costOutputs);
   const slowest = report.timings?.roots[0];
   if (slowest) console.log(`wave ${wave}: report in terragucci-report/, slowest root ${slowest.root} (${slowest.seconds}s)`);
+  w.observer.endPhase(reporting);
+  const uploading = settings.reports?.bucket ? w.observer.phase("upload", { "terragucci.reports.bucket": settings.reports.bucket }) : undefined;
+  let uploadProblem: string | undefined;
   if (settings.reports?.bucket && w.decided) {
     console.log(`wave ${wave}: the report stays with the job; the reports of its shares, which apply, go to ${settings.reports.bucket}`);
   } else if (settings.reports?.bucket) {
@@ -1567,6 +1600,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       const up = await uploadReport(storeFromEnv(settings.reports, env), dir, report, settings.reports.prefix);
       console.log(`wave ${wave}: report copied to ${up.prefix}${report.run.report_url ? `, at ${report.run.report_url}` : ""}`);
     } catch (e) {
+      uploadProblem = (e as Error).message;
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
     }
   }
@@ -1577,6 +1611,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     const cmd = w.state === "waiting" && w.command ? { command: w.command } : {};
     await noteRunView(repo, options, w, { state: w.state, ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}), ...cmd, ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.shareCount ? { shares: w.shareCount } : {}), report: runPath(report), ...runComposed(w.composed) });
   }
+  w.observer.endPhase(uploading, {}, uploadProblem);
   await w.observer.finish(report, env, (l) => console.log(l));
 }
 
