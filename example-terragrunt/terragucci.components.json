@@ -1,6 +1,6 @@
 {
   "schema": "terragucci.components/v1",
-  "generated_by": "terragucci 0.4.25",
+  "generated_by": "terragucci 0.4.26",
   "roots": {
     "live/dev/platform": {
       "dir": "live/dev/platform"
