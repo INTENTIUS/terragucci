@@ -101,7 +101,7 @@ describe("the DORA metrics", () => {
     const { sources, entries } = oneProject();
     const full = buildDora(sources, entries, NOW).estate;
     const withoutFailure = buildDora(sources, entries.filter((e) => e.result !== "failed"), NOW).estate;
-    expect(withoutFailure.change_failure).toEqual({ applies: 3, failed: 0, drifted: 1, rate: 0.333 });
+    expect(withoutFailure.change_failure).toEqual({ applies: 3, failed: 0, drifted: 1, rate: 0.333333 });
     expect(withoutFailure.restore.apply_restored).toBe(0);
     const noDrift = buildDora([{ project: P, rows: sources[0].rows.filter((r) => r.stage !== "tf-drift") }], entries, NOW).estate;
     expect(noDrift.change_failure.rate).toBe(0.25);
