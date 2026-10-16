@@ -21,7 +21,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { APPROVALS, approvalModeOf, ConfigError, requireSignedOf, type Approval, type ApprovalRuleSettings, type PolicyOutcome, type TerragucciConfig } from "./config";
+import { APPROVALS, approvalModeOf, ConfigError, requireSignedOf, type Approval, type ApprovalRuleSettings, type OverrideEntry, type PolicyOutcome, type TerragucciConfig } from "./config";
 import { configAtBase } from "./report/policy";
 import { baseCommit, sealRule, type SealRule } from "./seal";
 
@@ -36,8 +36,10 @@ export interface ApprovalMode {
 export interface ApprovalRule extends ApprovalMode, SealRule {
   /** The commit the rule was read from. */
   base: string;
-  /** Who may override a policy denial: `policy.override` in the config at base. Empty: nobody. */
+  /** Who may override a policy denial: the flat names of `policy.override` in the config at base, for every root and rule. */
   overriders: string[];
+  /** The scoped entries of `policy.override` at base (./override.ts). */
+  overrideEntries?: OverrideEntry[];
   /** The decision point every wave gate asks: `apply.point` in the config at base (./point-gate.ts). Unset, the gate waits for an approval. */
   point?: string;
   /** `approval.require_signed` at base: an unsigned approval on the ledger counts for nothing. */
@@ -107,11 +109,12 @@ export async function approvalRule(repo: string, options: { at?: string; config?
   const requireSigned = own && requireSignedOf(read.config.approval);
   const agentTokenEnv = own && typeof read.config.agent?.token_env === "string" ? read.config.agent.token_env : undefined;
   const agentLogin = own && typeof read.config.agent?.login === "string" && read.config.agent.login ? read.config.agent.login : undefined;
-  const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o) => typeof o === "string") : [];
+  const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o): o is string => typeof o === "string") : [];
+  const overrideEntries = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o): o is OverrideEntry => typeof o === "object" && o !== null) : [];
   const point = own && typeof read.config.apply?.point === "string" ? read.config.apply.point : undefined;
   const approvalRules = own && Array.isArray(read.config.approval_rules) && read.config.approval_rules.length > 0 ? read.config.approval_rules : undefined;
   const policyOutcomes = own && Array.isArray(read.config.policy?.outcomes) && read.config.policy.outcomes.some((o) => o !== "deny") ? read.config.policy.outcomes : undefined;
-  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}), ...(requireSigned ? { requireSigned } : {}), ...(agentTokenEnv ? { agentTokenEnv } : {}), ...(agentLogin ? { agentLogin } : {}), ...(approvalRules ? { approvalRules } : {}), ...(policyOutcomes ? { policyOutcomes } : {}) };
+  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}), ...(requireSigned ? { requireSigned } : {}), ...(agentTokenEnv ? { agentTokenEnv } : {}), ...(agentLogin ? { agentLogin } : {}), ...(approvalRules ? { approvalRules } : {}), ...(policyOutcomes ? { policyOutcomes } : {}), ...(overrideEntries.length ? { overrideEntries } : {}) };
 }
 
 /** The mode a repo's checkout holds, as `config check` reports it. */

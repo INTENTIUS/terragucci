@@ -220,7 +220,7 @@ No approval counts when sealing is on and base has no signers file. A reviewed c
 
 ## Policy overrides
 
-An override lets `tf-apply` apply one root's denied plan. It never edits the policy, and `tf-plan` still fails the root. `policy.override` in the config at base lists who may write one; with no key there, no override counts ([steps](/terragucci/reference/policy/#overriding-a-denial)).
+An override lets `tf-apply` apply one root's denied plan. It never edits the policy, and `tf-plan` still fails the root. `policy.override` in the config at base lists who may write one, for every root or, with an entry, for the roots and rules it names; with no key there, no override counts ([steps](/terragucci/reference/policy/#overriding-a-denial)). A role in an entry counts only under `sealed`, by the grants in `.chant/trust.json` at base.
 
 | Mode | An override counts when | Stops | Does not stop |
 |---|---|---|---|

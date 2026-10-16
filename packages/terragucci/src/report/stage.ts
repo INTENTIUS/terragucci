@@ -29,8 +29,8 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
-import { ruleProgress, rulesFor } from "../approval-rules";
-import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
+import { ruleProgress, rulesFor, trustRolesAt } from "../approval-rules";
+import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
 import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ApprovalRuleSettings, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
@@ -2035,21 +2035,28 @@ export async function planOverrides(repo: string, options: StageOptions, env: No
   const configPath = options.config ?? findConfig(repo);
   try {
     const rule = await approvalRule(repo, { ...(base ? { at: base } : {}), ...(configPath ? { config: configPath } : {}) });
-    if (rule.overriders.length === 0) return inputs;
-    policy.overriders = rule.overriders;
+    if (rule.overriders.length === 0 && !rule.overrideEntries) return inputs;
+    // Scoped entries (../override.ts): each denied root has its own overriders, roles read at base under sealed alone.
+    const roles = rule.overrideEntries?.some((e) => e.roles?.length) && rule.mode === "sealed" ? trustRolesAt(repo, rule.base).roles : {};
+    const whoFor = (root: string, rules: readonly string[]) => overridersFor({ overriders: rule.overriders, ...(rule.overrideEntries ? { entries: rule.overrideEntries } : {}), roles }, root, rules);
+    const union = [...new Set(denied.flatMap((i) => whoFor(i.path, i.policy!.rules ?? []).principals))];
+    if (union.length === 0) return inputs;
+    policy.overriders = rule.overrideEntries ? union : rule.overriders;
     const ledger = readLedger(repo, OVERRIDE_LEDGER);
-    const judge = overrideRule(repo, rule);
     const now = new Date().toISOString();
     const overridden: string[] = [];
     const out = inputs.map((i) => {
       if (!denied.includes(i)) return i;
+      const who = whoFor(i.path, i.policy!.rules ?? []);
+      const scoped = rule.overrideEntries ? { ...i, policy: { ...i.policy!, overriders: who.shown } } : i;
       const planDigest = terraformChangeSetPart({ member: i.path, plan: i.plan, planner: i.planner ?? "terraform" }).member.planDigest;
-      if (!planDigest) return i;
+      if (!planDigest || who.principals.length === 0) return scoped;
+      const judge = overrideRule(repo, { ...rule, overriders: who.principals });
       const decision = decideOverride(ledger, judge, i.path, planDigest, i.policy!.rules ?? [], now);
-      if (decision.status !== "overridden") return i;
+      if (decision.status !== "overridden") return scoped;
       overridden.push(i.path);
       log(`${i.path}: the policy denial is overridden by ${decision.override.by} at ${decision.override.at}, so tf-apply applies this plan; the plan still fails here`);
-      return { ...i, policy: { ...i.policy!, override: decision.override } };
+      return { ...scoped, policy: { ...scoped.policy!, override: decision.override } };
     });
     if (overridden.length > 0) policy.overridden = overridden.sort();
     return out;

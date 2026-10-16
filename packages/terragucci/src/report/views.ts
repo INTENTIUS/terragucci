@@ -349,7 +349,9 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const rules = (o?.rules ?? r.policy!.rules ?? []).map(code).join(", ") || "its rules";
       t += o
         ? `- ${to(code(r.path), rootAnchor(r.path))}: ${rules} overridden by ${o.by} at ${o.at}${o.sealed ? ", sealed" : ""}, for plan ${code(o.plan_digest)}: ${o.reason.split(/\s+/).join(" ")}${run.stage === "tf-plan" ? ". tf-apply applies this plan; this run still fails it" : ""}\n`
-        : `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. ${report.policy!.overriders!.join(", ")} may override it once a tf-apply wave records the denial: ${code(overrideCommand(r.path, r.policy!.rules ?? [], options.sealed))}\n`;
+        : r.policy!.overriders?.length === 0 || (r.policy!.overriders === undefined && !report.policy?.overriders?.length)
+          ? `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. policy.override names nobody who may override it\n`
+          : `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. ${(r.policy!.overriders ?? report.policy!.overriders!).join(", ")} may override it once a tf-apply wave records the denial: ${code(overrideCommand(r.path, r.policy!.rules ?? [], options.sealed))}\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }

@@ -491,6 +491,13 @@ export interface ReportRootPolicy {
   /** With `allow_unattended` in `policy.outcomes` at base (minor 40): the ids of the `allow_unattended` rules that matched, sorted. */
   allowed_by?: string[];
   /**
+   * With scoped `policy.override` entries at base (minor 40): who may override
+   * this root's denial by its rules, names first, then each role as `role
+   * <name> (<holders>)`. Absent with a flat list, where `policy.overriders`
+   * says it for every root.
+   */
+  overriders?: string[];
+  /**
    * The override that stands for this root's plan and rules (minor 10). On a
    * `tf-apply` wave the root then applies, and is `planned` with its denial
    * still here; on a `tf-plan` run the root still fails.

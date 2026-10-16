@@ -126,7 +126,7 @@ import { nowNanos, telemetryFromEnv, type Attrs } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
 import { rolesOf, ruleLine, ruleProgress, rulesFor, rulesMet, rulesWaiting, trustRolesAt, type RuleApprover, type RuleProgress } from "./approval-rules";
-import { overrideCommand } from "./override";
+import { mayOverride, overrideCommand, overridersFor, type Overriders } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ForgeCalls, type ReviewedPull, type ReviewOutcome } from "./review";
@@ -997,8 +997,10 @@ interface WaveJob {
   held?: boolean;
   /** Each denied root's policy error, for the report of a wave chant refused. */
   denials?: Map<string, string>;
-  /** Who policy.override at base lists. */
+  /** Who policy.override at base lists: everyone who may override a denied root of the wave, as chant's override gate takes them. */
   overriders?: string[];
+  /** With scoped `policy.override` entries at base, who may override each denied root (./override.ts). */
+  overridersByRoot?: Map<string, Overriders>;
   /** Under pr-review, the merged pull request's review of plans that moved since. */
   reviewMoved?: Extract<ReviewOutcome, { kind: "moved" }>;
   /** The digest of the stopped apply whose rest this one applies under its approval. */
@@ -1320,7 +1322,7 @@ async function waveCallIn(repo: string, options: ApplyWaveOptions, ctx: WavesCon
         const observer = j.w.observer;
         j.w = { observer };
         for (const key of Object.keys(j.facts)) delete (j.facts as Record<string, unknown>)[key];
-        for (const key of ["code", "apply", "held", "denials", "overriders", "reviewMoved", "resumes", "changes", "stored", "quorum", "quorumRoots"] as const) delete j[key];
+        for (const key of ["code", "apply", "held", "denials", "overriders", "reviewMoved", "resumes", "changes", "stored", "quorum", "quorumRoots", "overridersByRoot"] as const) delete j[key];
       }
       const plans = join(r.cwd, plansPath);
       const c = options.terragrunt ? await planUnits(repo, options, ctx, j, runs, plans) : await planRoots(repo, options, ctx, j, runs, plans);
@@ -2718,10 +2720,18 @@ async function policyCheck(
   }
   if (found.failed.size === 0) return out;
   // Who may override is policy.override in the config at base, when the policy key in force names any; with nobody listed, no denial is recorded for an override.
-  const overriders = governing.policy.override?.length ? (ctx.rule?.overriders ?? []) : [];
-  // A denial with its rules and plan can be overridden; one the policy could not check never is.
-  const overridable = (p: WavePlan): boolean => overriders.length > 0 && found.failed.has(p.root) && p.policy?.result === "denied" && (p.policy.rules?.length ?? 0) > 0 && !!p.member?.planDigest;
+  // Its scoped entries name people and roles for the roots their globs match, and the rules they cover (./override.ts).
+  const scoped = governing.policy.override?.length ? ctx.rule : undefined;
+  const byRoot = new Map<string, Overriders>();
+  for (const p of planned) if (found.failed.has(p.root)) byRoot.set(p.root, scoped ? rootOverriders(repo, scoped, p.root, p.policy?.rules ?? []) : { principals: [], shown: [] });
+  const overriders = [...new Set([...byRoot.values()].flatMap((o) => o.principals))];
+  // A denial with its rules and plan can be overridden by someone named for it; one the policy could not check never is.
+  const overridable = (p: WavePlan): boolean => (byRoot.get(p.root)?.principals.length ?? 0) > 0 && found.failed.has(p.root) && p.policy?.result === "denied" && (p.policy.rules?.length ?? 0) > 0 && !!p.member?.planDigest;
   const hard = planned.filter((p) => found.failed.has(p.root) && !overridable(p));
+  if (scoped?.overrideEntries) {
+    j.overridersByRoot = byRoot;
+    for (const p of hard) if (p.policy?.result === "denied" && p.policy.rules?.length) console.log(`${p.root}: policy.override at base names nobody who may override it for ${p.policy.rules.join(", ")}`);
+  }
   j.denials = new Map(found.failed);
   if (hard.length > 0) {
     for (const p of planned) {
@@ -2738,11 +2748,24 @@ async function policyCheck(
   }
   j.overriders = overriders;
   if (w.policy) w.policy.overriders = overriders;
+  // Scoped entries: each denied root says who may override it.
+  if (scoped?.overrideEntries) for (const p of planned) if (p.policy && byRoot.get(p.root)?.shown.length) p.policy = { ...p.policy, overriders: byRoot.get(p.root)!.shown };
   for (const p of planned) {
     if (!found.failed.has(p.root)) continue;
     out.set(p.root, { rules: p.policy!.rules!, reason: found.failed.get(p.root)!.split("\n")[0]! });
   }
   return out;
+}
+
+/**
+ * Who may override `root`'s denial by `rules` under `policy.override` at
+ * base (overridersFor), with the roles of `.chant/trust.json` at base under
+ * `sealed` alone, where a seal proves who wrote the override.
+ */
+function rootOverriders(repo: string, rule: ApprovalRule, root: string, rules: readonly string[]): Overriders {
+  const wantsRoles = rule.overrideEntries?.some((e) => e.roles?.length) === true;
+  const roles = wantsRoles && rule.mode === "sealed" ? trustRolesAt(repo, rule.base).roles : {};
+  return overridersFor({ overriders: rule.overriders, ...(rule.overrideEntries ? { entries: rule.overrideEntries } : {}), roles }, root, rules);
 }
 
 /**
@@ -3111,13 +3134,35 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   const mode: Approval = ctx.rule?.mode ?? "ledger";
   // The overrides chant let denied roots through under, for the report.
   const overridden: string[] = [];
+  // Scoped policy.override entries at base: chant counted anyone the wave named for any of its denied roots, so each override is judged for its own root and rules here.
+  const unscoped: string[] = [];
   for (const m of d?.members ?? []) {
     const p = w.planned?.find((x) => x.root === m.member);
     if (!m.override || !p?.policy) continue;
+    const allowed = j.overridersByRoot?.get(m.member);
+    if (allowed && !mayOverride(allowed.principals, m.override.by)) {
+      unscoped.push(m.member);
+      console.log(`${m.member}: the override by ${m.override.by} does not count: policy.override at base lets ${allowed.shown.join(", ") || "nobody"} override ${m.member} for ${(m.denied?.rules ?? p.policy.rules ?? []).join(", ")}`);
+      continue;
+    }
     p.policy = { ...p.policy, override: { by: m.override.by, at: m.override.at, rules: m.denied?.rules ?? p.policy.rules ?? [], reason: m.override.reason, plan_digest: m.planDigest, digest: m.override.digest, sealed: mode === "sealed" } };
     overridden.push(m.member);
   }
   if (overridden.length && w.policy) w.policy.overridden = overridden.sort();
+  if (unscoped.length > 0 && (status === "approved" || status === "not-required")) {
+    // Nothing applied or spent yet: a failing after-gate hook stops the wave before its apply.
+    for (const root of unscoped) {
+      const p = w.planned?.find((x) => x.root === root);
+      if (p) p.error = j.denials?.get(root) ?? "denied by the policy";
+      const allowed = j.overridersByRoot!.get(root)!;
+      if (allowed.shown.length) console.log(`${root}: ${allowed.shown.join(", ")} may let this plan through with:\n  ${overrideCommand(root, d?.members.find((m) => m.member === root)?.denied?.rules ?? [], mode === "sealed")}`);
+    }
+    console.log(`${label}: policy refused ${unscoped.length} root${unscoped.length === 1 ? "" : "s"}, whose override policy.override at base does not cover, so nothing in it was applied`);
+    w.refused = { reason: "policy", roots: [...unscoped].sort() };
+    writeOutcome(options.env, `wave ${wave} refused by policy: ${unscoped.join(", ")}`, w);
+    j.code = EXIT.failed;
+    return EXIT.failed;
+  }
   if (d?.heldOn) {
     // A state migration holds wave 1 on its own gate (migrationCall printed the proof and its command).
     j.code = EXIT.waiting;
@@ -3153,7 +3198,11 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
       console.log(`FAILED ${root}: ${error.split("\n")[0]}`);
       console.log(indent(error));
       const rules = d?.members.find((m) => m.member === root)?.denied?.rules ?? [];
-      if (j.overriders?.length) {
+      const scopedTo = j.overridersByRoot?.get(root);
+      if (scopedTo?.shown.length) {
+        console.log(`${root}: policy.override at base lets ${scopedTo.shown.join(", ")} override it for ${rules.join(", ")}; one of them can let this plan through with:`);
+        console.log(`  ${overrideCommand(root, rules, mode === "sealed")}`);
+      } else if (!scopedTo && j.overriders?.length) {
         console.log(`${root}: policy.override at base lists ${j.overriders.join(", ")}; one of them can let this plan through with:`);
         console.log(`  ${overrideCommand(root, rules, mode === "sealed")}`);
       }

@@ -213,6 +213,38 @@ policy:
 
 </Steps>
 
+### Scoped overriders
+
+A name in the list may override any root's denial, by any rule. An entry instead names who may override the roots its globs match:
+
+```yaml
+approval: sealed
+policy:
+  path: policy
+  override:
+    - roots: ["envs/dev/**"]
+      who: [github:alice, github:bob]
+    - roots: ["envs/prod/**"]
+      roles: [platform]              # roles from .chant/trust.json
+      rules: ["main.deny_untagged"]  # only an override of these rule ids
+    - github:carol                   # every root and rule, as before
+```
+
+| Key | Means |
+|---|---|
+| `roots` | root globs; the entry covers a denial of a root one matches |
+| `who` | the forge identities or signers it lets override |
+| `roles` | the roles in `.chant/trust.json` at base whose holders it lets override; needs `approval: sealed` |
+| `rules` | only an override whose rules are all in this list; unset, any rule |
+
+An override counts when a name in the list, or an entry that covers the root and its rules, names the person who wrote it: by name, or by a role `.chant/trust.json` at base gives them. A role counts only under `approval: sealed`, where the override's seal proves who wrote it, so `terragucci config check` refuses `roles` under any other mode. An override of a denial by `main.deny_untagged` and `main.deny_public` counts only under an entry whose `rules` hold both. When a wave holds denied roots of several entries, it refuses an override by someone the entries do not name for that root before anything applies, and says who may override it:
+
+```text
+envs/prod/app: the override by github:alice does not count: policy.override at base lets role platform (github:carol) override envs/prod/app for main.deny_untagged
+```
+
+A root no name or entry covers is refused as with no `override`. The pull request's plan note and `roots[].policy.overriders` in the report name who may override each denied root.
+
 ### Override binding
 
 | Part | Effect |
@@ -226,9 +258,9 @@ policy:
 
 | Case | Counts |
 |---|---|
-| by someone `override` lists in the config at base, written after the wave recorded the denial, with a reason | yes |
+| by someone `override` lists in the config at base for the root and its rules, written after the wave recorded the denial, with a reason | yes |
 | the same under `approval: sealed` | only when sealed by a key the signers file at base lists for that person |
-| by someone not listed, or listed only by the commit being applied | no |
+| by someone not listed, listed only for other roots or rules, or listed only by the commit being applied | no |
 | a line a job wrote, such as a `pr-review` record | no |
 | a line an agent recorded | no |
 | no `override` at base | nothing counts, and no denial is recorded |
