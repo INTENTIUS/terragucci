@@ -397,7 +397,7 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
       at_gate_seconds: median(leads.map((l) => l.gate)),
       after_gate_seconds: median(leads.map((l) => l.after)),
     },
-    change_failure: { applies: applies.length, failed, drifted: drift, rate: applies.length ? Math.round(((failed + drift) / applies.length) * 1000) / 1000 : null },
+    change_failure: { applies: applies.length, failed, drifted: drift, rate: applies.length ? Math.round(((failed + drift) / applies.length) * 1e6) / 1e6 : null },
     restore: {
       restored: restores.length,
       open: ev.open,
