@@ -322,6 +322,8 @@ services:
       - ./observability/tempo-lite.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-lite-data:/var/tempo
     mem_limit: 384m
+    # Back on its own after a restart of the host or an out-of-memory kill.
+    restart: unless-stopped
     ports:
       - "127.0.0.1:${TERRAGUCCI_TEMPO_PORT:-3210}:3200"
     networks:

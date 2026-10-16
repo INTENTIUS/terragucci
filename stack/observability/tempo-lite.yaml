@@ -22,14 +22,20 @@ live_store:
   max_block_duration: 30s
   # A demo run's traces are a few hundred spans; the default holds 250 MB of live traces.
   max_live_traces_bytes: 33554432
+  complete_block_concurrency: 1
 backend_scheduler:
   provider:
     compaction:
       compaction:
         block_retention: 24h
+        max_compaction_objects: 200000
+        max_block_bytes: 33554432
 backend_worker:
   compaction:
     block_retention: 24h
+    # Compaction reads its input blocks into memory: small ones keep it under the cap.
+    max_compaction_objects: 200000
+    max_block_bytes: 33554432
 storage:
   trace:
     backend: local
