@@ -9,11 +9,11 @@ reports:
   bucket: s3://demo-reports
   endpoint: http://floci:4566
   prefix: demo
-# Each job's metrics go to the stack's OpenTelemetry collector, and on to
-# the Prometheus that behold's kiosk reads (stack/demo.sh up starts both).
-# Metrics only, each gauge labelled with its commit and run. A collector that
-# is down costs a job one log line, never its result.
+# Each job's traces and metrics go to the stack's OpenTelemetry collector:
+# the metrics on to the Prometheus and the traces on to the Tempo that
+# behold's kiosk reads (stack/demo.sh up starts all three). Each gauge is
+# labelled with its commit and run, and each trace names them too. A
+# collector or a Tempo that is down never changes a job's result.
 env:
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-  OTEL_TRACES_EXPORTER: none
   TERRAGUCCI_METRICS_PER_RUN: "true"

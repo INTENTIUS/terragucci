@@ -29,7 +29,7 @@
 #   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 #   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
-#   observability-lite  the collector and Prometheus alone, with no Tempo or Grafana   stack/demo.sh up starts it
+#   observability-lite  the collector, Prometheus and a small Tempo, with no Grafana   stack/demo.sh up starts it
 #   blob      Azurite and fake-gcs-server, the Azure Blob and GCS emulators   used by the blob-azure and blob-gcs smoke claims
 #   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
 #   demo      Postgres for the demo's app schema           stack/demo.sh up starts it
@@ -58,6 +58,8 @@ volumes:
     name: ${TG_PROJECT:-terragucci}-fountain-sandboxes
   otel-out:
     name: ${TG_PROJECT:-terragucci}-otel-out
+  tempo-lite-data:
+    name: ${TG_PROJECT:-terragucci}-tempo-lite-data
   demo-pgdata:
     name: ${TG_PROJECT:-terragucci}-demo-pgdata
 
@@ -256,14 +258,16 @@ services:
         aliases: [otel-collector]
 
   # The same collector and config for observability-lite, under the same name
-  # and alias, with no Tempo to send traces to: a stage's spans only feed the
-  # span metrics, and nothing is written to the otel-out volume. The second
-  # --config replaces the traces pipeline's exporters. Run one profile or the
-  # other, not both: the two share a container name.
+  # and alias: a stage's spans go to tempo-lite and feed the span metrics, and
+  # nothing is written to the otel-out volume. The second --config replaces
+  # the traces pipeline's exporters. A Tempo that is down or not started costs
+  # the spans it would have kept, never a job's result: the exporter's queue
+  # retries and then drops them, and the span metrics go on. Run one profile or
+  # the other, not both: the two share a container name.
   otel-collector-lite:
     <<: *otel-collector
     profiles: [observability-lite]
-    command: ["--config=/etc/otelcol/collector.yaml", "--config=yaml:service::pipelines::traces::exporters: [spanmetrics]"]
+    command: ["--config=/etc/otelcol/collector.yaml", "--config=yaml:service::pipelines::traces::exporters: [otlp/tempo, spanmetrics]"]
     # A demo's jobs send a few dozen points a minute; the Go heap is held
     # well under what an idle collector takes unbounded.
     environment:
@@ -299,6 +303,29 @@ services:
       - ./observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
     ports:
       - "${TERRAGUCCI_TEMPO_PORT:-3210}:3200"
+    networks:
+      default:
+        aliases: [tempo]
+
+  # The Tempo of observability-lite, under the full profile's name and alias,
+  # sized for the demo host: traces kept 24 hours (observability/tempo-lite.yaml)
+  # in a volume, so a restart keeps them, and the container held to 384 MiB.
+  # behold's kiosk reads a run's traces from it on :3200 inside the network;
+  # the host port listens on loopback only.
+  tempo-lite:
+    image: grafana/tempo:3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd
+    container_name: ${TG_PROJECT:-terragucci}-tempo
+    profiles: [observability-lite]
+    user: "0:0"
+    command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo-lite.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-lite-data:/var/tempo
+    mem_limit: 384m
+    # Back on its own after a restart of the host or an out-of-memory kill.
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${TERRAGUCCI_TEMPO_PORT:-3210}:3200"
     networks:
       default:
         aliases: [tempo]
