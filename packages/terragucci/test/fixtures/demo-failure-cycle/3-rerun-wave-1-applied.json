@@ -1,0 +1,254 @@
+{
+  "schema": "terragucci.report/v1",
+  "minor": 39,
+  "run": {
+    "project": "forgejo:3000/terragucci-admin/demo",
+    "commit": "59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+    "commit_url": "http://forgejo:3000/terragucci-admin/demo/commit/59ffbd6fbfc6afa306f19b69c62c5a5b487c4e2b",
+    "pull_request": "1557",
+    "pull_request_url": "http://forgejo:3000/terragucci-admin/demo/pulls/1557",
+    "stage": "tf-apply",
+    "wave": 1,
+    "binary": "tofu",
+    "runtime": "forge",
+    "started": "2026-10-16T09:20:47.252Z",
+    "finished": "2026-10-16T09:20:47.794Z",
+    "terragucci": "0.4.28"
+  },
+  "change_set": "jcs1-sha256:09e952e1cb47c6bfb1529e7d525e138ff8dd05eff0391ca64f107962fa70719c",
+  "unit": "member",
+  "units": 2,
+  "totals": {
+    "create": 0,
+    "update": 0,
+    "replace": 0,
+    "delete": 0,
+    "read": 0,
+    "no-op": 3,
+    "forget": 0
+  },
+  "totals_roots": 0,
+  "groups": [
+    {
+      "id": "49648f9475c7",
+      "units": [
+        "network",
+        "other"
+      ],
+      "outlier": false,
+      "noChanges": true,
+      "changes": [],
+      "destroys": 0,
+      "varies": [],
+      "fold": "folded",
+      "why": []
+    }
+  ],
+  "roots": [
+    {
+      "path": "network",
+      "binary": {
+        "name": "tofu",
+        "version": "1.13.1"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:d081d6a67930ed68595e2007955a8873755535e0a0d6730dee8cf0250ca72303",
+      "counts": {
+        "no-op": 2
+      },
+      "group": "49648f9475c7",
+      "plan": {
+        "json": "roots/network/plan.json"
+      },
+      "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+      "changes": [],
+      "highlights": [],
+      "fold": "folded",
+      "why": [],
+      "resources": [
+        {
+          "address": "terraform_data.http_proxy_port",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        },
+        {
+          "address": "terraform_data.release",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        }
+      ],
+      "applied_changes": [],
+      "state": {
+        "backend": "s3",
+        "location": "s3://demo-terraform-state/network.tfstate",
+        "versioning": "off",
+        "note": "bucket versioning is off for demo-terraform-state, so it keeps only the latest state"
+      },
+      "timings": {
+        "seconds": 0.25,
+        "plan_seconds": 0.06,
+        "apply_seconds": 0.06,
+        "spans": 12,
+        "detail": "resources",
+        "resources": [
+          {
+            "address": "terraform_data.http_proxy_port",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.9
+          },
+          {
+            "address": "terraform_data.release",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.9
+          }
+        ],
+        "provider_calls": [],
+        "provider_init": [],
+        "lock_waits": [],
+        "aggregates": []
+      }
+    },
+    {
+      "path": "other",
+      "binary": {
+        "name": "tofu",
+        "version": "1.13.1"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:b693a2f0f2b74e37e574bebb011b273ba2bea69444ca26bcbd0da22b6ad96eb9",
+      "counts": {
+        "no-op": 1
+      },
+      "group": "49648f9475c7",
+      "plan": {
+        "json": "roots/other/plan.json"
+      },
+      "job_url": "http://forgejo:3000/terragucci-admin/demo/actions/runs/3965",
+      "changes": [],
+      "highlights": [],
+      "fold": "folded",
+      "why": [],
+      "resources": [
+        {
+          "address": "terraform_data.backup_schedule",
+          "type": "terraform_data",
+          "provider": "terraform.io/builtin/terraform"
+        }
+      ],
+      "applied_changes": [],
+      "state": {
+        "backend": "s3",
+        "location": "s3://demo-terraform-state/other.tfstate",
+        "versioning": "off",
+        "note": "bucket versioning is off for demo-terraform-state, so it keeps only the latest state"
+      },
+      "timings": {
+        "seconds": 0.25,
+        "plan_seconds": 0.05,
+        "apply_seconds": 0.05,
+        "spans": 10,
+        "detail": "resources",
+        "resources": [
+          {
+            "address": "terraform_data.backup_schedule",
+            "type": "terraform_data",
+            "provider": "provider[\"terraform.io/builtin/terraform\"]",
+            "ms": 0.5
+          }
+        ],
+        "provider_calls": [],
+        "provider_init": [],
+        "lock_waits": [],
+        "aggregates": []
+      }
+    }
+  ],
+  "waves": [
+    {
+      "number": 1,
+      "roots": [
+        "network",
+        "other"
+      ],
+      "set_digest": "jcs1-sha256:1c4558df6113fe506b12df1954cb398175470552670d45f2132b0a3ff3044817",
+      "approval": "not-required",
+      "cost": {
+        "currency": "USD",
+        "monthly_delta": 0,
+        "monthly_total": 17,
+        "past_monthly_total": 17
+      },
+      "state": "applied"
+    }
+  ],
+  "named": [],
+  "holes": [],
+  "redaction": {
+    "marker": "(sensitive, redacted by terragucci)",
+    "values": 0
+  },
+  "cost": {
+    "estimator": "cost-stub",
+    "currency": "USD",
+    "monthly_delta": 0,
+    "monthly_total": 17,
+    "past_monthly_total": 17,
+    "roots": [
+      {
+        "root": "network",
+        "monthly_delta": 0,
+        "monthly_total": 13,
+        "past_monthly_total": 13,
+        "output": "roots/network/cost.json"
+      },
+      {
+        "root": "other",
+        "monthly_delta": 0,
+        "monthly_total": 4,
+        "past_monthly_total": 4,
+        "output": "roots/other/cost.json"
+      }
+    ]
+  },
+  "timings": {
+    "roots": [
+      {
+        "root": "network",
+        "seconds": 0.25,
+        "plan_seconds": 0.06,
+        "apply_seconds": 0.06,
+        "detail": "resources"
+      },
+      {
+        "root": "other",
+        "seconds": 0.25,
+        "plan_seconds": 0.05,
+        "apply_seconds": 0.05,
+        "detail": "resources"
+      }
+    ],
+    "resources": [
+      {
+        "root": "network",
+        "address": "terraform_data.http_proxy_port",
+        "type": "terraform_data",
+        "ms": 0.9
+      },
+      {
+        "root": "network",
+        "address": "terraform_data.release",
+        "type": "terraform_data",
+        "ms": 0.9
+      },
+      {
+        "root": "other",
+        "address": "terraform_data.backup_schedule",
+        "type": "terraform_data",
+        "ms": 0.5
+      }
+    ]
+  }
+}

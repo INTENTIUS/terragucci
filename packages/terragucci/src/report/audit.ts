@@ -391,7 +391,12 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
       detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules, holder: refused.holder }),
     };
   }
-  const failed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).map((r) => r.path);
+  // A root's status is its plan's. A wave whose apply failed says so in its
+  // state (report minor 21) while its roots still read planned, as SQL
+  // Yodeler's refused migration did on the demo (behold#571); its roots are
+  // the ones that failed, since the report names no root's apply.
+  const planFailed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).map((r) => r.path);
+  const failed = planFailed.length > 0 ? planFailed : wave.state === "failed" ? [...wave.roots] : [];
   const result = failed.length > 0 ? "failed" : wave.approval === "waiting" ? "waiting" : "applied";
   const approval =
     wave.approval === "approved" && wave.set_digest
