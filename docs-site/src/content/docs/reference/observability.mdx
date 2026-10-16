@@ -136,7 +136,7 @@ A stage pushes its metrics once, when it ends; point Prometheus exporter or remo
 | `terragucci_wave_roots` | `wave` | roots in a `tf-apply` wave | one per wave |
 | `terragucci_wave_waiting_since_seconds`, `terragucci_wave_settled_seconds` | `wave` | when a wave started waiting for its approval, and when it last stopped waiting | one per wave |
 | `terragucci_wave_held_seconds` | `wave` | how long the wave was held at its gate, from its pending record to the approval; sent by the run that applies after it | one per wave |
-| `terragucci_wave_changes` | `wave`, `action` | the changes a wave applied, by action; sent when it applies | one per wave and action |
+| `terragucci_wave_changes` | `wave`, `action` | the changes a wave applied, by action, with no-ops and reads left out; sent when it applies | one per wave and action |
 | `terragucci_dora_deployments_per_week`, `terragucci_dora_change_failure_ratio`, `terragucci_dora_restore_seconds` | `project` only, `*` for the estate; sent by `terragucci estate` | the [delivery metrics](/terragucci/reference/delivery-metrics/) | one each per project |
 | `terragucci_dora_lead_time_seconds` | `project` only, and `segment`; sent by `terragucci estate` | the median lead time and its split | four per project |
 

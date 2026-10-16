@@ -297,7 +297,7 @@ describe("dashboards: what a stage sends", () => {
   it("a wave that applied after an approval says how long its gate held it and what it applied", () => {
     const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>) => ({ name, unit, description, value, attributes });
     const held = { since: "2026-10-04T00:00:00Z", approvedAt: "2026-10-04T00:02:30Z" };
-    const applied = waveGauges(2, 0, { roots: ["a"], held }, 2_000_000_000, g, { create: 1, update: 2 });
+    const applied = waveGauges(2, 0, { roots: ["a"], held }, 2_000_000_000, g, { create: 1, update: 2, "no-op": 2, read: 1 });
     expect(applied.find((x) => x.name === METRIC.waveHeld)).toMatchObject({ value: 150, attributes: { wave: "2" } });
     expect(applied.filter((x) => x.name === METRIC.waveChanges).map((x) => [x.attributes.action, x.value])).toEqual([["create", 1], ["update", 2]]);
     // Waiting, or with nothing to change, it applied nothing; a refusal ends no wait.
