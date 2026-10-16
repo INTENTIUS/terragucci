@@ -9,7 +9,7 @@
  * root, the slowest resources and provider calls.
  */
 import { spawnSync } from "node:child_process";
-import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
+import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Attrs, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
 import { METRIC } from "../dashboards/names";
 import { pinVersion } from "../rollout/pins";
 import type { Report } from "./schema";
@@ -57,7 +57,10 @@ interface RootTiming {
   path: string;
   start: bigint;
   end?: bigint;
+  /** The root's span in the phase it is timed in now. */
   span?: Span;
+  /** Every span the root had: one, or one per phase of a tf-apply wave (its plan, then its apply). */
+  spans: Span[];
   /** Each run of the binary in the root, in seconds. */
   commands: { command: string; seconds: number }[];
   /** Time between `endRoot` and `reopen`, which the root's seconds leave out. */
@@ -89,6 +92,12 @@ export function binaryVersion(binary: string, env: NodeJS.ProcessEnv): string | 
 export class StageObserver {
   readonly trace?: Trace;
   private readonly stageSpan?: Span;
+  /** The phase span open now (`phase`), which a root timed in it hangs under. */
+  private current?: Span;
+  /** Whether the stage was timed in phases: its roots then hang under the phases, not under wave spans. */
+  private phased = false;
+  /** The forge's pipeline run and job this stage runs in, put on the trace's resource so a reader finds a run's traces. */
+  private readonly pipeline: { run?: string; job?: string };
   private readonly start: bigint;
   private readonly roots: RootTiming[] = [];
   private receiver?: SpanReceiver;
@@ -119,6 +128,7 @@ export class StageObserver {
     this.start = start;
     const pr = env.TG_PR?.trim();
     if (pr) this.pullRequest = pr;
+    this.pipeline = { run: (env.GITHUB_RUN_ID || env.CI_PIPELINE_ID)?.trim() || undefined, job: (env.GITHUB_JOB || env.CI_JOB_NAME)?.trim() || undefined };
     if (env.TERRAGUCCI_METRICS_PER_RUN?.trim().toLowerCase() === "true") {
       const run = (env.GITHUB_RUN_ID || env.CI_PIPELINE_ID)?.trim();
       this.perRun = run ? { run } : {};
@@ -126,6 +136,8 @@ export class StageObserver {
     if (telemetry?.traces) {
       this.trace = new Trace(env.TRACEPARENT);
       this.stageSpan = this.trace.start(`terragucci ${stage}`, undefined, { "terragucci.stage": stage });
+      // The stage's span covers the job from when the stage began.
+      this.stageSpan.start = start;
     }
   }
 
@@ -140,10 +152,33 @@ export class StageObserver {
     else this.receiver = receiver;
   }
 
+  /**
+   * Open one phase of the stage as a span under the stage's span: a tf-apply
+   * wave's plan, gate, apply, report and upload. A root timed while it is
+   * open hangs under it. Undefined when not tracing. End it with `endPhase`.
+   */
+  phase(name: string, attributes: Attrs = {}, start?: bigint): Span | undefined {
+    if (!this.trace || !this.stageSpan) return undefined;
+    const span = this.trace.start(name, this.stageSpan, { "terragucci.phase": name, ...attributes });
+    if (start !== undefined) span.start = start;
+    this.phased = true;
+    this.current = span;
+    return span;
+  }
+
+  endPhase(span: Span | undefined, attributes: Attrs = {}, error?: string): void {
+    if (!span || !this.trace) return;
+    this.trace.end(span, attributes, error);
+    if (this.current === span) this.current = undefined;
+  }
+
   /** Start timing a root; end it with `endRoot`. */
   root(path: string): RootTiming {
-    const t: RootTiming = { path, start: nowNanos(), commands: [], idle: 0n };
-    if (this.trace) t.span = this.trace.start(`root ${path}`, this.stageSpan, { "terragucci.root": path });
+    const t: RootTiming = { path, start: nowNanos(), commands: [], idle: 0n, spans: [] };
+    if (this.trace) {
+      t.span = this.trace.start(`root ${path}`, this.current ?? this.stageSpan, { "terragucci.root": path });
+      t.spans.push(t.span);
+    }
     this.roots.push(t);
     return t;
   }
@@ -161,6 +196,11 @@ export class StageObserver {
     if (t.end === undefined) return;
     t.idle += nowNanos() - t.end;
     t.end = undefined;
+    // In a later phase (a wave's apply after its plan), the root gets a span of its own under that phase.
+    if (this.trace && this.current && t.span && t.span.parentSpanId !== this.current.spanId) {
+      t.span = this.trace.start(`root ${t.path}`, this.current, { "terragucci.root": t.path });
+      t.spans.push(t.span);
+    }
   }
 
   /**
@@ -188,7 +228,7 @@ export class StageObserver {
   unitEnv(path: string, command: string, env: NodeJS.ProcessEnv): Record<string, string> {
     let span = this.unitSpans.get(path);
     if (this.trace && !span) {
-      span = this.trace.start(`root ${path}`, this.stageSpan, { "terragucci.root": path });
+      span = this.trace.start(`root ${path}`, this.current ?? this.stageSpan, { "terragucci.root": path });
       this.unitSpans.set(path, span);
     }
     const traced = span ? binaryEnv(env, this.trace!, span, path) : env;
@@ -357,10 +397,13 @@ export class StageObserver {
     // dashboards' latest value is the latest run's, not the largest of any commit's. The trace names the run.
     // TERRAGUCCI_METRICS_PER_RUN adds the commit and the run id as labels on each gauge (perRunLabels).
     const metricsResource = { ...tel.resource, "service.version": run.terragucci, "terragucci.project": run.project };
+    // A run's traces are found by its project, commit, pipeline run and job: the labels its gauges carry with TERRAGUCCI_METRICS_PER_RUN.
     const resource = {
       ...metricsResource,
       "vcs.ref.head.revision": run.commit,
       ...(run.job_url ? { "cicd.pipeline.run.url.full": run.job_url } : {}),
+      ...(this.pipeline.run ? { "cicd.pipeline.run.id": this.pipeline.run } : {}),
+      ...(this.pipeline.job ? { "cicd.pipeline.task.name": this.pipeline.job } : {}),
     };
     const sent: string[] = [];
 
@@ -387,10 +430,11 @@ export class StageObserver {
       // A Terragrunt unit the run report did not time ends with the stage.
       for (const span of this.unitSpans.values()) span.end ??= end;
       const spans = [
-        ...this.roots.flatMap((t) => (t.span ? [{ path: t.path, span: t.span }] : [])),
+        ...this.roots.flatMap((t) => t.spans.map((span) => ({ path: t.path, span }))),
         ...[...this.unitSpans].map(([path, span]) => ({ path, span })),
       ];
-      for (const w of report.waves) {
+      // A stage timed in phases keeps its roots under them: its stage span is the wave.
+      for (const w of this.phased ? [] : report.waves) {
         const held = spans.filter((t) => w.roots.includes(t.path) && t.span.end !== undefined);
         if (held.length === 0) continue;
         const span = this.trace.start(`wave ${w.number}`, this.stageSpan, { "terragucci.wave": w.number, "terragucci.set_digest": w.set_digest ?? undefined, "terragucci.approval": w.approval });

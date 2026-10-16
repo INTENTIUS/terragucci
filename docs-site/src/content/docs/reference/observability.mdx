@@ -53,6 +53,37 @@ terragucci tf-plan          project, commit, binary, change set, totals
       tofu show
 ```
 
+### A wave's trace
+
+A `tf-apply` wave's job is one trace, its phases spans of their own:
+
+```
+terragucci tf-apply         project, commit, wave, result
+  plan
+    root network
+      tofu init
+      tofu plan             the binary's own spans, under this one
+  gate                      the gate's decision, and how long an approval held the wave
+  apply
+    root network
+      tofu apply
+  report
+  upload                    the report's copy in the reports bucket
+```
+
+### Finding a run's traces
+
+Each trace's resource names the run it came from, with the labels the metrics carry under `TERRAGUCCI_METRICS_PER_RUN`:
+
+| Resource attribute | Value | Metric label |
+|---|---|---|
+| `terragucci.project` | the project | `project` |
+| `vcs.ref.head.revision` | the commit | `commit` |
+| `cicd.pipeline.run.id` | the pipeline run, from `GITHUB_RUN_ID` or `CI_PIPELINE_ID` | `run` |
+| `cicd.pipeline.task.name` | the job, from `GITHUB_JOB` or `CI_JOB_NAME` | |
+
+The stage span carries `terragucci.stage` and, in a wave, `terragucci.wave`. In Tempo, `{ resource."cicd.pipeline.run.id" = "4182" }` finds every job's trace of run 4182; the quotes keep the name whole.
+
 ### Spans from the binary
 
 Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
