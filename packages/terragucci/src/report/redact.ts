@@ -5,6 +5,7 @@
  * wrote it, before this runs, so an approval still binds the real plan.
  */
 import { REDACTED } from "./schema";
+import { secretValues } from "../secret-values";
 
 type Json = Record<string, unknown>;
 export const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -83,7 +84,8 @@ export const PLAN_KEYS = {
  */
 export function redactPlan(plan: unknown): Redacted {
   const marked = redactMarked(plan);
-  const secrets = coveredStrings(plan, marked.plan);
+  // The values `secrets:` fetched count as marked, whether or not the variable that holds one is sensitive (../secret-values.ts).
+  const secrets = withHeld(coveredStrings(plan, marked.plan));
   if (secrets.length === 0) return marked;
   const count = { n: marked.values };
   return { plan: scrub(marked.plan, secrets, count), values: count.n };
@@ -91,7 +93,13 @@ export function redactPlan(plan: unknown): Redacted {
 
 /** The strings a plan marks sensitive anywhere, longest first: what {@link redactPlan} replaces wherever it appears. */
 export function sensitiveStrings(plan: unknown): string[] {
-  return coveredStrings(plan, redactMarked(plan).plan);
+  return withHeld(coveredStrings(plan, redactMarked(plan).plan));
+}
+
+/** `strings` and the values `secrets:` fetched, longest first. */
+function withHeld(strings: string[]): string[] {
+  const held = secretValues();
+  return held.length === 0 ? strings : [...new Set([...strings, ...held])].sort((a, b) => b.length - a.length);
 }
 
 /** `value` with every string that is one of `secrets` replaced, and every secret of eight characters and more cut out of the strings that hold it. */

@@ -1544,6 +1544,49 @@
       ],
       "description": "Roots each pull request gets a copy of."
     },
+    "secrets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "roots": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "from": {
+            "enum": [
+              "aws",
+              "gcp",
+              "azure"
+            ]
+          },
+          "values": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^(?!(?:[Gg][Ii][Tt][Hh][Uu][Bb]_|[Gg][Ii][Tt][Ee][Aa]_|[Ff][Oo][Rr][Gg][Ee][Jj][Oo]_|[Tt][Gg]_|[Tt][Ee][Rr][Rr][Aa][Gg][Uu][Cc][Cc][Ii]_|[Aa][Ww][Ss]_|[Aa][Rr][Mm]_|[Aa][Zz][Uu][Rr][Ee]_|[Gg][Oo][Oo][Gg][Ll][Ee]_|[Cc][Ll][Oo][Uu][Dd][Ss][Dd][Kk]_))(?!(?:TF_IN_AUTOMATION|TF_INPUT)$)[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[^\\s]+$"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "roots",
+          "from",
+          "values"
+        ]
+      },
+      "description": "Values a root's binary gets from a cloud's secret store, fetched at job time with the root's own identity."
+    },
     "environments": {
       "type": "object",
       "minProperties": 1,
@@ -3320,6 +3363,49 @@
             "roots"
           ],
           "description": "Roots each pull request gets a copy of."
+        },
+        "secrets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "roots": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              },
+              "from": {
+                "enum": [
+                  "aws",
+                  "gcp",
+                  "azure"
+                ]
+              },
+              "values": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^(?!(?:[Gg][Ii][Tt][Hh][Uu][Bb]_|[Gg][Ii][Tt][Ee][Aa]_|[Ff][Oo][Rr][Gg][Ee][Jj][Oo]_|[Tt][Gg]_|[Tt][Ee][Rr][Rr][Aa][Gg][Uu][Cc][Cc][Ii]_|[Aa][Ww][Ss]_|[Aa][Rr][Mm]_|[Aa][Zz][Uu][Rr][Ee]_|[Gg][Oo][Oo][Gg][Ll][Ee]_|[Cc][Ll][Oo][Uu][Dd][Ss][Dd][Kk]_))(?!(?:TF_IN_AUTOMATION|TF_INPUT)$)[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[^\\s]+$"
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "roots",
+              "from",
+              "values"
+            ]
+          },
+          "description": "Values a root's binary gets from a cloud's secret store, fetched at job time with the root's own identity."
         },
         "environments": {
           "type": "object",

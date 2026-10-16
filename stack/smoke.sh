@@ -2635,7 +2635,7 @@ claim_affected/outside_roots() {
         symlink) break_bundle "$bundle" affected.ts '      if (e.isSymbolicLink()) {' '      if (e.isSymbolicLink() && false) {' ;;
         config-keys) break_bundle "$bundle" affected.ts '    const keys = PLAN_KEYS.filter((k) => stable(a[k]) !== stable(b[k]));' '    const keys = PLAN_KEYS.filter((k) => false && stable(a[k]) !== stable(b[k]));' ;;
         policy-at-base) break_bundle "$bundle" affected.ts \
-          'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc"] as const;' 'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "policy"] as const;' \
+          'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "secrets"] as const;' 'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "secrets", "policy"] as const;' \
           affected.ts '  return { version: versionPin(s.version, root)?.version,' '  return { policy: (s as Record<string, unknown>).policy, version: versionPin(s.version, root)?.version,' ;;
         synth-command) break_bundle "$bundle" report/stage.ts '    if (shape.kind === "synth" && outside.synth) {' '    if (shape.kind === "synth" && outside.synth && false) {' ;;
       esac || { drop_work "$work" "$image"; return 1; }
