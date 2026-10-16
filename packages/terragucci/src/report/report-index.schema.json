@@ -39,7 +39,7 @@
         "groups": { "type": "integer" },
         "totals": { "$ref": "#/$defs/totals" },
         "refused": { "type": "integer", "description": "Roots that refused to plan." },
-        "failed": { "type": "integer", "description": "Roots that failed to plan or apply. Absent on rows written before it was kept." },
+        "failed": { "type": "integer", "description": "Roots that failed to plan or apply; on a tf-apply wave whose apply failed, every root of the wave. Absent on rows written before it was kept." },
         "changed": { "type": "integer", "description": "Roots with at least one change; on a tf-drift row, the roots that drifted." },
         "approval": { "enum": ["waiting", "approved", "not-required"], "description": "A tf-apply wave's gate." },
         "waiting_since": { "type": "string", "description": "When a waiting wave began waiting for an approval of its digest." },
