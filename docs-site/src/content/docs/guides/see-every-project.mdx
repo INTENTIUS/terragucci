@@ -177,7 +177,7 @@ In a Terragrunt repo the graph groups units into the waves their apply cut from 
    estate: 3 projects, 1 wave waiting, 1 project drifted, 0 roots failed
      gitlab.example.com/platform/network: wave 2 waits, for 3h 0m
      github.com/acme/data: 2 roots drifted
-   dora: 2.5 deployments per week, lead time 3h 10m, change failure rate 5%, time to restore 1h 20m
+   dora: 2.5 deployments per week (20 in 8 weeks), lead time 3h 10m, change failure rate 5%, time to restore 1h 20m
    wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/dora.json, terragucci-estate/history.json and terragucci-estate/history.html
    copied to s3://acme-terragucci/reports/estate.json, reports/estate.html, reports/dora.json, reports/history.json and reports/history.html
    link, until 2026-10-08T12:00:00.000Z:
@@ -251,7 +251,7 @@ For each project and the estate, the Delivery section shows the four DORA metric
 
 | Metric | What the page counts |
 |---|---|
-| Deployment frequency | applied waves per week |
+| Deployment frequency | applied waves per week, over the newest eight weeks or the span the history covers when it is younger |
 | Lead time | the median time from a change's first plan to its wave applied, and that time before the gate, at the gate and after the approval |
 | Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies; a refused wave does not count |
 | Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none |
