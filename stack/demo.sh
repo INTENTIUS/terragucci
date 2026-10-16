@@ -345,9 +345,13 @@ root_key() { # root -> its state key in this repo, a scenario's own roots too
   awk -v r="$1" '$1 == r { print $2; exit }' <<<"$BASE_KEYS"$'\n'"$EXTRA_KEYS"
 }
 
-# The file of a root's base state: its name with each / as __.
+# The file of a root's base state: its name with each / as __. They live in
+# <state>/snapshots, not <state>/base, where releases before SQL Yodeler's
+# migrations (0.4.22 and older) keep theirs: up copies those over once and
+# never writes them, so a rollback to such a release writes back states its
+# base matches, with none of app's migrations for its base run to destroy.
 snapshot() { # root
-  echo "$RSTATE/base/${1//\//__}.tfstate"
+  echo "$RSTATE/snapshots/${1//\//__}.tfstate"
 }
 
 # The repos this driver works on, as "<repo> <tool>" lines, for the runs copy:
@@ -1358,7 +1362,7 @@ states_back() { # [missing-ok]
       curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @"$(snapshot "$root")" \
         "$FLOCI/$STATE_BUCKET/$key" || fail "could not write $root's base state back"
     elif [ -z "${1:-}" ]; then
-      fail "$root has no base state in $RSTATE/base; run 'just demo up' again"
+      fail "$root has no base state in $RSTATE/snapshots; run 'just demo up' again"
     fi
   done
   while read -r root key; do
@@ -1449,22 +1453,32 @@ up_repo() {
   fi
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
   people_join
-  rm -rf "$RSTATE/base-tree"
-  mkdir -p "$RSTATE/base-tree"
-  (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./node_modules .) | (cd "$RSTATE/base-tree" && tar xf -)
+  # The new base is built in base-tree.new and replaces base-tree, beside
+  # base.sha, only once it applied. An up that fails part way leaves the last
+  # base-tree and base.sha as they were, so the loop of this release or of the
+  # one before still finds its base commit there.
+  local bt="$RSTATE/base-tree.new"
+  rm -rf "$bt"
+  mkdir -p "$bt"
+  (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./node_modules .) | (cd "$bt" && tar xf -)
   # The chant tree carries chant's generated pipeline; the others get terragucci's from init.
   if [ "$TOOL" != chant ]; then
-    (cd "$RSTATE/base-tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $(tool_tree "$TOOL")"
+    (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $(tool_tree "$TOOL")"
   fi
-  mkdir -p "$RSTATE/base-tree/.chant"
-  echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$RSTATE/base-tree/.chant/allowed_signers"
+  mkdir -p "$bt/.chant"
+  echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"
   # chant's pull-request gate names the reviewer as the forge does (chant_note).
-  [ "$TOOL" != chant ] || echo "forgejo@$CHANT_FORGE_HOST:$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" >> "$RSTATE/base-tree/.chant/allowed_signers"
+  [ "$TOOL" != chant ] || echo "forgejo@$CHANT_FORGE_HOST:$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" >> "$bt/.chant/allowed_signers"
+  # The snapshots an older release kept in <state>/base, copied once (snapshot).
+  if [ ! -d "$RSTATE/snapshots" ] && [ -d "$RSTATE/base" ]; then
+    mkdir -p "$RSTATE/snapshots"
+    cp -p "$RSTATE/base/"*.tfstate "$RSTATE/snapshots/" 2>/dev/null || true
+  fi
   # floci may still hold the states of a cycle the driver left part way (a
   # restart after the checkout moved): writing the last base snapshot back
   # first, as the reset does, leaves the base's pipeline nothing to destroy,
   # which gate: on-destructive would otherwise hold for an approval.
-  if [ -d "$RSTATE/base" ]; then
+  if [ -d "$RSTATE/snapshots" ]; then
     states_back missing-ok
     log "wrote the last base snapshot of $REPO back to floci before pushing the base"
   fi
@@ -1475,18 +1489,18 @@ up_repo() {
   if has_db; then
     db_fresh || fail "could not make database demo in demo-postgres"
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$(root_key app)" || true
-    (cd "$RSTATE/base-tree" && git init -q -b main && git add -A \
+    (cd "$bt" && git init -q -b main && git add -A \
       && git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "The demo's base, before its pipeline") \
       || fail "could not commit the base's parent"
   fi
   if [ "$TOOL" = chant ]; then
-    chant_base_apply
+    chant_base_apply "$bt"
     # [skip ci]: Forgejo starts no run for this push, nor for each reset's push back to it.
-    sha="$(push_tree "$RSTATE/base-tree" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
+    sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
     log "pushed the base to $REPO's main at ${sha:0:8}, applied outside its pipeline"
     RUN_URL="(applied outside the pipeline)"
   else
-    sha="$(push_tree "$RSTATE/base-tree" "$REPO" main "The demo's base: $(roots_words)")"
+    sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words)")"
     log "pushed the base to $REPO's main at ${sha:0:8}; the pipeline applies every root…"
     wait_run "$REPO" "$sha"
     if [ "$RUN_STATUS" != success ]; then
@@ -1494,11 +1508,13 @@ up_repo() {
       fail "the base's pipeline on $REPO ended '$RUN_STATUS'"
     fi
   fi
-  mkdir -p "$RSTATE/base"
+  mkdir -p "$RSTATE/snapshots"
   for root in "${ROOTS[@]}"; do
     curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
   done
   ! has_db || db_snapshot || fail "could not keep database demo as demo_base"
+  rm -rf "$RSTATE/base-tree"
+  mv "$bt" "$RSTATE/base-tree"
   echo "$sha" > "$RSTATE/base.sha"
   COMMIT="$sha"
   runs_mark base
@@ -1512,12 +1528,12 @@ up_repo() {
 # have yet, and a pull request's plan reads only outputs that exist
 # (chant#3999); and its apply job refuses a push no pull request merged.
 CHANT_JOB_IMAGE=public.ecr.aws/docker/library/node:22-bookworm
-chant_base_apply() {
+chant_base_apply() { # the base tree
   local out tofu
-  tofu="$(sed -n 's/^ *- run: \(command -v tofu .*\)$/\1/p' "$RSTATE/base-tree/.forgejo/workflows/chant-pr.yml" | awk 'NR == 1')"
+  tofu="$(sed -n 's/^ *- run: \(command -v tofu .*\)$/\1/p' "$1/.forgejo/workflows/chant-pr.yml" | awk 'NR == 1')"
   [ -n "$tofu" ] || fail "no OpenTofu install line in $(tool_tree chant)/.forgejo/workflows/chant-pr.yml"
   log "applying the base of $REPO with chant run in $CHANT_JOB_IMAGE (a minute or two)…"
-  if ! out="$(tar -C "$RSTATE/base-tree" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" \
+  if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
       -e TOFU_INSTALL="$tofu" "$CHANT_JOB_IMAGE" sh -c 'set -e; mkdir /w; cd /w; tar xf -; sh -c "$TOFU_INSTALL" >/dev/null
         npm ci --no-audit --no-fund >/dev/null; node_modules/.bin/chant run --components all --env demo --no-release-record' 2>&1)"; then

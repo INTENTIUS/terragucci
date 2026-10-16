@@ -23,8 +23,14 @@ resource "terraform_data" "migration" {
       DEV_POSTGRES_READER_PASSWORD = ""
       YODEL_CREDENTIALS            = "writer:dev"
     }
+    # SQL Yodeler's wave reads its gate at HEAD^1, the commit before the one
+    # applied, with git show. A wave job's checkout holds HEAD alone, so a
+    # shallow one is deepened by that one commit first, from the same origin.
     command = <<-EOT
       set -e
+      if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+        git fetch -q --no-tags --deepen=1 origin "$(git rev-parse HEAD)"
+      fi
       export PATH="/opt/yodel/node_modules/.bin:$PATH"
       ln -sfn /opt/yodel/node_modules node_modules
       echo "SQL Yodeler: chant run wave --spec yodel-waves.json --wave 1 runs yodel apply dev --wave-plan, then yodel apply dev --wave-apply"
