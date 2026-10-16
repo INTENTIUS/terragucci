@@ -81,7 +81,7 @@ REPO="${TERRAGUCCI_SANDBOX_REPO:-INTENTIUS/terragucci-sandbox}"
 DIR="${TERRAGUCCI_SANDBOX_DIR:-${TMPDIR:-/tmp}/terragucci-sandbox}"
 DIR="${DIR%/}"
 # The published release whose `init` writes the pipeline, and so its images.
-RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.4.27}"
+RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.4.28}"
 SIGNER="sandbox-signer"
 # 1: the sandbox's terragucci.yml marks the checkout safe for git (build_main).
 SAFE_DIRECTORY="${TERRAGUCCI_SANDBOX_SAFE_DIRECTORY:-0}"
