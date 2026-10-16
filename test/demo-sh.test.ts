@@ -68,6 +68,9 @@ describe("stack/demo.sh under pipefail", () => {
     const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
     expect(runs.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
     expect(pipeline).not.toMatch(/opentofu|npm |curl /);
+    // A Forgejo runner reads as GitHub Enterprise Server, where upload-artifact and download-artifact v4 refuse to run (chant#4008).
+    expect(pipeline).not.toMatch(/(upload|download)-artifact@v[4-9]/);
+    expect(pipeline.match(/uses: \S+\/upload-artifact@v3$/gm)).toHaveLength(2);
     // The image carries chant and OpenTofu, at the version the tree's lockfile pins.
     const dockerfile = readFileSync(join(root, "stack", "demo-chant.Dockerfile"), "utf8");
     expect(dockerfile).toMatch(/npm ci --omit=dev/);
