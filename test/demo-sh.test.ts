@@ -321,3 +321,58 @@ describe("up, for a rollback", () => {
     expect(writes).toEqual([expect.stringContaining('cp -p "$RSTATE/base/"*.tfstate "$RSTATE/snapshots/"')]);
   });
 });
+
+// behold#571: next.from is when the driver started waiting for next's action,
+// so the kiosk can draw how far the wait has gone. It stays put while the
+// driver writes the same action and deadline again.
+describe("demo_write's next.from", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+
+  /** Run demo_write's calls with the clock at each T, and read back each write's next. */
+  function writes(calls: string[]): Array<{ action: string; from?: string; at: string | null } | null> {
+    const state = mkdtempSync(join(tmpdir(), "demo-next-"));
+    made.push(state);
+    const stubs = [
+      `log() { :; }`,
+      `view_follow() { :; }`,
+      `demo_where() { echo '{}'; }`,
+      `now() { echo "$T"; }`,
+      `demo_put() { jq -c .next "$DEMO_STATE/demo.json" >> "$DEMO_STATE/nexts"; }`,
+      demo.split("\n").find((l) => l.startsWith("iso()"))!,
+    ].join("\n");
+    const setup = `DEMO_STATE=${state} CYCLE=1 SCENARIO=s TITLE=t STARTED=1792000000 PULL="" COMMIT="" ABOUT=null`;
+    const body = `${stubs}\n${setup}\nNEXT_KEY="" NEXT_FROM=""\n${fn("demo_write")}\n${calls.join("\n")}`;
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return readFileSync(join(state, "nexts"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  }
+
+  it("writes from as the time the wait started, and keeps it while the action and deadline repeat", () => {
+    const n = writes([
+      `T=1792000000; demo_write waiting "w" "approve wave-2" 1792000020`,
+      `T=1792000005; demo_write waiting "w" "approve wave-2" 1792000020`,
+      `T=1792000020; demo_write approved "a" "follow the waves"`,
+      `T=1792000030; demo_write applying "b" "follow the waves"`,
+      `T=1792000040; demo_write applied "c"`,
+      `T=1792000050; demo_write reset "r" "follow the waves"`,
+    ]);
+    expect(n[0]).toEqual({ action: "approve wave-2", from: "2026-10-14T17:46:40Z", at: "2026-10-14T17:47:00Z" });
+    expect(n[1]).toEqual(n[0]);
+    expect(n[2]).toEqual({ action: "follow the waves", from: "2026-10-14T17:47:00Z", at: null });
+    expect(n[3]).toEqual(n[2]);
+    expect(n[4]).toBeNull();
+    // A write with no next ends the wait: the same action after it starts a new one.
+    expect(n[5]).toEqual({ action: "follow the waves", from: "2026-10-14T17:47:30Z", at: null });
+  });
+
+  it("starts a new wait when the deadline moves", () => {
+    const n = writes([
+      `T=1792000000; demo_write applied "c" reset 1792000020`,
+      `T=1792000010; demo_write applied "c" reset 1792000030`,
+    ]);
+    expect(n.map((x) => x?.from)).toEqual(["2026-10-14T17:46:40Z", "2026-10-14T17:46:50Z"]);
+  });
+});
