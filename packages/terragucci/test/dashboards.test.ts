@@ -330,6 +330,21 @@ describe("dashboards: what a stage sends", () => {
     expect(perRunLabels(gauges, off.perRun, "abc123")).toBe(gauges);
   });
 
+  it("a tf-apply wave leads with its job's own time, and times each root's init, plan and apply to the millisecond", () => {
+    const start = 1_759_572_000_000_000_000n;
+    const observer = new StageObserver(undefined, "tf-apply", {}, start);
+    observer.wave = { number: 1, facts: { roots: ["envs/dev/orders"] }, code: 0 };
+    const t = observer.root("envs/dev/orders");
+    (t.commands as { command: string; seconds: number }[]).push({ command: "init", seconds: 0.1634 }, { command: "plan", seconds: 0.0712 }, { command: "apply", seconds: 0.0581 });
+    observer.endRoot(t);
+    const report = buildReport({ run: { ...RUN, stage: "tf-apply" as never }, roots: smallFixture() });
+    const g = observer.applyGauges(report, start + 5_360_000_000n);
+    const of = (name: string) => g.find((x) => x.name === name && (x.attributes.root === undefined || x.attributes.root === "envs/dev/orders"));
+    expect(of(METRIC.stageDuration)).toMatchObject({ value: 5.36, attributes: { stage: "tf-apply", wave: "1", result: "applied" } });
+    expect([of(METRIC.rootInit)!.value, of(METRIC.rootPlan)!.value, of(METRIC.rootApply)!.value]).toEqual([0.163, 0.071, 0.058]);
+    expect(of(METRIC.rootInit)!.attributes).toMatchObject({ wave: "1", root: "envs/dev/orders" });
+  });
+
   it("a tf-apply wave and a plan send a root's provider start-up and lock wait", () => {
     const report = buildReport({ run: { ...RUN, stage: "tf-apply" as never }, roots: smallFixture() });
     report.roots[0].timings = {

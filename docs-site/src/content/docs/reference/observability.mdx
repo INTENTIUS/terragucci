@@ -110,15 +110,16 @@ The HTML report shows them under "Where the time went", and `report.json` carrie
 
 ### Exported metrics
 
-A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_plan_seconds`, `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. All are gauges with `project` and `stage` labels, plus those below.
+A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_stage_duration_seconds`, `terragucci_root_init_seconds`, `terragucci_root_plan_seconds`, `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. All are gauges with `project` and `stage` labels, plus those below.
 
 ### Metric table
 
 | Metric | Labels | Answers | Series per project and stage |
 |---|---|---|---|
-| `terragucci_stage_duration_seconds` | `result` | how long each stage takes, and whether it failed | one per stage and result |
+| `terragucci_stage_duration_seconds` | `result`, and `wave` from a `tf-apply` wave | how long each stage takes, and whether it failed; a wave's is its job's time from the stage's start | one per stage and result, and per wave |
 | `terragucci_roots_planned` | | how many roots a change touches | one |
 | `terragucci_root_plan_seconds` | `root`, and `wave` from a `tf-apply` wave | the slowest roots; a wave's is its plan of the root before it applies | one per root, and per root and wave |
+| `terragucci_root_init_seconds` | `root`, `wave` | how long the binary's `init` took in a root; sent by a `tf-apply` wave | one per root and wave |
 | `terragucci_root_apply_seconds` | `root`, `wave` | the slowest root applies; sent by a `tf-apply` wave | one per root and wave |
 | `terragucci_plan_changes` | `action` | creates, updates, replaces and deletes, over time | one per action |
 | `terragucci_plan_groups` | | how far a change folds | one |
