@@ -1,12 +1,14 @@
 // scripts/demo-reports.ts: each reset deletes the demo's old wave reports from
 // the reports bucket, never a commit something still names, and drops their
-// runs from every document that lists them first (#1117). The choices are
+// runs from every document that lists them first, and the gate lines each
+// cycle's reset of chant/lifecycle took away from audit.jsonl (#1117). The choices are
 // tested on their own, then the script against a stand-in bucket that answers
 // as floci does.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AuditEntry } from "../packages/terragucci/src/report/audit";
@@ -24,6 +26,7 @@ import {
   pruneHistory,
   pruneIndex,
   pruneStates,
+  readLedgerCommits,
   recount,
   REPORTS_KEEP_MIN,
   runCommit,
@@ -304,6 +307,42 @@ function demoBucket(): Record<string, string> {
   return seed;
 }
 
+describe("the ledger entries chant/lifecycle no longer holds", () => {
+  const ledger = (id: string, commit: string, when: string, project = P) =>
+    JSON.stringify({ schema: "terragucci.audit/v1", id, kind: "approval", project, at: when, who: "reviewer", what: "wave-2", digest: null, result: "approved", evidence: { source: "ledger", branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl", commit } });
+  const report = JSON.stringify({ schema: "terragucci.audit/v1", id: "sha256:r", kind: "apply", project: P, at: OLD, who: null, what: "wave-1", digest: null, result: "applied", evidence: { source: "report", key: `${DIR}${runPath(12, "tf-apply-wave-1")}/report.json` } });
+  const lines = [
+    ledger("sha256:held", "aaa", OLD),
+    ledger("sha256:old", "bbb", OLD),
+    ledger("sha256:new", "ccc", finished(30)),
+    ledger("sha256:other", "ddd", OLD, OTHER),
+    report,
+  ];
+  const text = lines.join("\n") + "\n";
+  const kept = new Map([[P, new Set([sha(12)])]]);
+
+  it("reads the driver's list of each repo's chant/lifecycle commits, a repo alone holding none", () => {
+    const got = readLedgerCommits("admin/demo aaa\nadmin/demo bbb\nadmin/demo-terragrunt\n\n");
+    expect([...got.keys()]).toEqual(["admin/demo", "admin/demo-terragrunt"]);
+    expect([...got.get("admin/demo")!]).toEqual(["aaa", "bbb"]);
+    expect(got.get("admin/demo-terragrunt")!.size).toBe(0);
+  });
+
+  it("drops an entry whose commit the branch no longer holds and that is older than the project's oldest kept report, and nothing else", () => {
+    const got = pruneAudit(text, kept, { commits: new Map([["admin/demo", new Set(["aaa"])]]), oldest: new Map([[P, Date.parse(finished(10))]]) });
+    expect(got?.dropped).toBe(1);
+    expect(got?.entries.map((e) => e.id)).toEqual(["sha256:held", "sha256:new", "sha256:other", "sha256:r"]);
+  });
+
+  it("keeps every ledger entry of a repo the driver could not read, or of a project the prune did not read", () => {
+    expect(pruneAudit(text, kept, { commits: new Map(), oldest: new Map([[P, Date.parse(finished(10))]]) })).toBeNull();
+    expect(pruneAudit(text, kept, { commits: new Map([["admin/demo", new Set<string>()]]), oldest: new Map() })).toBeNull();
+    // A repo with no branch holds nothing: every entry older than the oldest kept report goes.
+    const none = pruneAudit(text, kept, { commits: new Map([["admin/demo", new Set<string>()]]), oldest: new Map([[P, Date.parse(finished(10))]]) });
+    expect(none?.entries.map((e) => e.id)).toEqual(["sha256:new", "sha256:other", "sha256:r"]);
+  });
+});
+
 describe("scripts/demo-reports.ts", () => {
   it("deletes the reports past the newest kept commits and the ones no index lists, after dropping their runs from every document", async () => {
     const s = await stand(demoBucket());
@@ -346,6 +385,23 @@ describe("scripts/demo-reports.ts", () => {
     }
   });
 
+  it("drops the ledger entries the driver's list says chant/lifecycle no longer holds", async () => {
+    const s = await stand(demoBucket());
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "demo-reports-"));
+      writeFileSync(join(dir, "lifecycle-commits"), `admin/demo ${sha(999)}\nadmin/demo-terragrunt\n`);
+      const r = await prune(s, { DEMO_REPORTS_LEDGER: join(dir, "lifecycle-commits") });
+      expect(r.code).toBe(0);
+      const audit = s.objects.get("demo/audit.jsonl")!.trim().split("\n");
+      // The 22 report entries of kept runs; the approval of a commit the branch lost, older than every kept report, went.
+      expect(audit).toHaveLength(22);
+      expect(audit.join("\n")).not.toContain('"sha256:l"');
+      expect(JSON.parse(s.objects.get("demo/audit.json")!)).toMatchObject({ entries: 22, kinds: { apply: 22 } });
+    } finally {
+      s.close();
+    }
+  });
+
   it("deletes nothing and writes nothing when the bucket cannot be listed, and says so", async () => {
     const seed = demoBucket();
     const s = await stand(seed, { listDown: true });
@@ -374,5 +430,18 @@ describe("stack/demo.sh", () => {
     expect(fn).toContain("scripts/demo-reports.ts) \\\n    || log");
     expect(fn).toContain('DEMO_REPORTS_KEEP="$REPORTS_KEEP"');
     expect(demo).toMatch(/^REPORTS_KEEP="\$\{DEMO_REPORTS_KEEP:-50\}"/m);
+    expect(fn).toContain('DEMO_REPORTS_LEDGER="$held"');
+    expect(fn.indexOf("lifecycle_commits >")).toBeGreaterThan(fn.indexOf("estate_wait"));
+  });
+
+  it("puts each repo's chant/lifecycle back to its base as a cycle starts, before the scenario, and never fails the cycle on it", () => {
+    const demo = readFileSync(join(root, "stack", "demo.sh"), "utf8");
+    const cycle = demo.slice(demo.indexOf("\nrun_cycle() {"), demo.indexOf('case "$SCENARIO" in', demo.indexOf("\nrun_cycle() {")));
+    expect(cycle).toContain("lifecycle_back");
+    const fn = demo.slice(demo.indexOf("\nlifecycle_back() {"), demo.indexOf("\n}\n", demo.indexOf("\nlifecycle_back() {")));
+    expect(fn).toContain('remote_head "$REPO" chant/lifecycle');
+    expect(fn).toContain('git push -q "$REMOTE" ":refs/heads/chant/lifecycle"');
+    expect(fn).toContain("|| log");
+    expect(fn).toContain("return 0");
   });
 });

@@ -126,7 +126,13 @@
 # commits, never a commit the indexes' newest rows, the inventory, the state
 # edges or versions, a stored cycle or demo.json name, after dropping those
 # runs from index.json, changes.json, states.json, history.json and the report
-# entries of audit.jsonl (scripts/demo-reports.ts).
+# entries of audit.jsonl (scripts/demo-reports.ts). Each cycle starts by
+# putting its repo's chant/lifecycle back to its base, which up never writes:
+# the branch is deleted, as a fresh repo has none, and the cycle's approvals
+# make it again. It holds that cycle's gate lines until the repo's next cycle,
+# so behold's kiosk can replay them, and the reset's prune drops the
+# audit.jsonl ledger entries it no longer holds that are older than the
+# project's oldest kept report.
 #
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
@@ -612,10 +618,44 @@ pulls_prune() {
 # rows, a stored cycle or demo.json name. The estate page that reads them is
 # waited for first. A prune that fails is logged, and the reset goes on.
 reports_prune() {
+  local held="$WORK/c$CYCLE/lifecycle-commits"
   estate_wait
+  mkdir -p "$WORK/c$CYCLE" 2>/dev/null || true
+  lifecycle_commits > "$held" 2>/dev/null || : > "$held"
   (cd "$HERE/.." && DEMO_REPORTS_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_REPORTS_PREFIX="$REPORT_PREFIX" \
-    DEMO_REPORTS_KEEP="$REPORTS_KEEP" node_modules/.bin/tsx scripts/demo-reports.ts) \
+    DEMO_REPORTS_KEEP="$REPORTS_KEEP" DEMO_REPORTS_LEDGER="$held" node_modules/.bin/tsx scripts/demo-reports.ts) \
     || log "reports: the old reports were not all pruned; the reset goes on"
+  return 0
+}
+
+# The commits each loop repo's chant/lifecycle holds, "<repo> <sha>" a line,
+# and a line of the repo alone when it has no such branch, for the prune's
+# audit.jsonl ledger entries. A repo whose branch cannot be read prints
+# nothing, and the prune keeps its entries.
+lifecycle_commits() {
+  local repo tool remote heads dir ref
+  dir="$(mktemp -d "$WORK/c$CYCLE/lifecycle.XXXXXX")" && git init -q --bare "$dir" || return 1
+  while read -r repo tool; do
+    [ -n "$repo" ] || continue
+    remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+    heads="$(git ls-remote --heads "$remote" chant/lifecycle 2>/dev/null)" || continue
+    if [ -z "$heads" ]; then echo "$repo"; continue; fi
+    ref="refs/lifecycle/${repo//\//-}"
+    git -C "$dir" fetch -q --no-tags "$remote" "+refs/heads/chant/lifecycle:$ref" 2>/dev/null || continue
+    git -C "$dir" rev-list "$ref" | sed "s|^|$repo |"
+  done <<<"$(loop_repos)"
+}
+
+# Put the repo's chant/lifecycle back to its base before a cycle, as the reset
+# puts main back: up writes no such branch, so it is deleted, and the cycle's
+# first approval makes it again. Nothing runs on the repo here: the reset
+# before waited for its push back's run. The cycle before's gate lines stay
+# until now, so behold's kiosk replays them while that cycle is the tool's
+# latest. A delete that fails is logged, and the cycle goes on.
+lifecycle_back() {
+  [ -n "$(remote_head "$REPO" chant/lifecycle)" ] || return 0
+  git push -q "$REMOTE" ":refs/heads/chant/lifecycle" 2>/dev/null \
+    || log "lifecycle: could not put $REPO's chant/lifecycle back to its base; the cycle goes on"
   return 0
 }
 
@@ -1384,6 +1424,7 @@ run_cycle() {
   on_failed() { default_failed; }
   on_refused() { default_refused; }
   mkdir -p "$WORK/c$CYCLE"
+  lifecycle_back
   case "$SCENARIO" in
     a-known|a-output) scenario_a ;;
     b-waves) scenario_b_waves ;;

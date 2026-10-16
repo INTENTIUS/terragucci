@@ -20,21 +20,30 @@
 // top index.json (and their index.html), changes.json, states.json,
 // history.json and history.html beside the estate page, and audit.jsonl, from
 // which it drops the report entries of those runs (audit.json and audit.html
-// are written again with the new counts). audit.jsonl's ledger entries stay:
-// terragucci audit builds them again from chant/lifecycle each cycle. When a
-// document cannot be read or written, it deletes nothing.
+// are written again with the new counts). It drops audit.jsonl's ledger
+// entries too once the repo's chant/lifecycle no longer holds their commit
+// (each cycle puts it back to its base, stack/demo.sh lifecycle_back) and
+// they are older than the project's oldest kept report; one the branch holds
+// stays, since terragucci audit builds it again. When a document cannot be
+// read or written, it deletes nothing.
 //
 // Everything comes from the environment the driver sets:
 //   DEMO_REPORTS_BUCKET_URL, DEMO_REPORTS_PREFIX   the reports bucket's URL in floci, and the prefix
 //   DEMO_REPORTS_KEEP                              the commits each project keeps (default 50)
+//   DEMO_REPORTS_LEDGER                            a file of the commits each repo's chant/lifecycle holds,
+//                                                  "<repo> <sha>" a line ("<repo>" alone for none); unset or
+//                                                  unreadable, no ledger entry is dropped
 //
 // Exits 1 when something failed; the driver logs that and goes on.
+import { readFileSync } from "node:fs";
 import { AUDIT_FILES, renderAuditHtml } from "../packages/terragucci/src/report/audit";
 import { renderHistoryHtml } from "../packages/terragucci/src/report/history";
 import { encodePath } from "../packages/terragucci/src/report/object-store";
 import { renderIndexHtml, type IndexEntry, type ReportIndex } from "../packages/terragucci/src/report/store";
 import {
+  keeps,
   keptCommits,
+  type LedgerHeld,
   type Listed,
   listPage,
   objectsToDelete,
@@ -44,6 +53,7 @@ import {
   pruneHistory,
   pruneIndex,
   pruneStates,
+  readLedgerCommits,
   recount,
   REPORTS_DELETE_MAX,
   REPORTS_KEEP,
@@ -151,7 +161,19 @@ interface Plan {
   kept: Set<string>;
   keys: string[];
   commits: string[];
+  /** When the project's oldest kept report finished, in ms; undefined when it keeps none. */
+  oldest: number | undefined;
 }
+
+const ledgerCommits = (): Map<string, Set<string>> => {
+  const file = process.env.DEMO_REPORTS_LEDGER;
+  if (!file) return new Map();
+  try {
+    return readLedgerCommits(readFileSync(file, "utf8"));
+  } catch {
+    return new Map();
+  }
+};
 
 // One project: what it keeps, and its own documents rewritten without the rest.
 async function planProject(project: string, demo: unknown[]): Promise<Plan | null> {
@@ -187,7 +209,9 @@ async function planProject(project: string, demo: unknown[]): Promise<Plan | nul
     const p = pruneStates(t, kept);
     return p && { body: json(p.doc), value: p.dropped };
   });
-  return { project, kept, keys, commits };
+  const keep2 = keeps(kept);
+  const times = listedRows.filter((r) => r.project === project && keep2(r.commit)).map((r) => Date.parse(r.finished) || 0);
+  return { project, kept, keys, commits, oldest: times.length ? Math.min(...times) : undefined };
 }
 
 async function remove(keys: string[]): Promise<number> {
@@ -234,9 +258,10 @@ async function main(): Promise<void> {
 
   // The documents of every project: the audit trail and the history beside the estate page.
   const kept = new Map(plans.map((p) => [p.project, p.kept]));
+  const ledger: LedgerHeld = { commits: ledgerCommits(), oldest: new Map(plans.flatMap((p) => (p.oldest === undefined ? [] : [[p.project, p.oldest] as [string, number]]))) };
   try {
     const record = await rewrite(k(prefix, AUDIT_FILES.record), "application/x-ndjson", (t) => {
-      const p = pruneAudit(t, kept);
+      const p = pruneAudit(t, kept, ledger);
       return p && { body: p.text, value: p };
     });
     if (record) {
@@ -245,7 +270,7 @@ async function main(): Promise<void> {
         await put(k(prefix, AUDIT_FILES.summary), json(summary), JSON_TYPE);
         await put(k(prefix, AUDIT_FILES.page), renderAuditHtml(summary, record.entries), HTML_TYPE);
       }
-      console.error(`reports: dropped ${record.dropped} report entries of pruned runs from ${AUDIT_FILES.record}`);
+      console.error(`reports: dropped ${record.dropped} entries of pruned runs and of gate lines chant/lifecycle no longer holds from ${AUDIT_FILES.record}`);
     }
     const history = await rewrite(k(prefix, "history.json"), JSON_TYPE, (t) => {
       const p = pruneHistory(t, kept);

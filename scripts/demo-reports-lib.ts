@@ -289,12 +289,56 @@ function entryCommit(e: AuditEntry): string | null {
 }
 
 /**
- * audit.jsonl without the report entries of runs that go, for each project
- * in `kept`. Every other line stays, in its place: a ledger entry, which
- * `terragucci audit` builds again from chant/lifecycle each cycle, and a line
- * that is not an entry. The record's entries after it are returned too.
+ * The commits each repo's chant/lifecycle holds, from the driver's
+ * `<repo> <sha>` lines; a line of the repo alone says it has no such branch,
+ * so it holds none. A repo with no line is not known, and none of its
+ * ledger entries is dropped.
  */
-export function pruneAudit(text: string | undefined, kept: ReadonlyMap<string, ReadonlySet<string>>): { text: string; entries: AuditEntry[]; dropped: number } | null {
+export function readLedgerCommits(text: string): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const line of text.split("\n")) {
+    const [repo, sha] = line.trim().split(/\s+/);
+    if (!repo) continue;
+    const held = out.get(repo) ?? new Set<string>();
+    if (sha) held.add(sha);
+    out.set(repo, held);
+  }
+  return out;
+}
+
+/** What the ledger holds, for pruneAudit: each repo's chant/lifecycle commits, and when each project's oldest kept report finished. */
+export interface LedgerHeld {
+  commits: ReadonlyMap<string, ReadonlySet<string>>;
+  oldest: ReadonlyMap<string, number>;
+}
+
+/**
+ * Whether a ledger entry goes: its repo's chant/lifecycle no longer holds the
+ * commit that added or removed its line (each cycle puts the branch back to
+ * its base, so `terragucci audit` never builds it again), and it is older
+ * than its project's oldest kept report, so the DORA numbers' gate times
+ * cover the same runs the reports do.
+ */
+function ledgerGone(e: AuditEntry, ledger: LedgerHeld | undefined): boolean {
+  if (!ledger || e.evidence?.source !== "ledger") return false;
+  const repo = [...ledger.commits.keys()].find((r) => projectOfRepo(e.project, r));
+  if (repo === undefined) return false;
+  const commit = e.evidence.commit;
+  if (typeof commit === "string" && ledger.commits.get(repo)!.has(commit)) return false;
+  // A project the prune did not read keeps its entries.
+  const oldest = ledger.oldest.get(e.project);
+  return oldest !== undefined && at(e.at) < oldest;
+}
+
+/**
+ * audit.jsonl without the report entries of runs that go, for each project
+ * in `kept`, and without the ledger entries `ledger` says are gone. Every
+ * other line stays, in its place: a ledger entry chant/lifecycle still holds
+ * (`terragucci audit --check` finds the record holds every entry its sources
+ * do), and a line that is not an entry. The record's entries after it are
+ * returned too.
+ */
+export function pruneAudit(text: string | undefined, kept: ReadonlyMap<string, ReadonlySet<string>>, ledger?: LedgerHeld): { text: string; entries: AuditEntry[]; dropped: number } | null {
   if (!text) return null;
   const keepers = new Map([...kept].map(([p, s]) => [p, keeps(s)]));
   const lines: string[] = [];
@@ -311,7 +355,7 @@ export function pruneAudit(text: string | undefined, kept: ReadonlyMap<string, R
     }
     const keep = e ? keepers.get(e.project) : undefined;
     const c = e && keep ? entryCommit(e) : null;
-    if (e && keep && c !== null && !keep(c)) {
+    if ((e && keep && c !== null && !keep(c)) || (e && ledgerGone(e, ledger))) {
       dropped++;
       continue;
     }
