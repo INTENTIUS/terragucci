@@ -8,7 +8,8 @@
  *                 set digests its waves bind) and tf-drift rows (when drift
  *                 was found and cleared, and on which roots)
  *
- * Deployment frequency   applied waves per week
+ * Deployment frequency   applied waves per week, over the span the history
+ *                        covers (see spanOf)
  * Lead time              first plan of the change to its applied wave, split
  *                        into before the gate, at the gate, after the gate
  * Change failure rate    failed applies, plus applied waves whose roots
@@ -20,7 +21,10 @@
  *                        found none
  *
  * Every number covers the newest DORA_WEEKS weeks, Monday to Sunday in UTC,
- * and each week has its own row, so a reader sees the trend. Nothing is
+ * and each week has its own row, so a reader sees the trend. Lead time,
+ * change failure rate and time to restore are medians and ratios of what the
+ * window holds, so a history shorter than the window does not skew them; only
+ * the deployment rate divides by time. Nothing is
  * compared to DORA's performance tiers: infrastructure ships less often than
  * an application does.
  */
@@ -37,6 +41,9 @@ export const DORA_WEEKS = 8;
 
 /** An applied wave whose roots drift within this long counts as a failed change. */
 export const DRIFT_WINDOW_SECONDS = 7 * 86400;
+
+/** The shortest span a deployment rate divides by, so one apply does not read as thousands a week. */
+export const DORA_MIN_SPAN_SECONDS = 86400;
 
 /** The file beside the estate page. */
 export const DORA_FILE = "dora.json";
@@ -66,9 +73,11 @@ export interface DoraWeek {
 }
 
 export interface DoraMetrics {
-  /** Applied waves in the window, and per week. */
+  /** Applied waves in the window, and per week over span_seconds. */
   deployments: number;
   per_week: number;
+  /** What per_week divides by: from the newest apply in the window back to the oldest apply, or to the window's start when the history is older; at least DORA_MIN_SPAN_SECONDS. The window's length when the window holds no apply. */
+  span_seconds: number;
   lead_time: DoraLeadTime;
   change_failure: { applies: number; failed: number; drifted: number; rate: number | null };
   /** Incidents restored in the window and their median; open ones are still failing or drifted. */
@@ -331,6 +340,29 @@ const merge = (all: Events[]): Events => ({
   open: all.reduce((n, e) => n + e.open, 0),
 });
 
+const WEEK_SECONDS = 7 * 86400;
+
+/**
+ * The span a deployment rate covers: the newest apply in the window back to
+ * the later of the oldest apply on record and the window's start, at least a
+ * day. A project younger than the window is not divided by weeks it did not
+ * exist for. With no apply in the window, the window itself.
+ */
+function spanOf(all: Apply[], inside: Apply[], from: number, now: number): number {
+  if (inside.length === 0) return secs(from, now);
+  const newest = Math.max(...inside.map((a) => a.at));
+  const oldest = Math.min(...all.map((a) => a.at));
+  return Math.max(DORA_MIN_SPAN_SECONDS, secs(Math.max(oldest, from), newest));
+}
+
+/** "32 hours", "9 days", "8 weeks", "7.4 weeks": a span as the page names it. */
+export function spanLabel(seconds: number): string {
+  const unit = (n: number, one: string): string => `${n} ${n === 1 ? one : `${one}s`}`;
+  if (seconds < 72 * 3600) return unit(Math.max(1, Math.round(seconds / 3600)), "hour");
+  if (seconds < 2 * WEEK_SECONDS) return unit(Math.round(seconds / 86400), "day");
+  return unit(Math.round((seconds / WEEK_SECONDS) * 10) / 10, "week");
+}
+
 /** The metrics over the window, and a row per week. Counts are of what happened in the window; open incidents are as of now. */
 function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
   const inside = <T extends { at: number }>(xs: T[]): T[] => xs.filter((x) => x.at >= from && x.at <= now);
@@ -340,6 +372,7 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
   const drift = applies.filter((a) => ev.drifted.has(a)).length;
   const leads = inside(ev.leads);
   const restores = inside(ev.restores);
+  const span = spanOf(ev.applies, applies, from, now);
   const trend: DoraWeek[] = [];
   for (let w = 0; w < DORA_WEEKS; w++) {
     const start = from + w * 7 * 86400 * 1000;
@@ -356,7 +389,8 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
   }
   return {
     deployments,
-    per_week: Math.round((deployments / DORA_WEEKS) * 100) / 100,
+    per_week: Math.round(((deployments * WEEK_SECONDS) / span) * 100) / 100,
+    span_seconds: span,
     lead_time: {
       changes: leads.length,
       median_seconds: median(leads.map((l) => l.total)),
@@ -412,7 +446,7 @@ function row(name: string, m: DoraMetrics): string {
   const split = l.changes ? `<br><small>before the gate ${duration(l.before_gate_seconds)}, at the gate ${duration(l.at_gate_seconds)}, after it ${duration(l.after_gate_seconds)}</small>` : "";
   const c = m.change_failure;
   const r = m.restore;
-  return `<tr><td>${name}</td><td>${m.per_week} <small>(${m.deployments} in ${DORA_WEEKS} weeks)</small></td><td>${duration(l.median_seconds)}${split}</td><td>${rate(c.rate)} <small>(${c.failed} failed, ${c.drifted} drifted, of ${c.applies})</small></td><td>${duration(r.median_seconds)} <small>(${r.restored} restored${r.open ? `, <span class="warn">${r.open} open</span>` : ""})</small></td></tr>`;
+  return `<tr><td>${name}</td><td>${m.per_week} <small>(${m.deployments} in ${spanLabel(m.span_seconds)})</small></td><td>${duration(l.median_seconds)}${split}</td><td>${rate(c.rate)} <small>(${c.failed} failed, ${c.drifted} drifted, of ${c.applies})</small></td><td>${duration(r.median_seconds)} <small>(${r.restored} restored${r.open ? `, <span class="warn">${r.open} open</span>` : ""})</small></td></tr>`;
 }
 
 /** The estate page's delivery section: the definitions, each project's numbers and the estate's, and a row per week. */
@@ -422,7 +456,7 @@ export function renderDoraSection(dora: Dora, link: (project: string) => string)
   );
   return `<p>The newest ${dora.weeks} weeks, from the audit trail and each project's index${dora.audit ? "" : `. <span class="warn">No audit trail was read, so no apply counts: run terragucci audit before terragucci estate.</span>`}</p>
 <dl class="defs">
-<dt>Deployment frequency</dt><dd>Applied waves per week. Infrastructure ships less often than an application, so read it as a trend, not against a tier.</dd>
+<dt>Deployment frequency</dt><dd>Applied waves per week, over the span the history covers: from the newest apply back to the oldest one, or to the window's start when the history is older, and at least a day. Beside each rate is the span it divides by. Infrastructure ships less often than an application, so read it as a trend, not against a tier.</dd>
 <dt>Lead time</dt><dd>The median time from a change's first plan to its wave applied: before the gate (the plan to the wave reaching its gate, or to the apply when no gate held it), at the gate (until the approval), and after it (until applied).</dd>
 <dt>Change failure rate</dt><dd>Failed applies, plus applied waves whose roots drifted within ${duration(dora.drift_window_seconds)}, over all applies. A refused wave is the gate working and does not count.</dd>
 <dt>Time to restore</dt><dd>The median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none.</dd>
@@ -456,7 +490,7 @@ export function doraGauges(dora: Dora): DoraGauge[] {
   const out: DoraGauge[] = [];
   const of = (project: string, m: DoraMetrics): void => {
     const a = { project };
-    out.push({ name: DORA_METRIC.deployments, unit: "", description: `Applied waves per week over the newest ${dora.weeks} weeks.`, value: m.per_week, attributes: a });
+    out.push({ name: DORA_METRIC.deployments, unit: "", description: `Applied waves per week over the newest ${spanLabel(m.span_seconds)}, the span the history covers in the ${dora.weeks}-week window.`, value: m.per_week, attributes: a });
     const l = m.lead_time;
     for (const [segment, v] of [["total", l.median_seconds], ["before_gate", l.before_gate_seconds], ["at_gate", l.at_gate_seconds], ["after_gate", l.after_gate_seconds]] as const) {
       if (v !== null) out.push({ name: DORA_METRIC.leadTime, unit: "s", description: "Median lead time from a change's first plan to its wave applied, and its split.", value: v, attributes: { ...a, segment } });

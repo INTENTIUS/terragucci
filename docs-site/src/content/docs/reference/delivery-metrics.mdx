@@ -29,6 +29,10 @@ Infrastructure ships less often than an application. The page shows frequency pe
 
 Every number covers the newest eight weeks (Monday to Sunday in UTC, current week included). Each week also has its own row, `trend` in `dora.json`, with the same counts for that week alone.
 
+The deployment rate divides by the span the history covers, not by eight weeks. The span runs from the newest apply in the window back to the oldest apply on record, or back to the window's start when the record is older, and is at least a day. A project whose first apply was 32 hours ago reads its applies per week over those 32 hours. The page names the span beside each rate ("12 in 32 hours", "20 in 7.4 weeks"), and `dora.json` holds it as `span_seconds`. With no apply in the window, the span is the window.
+
+Lead time, change failure rate and time to restore are medians and ratios of what the window holds. A short history gives them fewer samples, but no weeks it never had.
+
 ## Lead time and its split
 
 Lead time starts at the first plan. terragucci finds the plan of an applied wave by its commit, or by the wave's digest: a `tf-plan` row lists each wave's set digest and review digest (`wave_digests`), and a merge commit's wave binds the same digest its pull request planned. The clock then starts at the first plan of that pull request.
@@ -82,7 +86,7 @@ Each set of metrics holds:
 
 | Field | What it holds |
 |---|---|
-| `deployments`, `per_week` | applied waves in the window, and per week |
+| `deployments`, `per_week`, `span_seconds` | applied waves in the window, per week, and the span in seconds the rate divides by |
 | `lead_time` | `changes` counted, `median_seconds`, and the split as `before_gate_seconds`, `at_gate_seconds` and `after_gate_seconds`; `null` when nothing counts |
 | `change_failure` | `applies`, `failed`, `drifted` and `rate`; `rate` is `null` with no applies |
 | `restore` | `restored`, `open`, `median_seconds`, and how many restores were of applies and of drift |

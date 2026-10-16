@@ -29,6 +29,7 @@
           "project": { "type": "string" },
           "deployments": { "type": "integer" },
           "per_week": { "type": "number" },
+          "span_seconds": { "$ref": "#/$defs/span_seconds" },
           "lead_time": { "$ref": "#/$defs/lead_time" },
           "change_failure": { "$ref": "#/$defs/change_failure" },
           "restore": { "$ref": "#/$defs/restore" },
@@ -38,13 +39,15 @@
     }
   },
   "$defs": {
+    "span_seconds": { "type": "integer", "description": "What per_week divides by: from the newest apply in the window back to the oldest apply, or to the window's start when the history is older; at least a day. The window's length when it holds no apply. Absent from files written before it was added." },
     "seconds": { "type": ["integer", "null"], "description": "A median in seconds; null when nothing counts." },
     "metrics": {
       "type": "object",
       "required": ["deployments", "per_week", "lead_time", "change_failure", "restore", "trend"],
       "properties": {
         "deployments": { "type": "integer", "description": "Applied waves in the window." },
-        "per_week": { "type": "number", "description": "Deployment frequency: applied waves per week over the window." },
+        "per_week": { "type": "number", "description": "Deployment frequency: applied waves per week over span_seconds. Files written before span_seconds divided by the whole window." },
+        "span_seconds": { "$ref": "#/$defs/span_seconds" },
         "lead_time": { "$ref": "#/$defs/lead_time" },
         "change_failure": { "$ref": "#/$defs/change_failure" },
         "restore": { "$ref": "#/$defs/restore" },

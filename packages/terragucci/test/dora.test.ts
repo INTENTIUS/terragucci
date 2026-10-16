@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { estate } from "../src/estate";
 import { AUDIT_SCHEMA, appendEntries, readRecord, type AuditEntry } from "../src/report/audit";
-import { buildDora, DORA_METRIC, DORA_WEEKS, doraGauges, driftIncidents, duration, median, renderDoraSection, weekStart, type DoraSource } from "../src/report/dora";
+import { buildDora, DORA_METRIC, DORA_WEEKS, doraGauges, driftIncidents, duration, median, renderDoraSection, spanLabel, weekStart, type DoraSource } from "../src/report/dora";
+import { describeEstate, estate } from "../src/estate";
 import { readInlineEstate } from "../src/report/estate";
 import { addToIndex, type IndexEntry } from "../src/report/store";
 import type { OtlpFetch } from "../src/telemetry";
@@ -77,7 +77,10 @@ describe("the DORA metrics", () => {
     expect(d.window).toEqual({ from: "2026-08-17T00:00:00.000Z", to: NOW.toISOString() });
     const m = d.projects[0];
     expect(m.deployments).toBe(3);
-    expect(m.per_week).toBe(Math.round((3 / DORA_WEEKS) * 100) / 100);
+    // The apply ten weeks ago makes the history older than the window, so the rate runs from the window's start to the newest apply.
+    const span = (Date.parse(t(6, 13)) - Date.parse(d.window.from)) / 1000;
+    expect(m.span_seconds).toBe(span);
+    expect(m.per_week).toBe(Math.round(((3 * 7 * 86400) / span) * 100) / 100);
     // 7800s (08:00 to 10:10: 5400 before the gate, 1800 at it, 600 after) and 1200s (no gate); change 4 had no plan.
     expect(m.lead_time).toEqual({ changes: 2, median_seconds: 4500, before_gate_seconds: 3300, at_gate_seconds: 900, after_gate_seconds: 300 });
     // Four applies: change 3 failed, change 4 drifted within the window.
@@ -190,12 +193,67 @@ describe("the DORA metrics", () => {
     const { sources, entries } = oneProject();
     const g = doraGauges(buildDora(sources, entries, NOW));
     const of = (name: string, project: string, segment?: string) => g.find((x) => x.name === name && x.attributes.project === project && x.attributes.segment === segment)?.value;
-    expect(of(DORA_METRIC.deployments, "*")).toBe(0.38);
+    expect(of(DORA_METRIC.deployments, "*")).toBe(0.42);
+    expect(g.find((x) => x.name === DORA_METRIC.deployments)?.description).toBe("Applied waves per week over the newest 7.2 weeks, the span the history covers in the 8-week window.");
     expect(of(DORA_METRIC.leadTime, P, "total")).toBe(4500);
     expect(of(DORA_METRIC.leadTime, P, "at_gate")).toBe(900);
     expect(of(DORA_METRIC.failureRate, P)).toBe(0.5);
     expect(of(DORA_METRIC.restore, "*")).toBe(5400);
     expect(g.filter((x) => x.attributes.project === "*")).toHaveLength(7);
+  });
+});
+
+describe("the span a deployment rate divides by", () => {
+  const hourly = (from: number, count: number): AuditEntry[] =>
+    Array.from({ length: count }, (_, i) => entry({ kind: "apply", at: new Date(from + i * 3600 * 1000).toISOString(), result: "applied", detail: { commit: `h${i}`, roots: ["app"] } }));
+
+  it("a 32-hour history divides by 32 hours, not by the window, and the page, the gauge and the command name it", () => {
+    // 33 applies an hour apart, the first 32 hours before the last.
+    const entries = hourly(Date.parse(t(6, 4)), 33);
+    const d = buildDora([{ project: P, rows: [] }], entries, NOW);
+    expect(d.estate.deployments).toBe(33);
+    expect(d.estate.span_seconds).toBe(32 * 3600);
+    expect(d.estate.per_week).toBe(173.25);
+    // Over the whole window it would read 33 / 8.
+    expect(d.estate.per_week).toBeGreaterThan((33 / DORA_WEEKS) * 40);
+    expect(renderDoraSection(d, (p) => p)).toContain("173.25 <small>(33 in 32 hours)</small>");
+    expect(doraGauges(d)[0]).toMatchObject({ name: DORA_METRIC.deployments, value: 173.25, description: "Applied waves per week over the newest 32 hours, the span the history covers in the 8-week window." });
+    const line = describeEstate({ estate: { totals: { projects: 1, waiting: 0, drifted_projects: 0, failed_roots: 0 }, projects: [] }, files: [], unreadable: [], dora: d } as never, "/x");
+    expect(line).toContain("dora: 173.25 deployments per week (33 in 32 hours), ");
+  });
+
+  it("a history longer than the window divides by the window's start to the newest apply", () => {
+    // An apply a year ago, and one a day for the newest four weeks.
+    const daily = Array.from({ length: 28 }, (_, i) => entry({ kind: "apply", at: new Date(Date.parse(t(7, 6)) - i * 86400 * 1000).toISOString(), result: "applied", detail: { roots: ["app"] } }));
+    const old = entry({ kind: "apply", at: "2025-10-01T00:00:00.000Z", result: "applied", detail: { roots: ["app"] } });
+    const d = buildDora([{ project: P, rows: [] }], [old, ...daily], NOW);
+    const span = (Date.parse(t(7, 6)) - Date.parse(d.window.from)) / 1000;
+    expect(d.estate.deployments).toBe(28);
+    expect(d.estate.span_seconds).toBe(span);
+    expect(d.estate.per_week).toBe(Math.round(((28 * 7 * 86400) / span) * 100) / 100);
+    expect(renderDoraSection(d, (p) => p)).toContain(`(28 in ${spanLabel(span)})`);
+    expect(spanLabel(span)).toBe("7.3 weeks");
+  });
+
+  it("a single apply divides by the floor of a day", () => {
+    const d = buildDora([{ project: P, rows: [] }], hourly(Date.parse(t(7, 11)), 1), NOW);
+    expect(d.estate.span_seconds).toBe(86400);
+    expect(d.estate.per_week).toBe(7);
+    expect(renderDoraSection(d, (p) => p)).toContain("7 <small>(1 in 24 hours)</small>");
+  });
+
+  it("an empty history reads zero over the window", () => {
+    for (const entries of [[], undefined]) {
+      const d = buildDora([{ project: P, rows: [] }], entries, NOW);
+      expect(d.estate.deployments).toBe(0);
+      expect(d.estate.per_week).toBe(0);
+      expect(d.estate.span_seconds).toBe((NOW.getTime() - Date.parse(d.window.from)) / 1000);
+      expect(renderDoraSection(d, (p) => p)).toContain("0 <small>(0 in 7.4 weeks)</small>");
+    }
+  });
+
+  it("names a span in hours, days or weeks", () => {
+    expect([spanLabel(3600), spanLabel(86400), spanLabel(32 * 3600), spanLabel(3 * 86400), spanLabel(9 * 86400), spanLabel(56 * 86400)]).toEqual(["1 hour", "24 hours", "32 hours", "3 days", "9 days", "8 weeks"]);
   });
 });
 
