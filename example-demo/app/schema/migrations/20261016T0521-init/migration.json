@@ -1,0 +1,125 @@
+{
+  "format": 1,
+  "id": "20261016T0521-init",
+  "parent": null,
+  "checksum": "sha256:a99a52ad88ede64f11f0a9620e6a684f5d6374a2bffa178ddb815ff4adb576af",
+  "createdAt": "2026-10-16T05:21:41Z",
+  "dialect": "postgres",
+  "defaultSchema": "public",
+  "major": 18,
+  "refused": false,
+  "hints": [],
+  "steps": [
+    {
+      "kind": "statement",
+      "object": "app",
+      "type": "Postgres::Schema",
+      "name": "app",
+      "class": "create",
+      "rule": "SQLPG200",
+      "sql": "CREATE SCHEMA app",
+      "transactional": true
+    },
+    {
+      "kind": "statement",
+      "object": "app",
+      "type": "Postgres::Schema",
+      "name": "app",
+      "class": "create",
+      "rule": "SQLPG200",
+      "sql": "COMMENT ON SCHEMA app IS '[chant managed-by=chant]'",
+      "transactional": true
+    },
+    {
+      "kind": "statement",
+      "object": "users",
+      "type": "Postgres::Table",
+      "name": "app.users",
+      "class": "create",
+      "rule": "SQLPG200",
+      "sql": "CREATE TABLE app.users (\n    id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n    email text NOT NULL,\n    name  text NOT NULL\n  )",
+      "transactional": true
+    },
+    {
+      "kind": "statement",
+      "object": "users",
+      "type": "Postgres::Table",
+      "name": "app.users",
+      "class": "create",
+      "rule": "SQLPG200",
+      "sql": "COMMENT ON COLUMN app.users.email IS 'The address a user signs in with; demo rows only'",
+      "transactional": true
+    },
+    {
+      "kind": "statement",
+      "object": "users",
+      "type": "Postgres::Table",
+      "name": "app.users",
+      "class": "create",
+      "rule": "SQLPG200",
+      "sql": "COMMENT ON TABLE app.users IS '[chant managed-by=chant]'",
+      "transactional": true
+    }
+  ],
+  "schema": {
+    "applyOrder": [
+      "app",
+      "users"
+    ],
+    "dialect": "postgres",
+    "objects": [
+      {
+        "ddl": "CREATE SCHEMA app",
+        "dependsOn": [],
+        "export": "app",
+        "name": "app",
+        "sqlName": "app",
+        "type": "Postgres::Schema"
+      },
+      {
+        "checks": [],
+        "columns": [
+          {
+            "generated": {
+              "always": true,
+              "kind": "identity"
+            },
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "comment": "The address a user signs in with; demo rows only",
+            "name": "email",
+            "notNull": true,
+            "type": "text"
+          },
+          {
+            "name": "name",
+            "notNull": true,
+            "type": "text"
+          }
+        ],
+        "ddl": "CREATE TABLE app.users (\n    id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n    email text NOT NULL,\n    name  text NOT NULL\n  );\n  COMMENT ON COLUMN app.users.email IS 'The address a user signs in with; demo rows only'",
+        "dependsOn": [
+          "app"
+        ],
+        "exclusions": [],
+        "export": "users",
+        "foreignKeys": [],
+        "inherits": [],
+        "like": [],
+        "name": "users",
+        "primaryKey": {
+          "columns": [
+            "id"
+          ]
+        },
+        "schema": "app",
+        "sqlName": "app.users",
+        "type": "Postgres::Table",
+        "uniques": []
+      }
+    ],
+    "postgresMajor": 18
+  }
+}

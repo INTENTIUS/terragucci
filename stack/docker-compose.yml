@@ -31,6 +31,7 @@
 #   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
 #   blob      Azurite and fake-gcs-server, the Azure Blob and GCS emulators   used by the blob-azure and blob-gcs smoke claims
 #   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
+#   demo      Postgres for the demo's app schema           stack/demo.sh up starts it
 name: ${TG_PROJECT:-terragucci}
 
 networks:
@@ -56,6 +57,8 @@ volumes:
     name: ${TG_PROJECT:-terragucci}-fountain-sandboxes
   otel-out:
     name: ${TG_PROJECT:-terragucci}-otel-out
+  demo-pgdata:
+    name: ${TG_PROJECT:-terragucci}-demo-pgdata
 
 services:
   # ── aws ──────────────────────────────────────────────────────────────────
@@ -77,6 +80,34 @@ services:
         # The AWS provider reaches S3 Control at <account-id>.<endpoint host>,
         # and floci's account id is twelve zeros.
         aliases: [floci, 000000000000.floci]
+
+  # ── demo ─────────────────────────────────────────────────────────────────
+  # app's database in the looping demo (stack/demo.sh): SQL Yodeler applies
+  # example-demo/app/schema to database demo from app's wave job. Jobs reach it
+  # as demo-postgres:5432 on the stack's network; it publishes no port, and the
+  # driver works on it with docker exec. Trust auth, since only the stack's
+  # network reaches it and its rows are the demo's own. demo.sh up makes the
+  # roles and the database, and keeps the base as database demo_base, the
+  # template each reset copies back. postgres 18.6, the version SQL Yodeler's
+  # replay check runs, pinned by the index digest resolved on 2026-10-15
+  # (amd64 and arm64).
+  demo-postgres:
+    image: postgres:18.6@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    container_name: ${TG_PROJECT:-terragucci}-demo-postgres
+    profiles: [demo]
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - demo-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [demo-postgres]
 
   # ── forgejo ──────────────────────────────────────────────────────────────
   # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the

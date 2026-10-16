@@ -32,7 +32,7 @@ if docker network inspect "$TG_NETWORK" >/dev/null 2>&1; then
 fi
 
 docker compose -f "$HERE/docker-compose.yml" --project-name "$P" \
-  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability --profile blob --profile decide \
+  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability --profile blob --profile decide --profile demo \
   down --remove-orphans
 
 # Without -v, compose keeps volumes: remove the anonymous ones it made here.

@@ -29,7 +29,7 @@ describe("the kiosk's top pane", () => {
     expect(literal.map((s) => s.raw)).toEqual(
       expect.arrayContaining([expect.stringMatching(/^Wave 2 failed/), expect.stringMatching(/^Outside the pipeline/), expect.stringMatching(/^Stalled after/)]),
     );
-    expect(strings.filter((s) => s.kind === "action").map((s) => s.raw)).toEqual(expect.arrayContaining(["reset", "clear the fault and run the pipeline again"]));
+    expect(strings.filter((s) => s.kind === "action").map((s) => s.raw)).toEqual(expect.arrayContaining(["reset", "remove the duplicate and run the pipeline again"]));
   });
 
   it("names the string, its length and its budget when a label runs over, and a placeholder with no sample", () => {
