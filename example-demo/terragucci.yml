@@ -16,3 +16,11 @@ reports:
 # names it "cost-stub".
 cost:
   command: scripts/cost-stub
+# Each job's metrics go to the stack's OpenTelemetry collector, and on to
+# the Prometheus that behold's kiosk reads (stack/demo.sh up starts both).
+# Metrics only, each gauge labelled with its commit and run. A collector that
+# is down costs a job one log line, never its result.
+env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_TRACES_EXPORTER: none
+  TERRAGUCCI_METRICS_PER_RUN: "true"

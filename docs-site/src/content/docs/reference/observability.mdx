@@ -30,6 +30,7 @@ env:
 | `OTEL_SDK_DISABLED=true` | turn both off |
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | the service name (default `terragucci`) and extra resource attributes |
 | `TRACEPARENT` | the stage's trace joins this one, when your CI starts a trace of its own |
+| `TERRAGUCCI_METRICS_PER_RUN=true` | each metric also carries the run's `commit` and its pipeline `run` id ([one run's numbers](#one-runs-numbers)) |
 
 ### Headers and secrets
 
@@ -109,7 +110,7 @@ The HTML report shows them under "Where the time went", and `report.json` carrie
 
 ### Exported metrics
 
-A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. All are gauges with `project` and `stage` labels, plus those below.
+A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_plan_seconds`, `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. All are gauges with `project` and `stage` labels, plus those below.
 
 ### Metric table
 
@@ -117,7 +118,7 @@ A stage pushes its metrics once, when it ends; point Prometheus exporter or remo
 |---|---|---|---|
 | `terragucci_stage_duration_seconds` | `result` | how long each stage takes, and whether it failed | one per stage and result |
 | `terragucci_roots_planned` | | how many roots a change touches | one |
-| `terragucci_root_plan_seconds` | `root` | the slowest roots | one per root |
+| `terragucci_root_plan_seconds` | `root`, and `wave` from a `tf-apply` wave | the slowest roots; a wave's is its plan of the root before it applies | one per root, and per root and wave |
 | `terragucci_root_apply_seconds` | `root`, `wave` | the slowest root applies; sent by a `tf-apply` wave | one per root and wave |
 | `terragucci_plan_changes` | `action` | creates, updates, replaces and deletes, over time | one per action |
 | `terragucci_plan_groups` | | how far a change folds | one |
@@ -133,6 +134,8 @@ A stage pushes its metrics once, when it ends; point Prometheus exporter or remo
 | `terragucci_drift_since_seconds`, `terragucci_drift_clear_seconds` | | when the open drift was first found (its drift issue opened), and when a drift run last found none | one each |
 | `terragucci_wave_roots` | `wave` | roots in a `tf-apply` wave | one per wave |
 | `terragucci_wave_waiting_since_seconds`, `terragucci_wave_settled_seconds` | `wave` | when a wave started waiting for its approval, and when it last stopped waiting | one per wave |
+| `terragucci_wave_held_seconds` | `wave` | how long the wave was held at its gate, from its pending record to the approval; sent by the run that applies after it | one per wave |
+| `terragucci_wave_changes` | `wave`, `action` | the changes a wave applied, by action; sent when it applies | one per wave and action |
 | `terragucci_dora_deployments_per_week`, `terragucci_dora_change_failure_ratio`, `terragucci_dora_restore_seconds` | `project` only, `*` for the estate; sent by `terragucci estate` | the [delivery metrics](/terragucci/reference/delivery-metrics/) | one each per project |
 | `terragucci_dora_lead_time_seconds` | `project` only, and `segment`; sent by `terragucci estate` | the median lead time and its split | four per project |
 
@@ -147,6 +150,18 @@ The stage span's `terragucci.result` is `success` or `failure` for a plan or dri
 ### Resource attributes
 
 Metrics carry only `terragucci.project` and `service.version` as resource attributes, and spans also carry `vcs.ref.head.revision` and `cicd.pipeline.run.url.full`.
+
+### One run's numbers
+
+By default a project's gauge is one series, and each run overwrites the last. With `TERRAGUCCI_METRICS_PER_RUN=true`, every metric also carries `commit`, the commit the run is for, and `run`, the forge's run id (`GITHUB_RUN_ID`, or `CI_PIPELINE_ID` on GitLab). A reader can then show one run's waves, such as how long each root planned and applied in wave 2 of a given commit.
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector.example.com:4318
+  TERRAGUCCI_METRICS_PER_RUN: "true"
+```
+
+Every run makes new series, so keep Prometheus's retention short. The dashboards take the largest value of the runs in their range rather than the latest.
 
 ## Trace links
 

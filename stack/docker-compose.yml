@@ -29,6 +29,7 @@
 #   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 #   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
+#   observability-lite  the collector and Prometheus alone, with no Tempo or Grafana   stack/demo.sh up starts it
 #   blob      Azurite and fake-gcs-server, the Azure Blob and GCS emulators   used by the blob-azure and blob-gcs smoke claims
 #   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
 #   demo      Postgres for the demo's app schema           stack/demo.sh up starts it
@@ -238,7 +239,7 @@ services:
   # HTTP to http://otel-collector:4318. The collector writes traces to a file
   # in the otel-out volume and serves metrics to Prometheus. Root, so it can
   # write to the volume, which Docker creates owned by root.
-  otel-collector:
+  otel-collector: &otel-collector
     image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
     container_name: ${TG_PROJECT:-terragucci}-otel-collector
     profiles: [observability]
@@ -254,10 +255,27 @@ services:
       default:
         aliases: [otel-collector]
 
+  # The same collector and config for observability-lite, under the same name
+  # and alias, with no Tempo to send traces to: a stage's spans only feed the
+  # span metrics, and nothing is written to the otel-out volume. The second
+  # --config replaces the traces pipeline's exporters. Run one profile or the
+  # other, not both: the two share a container name.
+  otel-collector-lite:
+    <<: *otel-collector
+    profiles: [observability-lite]
+    command: ["--config=/etc/otelcol/collector.yaml", "--config=yaml:service::pipelines::traces::exporters: [spanmetrics]"]
+    # A demo's jobs send a few dozen points a minute; the Go heap is held
+    # well under what an idle collector takes unbounded.
+    environment:
+      GOMEMLIMIT: 160MiB
+    mem_limit: 256m
+
+  # Kept by both profiles: the full one's dashboards and the lite one's
+  # readers (behold's kiosk) ask it on :9090 inside the network.
   prometheus:
     image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
     container_name: ${TG_PROJECT:-terragucci}-prometheus
-    profiles: [observability]
+    profiles: [observability, observability-lite]
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       # The SLO recording rules and pipeline alerts terragucci's dashboards come with.

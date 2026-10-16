@@ -66,6 +66,13 @@ interface RootTiming {
 
 const seconds = (from: bigint, to: bigint): number => Number(to - from) / 1e9;
 
+/** Each gauge with the run's `commit` and `run` labels, when `TERRAGUCCI_METRICS_PER_RUN` asked for them; otherwise as given. */
+export function perRunLabels(gauges: Gauge[], perRun: { run?: string } | undefined, commit: string): Gauge[] {
+  if (!perRun) return gauges;
+  const labels = { ...(commit && commit !== "unknown" ? { commit } : {}), ...(perRun.run ? { run: perRun.run } : {}) };
+  return gauges.map((x) => ({ ...x, attributes: { ...x.attributes, ...labels } }));
+}
+
 /** The binary's version, from `<binary> version -json`. */
 export function binaryVersion(binary: string, env: NodeJS.ProcessEnv): string | undefined {
   const r = spawnSync(binary, ["version", "-json"], { encoding: "utf-8", env });
@@ -98,10 +105,20 @@ export class StageObserver {
 
   /** The pull request a tf-plan runs for (`TG_PR`, which the pipeline sets). */
   private readonly pullRequest?: string;
+  /**
+   * With `TERRAGUCCI_METRICS_PER_RUN=true`, every gauge also carries the
+   * run's `commit` and the forge's pipeline `run` id, so a reader can pick
+   * one run's numbers. Each run is then a series of its own.
+   */
+  readonly perRun?: { run?: string };
 
   constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv) {
     const pr = env.TG_PR?.trim();
     if (pr) this.pullRequest = pr;
+    if (env.TERRAGUCCI_METRICS_PER_RUN?.trim().toLowerCase() === "true") {
+      const run = (env.GITHUB_RUN_ID || env.CI_PIPELINE_ID)?.trim();
+      this.perRun = run ? { run } : {};
+    }
     if (telemetry?.traces) {
       this.trace = new Trace(env.TRACEPARENT);
       this.stageSpan = this.trace.start(`terragucci ${stage}`, undefined, { "terragucci.stage": stage });
@@ -256,8 +273,8 @@ export class StageObserver {
   }
 
   /**
-   * The metrics a tf-apply wave sends: how long each root's apply took, and
-   * the wave's own gauges (report/wave-telemetry.ts), which the Rollouts and
+   * The metrics a tf-apply wave sends: how long each root's plan and apply
+   * took in the wave, and the wave's own gauges (report/wave-telemetry.ts), which the Rollouts and
    * waves dashboard and the waiting-wave alert read.
    */
   applyGauges(report: Report, end: bigint): Gauge[] {
@@ -267,12 +284,14 @@ export class StageObserver {
     const wave: Record<string, string> = this.wave ? { wave: String(this.wave.number) } : {};
     const out: Gauge[] = [];
     for (const r of report.roots) {
+      const plan = r.timings?.plan_seconds;
+      if (plan !== undefined) out.push(g(METRIC.rootPlan, "s", "How long one root took to plan", plan, { ...wave, root: r.path }));
       const seconds = r.timings?.apply_seconds;
       if (seconds === undefined) continue;
       out.push(g(METRIC.rootApply, "s", "How long one root took to apply", seconds, { ...wave, root: r.path }));
     }
     out.push(...this.initAndLockGauges(report, g));
-    if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, Number(end / 1_000_000n) / 1000, g));
+    if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, Number(end / 1_000_000n) / 1000, g, report.totals));
     return out;
   }
 
@@ -325,6 +344,7 @@ export class StageObserver {
     const run = report.run;
     // The metrics carry nothing that changes from run to run, so a project's gauge is one series and the
     // dashboards' latest value is the latest run's, not the largest of any commit's. The trace names the run.
+    // TERRAGUCCI_METRICS_PER_RUN adds the commit and the run id as labels on each gauge (perRunLabels).
     const metricsResource = { ...tel.resource, "service.version": run.terragucci, "terragucci.project": run.project };
     const resource = {
       ...metricsResource,
@@ -384,7 +404,7 @@ export class StageObserver {
 
     // A tf-apply wave sends its trace, each root's apply time and its wave gauges. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
     if (tel.metrics) {
-      const gauges = this.stage === "tf-apply" ? this.applyGauges(report, end) : this.gauges(report, binaryVersion(run.binary, env), end);
+      const gauges = perRunLabels(this.stage === "tf-apply" ? this.applyGauges(report, end) : this.gauges(report, binaryVersion(run.binary, env), end), this.perRun, run.commit);
       const problem = await send(tel.metrics, metricsBody(gauges, metricsResource, run.terragucci ?? "0.0.0", end), fetchFn);
       if (problem) log(`telemetry: the metrics were not sent: ${problem}`);
       else sent.push(`${gauges.length} metric points`);
