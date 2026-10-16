@@ -209,6 +209,8 @@ The plan role is used on the pull request and on the default branch: re-plan, dr
 | GitLab | `project_path:<group>/<project>:ref_type:branch:ref:*` | `project_path:<group>/<project>:ref_type:branch:ref:<default branch>` |
 | Forgejo | `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` and `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` |
 
+With [`environments`](/terragucci/reference/config/#environments), an environment's apply jobs on GitHub run in its forge environment, so their subject is `repo:<owner>/<repo>:environment:<name>` in place of the ref's, and the environment's apply role trusts that subject alone ([Trust per environment](#trust-per-environment)). Plan jobs run in no forge environment and keep the subjects above.
+
 On GitLab a merge request's plan job carries its source branch in the subject, so the plan role trusts every branch of the project. Anyone who can push a branch can assume it; keep it read-only. Azure matches a federated credential's subject exactly, so on GitLab the plan identity needs a credential that matches on a claims expression instead.
 
 A repo with Actions on before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is toggled. `GET /api/v1/repos/<owner>/<repo>` shows both IDs.

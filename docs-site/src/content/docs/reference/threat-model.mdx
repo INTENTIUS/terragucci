@@ -69,7 +69,8 @@ The pipeline runs as jobs in your CI, so its trust is your forge's.
 | OIDC subject | Jobs |
 |---|---|
 | `repo:<owner>/<repo>:pull_request` | `plan` |
-| the default branch's ref | every job a comment, a schedule or a push to the default branch starts |
+| `repo:<owner>/<repo>:environment:<name>` | with `environments`, an environment's `apply-wave-<k>-<group>` jobs, which run in its forge environment; the environment's deployment branch rule decides which refs may run them |
+| the default branch's ref | every other job a comment, a schedule or a push to the default branch starts |
 
 </TabItem>
 <TabItem label="GitLab">
