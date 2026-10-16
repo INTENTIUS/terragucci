@@ -60,7 +60,8 @@
 #     "started_at": "2026-10-20T10:00:00Z",
 #     "next": { "action": "approve wave-2", "at": "2026-10-20T10:04:20Z" },
 #     "pull": 41, "commit": "<sha>",
-#     "about": { "changes": "...", "watch": "...", "shows": "..." } }
+#     "about": { "changes": "...", "watch": "...", "shows": "..." },
+#     "delivery": "Counted from this demo loop's own runs, ..." }
 #
 # step is one of pull-request, planned, merged, applying, waiting, approved,
 # failed, resumed, applied, reset and stalled. next is null at stalled; next.at
@@ -76,6 +77,15 @@
 # headline. index is the scenario's 1-based place in this loop's list and
 # scenarios is how many that list holds, so "1 of 3". index is null for the
 # base, and scenarios is 0 when up writes it, before any loop.
+#
+# delivery is the line behold's kiosk shows over the delivery (DORA) numbers:
+# the delivery field of example-demo/scenarios/intro.json, the same in every
+# write, which just lint-docs lints. The numbers are terragucci estate's, from
+# the loop's own audit trail: after each cycle's audit the driver runs
+# `terragucci estate` on the reports prefix (estate_page), which writes
+# estate.json, estate.html, dora.json, history.json and history.html beside
+# demo.json and sends the terragucci_dora_* gauges to the stack's collector,
+# which Prometheus keeps for the kiosk.
 #
 # tool is the tool the scenario shows (terraform, terragrunt) and repo the forge
 # repo its cycle runs on (<admin>/demo, <admin>/demo-terragrunt): the repo whose
@@ -183,6 +193,7 @@ LIMIT_PLAN="${DEMO_LIMIT_PLAN:-600}"    # a pull request's plan run and its note
 LIMIT_RUN="${DEMO_LIMIT_RUN:-900}"      # one apply run, from the push or comment that starts it
 LIMIT_START="${DEMO_LIMIT_START:-180}"  # for Forgejo to start a run after a push, merge or comment
 LIMIT_QUIET="${DEMO_LIMIT_QUIET:-900}"  # for no run to be in progress before a push
+LIMIT_ESTATE="${DEMO_LIMIT_ESTATE:-120}" # terragucci estate after a cycle's audit; past it, it is stopped and the cycle goes on
 RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may take
 FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
 POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
@@ -471,14 +482,17 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
 # The fields of demo.json that say where the viewer is: the demo's intro, the
 # scenario's short name, and its place in this loop's list.
 demo_where() {
-  jq -cn --arg intro "$INTRO" --arg name "$(scenario_name "$SCENARIO")" --arg index "$INDEX" --argjson count "$COUNT" \
+  jq -cn --arg intro "$INTRO" --arg delivery "$DELIVERY" --arg name "$(scenario_name "$SCENARIO")" --arg index "$INDEX" --argjson count "$COUNT" \
     --arg tool "$TOOL" --arg repo "$REPO" \
     '{intro: (if $intro == "" then null else $intro end), name: $name, tool: $tool, repo: $repo,
-      index: (if $index == "" then null else ($index | tonumber) end), scenarios: $count}'
+      index: (if $index == "" then null else ($index | tonumber) end), scenarios: $count,
+      delivery: (if $delivery == "" then null else $delivery end)}'
 }
 
 # The problem the demo is about, from example-demo/scenarios/intro.json; empty when it can't be read.
 INTRO="$(jq -r '.problem // empty' "$DEMO/scenarios/intro.json" 2>/dev/null || true)"
+# The line over the delivery (DORA) numbers, from the same file; empty when it can't be read.
+DELIVERY="$(jq -r '.delivery // empty' "$DEMO/scenarios/intro.json" 2>/dev/null || true)"
 
 # The scenario's card from its about.json, compact; null when it has none.
 scenario_about() { # scenario
@@ -1018,9 +1032,17 @@ scenario_a() {
 # finish (the re-run's replace of the tainted migration waits at the gate
 # first, and is approved like any waiting wave).
 failure_failed() {
+  local at left
   [ "${WAVE:-2}" = 2 ] || fail "wave $WAVE failed, not app's wave 2 ($RUN_URL)"
-  demo_hold failed "Wave 2 failed because SQL Yodeler found two users with one email, so it applied nothing. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port). Edge waits." \
-    "remove the duplicate and run the pipeline again"
+  at=$(( $(now) + HOLD ))
+  demo_write failed "Wave 2 failed because SQL Yodeler found two users with one email, so it applied nothing. Network keeps port $(state_input network http_proxy_port), and app keeps port $(state_input app listener_port). Edge waits." \
+    "remove the duplicate and run the pipeline again" "$at"
+  # The failed wave's report stays in the bucket only until the re-run's wave 2
+  # writes over it, so the trail records the failure now, during the hold: the
+  # delivery numbers count it as a failed change and the re-run as its restore.
+  audit_trail
+  left=$(( at - $(now) ))
+  [ "$left" -le 0 ] || sleep "$left"
   db_dedupe || fail "could not remove the duplicate user from demo-postgres"
   resume_pull
   demo_write resumed "The driver removes the duplicate user and comments /terragucci apply on pull request $PULL. Network is already done, and app's migration runs again." "follow the waves"
@@ -1308,6 +1330,8 @@ run_cycle() {
     cycle_end
   else
     audit_trail
+    estate_page
+    estate_wait
   fi
 }
 
@@ -1323,7 +1347,9 @@ cycle_end() {
   local at=$(( $(now) + HOLD )) left
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
   audit_trail
+  estate_page
   reset_work
+  estate_wait
   left=$(( at - $(now) ))
   [ "$left" -le 0 ] || sleep "$left"
   reset_written
@@ -1341,11 +1367,13 @@ cycle_reset() {
 # against floci's host address. The project is named as the jobs name it
 # (GITHUB_SERVER_URL is Forgejo's ROOT_URL inside the stack), so it reads the
 # reports the waves indexed under forgejo:3000/<admin>/demo. An audit that
-# fails is logged and never stalls the cycle.
+# fails is logged and never stalls the cycle. The failure scenario audits twice
+# in its cycle (failure_failed), so each audit clones into a directory of its own.
 audit_trail() {
-  local clone="$WORK/c$CYCLE/audit" out
+  local clone out
   # The chant repo's pipeline writes no terragucci reports for the trail to read.
   [ "$TOOL" != chant ] || return 0
+  mkdir -p "$WORK/c$CYCLE" && clone="$(mktemp -d "$WORK/c$CYCLE/audit.XXXXXX")" || { log "audit: could not make a directory to clone $REPO into"; return 0; }
   git clone -q "$REMOTE" "$clone" 2>/dev/null || { log "audit: could not clone $REPO"; return 0; }
   if out="$(cd "$clone" && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
       GITHUB_SERVER_URL=http://forgejo:3000 GITHUB_REPOSITORY="$REPO" \
@@ -1356,6 +1384,51 @@ audit_trail() {
     log "audit: terragucci audit failed; the trail did not grow this cycle"
     printf '%s\n' "$out" >&2
   fi
+}
+
+# The delivery (DORA) numbers, behold#571: terragucci estate reads the reports
+# prefix's index, each project's index and the audit trail the audit above
+# grew, and writes estate.json, estate.html, dora.json, history.json and
+# history.html beside demo.json. With the collector up it sends the
+# terragucci_dora_* gauges, per project and for the estate, which Prometheus
+# keeps for behold's kiosk; without it, behold reads dora.json. One run covers
+# every repo whose pipeline writes terragucci reports here (demo and
+# demo-terragrunt). It runs in the background while the reset works, from
+# the host against floci's and the collector's host ports, and estate_wait
+# waits at most LIMIT_ESTATE seconds for it. One that fails or runs past the
+# limit is logged, and the cycle goes on.
+ESTATE_PID=""
+estate_page() {
+  local dir="$WORK/c$CYCLE/estate"
+  ESTATE_PID=""
+  # The chant repo's pipeline writes no terragucci reports, so its cycle adds nothing to count.
+  [ "$TOOL" != chant ] || return 0
+  mkdir -p "$dir" || { log "estate: could not make $dir; the delivery numbers stay as they were"; return 0; }
+  (cd "$dir" && exec env AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
+    OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:${TERRAGUCCI_OTLP_PORT:-4328}" OTEL_TRACES_EXPORTER=none \
+    "$TERRAGUCCI" estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint "$FLOCI" --bucket-prefix "$REPORT_PREFIX" \
+    --out "$dir/page" --link-hours 1 >"$dir/out" 2>&1) &
+  ESTATE_PID=$!
+}
+
+estate_wait() {
+  local pid="$ESTATE_PID" dir="$WORK/c$CYCLE/estate" deadline=$(( $(now) + LIMIT_ESTATE ))
+  ESTATE_PID=""
+  [ -n "$pid" ] || return 0
+  while kill -0 "$pid" 2>/dev/null && [ "$(now)" -lt "$deadline" ]; do sleep 0.2; done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    log "estate: terragucci estate ran past ${LIMIT_ESTATE}s and was stopped; the delivery numbers stay as they were"
+    return 0
+  fi
+  if wait "$pid"; then
+    log "estate: $(grep -E '^(dora|sent|the DORA)' "$dir/out" 2>/dev/null | tr '\n' ' ')"
+  else
+    log "estate: terragucci estate failed; the delivery numbers stay as they were"
+    cat "$dir/out" >&2 2>/dev/null || true
+  fi
+  return 0
 }
 
 # Every root's state back to the base snapshot, and the states of the roots

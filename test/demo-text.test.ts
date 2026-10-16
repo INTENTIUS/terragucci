@@ -12,6 +12,15 @@ describe("the kiosk's top pane", () => {
     expect(cardProblems(root)).toEqual([]);
   });
 
+  it("has the delivery line the metrics pane shows over the DORA numbers, within its budget", () => {
+    const intro = JSON.parse(readFileSync(join(root, "example-demo/scenarios/intro.json"), "utf8")) as { delivery?: string };
+    expect(intro.delivery).toMatch(/demo loop's own/);
+    expect(intro.delivery!.length).toBeLessThanOrEqual(BUDGETS.delivery);
+    // demo.sh writes it into every demo.json as delivery.
+    expect(demo).toContain(`DELIVERY="$(jq -r '.delivery // empty' "$DEMO/scenarios/intro.json"`);
+    expect(demo).toContain("delivery: (if $delivery");
+  });
+
   it("holds every title, name, step line and next action in demo.sh to its budget, placeholders filled", () => {
     expect(demoProblems(demo)).toEqual([]);
   });

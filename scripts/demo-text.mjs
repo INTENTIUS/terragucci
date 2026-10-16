@@ -1,12 +1,12 @@
 // The text stack/demo.sh puts in the kiosk's top pane (behold's web/kiosk.js), held to length budgets so the
-// header stays a few lines on a TV: the intro, each scenario's card, its title and short name, every step line
+// header stays a few lines on a TV: the intro and its delivery line, each scenario's card, its title and short name, every step line
 // and every next action. A step line is measured with its placeholders filled by sample values as long as the
 // real ones (a terraform_data id is 36 characters, a short sha 8). Used by scripts/lint-docs.mjs and
 // test/demo-text.test.ts.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-export const BUDGETS = { problem: 220, changes: 120, watch: 220, shows: 120, title: 60, name: 24, step: 200, action: 60 };
+export const BUDGETS = { problem: 220, delivery: 120, changes: 120, watch: 220, shows: 120, title: 60, name: 24, step: 200, action: 60 };
 
 const ID = "4b6e2c1a-9f3d-4e8b-a1c7-2d5f8e0b3c69";
 
@@ -118,7 +118,7 @@ export function demoProblems(src, file = "stack/demo.sh") {
   return problems;
 }
 
-/** Problems with the cards' lengths: intro.json's problem, and changes, watch and shows in each about.json. */
+/** Problems with the cards' lengths: intro.json's problem and delivery, and changes, watch and shows in each about.json. */
 export function cardProblems(root = ".") {
   const problems = [];
   const check = (file, field, text) => {
@@ -131,7 +131,9 @@ export function cardProblems(root = ".") {
       return undefined; // lint-docs says what is wrong with a file that does not parse
     }
   };
-  check("example-demo/scenarios/intro.json", "problem", read("example-demo/scenarios/intro.json")?.problem);
+  const intro = read("example-demo/scenarios/intro.json");
+  check("example-demo/scenarios/intro.json", "problem", intro?.problem);
+  check("example-demo/scenarios/intro.json", "delivery", intro?.delivery);
   for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios"]) {
     for (const d of readdirSync(join(root, dir), { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
       const file = `${dir}/${d.name}/about.json`;

@@ -2,7 +2,7 @@
 // exits early (head -1, grep -q) kills its writer with SIGPIPE and the driver
 // with 141. v0.4.17's tree_bucket did that on every `up` (behold#571).
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -130,6 +130,80 @@ describe("view_follow", () => {
     const missing = spawnSync("bash", ["-c", `set -euo pipefail\nVIEWS=/nowhere\nVIEW_AT=""\n${body}\nview_follow`], { cwd: root, encoding: "utf8" });
     expect(missing.status).toBe(0);
     expect(missing.stderr).toContain("view: no checkout /nowhere/demo.change");
+  });
+});
+
+// behold#571: the delivery (DORA) numbers. After each cycle's audit the driver
+// runs terragucci estate on the reports prefix, in the background while the
+// reset works; a failed or slow one is logged and the cycle goes on.
+describe("audit_trail and estate_page", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** A scratch WORK and a fake terragucci whose body is `script`; it records its arguments and environment. */
+  const setup = (script: string) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-estate-"));
+    made.push(tmp);
+    const bin = join(tmp, "terragucci");
+    writeFileSync(bin, `#!/usr/bin/env bash\necho "$*" > "${tmp}/args"\nenv > "${tmp}/env"\n${script}\n`);
+    chmodSync(bin, 0o755);
+    return { tmp, bin };
+  };
+  const driver = (tmp: string, bin: string, body: string, extra = "") =>
+    spawnSync(
+      "bash",
+      ["-c", `set -euo pipefail\nlog() { echo "[demo] $*" >&2; }\nnow() { date +%s; }\nWORK=${tmp}/work CYCLE=7 TOOL=terraform TERRAGUCCI=${bin} REPORT_BUCKET=demo-reports REPORT_PREFIX=demo FLOCI=http://127.0.0.1:4580 LIMIT_ESTATE=60 REPO=admin/demo ${extra}\n${fn("audit_trail")}\nESTATE_PID=""\n${fn("estate_page")}\n${fn("estate_wait")}\n${body}`],
+      { cwd: root, encoding: "utf8", timeout: 30_000 },
+    );
+
+  it("runs terragucci estate on the reports prefix, sends the gauges to the collector's host port, and logs the DORA line", () => {
+    const { tmp, bin } = setup(`echo "estate: 2 projects"\necho "dora: 3.5 deployments per week, lead time 2m, change failure rate 25%, time to restore 1m"\necho "sent 18 DORA gauges"`);
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("carried-on");
+    expect(r.stderr).toContain("[demo] estate: dora: 3.5 deployments per week, lead time 2m, change failure rate 25%, time to restore 1m sent 18 DORA gauges");
+    expect(readFileSync(join(tmp, "args"), "utf8").trim()).toBe(`estate --bucket s3://demo-reports --bucket-endpoint http://127.0.0.1:4580 --bucket-prefix demo --out ${tmp}/work/c7/estate/page --link-hours 1`);
+    const env = readFileSync(join(tmp, "env"), "utf8");
+    expect(env).toContain("OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4328\n");
+    expect(env).toContain("OTEL_TRACES_EXPORTER=none\n");
+  });
+
+  it("logs a failed estate and carries on", () => {
+    const { tmp, bin } = setup(`echo "the index could not be read" >&2\nexit 1`);
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("carried-on");
+    expect(r.stderr).toContain("estate: terragucci estate failed; the delivery numbers stay as they were");
+    expect(r.stderr).toContain("the index could not be read");
+  });
+
+  it("stops an estate past its limit and carries on", () => {
+    const { tmp, bin } = setup("exec sleep 30");
+    const started = Date.now();
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on", "LIMIT_ESTATE=1");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("carried-on");
+    expect(r.stderr).toContain("estate: terragucci estate ran past 1s and was stopped");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("runs no estate for the chant repo, whose pipeline writes no terragucci reports", () => {
+    const { tmp, bin } = setup("echo ran");
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on", "TOOL=chant");
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(tmp, "args"))).toBe(false);
+  });
+
+  it("audits twice in one cycle, as the failure scenario does, each in a clone of its own", () => {
+    const { tmp, bin } = setup(`echo "audit: 3 entries, 1 added"`);
+    const git = "git -c user.name=t -c user.email=t@t -c init.defaultBranch=main";
+    const init = spawnSync("bash", ["-c", `${git} init -q origin && cd origin && echo a > a && ${git} add . && ${git} commit -qm base`], { cwd: tmp, encoding: "utf8" });
+    expect(init.status, init.stderr).toBe(0);
+    const r = driver(tmp, bin, "audit_trail\naudit_trail", `REMOTE=${tmp}/origin`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain("could not clone");
+    expect(r.stderr.match(/\[demo\] audit: audit: 3 entries, 1 added/g)).toHaveLength(2);
   });
 });
 
