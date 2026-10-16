@@ -58,7 +58,7 @@
 #     "index": 1, "scenarios": 2,
 #     "step": "waiting", "label": "Wave 2 stops and waits for a person to approve it. ...",
 #     "started_at": "2026-10-20T10:00:00Z",
-#     "next": { "action": "approve wave-2", "at": "2026-10-20T10:04:20Z" },
+#     "next": { "action": "approve wave-2", "from": "2026-10-20T10:04:00Z", "at": "2026-10-20T10:04:20Z" },
 #     "pull": 41, "commit": "<sha>",
 #     "about": { "changes": "...", "watch": "...", "shows": "..." },
 #     "delivery": "Counted from this demo loop's own runs, ..." }
@@ -66,6 +66,10 @@
 # step is one of pull-request, planned, merged, applying, waiting, approved,
 # failed, resumed, applied, reset and stalled. next is null at stalled; next.at
 # is null while the driver waits on the pipeline rather than on its own clock.
+# next.from is when the driver started waiting for that action: a write that
+# keeps the same action and at keeps its from, so a reader can draw how far the
+# wait has gone. An older driver leaves it out, so readers take it as
+# optional.
 # pull and commit are null until the cycle has them. about is the scenario's
 # card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
@@ -485,11 +489,21 @@ view_follow() {
   log "view: could not check out ${COMMIT:0:8} in $dir after $try tries; the next step tries again: $(awk '/^(fatal|error):/ && !f { f = $0 } NF { l = $0 } END { print (f != "" ? f : l) }' <<<"$err")"
 }
 
+# The action and deadline the driver last wrote as next, and when it started
+# waiting for them: next.from stays put while a write repeats both.
+NEXT_KEY="" NEXT_FROM=""
 demo_write() { # step, label, [next action], [next at, epoch seconds]
   local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null
   view_follow
   [ -z "$at" ] || at_iso="$(iso "$at")"
-  [ -z "$action" ] || next="$(jq -cn --arg a "$action" --arg t "$at_iso" '{action: $a, at: (if $t == "" then null else $t end)}')"
+  if [ -z "$action" ]; then
+    NEXT_KEY="" NEXT_FROM=""
+  else
+    if [ "$action|$at_iso" != "${NEXT_KEY:-}" ] || [ -z "${NEXT_FROM:-}" ]; then
+      NEXT_KEY="$action|$at_iso" NEXT_FROM="$(now)"
+    fi
+    next="$(jq -cn --arg a "$action" --arg f "$(iso "$NEXT_FROM")" --arg t "$at_iso" '{action: $a, from: $f, at: (if $t == "" then null else $t end)}')"
+  fi
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
     --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
@@ -545,6 +559,7 @@ demo_stalled() {
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
       pull: ($last.pull // null), commit: ($last.commit // null), about: $about}' > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
+  NEXT_KEY="" NEXT_FROM=""
   log "cycle $CYCLE $SCENARIO: stalled: $reason"
   demo_put
 }
