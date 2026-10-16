@@ -52,12 +52,12 @@ export const LIMITS: { label: string; why: string; href?: string }[] = [
 	{ label: 'A server or database to run', why: 'Every job runs in your CI and writes to your git and your bucket.', href: '/concepts/how-it-works/#components' },
 ];
 
-/** The repo shapes, each a tile on the picker with a short line under its name. */
-export const SHAPES: { id: string; label: string; blurb: string; room: string }[] = [
+/** The repo shapes, each a tile on the picker with a short line under its name, unless `picker` is false. */
+export const SHAPES: { id: string; label: string; blurb: string; room: string; picker?: false }[] = [
 	{ id: 'plain', label: 'Plain roots', blurb: 'Directories of .tf files', room: 'plain-roots' },
 	{ id: 'terragrunt', label: 'Terragrunt', blurb: 'Units, stacks, Scale', room: 'terragrunt' },
 	{ id: 'atmos', label: 'Atmos', blurb: 'Component instances', room: 'atmos' },
-	{ id: 'terramate', label: 'Terramate', blurb: 'Stacks with order', room: 'terramate' },
+	{ id: 'terramate', label: 'Terramate', blurb: 'Stacks with order', room: 'terramate', picker: false },
 	{ id: 'cdktn', label: 'CDK Terrain', blurb: 'Synthesized stacks', room: 'cdk-terrain' },
 ];
 
