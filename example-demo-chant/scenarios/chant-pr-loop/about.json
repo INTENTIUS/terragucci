@@ -1,0 +1,5 @@
+{
+  "changes": "A pull request (a change up for review) adds a resource to each of three chant components.",
+  "watch": "chant plans each component and posts one note with the plan's digest. A reviewer approves that digest, and the merge applies the components in waves.",
+  "shows": "What applied is what the review showed: the merge planned again and got the approved digest."
+}

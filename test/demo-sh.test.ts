@@ -50,6 +50,12 @@ describe("stack/demo.sh under pipefail", () => {
     expect(r.stdout.trim().split("\n").map((l) => l.split(" ")[0])).toEqual(["app", "edge", "network", "other"]);
   });
 
+  it("reads the chant tree's state bucket and root keys, its components' Terraform roots", () => {
+    const r = run(`tree_bucket example-demo-chant; tree_keys example-demo-chant chant`);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["demo-chant-state", "app app.tfstate", "edge edge.tfstate", "network network.tfstate"]);
+  });
+
   it("has no pipeline whose reader exits before its writer is done", () => {
     for (const f of ["demo.sh", "bootstrap.sh", "lib.sh"]) {
       const text = readFileSync(join(root, "stack", f), "utf8");
