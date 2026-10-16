@@ -34,7 +34,7 @@ import { readStateVersions, type StateVersions } from "./report/state-versions";
 import { readStateEdges, type StateEdges } from "./report/state-edges";
 import { RUN_SCHEMA, runViewKey, type RunView } from "./report/run-view";
 import { changesKey, edgesKey, inventoryKey, statesKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
-import { buildDora, DORA_FILE, doraGauges, duration, type Dora } from "./report/dora";
+import { buildDora, DORA_FILE, doraGauges, duration, spanLabel, type Dora } from "./report/dora";
 import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
 import { EPHEMERAL_SCHEMA, ephemeralKey, type EphemeralList } from "./ephemeral";
 import { version as VERSION } from "../package.json";
@@ -350,7 +350,7 @@ export function describeEstate(r: EstateResult, cwd: string): string {
   }
   const d = r.dora;
   const c = d.estate.change_failure.rate;
-  lines.push(`dora: ${d.estate.per_week} deployments per week, lead time ${duration(d.estate.lead_time.median_seconds)}, change failure rate ${c === null ? "none" : `${Math.round(c * 1000) / 10}%`}, time to restore ${duration(d.estate.restore.median_seconds)}`);
+  lines.push(`dora: ${d.estate.per_week} deployments per week (${d.estate.deployments} in ${spanLabel(d.estate.span_seconds)}), lead time ${duration(d.estate.lead_time.median_seconds)}, change failure rate ${c === null ? "none" : `${Math.round(c * 1000) / 10}%`}, time to restore ${duration(d.estate.restore.median_seconds)}`);
   if (r.metrics) lines.push("sent" in r.metrics ? `sent ${plural(r.metrics.sent, "DORA gauge", "DORA gauges")}` : `the DORA gauges were not sent: ${r.metrics.problem}`);
   lines.push(`wrote ${listed(r.files.map((f) => (f.startsWith(cwd + "/") ? f.slice(cwd.length + 1) : f)))}`);
   if (r.uploaded) lines.push(`copied to ${named(r.uploaded.bucket)}/${listed(r.uploaded.keys)}`);

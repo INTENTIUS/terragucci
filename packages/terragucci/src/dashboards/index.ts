@@ -327,7 +327,7 @@ function estate(s: Required<DashboardSettings>, links: DashboardLinks): Dashboar
     new Row({
       title: "Delivery",
       panels: [
-        series("Deployments per week", "Applied waves per week over the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.", ds, dora(METRIC.doraDeployments, [P]), "{{project}}"),
+        series("Deployments per week", "Applied waves per week over the span each project's history covers, up to the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.", ds, dora(METRIC.doraDeployments, [P]), "{{project}}"),
         series("Lead time", "Median time from a change's first plan to its wave applied, by project.", ds, dora(METRIC.doraLeadTime, [P, ["segment", "=", "total"]]), "{{project}}", "s"),
         series("Change failure rate", "Failed applies and applied waves followed by drift, over all applies, by project.", ds, dora(METRIC.doraFailureRate, [P]), "{{project}}", "percentunit"),
         series("Time to restore", "Median time from a failed apply or drift found to restored, by project.", ds, dora(METRIC.doraRestore, [P]), "{{project}}", "s"),

@@ -2482,7 +2482,7 @@
             "type": "timeseries",
             "id": 5,
             "title": "Deployments per week",
-            "description": "Applied waves per week over the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.",
+            "description": "Applied waves per week over the span each project's history covers, up to the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.",
             "gridPos": {
               "h": 8,
               "w": 12,
@@ -2845,7 +2845,7 @@
             "type": "timeseries",
             "id": 5,
             "title": "Deployments per week",
-            "description": "Applied waves per week over the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.",
+            "description": "Applied waves per week over the span each project's history covers, up to the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.",
             "gridPos": {
               "h": 8,
               "w": 12,
