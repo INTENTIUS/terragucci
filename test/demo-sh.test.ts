@@ -111,3 +111,24 @@ describe("view_follow", () => {
     expect(missing.stderr).toContain("view: no checkout /nowhere/demo.change");
   });
 });
+
+// A rollback to the release before SQL Yodeler's migrations (0.4.22) runs that
+// release's loop, or its up, on what this one's up left (behold#571).
+describe("up, for a rollback", () => {
+  it("replaces base-tree and base.sha only once the base applied, after the last step that can fail", () => {
+    const up = fn("up_repo");
+    const swap = up.indexOf('mv "$bt" "$RSTATE/base-tree"');
+    expect(swap).toBeGreaterThan(-1);
+    // Before the swap, the base is built and pushed from base-tree.new alone.
+    expect(up.slice(0, swap).match(/"\$RSTATE\/base-tree"/g)).toEqual(['"$RSTATE/base-tree"']);
+    expect(up).toContain('rm -rf "$RSTATE/base-tree"\n  mv "$bt" "$RSTATE/base-tree"');
+    expect(up.indexOf('echo "$sha" > "$RSTATE/base.sha"')).toBeGreaterThan(swap);
+    for (const step of ["wait_run", "db_snapshot", "has no state in floci after the base applied"]) expect(up.indexOf(step)).toBeLessThan(swap);
+  });
+
+  it("writes its snapshots to <state>/snapshots and leaves the older release's <state>/base as it was", () => {
+    expect(fn("snapshot")).toContain('"$RSTATE/snapshots/');
+    const writes = demo.split("\n").filter((l) => /RSTATE\/base\//.test(l));
+    expect(writes).toEqual([expect.stringContaining('cp -p "$RSTATE/base/"*.tfstate "$RSTATE/snapshots/"')]);
+  });
+});
