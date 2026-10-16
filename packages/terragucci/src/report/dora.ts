@@ -76,7 +76,7 @@ export interface DoraMetrics {
   /** Applied waves in the window, and per week over span_seconds. */
   deployments: number;
   per_week: number;
-  /** What per_week divides by: from the newest apply in the window back to the oldest apply, or to the window's start when the history is older; at least DORA_MIN_SPAN_SECONDS. The window's length when the window holds no apply. */
+  /** What per_week divides by: from now (the estate run's time) back to the oldest apply on record, or to the window's start when the history is older; at least DORA_MIN_SPAN_SECONDS. With no apply on record, the window. */
   span_seconds: number;
   lead_time: DoraLeadTime;
   change_failure: { applies: number; failed: number; drifted: number; rate: number | null };
@@ -343,16 +343,15 @@ const merge = (all: Events[]): Events => ({
 const WEEK_SECONDS = 7 * 86400;
 
 /**
- * The span a deployment rate covers: the newest apply in the window back to
- * the later of the oldest apply on record and the window's start, at least a
- * day. A project younger than the window is not divided by weeks it did not
- * exist for. With no apply in the window, the window itself.
+ * The span a deployment rate covers: `now`, the run's clock, back to the
+ * later of the oldest apply on record and the window's start, at least a day.
+ * A project younger than the window is not divided by weeks it did not exist
+ * for, and one that stopped deploying is still divided by the time since.
+ * With no apply on record, the window itself.
  */
-function spanOf(all: Apply[], inside: Apply[], from: number, now: number): number {
-  if (inside.length === 0) return secs(from, now);
-  const newest = Math.max(...inside.map((a) => a.at));
-  const oldest = Math.min(...all.map((a) => a.at));
-  return Math.max(DORA_MIN_SPAN_SECONDS, secs(Math.max(oldest, from), newest));
+function spanOf(all: Apply[], from: number, now: number): number {
+  const start = all.length ? Math.max(from, Math.min(...all.map((a) => a.at))) : from;
+  return Math.max(DORA_MIN_SPAN_SECONDS, secs(start, now));
 }
 
 /** "32 hours", "9 days", "8 weeks", "7.4 weeks": a span as the page names it. */
@@ -372,7 +371,7 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
   const drift = applies.filter((a) => ev.drifted.has(a)).length;
   const leads = inside(ev.leads);
   const restores = inside(ev.restores);
-  const span = spanOf(ev.applies, applies, from, now);
+  const span = spanOf(ev.applies, from, now);
   const trend: DoraWeek[] = [];
   for (let w = 0; w < DORA_WEEKS; w++) {
     const start = from + w * 7 * 86400 * 1000;
@@ -456,7 +455,7 @@ export function renderDoraSection(dora: Dora, link: (project: string) => string)
   );
   return `<p>The newest ${dora.weeks} weeks, from the audit trail and each project's index${dora.audit ? "" : `. <span class="warn">No audit trail was read, so no apply counts: run terragucci audit before terragucci estate.</span>`}</p>
 <dl class="defs">
-<dt>Deployment frequency</dt><dd>Applied waves per week, over the span the history covers: from the newest apply back to the oldest one, or to the window's start when the history is older, and at least a day. Beside each rate is the span it divides by. Infrastructure ships less often than an application, so read it as a trend, not against a tier.</dd>
+<dt>Deployment frequency</dt><dd>Applied waves per week, over the span the history covers: from now back to the oldest apply, or to the window's start when the history is older, and at least a day. Beside each rate is the span it divides by. Infrastructure ships less often than an application, so read it as a trend, not against a tier.</dd>
 <dt>Lead time</dt><dd>The median time from a change's first plan to its wave applied: before the gate (the plan to the wave reaching its gate, or to the apply when no gate held it), at the gate (until the approval), and after it (until applied).</dd>
 <dt>Change failure rate</dt><dd>Failed applies, plus applied waves whose roots drifted within ${duration(dora.drift_window_seconds)}, over all applies. A refused wave is the gate working and does not count.</dd>
 <dt>Time to restore</dt><dd>The median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none.</dd>

@@ -39,7 +39,7 @@
     }
   },
   "$defs": {
-    "span_seconds": { "type": "integer", "description": "What per_week divides by: from the newest apply in the window back to the oldest apply, or to the window's start when the history is older; at least a day. The window's length when it holds no apply. Absent from files written before it was added." },
+    "span_seconds": { "type": "integer", "description": "What per_week divides by: from generated back to the oldest apply on record, or to the window's start when the history is older; at least a day. With no apply on record, the window's length. Absent from files written before it was added." },
     "seconds": { "type": ["integer", "null"], "description": "A median in seconds; null when nothing counts." },
     "metrics": {
       "type": "object",

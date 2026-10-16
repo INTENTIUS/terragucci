@@ -29,7 +29,7 @@ Infrastructure ships less often than an application. The page shows frequency pe
 
 Every number covers the newest eight weeks (Monday to Sunday in UTC, current week included). Each week also has its own row, `trend` in `dora.json`, with the same counts for that week alone.
 
-The deployment rate divides by the span the history covers, not by eight weeks. The span runs from the newest apply in the window back to the oldest apply on record, or back to the window's start when the record is older, and is at least a day. A project whose first apply was 32 hours ago reads its applies per week over those 32 hours. The page names the span beside each rate ("12 in 32 hours", "20 in 7.4 weeks"), and `dora.json` holds it as `span_seconds`. With no apply in the window, the span is the window.
+The deployment rate divides by the span the history covers, not by eight weeks. The span runs from when `terragucci estate` ran back to the oldest apply on record, or back to the window's start when the record is older, and is at least a day. A project whose first apply was 32 hours ago reads its applies per week over those 32 hours, and a project that stopped deploying keeps counting the weeks since. The page names the span beside each rate ("12 in 32 hours", "20 in 7.4 weeks"), and `dora.json` holds it as `span_seconds`. With no apply on record, the span is the window.
 
 Lead time, change failure rate and time to restore are medians and ratios of what the window holds. A short history gives them fewer samples, but no weeks it never had.
 

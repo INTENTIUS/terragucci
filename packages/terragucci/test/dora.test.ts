@@ -77,8 +77,8 @@ describe("the DORA metrics", () => {
     expect(d.window).toEqual({ from: "2026-08-17T00:00:00.000Z", to: NOW.toISOString() });
     const m = d.projects[0];
     expect(m.deployments).toBe(3);
-    // The apply ten weeks ago makes the history older than the window, so the rate runs from the window's start to the newest apply.
-    const span = (Date.parse(t(6, 13)) - Date.parse(d.window.from)) / 1000;
+    // The apply ten weeks ago makes the history older than the window, so the rate runs from the window's start to now.
+    const span = (NOW.getTime() - Date.parse(d.window.from)) / 1000;
     expect(m.span_seconds).toBe(span);
     expect(m.per_week).toBe(Math.round(((3 * 7 * 86400) / span) * 100) / 100);
     // 7800s (08:00 to 10:10: 5400 before the gate, 1800 at it, 600 after) and 1200s (no gate); change 4 had no plan.
@@ -193,8 +193,8 @@ describe("the DORA metrics", () => {
     const { sources, entries } = oneProject();
     const g = doraGauges(buildDora(sources, entries, NOW));
     const of = (name: string, project: string, segment?: string) => g.find((x) => x.name === name && x.attributes.project === project && x.attributes.segment === segment)?.value;
-    expect(of(DORA_METRIC.deployments, "*")).toBe(0.42);
-    expect(g.find((x) => x.name === DORA_METRIC.deployments)?.description).toBe("Applied waves per week over the newest 7.2 weeks, the span the history covers in the 8-week window.");
+    expect(of(DORA_METRIC.deployments, "*")).toBe(0.41);
+    expect(g.find((x) => x.name === DORA_METRIC.deployments)?.description).toBe("Applied waves per week over the newest 7.4 weeks, the span the history covers in the 8-week window.");
     expect(of(DORA_METRIC.leadTime, P, "total")).toBe(4500);
     expect(of(DORA_METRIC.leadTime, P, "at_gate")).toBe(900);
     expect(of(DORA_METRIC.failureRate, P)).toBe(0.5);
@@ -222,17 +222,17 @@ describe("the span a deployment rate divides by", () => {
     expect(line).toContain("dora: 173.25 deployments per week (33 in 32 hours), ");
   });
 
-  it("a history longer than the window divides by the window's start to the newest apply", () => {
+  it("a history longer than the window divides by the window's start to now", () => {
     // An apply a year ago, and one a day for the newest four weeks.
     const daily = Array.from({ length: 28 }, (_, i) => entry({ kind: "apply", at: new Date(Date.parse(t(7, 6)) - i * 86400 * 1000).toISOString(), result: "applied", detail: { roots: ["app"] } }));
     const old = entry({ kind: "apply", at: "2025-10-01T00:00:00.000Z", result: "applied", detail: { roots: ["app"] } });
     const d = buildDora([{ project: P, rows: [] }], [old, ...daily], NOW);
-    const span = (Date.parse(t(7, 6)) - Date.parse(d.window.from)) / 1000;
+    const span = (NOW.getTime() - Date.parse(d.window.from)) / 1000;
     expect(d.estate.deployments).toBe(28);
     expect(d.estate.span_seconds).toBe(span);
     expect(d.estate.per_week).toBe(Math.round(((28 * 7 * 86400) / span) * 100) / 100);
     expect(renderDoraSection(d, (p) => p)).toContain(`(28 in ${spanLabel(span)})`);
-    expect(spanLabel(span)).toBe("7.3 weeks");
+    expect(spanLabel(span)).toBe("7.4 weeks");
   });
 
   it("a single apply divides by the floor of a day", () => {
@@ -240,6 +240,14 @@ describe("the span a deployment rate divides by", () => {
     expect(d.estate.span_seconds).toBe(86400);
     expect(d.estate.per_week).toBe(7);
     expect(renderDoraSection(d, (p) => p)).toContain("7 <small>(1 in 24 hours)</small>");
+  });
+
+  it("a project whose only apply was 7 weeks ago divides by those 7 weeks, not by a day", () => {
+    const d = buildDora([{ project: P, rows: [] }], hourly(NOW.getTime() - 49 * 86400 * 1000, 1), NOW);
+    expect(d.estate.deployments).toBe(1);
+    expect(d.estate.span_seconds).toBe(49 * 86400);
+    expect(d.estate.per_week).toBe(0.14);
+    expect(renderDoraSection(d, (p) => p)).toContain("0.14 <small>(1 in 7 weeks)</small>");
   });
 
   it("an empty history reads zero over the window", () => {
