@@ -117,7 +117,7 @@ Every `index.json` in the bucket is `terragucci.report-index/v1` (JSON Schema `d
 | `project`, `commit`, `stage`, `wave`, `finished`, `path` | the run, and its directory relative to the index |
 | `share` | the share of a `tf-apply` wave split across jobs; each share has its own row |
 | `roots`, `groups`, `totals`, `refused` | the report's counts |
-| `failed` | roots that failed to plan or apply |
+| `failed` | roots that failed to plan or apply; on a `tf-apply` wave whose apply failed, every root of the wave |
 | `changed` | roots with a change; on a `tf-drift` row, the roots that drifted |
 | `wave_digests` | on a `tf-plan` row, each wave's set digest and review digest: the digests an apply of the same plans binds |
 | `drifted_roots` | on a `tf-drift` row, up to 50 of the roots that drifted |

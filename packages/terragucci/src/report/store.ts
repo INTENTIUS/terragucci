@@ -30,7 +30,7 @@ import { addToInventory, inventoryRoots } from "./inventory";
 import { addToStateVersions, stateRecords } from "./state-versions";
 import { addToStateEdges, hasEdgeFacts } from "./state-edges";
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
-import type { Report } from "./schema";
+import { failedRoots, type Report } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
 
@@ -152,7 +152,7 @@ export interface IndexEntry {
   groups: number;
   totals: { create: number; update: number; replace: number; delete: number };
   refused: number;
-  /** Roots that failed to plan or apply (a provisional preview never counts). Absent on rows written before it was kept. */
+  /** Roots that failed to plan or apply (a provisional preview never counts); on a tf-apply wave whose apply failed, every root of the wave. Absent on rows written before it was kept. */
   failed?: number;
   /** Roots with at least one change; on a tf-drift row, the roots that drifted. */
   changed?: number;
@@ -201,7 +201,7 @@ export const INDEX_DESTROYS = 50;
 export function indexEntry(report: Report, path: string): IndexEntry {
   const t = report.totals;
   const destroys = report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => `${n.root}: ${n.address}`);
-  const failed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).length;
+  const failed = failedRoots(report).length;
   const wave = report.run.stage === "tf-apply" ? report.waves[0] : undefined;
   const approval = wave && wave.approval !== "not-requested" ? wave.approval : undefined;
   const overridden = report.roots.filter((r) => r.policy?.override).length;
