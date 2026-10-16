@@ -29,10 +29,18 @@
  * 3. with neither, every read counts as unknown: the wave is held, and the
  *    log says why.
  *
+ * An Atmos `!terraform.state` read and a Terramate `input` (#1053) are
+ * planned in the pull request on the upstream's applied state, never on its
+ * plan, so the review saw none of the upstream's change: such a read
+ * (`review: "applied"`) holds the wave when a plan that changes the upstream
+ * changes, deletes or leaves unknown an output it reads, known or not. The
+ * pull request's report cannot say what that change moved, so with no plan
+ * of the upstream to read, the read holds the wave.
+ *
  * Nothing here reads the forge or the bucket: the caller hands in each
  * carrier as a function, and this module decides from what they return.
  */
-import { plannedOutputs, unknownOutputs } from "./planned-outputs";
+import { changedOutputs, plannedOutputs, unknownOutputs } from "./planned-outputs";
 import { changesSomething } from "./report/changing";
 import type { Report } from "./report/schema";
 
@@ -42,6 +50,12 @@ export interface WaveRead {
   upstream: string;
   wave: number;
   outputs?: ReadonlySet<string>;
+  /**
+   * `applied`: the pull request planned the root on the upstream's applied
+   * state, not its planned outputs (an Atmos `!terraform.state` read, a
+   * Terramate `input`), so any change to an output it reads was unseen.
+   */
+  review?: "applied";
 }
 
 /** Which carrier settled a read: the upstream's plan in this push, the pull request's report, or none. */
@@ -116,7 +130,7 @@ export async function unknownReads(reads: readonly WaveRead[], carriers: ReadCar
     const got = await planOf(r);
     // A plan that changes the upstream is one whose outputs the change's reviewers could not see; one that changes nothing
     // counts only as the first plan of the upstream at this commit, which leaves its outputs as they were applied before.
-    const changing: { from: string; outputs: NonNullable<ReturnType<typeof plannedOutputs>> }[] = [];
+    const changing: { from: string; names: string[] }[] = [];
     for (const g of got) {
       const outputs = plannedOutputs(g.plan);
       if (!changesSomething(g.plan)) {
@@ -128,22 +142,28 @@ export async function unknownReads(reads: readonly WaveRead[], carriers: ReadCar
         }
         if (!said.has(g.from)) lines.push(`${g.from} changes nothing, and no earlier run of this commit applied ${r.upstream}, so its outputs were known when the change was reviewed`);
         said.add(g.from);
-        changing.push({ from: g.from, outputs: outputs ?? { outputs: new Map(), changed: false } });
+        changing.push({ from: g.from, names: r.review === "applied" ? [] : unknownOutputs(outputs?.outputs ?? new Map(), r.outputs) });
         continue;
       }
-      if (outputs) changing.push({ from: g.from, outputs });
+      if (outputs) changing.push({ from: g.from, names: r.review === "applied" ? changedOutputs(g.plan, r.outputs) : unknownOutputs(outputs.outputs, r.outputs) });
     }
     if (changing.length === 0) {
       left.push(r);
       continue;
     }
-    const held = changing.map((c) => ({ from: c.from, names: unknownOutputs(c.outputs.outputs, r.outputs) })).filter((c) => c.names.length > 0);
-    if (held.length) unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [...new Set(held.flatMap((c) => c.names))].sort(), carrier: "upstream-plan", from: held.map((c) => c.from).join(", ") });
-    else lines.push(`${r.root} reads no output of ${r.upstream} that ${changing.map((c) => c.from).join(", ")} left unknown`);
+    const held = changing.filter((c) => c.names.length > 0);
+    if (held.length) unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [...new Set(held.flatMap((c) => c.names))].sort(), carrier: "upstream-plan", from: held.map((c) => c.from).join(", "), ...(r.review ? { review: r.review } : {}) });
+    else lines.push(`${r.root} reads no output of ${r.upstream} that ${changing.map((c) => c.from).join(", ")} ${r.review === "applied" ? "changes" : "left unknown"}`);
   }
   if (left.length === 0) return { unknown, lines };
-  const pulled = await carriers.pullReport().catch((e: Error): PullReport => ({ missing: `the pull request's report could not be read (${e.message.split("\n")[0]})` }));
+  // A read planned on the applied state is not asked of the pull request's report, which cannot say.
+  const asked = left.some((r) => r.review !== "applied");
+  const pulled: PullReport = asked ? await carriers.pullReport().catch((e: Error): PullReport => ({ missing: `the pull request's report could not be read (${e.message.split("\n")[0]})` })) : { missing: "" };
   for (const r of left) {
+    if (r.review === "applied") {
+      unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [], carrier: "none", review: r.review, why: `this push has no plan that changes ${r.upstream} the wave can read, and the pull request planned ${r.root} on the applied state of ${r.upstream}, so its report cannot say whether the change moved what ${r.root} reads` });
+      continue;
+    }
     if ("missing" in pulled) {
       unknown.push({ root: r.root, upstream: r.upstream, wave: r.wave, outputs: [], carrier: "none", why: `this push has no plan that changes ${r.upstream} the wave can read, and ${pulled.missing}` });
       continue;
@@ -182,5 +202,6 @@ export function pullRequestSays(report: Report, r: WaveRead): { unknown: boolean
 export function unknownReadLine(u: UnknownRead): string {
   if (u.carrier === "none") return `${u.root} reads the state of ${u.upstream}, which wave ${u.wave} applied, and nothing says whether the outputs it reads were known when the change was reviewed: ${u.why}`;
   const what = u.outputs.length ? `${u.outputs.join(", ")} of ${u.upstream}` : `outputs of ${u.upstream}`;
+  if (u.review === "applied") return `${u.root} reads ${what}, which ${u.from} changes; the pull request planned ${u.root} on the state ${u.upstream} had before, so its review showed none of what wave ${u.wave} applied`;
   return `${u.root} read ${what}, unknown in ${u.from} and known only once wave ${u.wave} applied it`;
 }
