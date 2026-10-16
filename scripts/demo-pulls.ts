@@ -18,8 +18,9 @@
 // Then, at most every DEMO_PULLS_MAINTENANCE_EVERY seconds (3600), it asks
 // Forgejo to run two of its cron tasks (POST /api/v1/admin/cron/{task}, site
 // admin): git_gc_repos, `git gc` in every repo, which packs the loose objects
-// and the refs; and cleanup_actions, which removes the artifacts and logs of
-// the runs the reset deleted (Forgejo otherwise does that at midnight).
+// and the refs; and cleanup_actions, which removes the artifacts of the runs
+// the reset deleted (their logs go with them; Forgejo otherwise clears the
+// artifacts at midnight).
 //
 // Everything comes from the environment the driver sets:
 //   DEMO_PULLS_FORGE_URL, DEMO_PULLS_TOKEN       Forgejo, and the admin's token (a site admin, scope all)
