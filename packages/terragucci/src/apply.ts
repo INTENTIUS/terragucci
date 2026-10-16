@@ -140,7 +140,7 @@ import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type 
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { backendBootstrap } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
-import { fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
+import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
@@ -1817,8 +1817,9 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   for (const [r, h] of composed?.holds ?? []) console.log(`${label}: ${r}: step ${h.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
   // A root that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
+  // An Atmos or Terramate read was reviewed on the upstream's applied state: one the change moved holds it the same way (#1053).
   // In a composed run, a root that reads another root's value unknown at plan time applies a value nobody reviewed: the same hold.
-  const linkedReads = deciding && changes > 0 && gate !== "never" ? [...rootReads(repo, waves, wave, w.reads, changing), ...(composed?.reads ?? [])] : [];
+  const linkedReads = deciding && changes > 0 && gate !== "never" ? [...rootReads(repo, waves, wave, w.reads, changing), ...toolReads(repo, waves, wave, changing), ...(composed?.reads ?? [])] : [];
   const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads)).length > 0;
   // A step that asks for an approval, or a change over cost.approve_above at base, holds the wave whatever the gate policy says.
   const byGate = gate === "always" || (gate === "on-destructive" && destroys > 0) || heldBySteps.length > 0 || byReads;
@@ -2486,6 +2487,30 @@ function rootReads(repo: string, waves: readonly string[][], wave: number, reads
       const had = out.get(id);
       const merged = had ? (had.outputs && outputs ? new Set([...had.outputs, ...outputs]) : undefined) : outputs;
       out.set(id, { root, upstream: r.upstream, wave: k, ...(merged ? { outputs: merged } : {}) });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * A wave's Atmos `!terraform.state` reads and Terramate `input` blocks of
+ * roots in earlier waves, by each of `readers`: the reads in the edges beside
+ * the root (./atmos.ts), which fillReads filled from the state the
+ * upstream's wave applied, and the outputs they read. The pull request
+ * planned them on the upstream's applied state, so each is a read of
+ * `review: "applied"`. Reads of the same upstream by one root are one read.
+ */
+function toolReads(repo: string, waves: readonly string[][], wave: number, readers: ReadonlySet<string>): WaveRead[] {
+  const waveOf = new Map(waves.flatMap((rs, i) => rs.map((r) => [r, i + 1] as const)));
+  const out = new Map<string, WaveRead & { outputs: Set<string> }>();
+  for (const root of [...readers].sort()) {
+    for (const r of atmosEdges(join(repo, root))?.reads ?? []) {
+      const k = waveOf.get(r.upstream);
+      if (k === undefined || k >= wave || r.output.length === 0) continue;
+      const id = `${root}\n${r.upstream}`;
+      const had = out.get(id) ?? { root, upstream: r.upstream, wave: k, outputs: new Set<string>(), review: "applied" as const };
+      had.outputs.add(r.output[0]!);
+      out.set(id, had);
     }
   }
   return [...out.values()];
