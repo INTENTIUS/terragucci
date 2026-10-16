@@ -1,14 +1,19 @@
 ---
-title: Changes in 0.4.28
-description: "terragucci 0.4.28, released 2026-10-16."
+title: Changes in 0.4.29
+description: "terragucci 0.4.29, released 2026-10-16."
 ---
 
-Release `0.4.28` is on npm as `@intentius/terragucci@0.4.28`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.28) lists every change.
+Release `0.4.29` is on npm as `@intentius/terragucci@0.4.29`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.29) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.28 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.29 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.29
+
+- An apply whose wave failed counts as a failed change (#1102).
+- A failed view checkout is retried (#1104).
 
 ## In 0.4.28
 
