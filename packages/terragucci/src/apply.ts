@@ -2924,6 +2924,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
         if (asked) {
           w.gateSince = asked;
           w.approvedAt = d.approvedAt;
+          facts.held = { since: asked, approvedAt: d.approvedAt };
         }
       } catch {
         // The run view's gate span is left out.

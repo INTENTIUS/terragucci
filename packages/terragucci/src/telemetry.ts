@@ -13,6 +13,7 @@
  *   OTEL_SDK_DISABLED=true                 turns both off
  *   OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES
  *   TRACEPARENT                            the stage's trace joins it
+ *   TERRAGUCCI_METRICS_PER_RUN=true        each gauge also carries the run's commit and run id (report/observe.ts)
  *
  * The binary's own spans join the stage's trace through `TRACEPARENT` in its
  * environment (OpenTofu and choudoufu read it). A binary that ignores it,

@@ -49,6 +49,8 @@ export const METRIC = {
   waveWaitingSince: "terragucci_wave_waiting_since_seconds",
   waveSettled: "terragucci_wave_settled_seconds",
   waveRoots: "terragucci_wave_roots",
+  waveHeld: "terragucci_wave_held_seconds",
+  waveChanges: "terragucci_wave_changes",
   // terragucci estate's DORA metrics (report/dora.ts), per project and for the estate as project "*".
   doraDeployments: "terragucci_dora_deployments_per_week",
   doraLeadTime: "terragucci_dora_lead_time_seconds",
