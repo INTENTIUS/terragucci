@@ -182,6 +182,39 @@ A project's `states.json` holds the version ids its roots' applies left (never a
 | `roots[].checked` | when that apply finished |
 | `roots[].versions[]` | newest first: `version_id`, the `commit`, `wave` and `finished` time of the wave that recorded it, and its directory as `path` |
 
+## Estate rosters
+
+An estate's roster lists every resource it holds, so a viewer can draw the estate without reading the cloud. Each `tf-apply` wave's upload reads one from the plan it applied. After an estate migration writes its markers, wave 1 reads one out of each plan that verifies the write. Both reuse plans the job already made. The key is `<prefix>/estates/<estate>/roster.json`, and an example looks like this.
+
+```json
+{
+  "estate": "team",
+  "at": "2026-10-16T12:03:00.000Z",
+  "resources": [
+    { "address": "aws_sqs_queue.jobs", "type": "aws_sqs_queue", "live_id": "q-jobs", "marked": true },
+    { "address": "aws_sqs_queue_policy.jobs", "type": "aws_sqs_queue_policy", "marked": false, "follows": "aws_sqs_queue.jobs" }
+  ]
+}
+```
+
+| Field | What it holds |
+|---|---|
+| `estate` | the estate a `live` block names; for stock code, its directory path (`root` for the repo's top) |
+| `at` | when the job read it: the wave's end, or the migration's write |
+| `resources[]` | every managed resource the plan leaves, child modules included, by `address` |
+| `resources[].type` | the resource type |
+| `resources[].live_id` | the live resource's id, when the migration that wrote the roster retagged or stamped it |
+| `resources[].marked` | `true` when the planned object's `tofu-estate` marker (in `tags`, `tags_all`, or a Kubernetes object's metadata labels) names the estate; always `false` for stock code |
+| `resources[].follows` | the address of the resource it moved with in a retag, for an instance with no marker write of its own |
+
+Attribute values stay out of it: of the marker, only whether it names the estate is kept. An older roster never replaces a newer one at the same key. Stock code takes its path as the estate, so two projects with stock code at the same path share one key.
+
+`<prefix>/estates.json`, beside the reports index, is `terragucci.estates/v1` (`dist/estates.schema.json`). It has one entry per estate.
+
+| Field | What it holds |
+|---|---|
+| `estates[]` | by estate name: `estate`, its resource `count`, the roster's `at`, the `project` and `root` that wrote it, and `roster`, the roster's key relative to `estates.json` |
+
 ## Cross-state edges
 
 A project's `edges.json` holds, for each root, the roots whose state it reads and the runs that planned and applied it, as root paths and run facts with no state contents or output values. Its `schema` is `terragucci.state-edges/v1`, checked by `dist/state-edges.schema.json`. An upload writes it when a root of the report reads another's state, or when a `tf-apply` wave changed a root.
