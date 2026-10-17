@@ -415,6 +415,8 @@ A job runs on its stage's runner, or `default` when its stage has none; [Runners
 | Forgejo | `runs-on`: the label or the list as given; GitHub's hosted labels, such as `ubuntu-latest`, become `docker` | `group` |
 | GitLab | `tags`: the label or the list | `group` |
 
+`runner.apply` on runners of its own keeps the apply role, and the network those runners reach, away from pull request code: [Runners](/terragucci/reference/threat-model/#runners) in the threat model says what each runner setup leaves between jobs and who else can run a job on the apply runners.
+
 A project's `runner` in a control repo replaces the defaults' whole. Run `npx terragucci init` after a change; [Self-hosted runners](/terragucci/guides/add-to-a-repo/#self-hosted-runners) covers what the runner needs.
 
 ## Secrets and variables

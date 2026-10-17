@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { ForgeName, ProjectSettings } from "../src/config";
 import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "../src/groups";
-import { environmentAudienceTips, environmentTips, sharedApplyRoleTips, sharedRunnerTips } from "../src/environment-tips";
+import { environmentAudienceTips, environmentTips, planApplyRunnerTip, sharedApplyRoleTips, sharedRunnerTips } from "../src/environment-tips";
 import { SHARED_AUDIENCE_TIP, PERSISTENT_RUNNER_TIP, ENVIRONMENT_ROLE_TIP } from "../src/tips";
 import { renderPipeline, type PipelineInput } from "../src/render";
 import { withEnvironmentRoles } from "../src/environments";
@@ -141,6 +141,39 @@ describe("config check tips for environments", () => {
     expect(environmentTips(undefined, { runner: { plan: "x", apply: "x" } }, "gitlab")).toEqual([]);
   });
 
+  // #949: without environments, plan and apply on one self-hosted runner get the tip from runner alone.
+  it("plan and apply runner: names both stages and the labels, and what keeps other jobs off per forge", () => {
+    const one = planApplyRunnerTip({ runner: ["self-hosted", "linux"] }, "github")!;
+    expect(one.rule).toBe(PERSISTENT_RUNNER_TIP);
+    expect(one.message).toMatch(/^the plan jobs and the apply jobs can run on the same runner \(both on labels self-hosted, linux\), so a pull request's code planned there can leave files, caches or processes for an apply; give runner.apply labels no plan job uses/);
+    expect(one.message).toContain("only a runner group limited to selected workflows keeps those off");
+    // The default runner counts for a stage that names none.
+    expect(planApplyRunnerTip({ runner: { default: "deploy", apply: ["deploy", "prod"] } }, "gitlab")!.message).toContain("(plan on labels deploy, apply on labels deploy, prod)");
+    expect(planApplyRunnerTip({ runner: { default: "deploy", apply: ["deploy", "prod"] } }, "gitlab")!.message).toContain("only protected runners, which take jobs of protected refs alone, keep those off");
+    expect(planApplyRunnerTip({ runner: { plan: "box", apply: "box" } }, "forgejo")!.message).toContain("Forgejo has no per-workflow limit on a runner");
+    expect(planApplyRunnerTip({ runner: { plan: { group: "infra" }, apply: { group: "infra" } } }, "github")!.message).toContain("(both on group infra)");
+  });
+
+  it("plan and apply runner: silent for hosted runners, separate labels, no runner, and an environment with no runner of its own", () => {
+    expect(planApplyRunnerTip({}, "github")).toBeUndefined();
+    expect(planApplyRunnerTip({ runner: "ubuntu-24.04" }, "github")).toBeUndefined();
+    expect(planApplyRunnerTip({ runner: "ubuntu-24.04" }, undefined)).toBeUndefined();
+    expect(planApplyRunnerTip({ runner: { plan: "saas-linux-small-amd64", apply: "saas-linux-small-amd64" } }, "gitlab")).toBeUndefined();
+    expect(planApplyRunnerTip({ runner: { plan: ["self-hosted", "plan"], apply: ["self-hosted", "apply"] } }, "github")).toBeUndefined();
+    expect(planApplyRunnerTip({ runner: { plan: { group: "plans" }, apply: { group: "applies" } } }, "github")).toBeUndefined();
+    // Only the plan stage named: apply runs on the forge's default runner.
+    expect(planApplyRunnerTip({ runner: { plan: "deploy" } }, "gitlab")).toBeUndefined();
+    // An environment that takes runner.apply has its own tip naming the same runner.
+    expect(planApplyRunnerTip({ runner: "deploy", environments: { prod: { roots: ["envs/prod/**"] } } }, "gitlab")).toBeUndefined();
+    // Every environment on a runner of its own: the roots outside them still apply on runner.apply.
+    expect(planApplyRunnerTip({ runner: "deploy", environments: { prod: { roots: ["envs/prod/**"], runner: "prod" } } }, "gitlab")).toBeDefined();
+  });
+
+  it("GitLab.com's hosted runners (saas- tags) get no environment runner tip", () => {
+    const s: ProjectSettings = { runner: { plan: "saas-linux-small-amd64" }, environments: { prod: { roots: ["envs/prod/**"], runner: "saas-linux-small-amd64" }, dev: { roots: ["envs/dev/**"], runner: "saas-linux-small-amd64" } } };
+    expect(sharedRunnerTips(groups(s), s.runner, "gitlab")).toEqual([]);
+  });
+
   async function check(dir: string): Promise<{ code: number; out: string }> {
     const cwd = process.cwd();
     const out: string[] = [];
@@ -157,7 +190,7 @@ describe("config check tips for environments", () => {
   }
   const files = Object.fromEntries(roots.map((r) => [`${r}/main.tf`, backend(`${r}.tfstate`)]));
 
-  it("config check lists them under tips and exits 0; a config without environments gets none", async () => {
+  it("config check lists them under tips and exits 0; a config without environments gets the plan and apply runner tip alone", async () => {
     const yml = [
       "forge: gitlab",
       "runner: { plan: deploy, apply: deploy }",
@@ -175,7 +208,11 @@ describe("config check tips for environments", () => {
     expect(JSON.stringify(results.warnings ?? [])).not.toContain("runner");
     const plain = await check(write(tmp(), { ...files, "terragucci.yml": `forge: gitlab\nrunner: { plan: deploy, apply: deploy }\noidc: { plan_role: "${TOP.plan_role}", apply_role: "${TOP.apply_role}" }\n` }));
     expect(plain.code).toBe(0);
-    expect(JSON.parse(plain.out).results.tips).toBeUndefined();
+    // Without environments, the one tip is plan and apply on one runner (#949).
+    expect(JSON.parse(plain.out).results.tips).toEqual([{ rule: PERSISTENT_RUNNER_TIP, message: expect.stringMatching(/^the plan jobs and the apply jobs can run on the same runner \(both on labels deploy\)/) }]);
+    const apart = await check(write(tmp(), { ...files, "terragucci.yml": `forge: gitlab\nrunner: { plan: plans, apply: applies }\noidc: { plan_role: "${TOP.plan_role}", apply_role: "${TOP.apply_role}" }\n` }));
+    expect(apart.code).toBe(0);
+    expect(JSON.parse(apart.out).results.tips).toBeUndefined();
     expect(SHARED_SUBJECT_TIP).toBe("terragucci-shared-subject");
   });
 });
