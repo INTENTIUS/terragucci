@@ -262,6 +262,7 @@ export default defineConfig({
 						{ label: 'Job triggers', slug: 'concepts/job-triggers' },
 						{ label: 'Control repo', slug: 'concepts/control-repo' },
 						{ label: 'Setting levels', slug: 'concepts/setting-levels' },
+						{ label: 'Splitting a root', slug: 'concepts/splitting-a-root' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
