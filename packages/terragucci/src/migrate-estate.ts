@@ -289,7 +289,7 @@ async function planRetag(m: Migration, roots: string[], estates: Map<string, str
       before: { digest: sha(JSON.stringify({ estate: estates.get(root), ...(plan ? { changes: [...plan.changes].sort() } : {}), leaving: ids(leaving), joining: ids(joining) })) },
       after: { digest: sha(JSON.stringify({ estate: estates.get(root), changes: [] })) },
       // A joining root has no plan before the retag: its dry runs are its proof, and each one that refused stopped the migration above.
-      proof: plan ? { changes: plan.changes.filter((c) => !accounted.has(c)), summary: plan.summary } : { changes: [], summary: `live-mv -dry-run: ${joining.length} resource${joining.length === 1 ? "" : "s"} found in the estate${joining.length === 1 ? "" : "s"} they leave` },
+      proof: plan ? { changes: plan.changes.filter((c) => !accounted.has(c)), summary: plan.summary } : { changes: [], summary: `live-mv -dry-run: ${joining.length === 1 ? "1 resource found in the estate it leaves" : `${joining.length} resources found in the estates they leave`}` },
     });
     log(`${root}: ${plan ? proofLine(plan.changes, accounted, "the retag") : `not planned before the retag; live-mv -dry-run found ${joining.length === 1 ? "the resource that joins" : `each of the ${joining.length} resources that join`} it`}`);
   }
