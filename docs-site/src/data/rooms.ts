@@ -437,7 +437,8 @@ export const ROOMS: Room[] = [
 		lede: 'Setup by an agent, and four opt-in features that run a model.',
 		works: [
 			'An agent can run the setup and stops at a pull request; it never applies or approves',
-			'A read-only MCP server over the estate, the audit trail and the delivery metrics, running no model',
+			'An MCP server over the estate, the audit trail and the delivery metrics, running no model; with --propose it opens pull requests and reads their plans',
+			'A local guard that refuses an apply in a pipeline root from the agent\'s shell',
 			'Four opt-in features run a model, each off until you set it up with a model API key',
 		],
 		differs: ['On GitLab the agent comment and drift fixes are refused, and the review runs through the comments schedule.'],
@@ -448,6 +449,7 @@ export const ROOMS: Room[] = [
 			{ label: 'Model review of a pull request', href: '/guides/agent-review-a-pull-request/' },
 			{ label: 'Refused wave summaries', href: '/guides/agent-refused-wave/' },
 			{ label: 'The estate over MCP', href: '/guides/agent-read-over-mcp/' },
+			{ label: 'Changes proposed over MCP', href: '/guides/agent-propose-over-mcp/' },
 		],
 		explain: [{ label: 'Architecture', href: '/concepts/how-it-works/' }],
 		reference: [{ label: 'CLI commands', href: '/reference/cli/' }],

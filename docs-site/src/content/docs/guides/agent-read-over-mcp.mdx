@@ -10,7 +10,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-`terragucci mcp` is a read-only Model Context Protocol server on stdio. It serves only what terragucci already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and the repo, and runs no model of its own.
+`terragucci mcp` is a read-only Model Context Protocol server on stdio. It serves only what terragucci already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and the repo, and runs no model of its own. Started with `--propose`, it can also push a branch and open a pull request for the pipeline to plan: [Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/).
 
 ## Result
 
@@ -109,9 +109,11 @@ The `waiting` tool prints each waiting wave's `terragucci approve` command for a
 |---|---|
 | read what terragucci wrote: reports, the estate, state versions, the audit trail, DORA figures | `terragucci mcp` |
 | set terragucci up, check a config, write the pipeline, plan, run a response in dry run | the CLI with `--json` ([JSON output](/terragucci/reference/cli-json/)) |
+| get a change planned by the pipeline: push a branch, open a pull request, read its plan | `terragucci mcp --propose` ([propose a change](/terragucci/guides/agent-propose-over-mcp/)) |
 | approve, apply, override or merge | neither: a person does it |
 
 ## Next
 
+- [Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/) adds the tools that open a pull request.
 - [Set up with a coding agent](/terragucci/getting-started/agents/) gives the agent's rules.
 - [See every project](/terragucci/guides/see-every-project/) writes the estate page the `estate` tool reads.

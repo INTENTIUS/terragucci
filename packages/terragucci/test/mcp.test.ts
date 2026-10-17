@@ -5,13 +5,14 @@ import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { assertReadOnly, callTool, checkArgs, context, readOnlyStore, refusal, serve, TOOLS, type McpOptions, type Tool } from "../src/mcp";
+import { assertReadOnly, callTool, checkArgs, context, PROPOSE_TOOLS, PROPOSED_FOOTER, readOnlyStore, refusal, serve, TOOLS, type McpOptions, type Tool } from "../src/mcp";
+import type { Fetch } from "../src/forge";
 import { buildReport } from "../src/report/build";
 import { StoreError, type ObjectStore } from "../src/report/object-store";
 import type { Report } from "../src/report/schema";
 import { addToIndex, indexEntry, runPath } from "../src/report/store";
 import { RUN, smallFixture } from "./report-fixtures";
-import { tmp } from "./helpers";
+import { backend, bareFrom, git, tmp, write } from "./helpers";
 
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
 
@@ -211,6 +212,170 @@ describe("terragucci mcp", () => {
     expect(() => checkArgs(idx, { limit: 0 })).toThrow(/whole number from 1 to 500/);
     expect(() => checkArgs(idx, { stage: 3 })).toThrow(/must be a string/);
     expect(checkArgs(idx, { limit: 5 })).toEqual({ limit: 5 });
+  });
+});
+
+// ── --propose ────────────────────────────────────────────────────────────────
+
+/** A forgejo answering what propose, request_plan and plan_result ask, recording every call and what was sent. */
+function fakeForge(head: () => string) {
+  const calls: { method: string; path: string; body?: string }[] = [];
+  const fetch: Fetch = async (url, init) => {
+    const method = init?.method ?? "GET";
+    const u = new URL(url);
+    const path = u.pathname.replace(/^\/api\/v1/, "");
+    calls.push({ method, path, ...(init?.body !== undefined ? { body: init.body } : {}) });
+    let out: unknown = [];
+    if (path === "/repos/acme/infra") out = { default_branch: "main" };
+    else if (method === "POST" && path === "/repos/acme/infra/pulls") out = { number: 7, html_url: "https://forge.test/acme/infra/pulls/7", title: "t", body: "b", head: { ref: "feature" } };
+    else if (path === "/repos/acme/infra/pulls/7") out = { state: "open", head: { sha: head(), ref: "feature" }, html_url: "https://forge.test/acme/infra/pulls/7" };
+    else if (method === "POST" && path === "/repos/acme/infra/issues/7/comments") out = { id: 11, html_url: "https://forge.test/acme/infra/pulls/7#issuecomment-11" };
+    else if (path === "/repos/acme/infra/issues/7/comments" && (u.searchParams.get("page") ?? "1") === "1") out = [{ id: 10, body: "<!-- terragucci:plan roots=envs/prod/orders -->\nPlan: 1 to destroy", user: { login: "pipeline" } }];
+    return { ok: true, status: 200, json: async () => out, text: async () => JSON.stringify(out) };
+  };
+  return { fetch, calls, writes: () => calls.filter((c) => c.method !== "GET") };
+}
+
+/** A clone whose origin is a bare repo, with a committed local branch `feature`, and the server's options over it. */
+function proposing(extra: Partial<McpOptions> = {}) {
+  const bare = bareFrom(write(tmp(), { "envs/prod/orders/main.tf": backend("orders") }));
+  const repo = tmp();
+  git(repo, "clone", "-q", bare, ".");
+  git(repo, "checkout", "-q", "-b", "feature");
+  write(repo, { "envs/prod/orders/extra.tf": "# change\n" });
+  git(repo, "add", "-A");
+  git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "change");
+  const head = git(repo, "rev-parse", "HEAD").trim();
+  const forge = fakeForge(() => head);
+  const store = memoryStore();
+  const o: McpOptions = {
+    cwd: repo,
+    config: { forge: "forgejo", url: "https://forge.test/acme/infra", token_env: "FORGE_TOKEN", apply: { branches: { release: ["envs/prod/*"] } }, reports: { bucket: "s3://reports", prefix: PREFIX } },
+    store: () => store,
+    env: { FORGE_TOKEN: "t" },
+    propose: true,
+    forgeFetch: forge.fetch,
+    sleep: async () => {},
+    ...extra,
+  };
+  return { bare, repo, head, forge, store, o };
+}
+
+/** The tf-plan report of pull request 7 at `commit`, in the bucket and its index: envs/prod/orders destroys a database, so its wave waits under on-destructive. */
+function planned(store: ReturnType<typeof memoryStore>, commit: string): void {
+  const r = buildReport({
+    run: { ...RUN, stage: "tf-plan", commit, pull_request: "7" },
+    roots: smallFixture().filter((x) => x.path === "envs/prod/orders"),
+    waves: [{ number: 1, roots: ["envs/prod/orders"] }],
+    gate: "on-destructive",
+  });
+  const path = runPath(r);
+  store.objects.set(`${PREFIX}/${PROJECT}/${path}/report.json`, JSON.stringify(r));
+  store.objects.set(`${PREFIX}/${PROJECT}/index.json`, JSON.stringify(addToIndex(undefined, indexEntry(r, path))));
+  store.objects.set(`${PREFIX}/index.json`, JSON.stringify(addToIndex(undefined, indexEntry(r, `${PROJECT}/${path}`))));
+}
+
+describe("terragucci mcp --propose", () => {
+  it("serves propose, request_plan and plan_result only with --propose, and still no tool that approves, applies, overrides or merges", async () => {
+    const { o } = proposing();
+    const plain = await connected({ ...o, propose: false });
+    expect((await plain.listTools()).tools.map((t) => t.name)).not.toContain("propose");
+    const client = await connected(o);
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "plan_result", "propose", "report", "request_plan", "run_view", "state_versions", "waiting"]);
+    for (const t of tools) {
+      expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
+      expect(t.annotations?.destructiveHint).toBe(false);
+    }
+    expect(tools.find((t) => t.name === "propose")?.annotations?.readOnlyHint).toBe(false);
+    expect(() => assertReadOnly([...TOOLS, ...PROPOSE_TOOLS])).not.toThrow();
+    for (const name of ["approve", "apply", "override", "merge"]) {
+      const r = await client.callTool({ name, arguments: {} });
+      expect(r.isError, name).toBe(true);
+      expect(said(r)).toContain("never approves, applies, overrides or merges");
+    }
+  });
+
+  it("propose pushes the local branch without force and opens a pull request through the forge's API, with the token from its environment", async () => {
+    const { bare, head, forge, o } = proposing();
+    const client = await connected(o);
+    const r = await client.callTool({ name: "propose", arguments: { branch: "feature", title: "Grow the orders queue", body: "Why: more traffic." } });
+    expect(r.isError).toBeFalsy();
+    expect(body(r)).toMatchObject({ branch: "feature", commit: head, base: "main", pull_request: 7, url: "https://forge.test/acme/infra/pulls/7", existing: false });
+    expect(git(bare, "rev-parse", "feature").trim()).toBe(head);
+    expect(git(bare, "rev-parse", "main").trim()).not.toBe(head);
+    const writes = forge.writes();
+    expect(writes.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /repos/acme/infra/pulls"]);
+    const sent = JSON.parse(writes[0].body!);
+    expect(sent).toMatchObject({ head: "feature", base: "main", title: "Grow the orders queue" });
+    expect(sent.body).toBe(`Why: more traffic.\n\n${PROPOSED_FOOTER}`);
+    // Nothing merges: no call reaches a merge endpoint.
+    expect(forge.calls.some((c) => c.path.endsWith("/merge"))).toBe(false);
+  });
+
+  it("propose refuses the default branch, chant/lifecycle and an apply.branches branch, and pushes nothing", async () => {
+    const { bare, repo, forge, o } = proposing();
+    for (const b of ["release", "chant/lifecycle"]) git(repo, "branch", b);
+    const client = await connected(o);
+    for (const [branch, says] of [["main", "never pushes the default branch (main)"], ["chant/lifecycle", "never pushes chant/lifecycle"], ["release", "a push to it applies roots (apply.branches)"]] as const) {
+      const r = await client.callTool({ name: "propose", arguments: { branch, title: "x" } });
+      expect(r.isError, branch).toBe(true);
+      expect(said(r)).toContain(says);
+    }
+    const into = await client.callTool({ name: "propose", arguments: { branch: "feature", title: "x", base: "chant/lifecycle" } });
+    expect(said(into)).toContain("never goes into chant/lifecycle");
+    expect(said(await client.callTool({ name: "propose", arguments: { branch: "-f", title: "x" } }))).toContain("is not a branch name");
+    expect(said(await client.callTool({ name: "propose", arguments: { branch: "nowhere", title: "x" } }))).toContain("there is no local branch nowhere");
+    expect(git(bare, "for-each-ref", "--format=%(refname:short)", "refs/heads").trim()).toBe("main");
+    expect(forge.writes()).toEqual([]);
+  });
+
+  it("propose says which variable holds the forge token when it is not set, and takes none as an argument", async () => {
+    const { forge, o } = proposing({ env: {} });
+    const client = await connected(o);
+    const r = await client.callTool({ name: "propose", arguments: { branch: "feature", title: "x" } });
+    expect(said(r)).toContain("FORGE_TOKEN is not set in terragucci mcp's environment");
+    const t = await client.callTool({ name: "propose", arguments: { branch: "feature", title: "x", token: "ghp_x" } });
+    expect(said(t)).toContain("reads credentials from its own environment");
+    expect(forge.calls).toEqual([]);
+  });
+
+  it("request_plan comments /terragucci plan on the pull request, and refuses a root that is not a path", async () => {
+    const { forge, o } = proposing();
+    const client = await connected(o);
+    const r = body(await client.callTool({ name: "request_plan", arguments: { pull_request: 7, root: "envs/prod/orders" } }));
+    expect(r).toMatchObject({ pull_request: 7, comment: "/terragucci plan envs/prod/orders" });
+    const writes = forge.writes();
+    expect(writes.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /repos/acme/infra/issues/7/comments"]);
+    expect(JSON.parse(writes[0].body!).body).toBe("/terragucci plan envs/prod/orders");
+    const bad = await client.callTool({ name: "request_plan", arguments: { pull_request: 7, root: "../x" } });
+    expect(bad.isError).toBe(true);
+    expect(forge.writes()).toHaveLength(1);
+  });
+
+  it("plan_result returns the note, the policy result and the gate prediction of the head's plan, and says when it is not planned yet", async () => {
+    const { head, store, o } = proposing();
+    let now = 0;
+    const slept: number[] = [];
+    const client = await connected({ ...o, now: () => now, sleep: async (ms) => { slept.push(ms); now += ms; } });
+    const pending = body(await client.callTool({ name: "plan_result", arguments: { pull_request: 7, wait: 25 } }));
+    expect(pending).toMatchObject({ pull_request: 7, head, planned: false, note: expect.stringContaining("Plan: 1 to destroy") });
+    expect(pending.why).toContain("no plan of");
+    expect(slept).toEqual([10_000, 10_000, 5_000]);
+
+    planned(store, head);
+    const r = body(await client.callTool({ name: "plan_result", arguments: { pull_request: 7, wait: 0 } }));
+    expect(r).toMatchObject({ pull_request: 7, head, planned: true, report: `${PROJECT}/2026/10/${head}/tf-plan`, note: expect.stringContaining("terragucci:plan") });
+    expect(r.plan.commit).toBe(head);
+    expect(r.plan.roots.map((x: { path: string }) => x.path)).toEqual(["envs/prod/orders"]);
+    expect(r.plan.gate).toEqual([{ wave: 1, roots: ["envs/prod/orders"], waits: true }]);
+  });
+
+  it("plan_result never takes a plan of another commit for the head's", async () => {
+    const { store, o } = proposing();
+    planned(store, "c".repeat(40));
+    const r = body(await callTool(PROPOSE_TOOLS, "plan_result", { pull_request: 7, wait: 0 }, context(o)));
+    expect(r.planned).toBe(false);
   });
 });
 
