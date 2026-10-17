@@ -522,7 +522,7 @@ describe("the review's pull request and plan report", () => {
     expect(() => readFileSync(join(dir, "other.txt"))).toThrow();
   });
 
-  it("forgejo: waits for the plan job of the pipeline's pull_request run of the head, not the review's own run", async () => {
+  it("forgejo: waits for the plan-note job of the pipeline's pull_request run of the head, which keeps the report, not the review's own run", async () => {
     const runs = `repos/o/r/actions/runs?event=pull_request&head_sha=${HEAD}&limit=50`;
     const { f, hits } = calls({
       [runs]: {
@@ -531,7 +531,8 @@ describe("the review's pull request and plan report", () => {
           { id: 69, event: "pull_request", trigger_event: "pull_request", workflow_id: "terragucci.yml", commit_sha: HEAD, status: "running" },
         ],
       },
-      "repos/o/r/actions/runs/69/jobs": (n: number) => [{ name: "check", status: "success" }, { name: "plan", status: n < 3 ? "running" : "success" }],
+      // The plan job is done at once; the plan-note job, which keeps the report, later.
+      "repos/o/r/actions/runs/69/jobs": (n: number) => [{ name: "check", status: "success" }, { name: "plan", status: "success" }, { name: "plan-note", status: n < 3 ? "running" : "success" }],
       "repos/o/r/actions/runs/69/artifacts?name=terragucci-report&per_page=100&limit=50": [{ id: 8, name: "terragucci-report", run_id: 69 }],
     });
     const slept: number[] = [];

@@ -5,9 +5,12 @@
  * The plan job runs the pull request's code: its providers, modules, external
  * data sources, synth command and Terragrunt hooks. So it holds no forge
  * token. It writes the note and the status into its report directory
- * (PLAN_NOTE_FILE, PLAN_STATUS_FILE) and keeps the directory as an artifact.
- * The note job starts in a fresh container after it, checks nothing out, runs
- * none of the change's code, and posts the two with the job's token.
+ * (PLAN_NOTE_FILE, PLAN_STATUS_FILE) and keeps the directory as an artifact;
+ * on Forgejo, whose runner gives every step the run's token, the plan step is
+ * the job's last and hands the directory on as the job's outputs, and the
+ * note job keeps it (forgejo-handover.ts). The note job starts in a fresh
+ * container after it, checks nothing out, runs none of the change's code, and
+ * posts the two with the job's token.
  *
  * Both files are the pull request's: its code can write anything into them.
  * So they are read as data, as the GitLab comments job reads them
