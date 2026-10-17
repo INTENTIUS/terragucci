@@ -74,7 +74,8 @@ import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 import { rootRoleEnv } from "./roles";
 import { liveRoots } from "./detect";
-import { applyEstateMigration, planEstateMigration, type EstatePlan, type Retag, type Stamp } from "./migrate-estate";
+import { eachLimited } from "./each-limited";
+import { applyEstateMigration, ESTATE_PARALLELISM, planEstateMigration, type EstatePlan, type Retag, type Stamp } from "./migrate-estate";
 import type { MigrationCounts, ProgressSinks } from "./migrate-progress";
 import { EXTERNAL_BACKENDS, externalProblems, externalSource, type ExternalSource } from "./state-source";
 import { literal, stateAddress } from "./state-address";
@@ -1148,16 +1149,17 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
       if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
       log(`${r.root}: wrote its new state`);
     }
+    // Every root plans against its new state, ESTATE_PARALLELISM at once (each root its own backend); the record and log keep the roots' order.
     const roots: MigrationRoot[] = [];
-    for (const [i, r] of record.roots.entries()) {
+    await eachLimited(record.roots, ESTATE_PARALLELISM, async (r, i) => {
       const f = plan.files.get(r.root)!;
       const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
       const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `${i}-verify`, !isStored(f.object));
       const v = await versionOf(f.object, options.fetch, true);
       const was = pinned.get(r.root);
-      roots.push({ ...r, ...(was ? { before: { ...r.before, version_id: was } } : {}), after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify });
-      log(`${r.root}: ${verify.changes.length === 0 ? "no changes against its backend" : `${verify.changes.length} changes against its backend: ${verify.changes.join(", ")}`}`);
-    }
+      roots[i] = { ...r, ...(was ? { before: { ...r.before, version_id: was } } : {}), after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify };
+    });
+    for (const r of roots) log(`${r.root}: ${r.verify!.changes.length === 0 ? "no changes against its backend" : `${r.verify!.changes.length} changes against its backend: ${r.verify!.changes.join(", ")}`}`);
     const changed = roots.filter((r) => r.verify!.changes.length > 0).map((r) => r.root);
     return { ...record, roots, status: changed.length > 0 ? "failed" : "applied", ...(changed.length > 0 ? { error: `after the write, ${changed.join(", ")} plan changes` } : {}) };
   } finally {

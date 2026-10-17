@@ -48,6 +48,7 @@ import { join, resolve } from "node:path";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, resolveRepo } from "./config";
 import { estateOf } from "./detect";
+import { eachLimited } from "./each-limited";
 import {
   backendRefusal,
   firstLine,
@@ -100,6 +101,18 @@ export interface Stamp {
 
 /** What an estate migration's apply needs beyond the record. */
 export type EstatePlan = { kind: "retag"; retags: Retag[] } | { kind: "adopt"; adopts: { root: string; estate: string; state: string; source: StateObject; version?: string; digest: string }[] };
+
+/**
+ * How many roots of an estate migration plan at once, and how many roots take
+ * their live-mv dry runs at once. Inits take turns before any of them: the
+ * roots share the job's provider cache, which is not safe for inits that run
+ * together (./apply.ts waveCache). Plans read the cache and write nothing to
+ * it, so they run side by side, as a wave's do. Each root's dry runs still go
+ * one at a time in its own directory, and every result keeps its place in the
+ * order the roots and addresses were given, so the record, its digest and the
+ * log read as they would one at a time.
+ */
+export const ESTATE_PARALLELISM = 4;
 
 /** Whether the binary is choudoufu: the one that reads and writes ownership markers. */
 export const isChoudoufu = (binary: string): boolean => /(^|\/)choudoufu[^/]*$/.test(binary);
@@ -224,55 +237,76 @@ export async function planEstateMigration(repo: string, m: Migration, options: M
   if (m.kind === "backends") return planAdopt(m, estates, places, exec, options);
   // A root resources join is not planned before the retag either: their live objects carry another estate's markers until then.
   const joining = new Set(m.moves.map((x) => x.to));
-  const plans = new Map<string, { changes: string[]; summary: string }>();
-  for (const [i, root] of roots.entries()) {
-    if (joining.has(root)) continue;
+  const planned = roots.filter((r) => !joining.has(r));
+  const got = new Map<string, { changes: string[]; summary: string }>();
+  await eachLimited(planned, ESTATE_PARALLELISM, async (root) => {
     const p = places.get(root)!;
-    plans.set(root, await planChanges(exec, options.binary, p.dir, p.env, options.work, `estate-${i}`, true));
-  }
+    got.set(root, await planChanges(exec, options.binary, p.dir, p.env, options.work, `estate-${roots.indexOf(root)}`, true));
+  });
+  const plans = new Map(planned.map((r) => [r, got.get(r)!] as const));
   return planRetag(m, roots, estates, plans, places, exec, options);
 }
 
 async function planRetag(m: Migration, roots: string[], estates: Map<string, string>, plans: Map<string, { changes: string[]; summary: string }>, places: Map<string, Place>, exec: BinaryExec, options: MigrateOptions): Promise<PlannedMigration> {
   const log = options.log ?? (() => {});
-  const problems: string[] = [];
-  const retags: Retag[] = [];
+  // Each slot is a problem, or an instance to dry-run, in the order the file names them.
+  type Slot = { problem: string } | { mv: Migration["moves"][number]; inst: string; fromEstate: string; toEstate: string; result?: { doc: MoveDoc } | { problem: string } };
+  const slots: Slot[] = [];
   for (const mv of m.moves) {
     const fromEstate = estates.get(mv.from)!;
     const toEstate = estates.get(mv.to)!;
     if (fromEstate === toEstate) {
-      problems.push(`${mv.from} and ${mv.to} are both estate ${fromEstate}; a move inside one estate is a moved block`);
+      slots.push({ problem: `${mv.from} and ${mv.to} are both estate ${fromEstate}; a move inside one estate is a moved block` });
       continue;
     }
     for (const address of mv.addresses) {
       if (/(^|\.)module\.[A-Za-z_][\w-]*$/.test(address)) {
-        problems.push(`${address} is a module call; a retag names each resource in it`);
+        slots.push({ problem: `${address} is a module call; a retag names each resource in it` });
         continue;
       }
       // A root that is not planned (it takes resources too) names no instances: the address moves as the file names it.
       const source = plans.get(mv.from);
       const instances = source ? instancesOf(address, source.changes, "delete") : [address];
       if (instances.length === 0) {
-        problems.push(`${address}: the plan of ${mv.from} does not destroy it, so estate ${fromEstate} holds no live resource it leaves`);
+        slots.push({ problem: `${address}: the plan of ${mv.from} does not destroy it, so estate ${fromEstate} holds no live resource it leaves` });
         continue;
       }
-      for (const inst of instances) {
-        let doc: MoveDoc;
-        try {
-          doc = await liveMv(exec, options.binary, places.get(mv.to)!, fromEstate, inst, true);
-        } catch (e) {
-          problems.push((e as Error).message);
-          continue;
-        }
-        if (!doc.resource?.live_id) {
-          problems.push(`live-mv -dry-run names no live resource for ${inst}`);
-          continue;
-        }
-        const followers = (doc.followers ?? []).map((f) => f.address).filter((a): a is string => typeof a === "string").sort();
-        retags.push({ address: inst, from: mv.from, to: mv.to, from_estate: fromEstate, to_estate: toEstate, live_id: doc.resource.live_id, followers });
-        log(`${inst}: ${doc.resource.live_id} moves from estate ${fromEstate} to estate ${toEstate}${followers.length ? `, with ${followers.join(", ")}` : ""}`);
+      for (const inst of instances) slots.push({ mv, inst, fromEstate, toEstate });
+    }
+  }
+  // The dry runs: one at a time in each root they join, ESTATE_PARALLELISM roots at once.
+  const runs = slots.filter((x): x is Extract<Slot, { inst: string }> => "inst" in x);
+  const byRoot = new Map<string, typeof runs>();
+  for (const r of runs) byRoot.set(r.mv.to, [...(byRoot.get(r.mv.to) ?? []), r]);
+  await eachLimited([...byRoot.entries()], ESTATE_PARALLELISM, async ([to, theirs]) => {
+    for (const r of theirs) {
+      try {
+        r.result = { doc: await liveMv(exec, options.binary, places.get(to)!, r.fromEstate, r.inst, true) };
+      } catch (e) {
+        r.result = { problem: (e as Error).message };
       }
     }
+  });
+  const problems: string[] = [];
+  const retags: Retag[] = [];
+  for (const x of slots) {
+    if ("problem" in x) {
+      problems.push(x.problem);
+      continue;
+    }
+    const result = x.result!;
+    if ("problem" in result) {
+      problems.push(result.problem);
+      continue;
+    }
+    const { doc } = result;
+    if (!doc.resource?.live_id) {
+      problems.push(`live-mv -dry-run names no live resource for ${x.inst}`);
+      continue;
+    }
+    const followers = (doc.followers ?? []).map((f) => f.address).filter((a): a is string => typeof a === "string").sort();
+    retags.push({ address: x.inst, from: x.mv.from, to: x.mv.to, from_estate: x.fromEstate, to_estate: x.toEstate, live_id: doc.resource.live_id, followers });
+    log(`${x.inst}: ${doc.resource.live_id} moves from estate ${x.fromEstate} to estate ${x.toEstate}${followers.length ? `, with ${followers.join(", ")}` : ""}`);
   }
   if (problems.length > 0) throw new ConfigError(`migration ${m.name}:\n  ${problems.join("\n  ")}`);
   const out: MigrationRoot[] = [];
@@ -498,13 +532,20 @@ async function writeEstate(plan: PlannedMigration, options: MigrateOptions & { n
         log(`${a.root}: stamped estate ${a.estate} on the resources of ${locationOf(a.source)}, which is left where it was`);
       }
     }
-    const roots: MigrationRoot[] = [];
     const facts = rosterFacts(e, record);
-    for (const [i, r] of record.roots.entries()) {
+    // Every root plans after the write, ESTATE_PARALLELISM at once; the results, rosters and log lines keep the record's order.
+    const verified: { verify: { changes: string[]; summary: string }; json?: unknown }[] = [];
+    await eachLimited(record.roots, ESTATE_PARALLELISM, async (r, i) => {
       const at = plan.places.get(r.root)!;
+      let json: unknown;
+      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `estate-${i}-verify`, true, (j) => (json = j));
+      verified[i] = { verify, json };
+    });
+    const roots: MigrationRoot[] = [];
+    for (const [i, r] of record.roots.entries()) {
+      const { verify, json } = verified[i]!;
       // The plan after the write is the estate as it stands: its roster, with the live ids the write named.
-      const keep = options.roster ? (json: unknown) => options.roster!(r.root, rosterOf(r.root, facts.estates.get(r.root), json, options.now, facts.byRoot.get(r.root))) : undefined;
-      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `estate-${i}-verify`, true, keep);
+      if (options.roster && json !== undefined) options.roster(r.root, rosterOf(r.root, facts.estates.get(r.root), json, options.now, facts.byRoot.get(r.root)));
       roots.push({ ...r, verify });
       log(`${r.root}: ${verify.changes.length === 0 ? "no changes" : `${verify.changes.length} changes: ${verify.changes.join(", ")}`}`);
     }

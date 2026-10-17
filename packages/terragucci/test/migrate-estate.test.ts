@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendLifecycle } from "../src/apply";
 import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
-import { isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
+import { ESTATE_PARALLELISM, isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
 import { runStage } from "../src/report/stage";
 import { renderNote } from "../src/report/views";
 import { tmp, validate, write } from "./helpers";
@@ -119,6 +119,121 @@ const retagRepo = (teamWants = ["aws_sqs_queue.jobs"], monoWants = ["aws_sqs_que
     "team/want.json": JSON.stringify(teamWants),
     "migrations/carve-jobs.yml": "moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs]\n",
   });
+
+/**
+ * Two estates s1 and s2 carved into five team roots: s1 gives t1, t2 and t3 one
+ * queue each, s2 gives t4 one and t5 two. Seven roots plan after the write.
+ */
+const carveRepo = () =>
+  repo({
+    "live.json": JSON.stringify([
+      ...["a", "b", "c"].map((q) => ({ id: `q-${q}`, estate: "s1", address: `aws_sqs_queue.${q}` })),
+      ...["d", "e", "f"].map((q) => ({ id: `q-${q}`, estate: "s2", address: `aws_sqs_queue.${q}` })),
+    ]),
+    "s1/main.tf": liveBlock("s1"),
+    "s1/want.json": "[]",
+    "s2/main.tf": liveBlock("s2"),
+    "s2/want.json": "[]",
+    ...Object.fromEntries(
+      (
+        [
+          ["t1", ["a"]],
+          ["t2", ["b"]],
+          ["t3", ["c"]],
+          ["t4", ["d"]],
+          ["t5", ["e", "f"]],
+        ] as const
+      ).flatMap(([t, qs]) => [
+        [`${t}/main.tf`, `${liveBlock(t)}${qs.map((q) => `resource "aws_sqs_queue" "${q}" {}\n`).join("")}`],
+        [`${t}/want.json`, JSON.stringify(qs.map((q) => `aws_sqs_queue.${q}`))],
+      ]),
+    ),
+    "migrations/carve.yml": [
+      "moves:",
+      "  - from: s1\n    to: t1\n    addresses: [aws_sqs_queue.a]",
+      "  - from: s1\n    to: t2\n    addresses: [aws_sqs_queue.b]",
+      "  - from: s1\n    to: t3\n    addresses: [aws_sqs_queue.c]",
+      "  - from: s2\n    to: t4\n    addresses: [aws_sqs_queue.d]",
+      "  - from: s2\n    to: t5\n    addresses: [aws_sqs_queue.e, aws_sqs_queue.f]",
+      "",
+    ].join("\n"),
+  });
+
+/**
+ * The fake choudoufu with each init, plan and dry run held open a few
+ * milliseconds, counting how many of each run at once. `serial` instead runs
+ * every call alone, as the migration did before its roots planned side by side.
+ */
+function timed(inner: BinaryExec, serial = false) {
+  const active: Record<"init" | "plan" | "dry", string[]> = { init: [], plan: [], dry: [] };
+  const most = { init: 0, plan: 0, dry: 0 };
+  let sameRootDry = false;
+  let turn: Promise<unknown> = Promise.resolve();
+  const call: BinaryExec = async (binary, args, dir, ...rest) => {
+    const kind = args[0] === "init" ? "init" : args[0] === "plan" ? "plan" : args[0] === "live-mv" && args.includes("-dry-run") ? "dry" : undefined;
+    if (!kind) return inner(binary, args, dir, ...rest);
+    if (kind === "dry" && active.dry.includes(dir)) sameRootDry = true;
+    active[kind].push(dir);
+    most[kind] = Math.max(most[kind], active[kind].length);
+    await new Promise((r) => setTimeout(r, 15));
+    try {
+      return await inner(binary, args, dir, ...rest);
+    } finally {
+      active[kind].splice(active[kind].indexOf(dir), 1);
+    }
+  };
+  const exec: BinaryExec = serial
+    ? (...a) => {
+        const r = turn.then(() => call(...a));
+        turn = r.catch(() => undefined);
+        return r;
+      }
+    : call;
+  return { exec, most, sameRoot: () => sameRootDry };
+}
+
+describe("an estate migration's roots", () => {
+  it("plan and dry-run side by side, at most ESTATE_PARALLELISM at once, with inits one at a time, and record and log what one at a time would", async () => {
+    const run = async (serial: boolean) => {
+      const { work } = carveRepo();
+      const t = timed(choudoufu(work), serial);
+      const lines: string[] = [];
+      const first = await runMigrations(work, { binary: "choudoufu", exec: t.exec, env: {}, now: T(1), log: (l) => void lines.push(l) });
+      expect(first.code).toBe(3);
+      const planned = { ...t.most };
+      t.most.init = t.most.plan = t.most.dry = 0;
+      approve(work, "carve", first.records[0]!.digest, T(2));
+      const second = await runMigrations(work, { binary: "choudoufu", exec: t.exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
+      expect(second.code).toBe(0);
+      return { first: first.records[0]!, second: second.records[0]!, planned, applied: { ...t.most }, sameRoot: t.sameRoot(), lines, work };
+    };
+    const side = await run(false);
+    const alone = await run(true);
+
+    expect(ESTATE_PARALLELISM).toBe(4);
+    // The inits share the provider cache: one at a time, in both runs.
+    expect(side.planned.init).toBe(1);
+    expect(side.applied.init).toBe(1);
+    // s1 and s2, the roots the queues leave, plan together before the gate.
+    expect(side.planned.plan).toBe(2);
+    // Five roots take dry runs, four at a time, and t5's two never overlap in its directory.
+    expect(side.planned.dry).toBe(ESTATE_PARALLELISM);
+    expect(side.sameRoot).toBe(false);
+    // After the write all seven roots plan, four at a time.
+    expect(side.applied.plan).toBe(ESTATE_PARALLELISM);
+    expect(alone.planned.plan).toBe(1);
+    expect(alone.applied.plan).toBe(1);
+
+    // The record, its digest and its order are the ones a migration one root at a time makes.
+    expect(side.first.digest).toBe(alone.first.digest);
+    expect(side.first.retags?.map((r) => r.address)).toEqual(["aws_sqs_queue.a", "aws_sqs_queue.b", "aws_sqs_queue.c", "aws_sqs_queue.d", "aws_sqs_queue.e", "aws_sqs_queue.f"]);
+    expect(side.first.retags).toEqual(alone.first.retags);
+    expect(side.second.roots.map((r) => r.root)).toEqual(["s1", "s2", "t1", "t2", "t3", "t4", "t5"]);
+    expect(side.second.roots.map((r) => r.verify?.changes)).toEqual(side.second.roots.map(() => []));
+    expect(side.second.roots.map((r) => r.verify)).toEqual(alone.second.roots.map((r) => r.verify));
+    expect(side.lines.map((l) => l.split(side.work).join("<repo>"))).toEqual(alone.lines.map((l) => l.split(alone.work).join("<repo>")));
+  });
+});
 
 describe("a move between two estates", () => {
   it("is a retag: proved by each plan and the dry run, approved by digest, written by live-mv, with no change after and the move on chant/lifecycle", async () => {

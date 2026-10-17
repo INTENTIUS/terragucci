@@ -574,3 +574,76 @@ describe("tl_fill", () => {
     }
   });
 });
+
+// The terralith scenario counts each hold down from 8 s, every other scenario
+// from DEMO_HOLD (20 s), and the loop sets HOLD from the scenario before each cycle.
+describe("scenario_hold", () => {
+  const hold = (scenario: string, env = "") => {
+    const defaults = /^HOLD_DEFAULT=.*$/m.exec(demo)?.[0];
+    expect(defaults).toBe('HOLD_DEFAULT="${DEMO_HOLD:-20}"');
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${env}\n${defaults}\n${fn("scenario_hold")}\nscenario_hold ${scenario}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("is 8 s for terralith and DEMO_HOLD's 20 s for the rest", () => {
+    expect(hold("terralith")).toBe("8");
+    for (const s of ["a-known", "a-output", "b-waves", "failure", "stale-plan", "b-composed", "tg-planned-outputs", "chant-pr-loop", "base"]) expect(hold(s), s).toBe("20");
+  });
+
+  it("takes DEMO_HOLD_TERRALITH for terralith and DEMO_HOLD for the rest, each without moving the other", () => {
+    expect(hold("terralith", "DEMO_HOLD_TERRALITH=3")).toBe("3");
+    expect(hold("b-waves", "DEMO_HOLD_TERRALITH=3")).toBe("20");
+    expect(hold("b-waves", "DEMO_HOLD=30")).toBe("30");
+    expect(hold("terralith", "DEMO_HOLD=30")).toBe("8");
+  });
+
+  it("is what the loop holds each cycle for", () => {
+    const loop = demo.slice(demo.indexOf("    while :; do\n      INDEX=0"));
+    const set = loop.indexOf('HOLD="$(scenario_hold "$s")"');
+    expect(set).toBeGreaterThan(-1);
+    expect(set).toBeLessThan(loop.indexOf('attempt run_cycle "$s"'));
+    // Every hold the driver counts down reads HOLD.
+    expect(fn("demo_hold")).toContain('sleep "$HOLD"');
+    expect(fn("cycle_end")).toContain("HOLD");
+  });
+});
+
+// The driver goes on once a run's waves have ended and only its tips job is
+// left: that job opens advice pull requests and writes nothing behold reads.
+describe("only_tips_left", () => {
+  const left = (jobs: unknown) => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("only_tips_left")}\nif only_tips_left "$1"; then echo yes; else echo no; fi`, "x", JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+  const job = (name: string, status: string) => ({ id: 1, name, status, needs: null, task_id: 1 });
+
+  it("passes a run whose waves succeeded while tips waits or runs", () => {
+    expect(left([job("check", "success"), job("apply-wave-1", "success"), job("apply-wave-2", "success"), job("tips", "running")])).toBe("yes");
+    expect(left([job("check", "success"), job("apply-wave-1", "success"), job("tips", "waiting")])).toBe("yes");
+    expect(left([job("check", "success"), job("apply-comment", "success"), job("apply-wave-1", "skipped"), job("tips", "blocked")])).toBe("yes");
+  });
+
+  it("waits while a wave runs or waits, and for a run with no tips job or tips ended", () => {
+    expect(left([job("check", "success"), job("apply-wave-1", "running"), job("tips", "waiting")])).toBe("no");
+    expect(left([job("check", "success"), job("apply-wave-1", "success"), job("apply-wave-2", "waiting"), job("tips", "blocked")])).toBe("no");
+    expect(left([job("check", "success"), job("apply-wave-1", "success")])).toBe("no");
+    expect(left([job("apply-wave-1", "success"), job("tips", "success")])).toBe("no");
+    expect(left([job("tips", "running")])).toBe("no");
+  });
+
+  it("never passes a wave that failed or was cancelled, nor a reply that is not a job list", () => {
+    expect(left([job("check", "success"), job("apply-wave-1", "failure"), job("tips", "waiting")])).toBe("no");
+    expect(left([job("check", "success"), job("apply-wave-1", "cancelled"), job("tips", "waiting")])).toBe("no");
+    expect(left({ message: "not found" })).toBe("no");
+    expect(left("")).toBe("no");
+  });
+
+  it("is checked by run_ended, which counts it as success", () => {
+    const body = fn("run_ended");
+    expect(body).toContain("only_tips_left");
+    expect(body.indexOf("only_tips_left")).toBeGreaterThan(body.indexOf("success|failure|cancelled|skipped) break"));
+    expect(body).toMatch(/only_tips_left[\s\S]*status=success/);
+  });
+});
