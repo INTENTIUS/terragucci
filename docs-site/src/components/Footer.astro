@@ -1,7 +1,8 @@
 ---
 // Starlight's footer, with the step a tutorial page is on and a small taco
 // under it on every page. The step comes from the sidebar's Tutorial group,
-// so a new tutorial page counts without an edit here.
+// so a new tutorial page counts without an edit here. Under the taco, a link
+// to Intentius for help adopting terragucci.
 import Default from '@astrojs/starlight/components/Footer.astro';
 import Taco from './Taco.astro';
 
@@ -24,6 +25,7 @@ const analytics = Boolean(import.meta.env.PUBLIC_POSTHOG_KEY);
 <Default />
 <p class="tg-foot not-content">
 	<a href={`${base}/`}><Taco /><span>terragucci</span></a>
+	<a class="tg-help" href="https://intentius.io/work/">Help setting it up: Intentius</a>
 </p>
 {analytics && (
 	<p class="tg-privacy not-content">
@@ -61,6 +63,12 @@ const analytics = Boolean(import.meta.env.PUBLIC_POSTHOG_KEY);
 		text-align: center;
 		font-size: var(--sl-text-xs);
 		color: var(--sl-color-gray-3);
+	}
+	.tg-foot a.tg-help {
+		display: block;
+		margin-top: 0.6rem;
+		font-family: inherit;
+		font-weight: 400;
 	}
 	.tg-foot a:hover {
 		color: var(--sl-color-white);

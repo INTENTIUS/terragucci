@@ -268,7 +268,7 @@ GCP and Azure tokens keep their audiences.
 
 ## Approval modes
 
-The gate policy decides when a wave waits: `always`, `on-destructive` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent.
+The gate policy decides when a wave waits: `always`, `on-destructive` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent. [Approval modes](/terragucci/standards/access-and-identity/#approval-modes) defines each mode; this table is what each one stops.
 
 | Mode | Set by | An approval counts when | Stops | Does not stop |
 |---|---|---|---|---|
@@ -492,4 +492,7 @@ By default `GITLAB_TOKEN` reaches every branch's pipeline, so give it a role no 
 - [The generated pipeline](/terragucci/reference/pipeline/) has each job and check in full.
 - [Approvals runbook](/terragucci/guides/approvals-runbook/) for the day-to-day approval commands.
 - [Separate environments](/terragucci/guides/separate-environments/) for the forge and cloud settings that keep each environment's runners, secrets and roles apart.
+- [Handle secrets](/terragucci/guides/keep-secrets-out-of-notes/) for a secret's path from the forge's store to the state.
+- [Read at base](/terragucci/concepts/setting-levels/#read-at-base) lists every key a pull request cannot change for itself.
 - [Access and identity](/terragucci/standards/access-and-identity/) maps each action to the forge, approval mode or cloud role that decides it.
+- For help reviewing this model against your own controls, [Intentius](https://intentius.io/work/) works with teams adopting terragucci.

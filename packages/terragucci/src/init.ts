@@ -40,7 +40,7 @@ import { reportsBase } from "./report/store";
 import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
-import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { migrationFiles } from "./migrate";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
@@ -368,11 +368,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const rolloutRel = forgeChoice.value === "gitlab" ? undefined : ROLLOUT_PATHS[forgeChoice.value];
   const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
   const ephemeralRel = forgeChoice.value === "gitlab" ? undefined : EPHEMERAL_PATHS[forgeChoice.value];
+  const resumeRel = forgeChoice.value === "gitlab" ? undefined : RESUME_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
-    // The rollout and review workflows, like the pipeline, overwrite only a file terragucci wrote.
-    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.
+    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
   // terragucci.components.json at the repo's root: the roots as chant components by wave, under the jobs that apply them, for behold.
@@ -381,8 +382,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (existsSync(componentsPath) && !options.force && !componentsWrittenByTerragucci(readFileSync(componentsPath, "utf-8"))) {
     throw new ConfigError(`${COMPONENTS_PATH} exists and terragucci did not write it; move it aside or pass --force`);
   }
-  // A rollout, review or ephemeral workflow an earlier init wrote goes when the config stops asking for it.
-  for (const rel of [rolloutRel, reviewRel, ephemeralRel]) {
+  // A rollout, review, ephemeral or resume workflow an earlier init wrote goes when the config stops asking for it.
+  for (const rel of [rolloutRel, reviewRel, ephemeralRel, resumeRel]) {
     if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
     const path = join(repo, rel);
     if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });
@@ -460,6 +461,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.rollouts && !rollouts) notes.push("rollouts is set and respond.rollout is off, so no rollout job is written");
   if (settings.comments && forgeChoice.value === "gitlab") {
     notes.push(`comments is set: add a pipeline schedule with the cron ${settings.comments} and the variable TERRAGUCCI_SCHEDULE set to comments under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope and the Developer role so the comments job can answer notes and start pipelines`);
+  }
+  if (settings.apply?.resume && forgeChoice.value === "gitlab") {
+    notes.push(`apply.resume is set: add a pipeline schedule with the cron ${resumeCron(settings.apply.resume)} and the variable TERRAGUCCI_SCHEDULE set to resume under CI/CD > Schedules, so the resume job applies a wave once its approval is recorded`);
+  }
+  if (settings.ephemeral && forgeChoice.value === "gitlab") {
+    notes.push(`ephemeral is set: add a pipeline schedule with the cron ${resumeCron(settings.ephemeral.sweep ?? EPHEMERAL_SWEEP)} and the variable TERRAGUCCI_SCHEDULE set to ephemeral under CI/CD > Schedules, so the sweep destroys each copy whose TTL passed or whose merge request closed`);
   }
   if (settings.gitlab?.token === "protected" && forgeChoice.value === "gitlab") {
     // A pipeline is built from its branch's own files, so any variable that is not protected reaches a merge request's code.

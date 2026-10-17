@@ -108,6 +108,40 @@ describe("init", () => {
     expect(r.notes.join("\n")).toMatch(/rollouts is set: add a pipeline schedule with the cron \*\/15 \* \* \* \* and the variable TERRAGUCCI_SCHEDULE set to rollouts/);
   });
 
+  it("apply.resume writes the resume workflow beside the pipeline, refuses one it did not write, and removes the one it wrote once apply.resume goes", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "apply:\n  resume: 10\n" });
+    const path = join(dir, ".github/workflows/terragucci-resume.yml");
+    let r = await init(dir, { binary: "tofu" });
+    expect(r.files.find((f) => f.path === path)?.status).toBe("created");
+    expect(readFileSync(path, "utf-8").startsWith(MARKER)).toBe(true);
+    write(dir, { "terragucci.yml": "gate: on-destructive\n" });
+    r = await init(dir, { binary: "tofu", dryRun: true });
+    expect(r.files.find((f) => f.path === path)?.status).toBe("removed");
+    r = await init(dir, { binary: "tofu" });
+    expect(existsSync(path)).toBe(false);
+    r = await init(dir, { binary: "tofu" });
+    expect(r.files.some((f) => f.path === path)).toBe(false);
+    // A resume workflow terragucci did not write is neither overwritten nor removed.
+    write(dir, { "terragucci.yml": "apply:\n  resume: 10\n", ".github/workflows/terragucci-resume.yml": "name: mine\n" });
+    await expect(init(dir, { binary: "tofu", dryRun: true })).rejects.toThrow(/terragucci-resume.yml exists and terragucci did not write it/);
+    write(dir, { "terragucci.yml": "gate: on-destructive\n" });
+    r = await init(dir, { binary: "tofu", dryRun: true });
+    expect(r.files.some((f) => f.path === path)).toBe(false);
+  });
+
+  it("apply.resume and ephemeral on GitLab: the notes name each schedule's cron and its TERRAGUCCI_SCHEDULE variable", async () => {
+    const gl = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": 'apply:\n  resume: 10\nephemeral:\n  roots: ["app"]\n  sweep: 15\n' });
+    const notes = (await init(gl, { binary: "tofu", dryRun: true })).notes.join("\n");
+    expect(notes).toMatch(/apply\.resume is set: add a pipeline schedule with the cron \*\/10 \* \* \* \* and the variable TERRAGUCCI_SCHEDULE set to resume/);
+    expect(notes).toMatch(/ephemeral is set: add a pipeline schedule with the cron \*\/15 \* \* \* \* and the variable TERRAGUCCI_SCHEDULE set to ephemeral/);
+    // The default sweep, 30 minutes.
+    const dflt = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": 'ephemeral:\n  roots: ["app"]\n' });
+    expect((await init(dflt, { binary: "tofu", dryRun: true })).notes.join("\n")).toMatch(/cron \*\/30 \* \* \* \* and the variable TERRAGUCCI_SCHEDULE set to ephemeral/);
+    // GitHub schedules both in workflows of its own, so no note asks for one.
+    const gh = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "apply:\n  resume: 10\n" });
+    expect((await init(gh, { binary: "tofu", dryRun: true })).notes.join("\n")).not.toMatch(/TERRAGUCCI_SCHEDULE set to resume/);
+  });
+
   it("gitlab.token: protected says how to protect the variable, writes the plan job with no token, and needs comments", async () => {
     const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\ngitlab:\n  token: protected\n" });
     const r = await init(dir, { binary: "tofu", dryRun: true });

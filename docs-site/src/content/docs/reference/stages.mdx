@@ -1,6 +1,10 @@
 ---
 title: Stages
-description: Each stage's inputs, permissions and outputs.
+description: Each stage's inputs, permissions and outputs, and how a change reaches many roots.
+prompt: |
+  Read https://intentius.io/terragucci/reference/stages/.
+  Plan a rollout of the module and version I name across this repo with `npx terragucci rollout <module> <version>` (the dry run, without `--mode apply`), and list its waves with the roots in each and any pin it cannot move, with the tip it gives.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -158,6 +162,31 @@ A file in `migrations/` moves resources between roots' states. `stage tf-plan` p
 | 1 | the migration cannot be proved or written |
 
 See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
+
+## Changes that reach many roots
+
+A change reaches many roots one of three ways. Each is a reviewed pull request with its own plan, and every wave it applies waits at the same gate as a one-line change.
+
+| Change | Started by | A reviewer sees | Goes out | Watch it in |
+|---|---|---|---|---|
+| a local module (`affected/tofu`) | a pull request that edits it | one plan note for every root that calls it | in gated waves after the merge | the plan note, then the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) |
+| a module or provider at an exact pin (`rollout/tofu`, `rollout/pins`) | `terragucci rollout <module> <version> --mode apply`, or `rollout --provider` | one pull request per wave, changing only that wave's pins or lock files | the next wave's pull request opens once every pull request of the last one merged and its roots applied | the rollout's pull requests, and the dry run of `terragucci rollout`, which names the step it would take |
+| a shared default or pipeline setting (`reconcile/tofu`, `reconcile/mixed`) | `terragucci reconcile --mode apply` in a [control repo](/terragucci/concepts/control-repo/) | one pull request per project that changes, with its pipeline, its `terragucci.yml` and any generated files | each project's own team merges it, and its own pipeline applies | each project's pull request |
+
+<Tabs>
+<TabItem label="One repo">
+
+`rollouts: <cron>` in the repo's `terragucci.yml` writes a job that opens each next wave on that schedule, so nobody runs the next step by hand. Without it, run `terragucci rollout` again after each wave applies. A shared default has no second level here: change the repo's own `terragucci.yml` in a pull request.
+
+</TabItem>
+<TabItem label="Control repo">
+
+A rollout from a control repo puts every project's canaries in wave 1, then each project in config order, with a pull request per project per wave (`rollout/control`). `rollouts` is refused there, since a project's pipeline sees only its own roots: run `terragucci respond rollout --mode apply` on a schedule of your own in the control repo to open each next wave. `reconcile` carries a change to `defaults` into every project.
+
+</TabItem>
+</Tabs>
+
+A range such as `~> 1.4` is refused for a rollout, with the tip `rollout-floating-pin` (`tips/tofu`). This is a choice: a range lets a version move without a reviewed change, and no diff shows which roots it reached. Pin one version and roll the next one out. [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) walks through a rollout.
 
 ## Rolling out a module version
 
