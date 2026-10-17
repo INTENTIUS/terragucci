@@ -11,9 +11,10 @@
  * review       its first step (`terragucci review prompt`) reads the pull
  *              request from the event (on GitHub, from the API by the number
  *              the event names), fetches the plan job's report from the
- *              pipeline's run of the head (on Forgejo it waits for that plan
- *              first) and writes the prompt: the title and description, the
- *              diff against the base, the plan note and the policy results,
+ *              pipeline's run of the head (on Forgejo it waits for the job
+ *              that keeps it first) and writes the prompt: the title and
+ *              description, the diff against the base, the plan note and the
+ *              policy results,
  *              and the review instructions read from the default branch with
  *              `git show`, never from the checkout. The checkout is the head,
  *              without credentials, and nothing in it runs. The step also
@@ -413,6 +414,8 @@ export const REVIEW_EVENTS = { github: "workflow_run", forgejo: "pull_request_ta
 /** The pipeline's workflow file and the artifact its plan job keeps the report in (render.ts PIPELINE_PATHS and REPORT_DIR). */
 export const PIPELINE_WORKFLOW = "terragucci.yml";
 export const PLAN_REPORT_ARTIFACT = "terragucci-report";
+/** The job that keeps that artifact on Forgejo: the plan job hands its report on, and plan-note keeps it (forgejo-handover.ts). */
+export const REPORT_KEEPER_JOB = "plan-note";
 
 /** The artifact the review job keeps the review of a head in, and a wave reads the verdict from. */
 export const REVIEW_ARTIFACT = "terragucci-review";
@@ -489,7 +492,8 @@ const DONE = new Set(["success", "failure", "cancelled", "skipped", "completed"]
  * plan note and report.json, read out of the artifact by name. On GitHub the
  * run is the one that started the review, and it has finished. On Forgejo
  * `pull_request_target` starts the review with the pipeline, so this waits
- * for the newest `pull_request` run of the head to finish its plan job. What
+ * for the newest `pull_request` run of the head to finish its plan-note job,
+ * which keeps the plan job's report there. What
  * it returns is said in the log. The report is the change's own run's, so it
  * is data like the diff, never trusted.
  */
@@ -507,7 +511,7 @@ export async function fetchPlanReport(f: ForgeCalls, bytes: ArtifactFiles, subje
         .sort((a: any, b: any) => b.id - a.id)[0];
       if (pipeline) {
         const jobs = await f.get(`repos/${f.repo}/actions/runs/${pipeline.id}/jobs`);
-        const plan = (Array.isArray(jobs) ? jobs : Array.isArray(jobs?.jobs) ? jobs.jobs : []).find((j: any) => j?.name === "plan");
+        const plan = (Array.isArray(jobs) ? jobs : Array.isArray(jobs?.jobs) ? jobs.jobs : []).find((j: any) => j?.name === REPORT_KEEPER_JOB);
         if (DONE.has(plan?.status) || DONE.has(pipeline.status)) {
           id = pipeline.id;
           break;

@@ -30,6 +30,8 @@ type Step = { name?: string; uses?: string; run?: string; id?: string; if?: stri
 const steps = (doc: Record<string, any>, job: string): Step[] => doc.jobs[job].steps as Step[];
 const planStep = (s: Step[]): Step => s.find((x) => typeof x.run === "string" && x.run.includes("terragucci stage tf-plan"))!;
 const tradeStep = (s: Step[]): Step | undefined => s.find((x) => x.name === "Trade the job's OIDC token for the plan identities");
+/** The last checkout of a job: actions/checkout on GitHub, the checkout script on Forgejo. */
+const lastCheckout = (s: Step[]): number => s.map((x) => (x.uses ?? "").endsWith("actions/checkout@v4") || (x.name ?? "").startsWith("Check out")).lastIndexOf(true);
 
 /** What the plan step's lines say past its first, the restart without the token variables. */
 const after = (run: string): string => run.split("\n").slice(1).join("\n");
@@ -40,8 +42,8 @@ describe("the re-plan's rendered steps", () => {
     const s = steps(doc, "replan");
     const t = tradeStep(s)!;
     expect(t, "the re-plan has a trade step").toBeDefined();
-    const names = s.map((x) => x.id ?? x.uses ?? x.name);
-    const checkout = names.lastIndexOf("actions/checkout@v4");
+    const checkout = lastCheckout(s);
+    expect(checkout).toBeGreaterThanOrEqual(0);
     expect(checkout).toBeLessThan(s.indexOf(t));
     expect(s.indexOf(t)).toBeLessThan(s.indexOf(planStep(s)));
     expect(t.if).toBe("steps.decide.outputs.go == '1'");
@@ -374,14 +376,14 @@ describe("the re-plan's Terragrunt cache", () => {
     const caches = cacheSteps(s);
     expect(caches.map((x) => action(x.uses))).toEqual([RESTORE]);
     // The same path, key and fallback the saving jobs use, so a re-plan starts as warm as before.
-    const saved = cacheSteps(steps(doc, "plan"))[0]!;
+    const saved = cacheSteps(steps(doc, "apply-wave-1"))[0]!;
     expect(action(saved.uses)).toBe(SAVE);
     expect(caches[0]!.with).toEqual(saved.with);
     expect(caches[0]!.with).toEqual({ path: ".terragrunt-cache", key: "terragucci-tg-${{ hashFiles('**/*.hcl') }}", "restore-keys": "terragucci-tg-" });
     expect(caches[0]!.if).toBe("steps.decide.outputs.go == '1'");
     // Restored after the head's checkout and before the trade and the plan, as the cache was.
-    const names = s.map((x) => action(x.uses) || x.name);
-    expect(names.lastIndexOf("actions/checkout@v4")).toBeLessThan(s.indexOf(caches[0]!));
+    expect(lastCheckout(s)).toBeGreaterThanOrEqual(0);
+    expect(lastCheckout(s)).toBeLessThan(s.indexOf(caches[0]!));
     expect(s.indexOf(caches[0]!)).toBeLessThan(s.indexOf(tradeStep(s)!));
     expect(s.indexOf(caches[0]!)).toBeLessThan(s.indexOf(planStep(s)));
     // Nothing else in the job writes to a cache.
@@ -395,10 +397,13 @@ describe("the re-plan's Terragrunt cache", () => {
 
   it.each(["github", "forgejo"] as const)("%s: every other job that cached keeps saving as before", (forge) => {
     const doc = render(forge, tgInput({ drift: "0 6 * * *" }));
+    // On Forgejo the plan job restores and saves none: a save is a step after the plan's, which would hold the run's token.
+    const restoring = forge === "forgejo" ? ["replan", "plan"] : ["replan"];
     const saving = Object.entries(doc.jobs as Record<string, { steps?: Step[] }>)
-      .filter(([name]) => name !== "replan")
+      .filter(([name]) => !restoring.includes(name))
       .flatMap(([name, job]) => cacheSteps(job.steps ?? []).map((c) => [name, c] as const));
-    expect(saving.map(([name]) => name)).toEqual(["plan", "apply-comment", "apply-wave-1", "apply-wave-2", "drift"]);
+    expect(saving.map(([name]) => name)).toEqual([...(forge === "github" ? ["plan"] : []), "apply-comment", "apply-wave-1", "apply-wave-2", "drift"]);
+    if (forge === "forgejo") expect(cacheSteps(steps(doc, "plan")).map((x) => action(x.uses))).toEqual([RESTORE]);
     for (const [name, c] of saving) {
       expect(action(c.uses), name).toBe(SAVE);
       expect(c.with, name).toEqual({ path: ".terragrunt-cache", key: "terragucci-tg-${{ hashFiles('**/*.hcl') }}", "restore-keys": "terragucci-tg-" });

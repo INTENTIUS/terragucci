@@ -44,13 +44,44 @@ jobs:
     if: (env.TF_IN_AUTOMATION || 'set') != '' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository))
     env:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
+    outputs:
+      report_0: '${{ steps.check.outputs.report_0 }}'
+      report_1: '${{ steps.check.outputs.report_1 }}'
+      report_2: '${{ steps.check.outputs.report_2 }}'
+      report_3: '${{ steps.check.outputs.report_3 }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Format check and validate, every unit
+      - name: Check out the change
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - id: check
+        name: Format check and validate, every unit
         run: |
           if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
+          tg_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to the note and the status; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on the note, the status and report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' terragucci-check "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
+          trap tg_handover EXIT
           set -eu
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tofu fmt -check -recursive -diff .
@@ -59,6 +90,23 @@ jobs:
           echo "every unit is formatted and its inputs match its module"
           terragucci check-pins
           terragucci check-policy
+  check-report:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.35-tg1.1.6-tofu1.13.1@sha256:1d7bbd4da00a2fc43011322b00dd9e815eb8d8dc02ff2bfb4bf69562b521f4f9
+    needs: check
+    if: always() && (needs.check.result == 'success' || needs.check.result == 'failure')
+    steps:
+      - name: Take the check report from the check job
+        shell: bash
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("terragucci: the job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("terragucci: the report the job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("terragucci: the report the job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("terragucci: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("terragucci: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("terragucci: took "+n+" report files from the job")' terragucci-check <<'END_OF_REPORT'
+          ${{ toJSON(needs.check.outputs.report_0) }}
+          ${{ toJSON(needs.check.outputs.report_1) }}
+          ${{ toJSON(needs.check.outputs.report_2) }}
+          ${{ toJSON(needs.check.outputs.report_3) }}
+          END_OF_REPORT
       - name: Keep the check report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v3
@@ -74,6 +122,11 @@ jobs:
     env:
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
       TG_PR: '${{ github.event.pull_request.number }}'
+    outputs:
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
     steps:
       - name: Say on the head that the plan started
         shell: bash
@@ -104,21 +157,46 @@ jobs:
             if (cmd === "oidc") process.exit(1);
           }' -- "$@" ;; esac; }
           tg status terragucci/plan pending "planning"
-      - uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+      - name: Check out the change
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - name: Restore the Terragrunt sources and providers cache
+        uses: https://code.forgejo.org/actions/cache/restore@v4
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
           restore-keys: terragucci-tg-
-      - name: Plan the units the change reaches and write the plan report
+      - id: plan
+        name: Plan the units the change reaches and write the plan report
         shell: bash
         run: |
           if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
           set +e -uo pipefail
+          tg_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to the note and the status; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on the note, the status and report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' terragucci-report "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
+          trap tg_handover EXIT
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
           rc=$?
@@ -133,13 +211,6 @@ jobs:
           fi
           if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
           echo "success $counts" >terragucci-report/plan-status.txt
-      - name: Keep the plan report
-        if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
-        with:
-          name: terragucci-report
-          path: terragucci-report/
-          if-no-files-found: ignore
   plan-note:
     runs-on: docker
     container:
@@ -152,11 +223,23 @@ jobs:
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
       TG_PR: '${{ github.event.pull_request.number }}'
     steps:
-      - name: Fetch the plan report
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+      - name: Take the plan report from the plan job
+        shell: bash
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("terragucci: the job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("terragucci: the report the job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("terragucci: the report the job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("terragucci: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("terragucci: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("terragucci: took "+n+" report files from the job")' terragucci-report <<'END_OF_REPORT'
+          ${{ toJSON(needs.plan.outputs.report_0) }}
+          ${{ toJSON(needs.plan.outputs.report_1) }}
+          ${{ toJSON(needs.plan.outputs.report_2) }}
+          ${{ toJSON(needs.plan.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
         with:
           name: terragucci-report
-          path: terragucci-report
+          path: terragucci-report/
+          if-no-files-found: ignore
       - name: Post the plan note and terragucci/plan
         if: always()
         shell: bash
@@ -176,10 +259,37 @@ jobs:
       pr: '${{ steps.decide.outputs.pr }}'
       sha: '${{ steps.decide.outputs.sha }}'
       root: '${{ steps.decide.outputs.root }}'
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+      report_1: '${{ steps.plan.outputs.report_1 }}'
+      report_2: '${{ steps.plan.outputs.report_2 }}'
+      report_3: '${{ steps.plan.outputs.report_3 }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Check out the workflow's commit
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
       - id: decide
         name: Read the comment and decide whether it re-plans
         shell: bash
@@ -220,11 +330,33 @@ jobs:
           { echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"
           [ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"
       - if: steps.decide.outputs.go == '1'
-        uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          ref: refs/pull/${{ steps.decide.outputs.pr }}/head
-          fetch-depth: 0
-          persist-credentials: false
+        name: Check out the pull request's head
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+          TG_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
       - if: steps.decide.outputs.go == '1'
         name: Restore the Terragrunt sources and providers cache
         uses: https://code.forgejo.org/actions/cache/restore@v4
@@ -233,6 +365,7 @@ jobs:
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
           restore-keys: terragucci-tg-
       - if: steps.decide.outputs.go == '1'
+        id: plan
         name: Re-plan the pull request on request and write the plan report
         shell: bash
         env:
@@ -262,6 +395,8 @@ jobs:
             done
           }
           trap tg_sweep EXIT
+          tg_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to the note and the status; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on the note, the status and report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' terragucci-report "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
+          trap 'tg_sweep; tg_handover' EXIT
           if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
@@ -277,13 +412,6 @@ jobs:
           fi
           if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
           echo "success $counts" >terragucci-report/plan-status.txt
-      - name: Keep the plan report
-        if: always() && steps.decide.outputs.go == '1'
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
-        with:
-          name: terragucci-report-replan
-          path: terragucci-report/
-          if-no-files-found: ignore
   replan-note:
     runs-on: docker
     container:
@@ -297,11 +425,23 @@ jobs:
       TG_SHA: '${{ needs.replan.outputs.sha }}'
       TG_ROOT: '${{ needs.replan.outputs.root }}'
     steps:
-      - name: Fetch the plan report
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+      - name: Take the plan report from the plan job
+        shell: bash
+        run: |
+          set -u
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("terragucci: the job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("terragucci: the report the job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("terragucci: the report the job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("terragucci: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("terragucci: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("terragucci: took "+n+" report files from the job")' terragucci-report <<'END_OF_REPORT'
+          ${{ toJSON(needs.replan.outputs.report_0) }}
+          ${{ toJSON(needs.replan.outputs.report_1) }}
+          ${{ toJSON(needs.replan.outputs.report_2) }}
+          ${{ toJSON(needs.replan.outputs.report_3) }}
+          END_OF_REPORT
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
         with:
           name: terragucci-report-replan
-          path: terragucci-report
+          path: terragucci-report/
+          if-no-files-found: ignore
       - name: Post the plan note and terragucci/plan
         if: always()
         shell: bash
