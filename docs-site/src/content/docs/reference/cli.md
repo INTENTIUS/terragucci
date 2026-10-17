@@ -34,7 +34,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `query` | runs one SQL statement over the inventory, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
-| `mcp` | a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent |
+| `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request and reads its plan |
+| `guard` | writes wrappers for the binaries and a Claude Code hook that refuse an apply in a root of the pipeline, for a coding agent's shell |
 | `view` | runs [behold](https://intentius.io/behold/using/terragucci/) on your machine over the repo and its reports bucket: the roots as one graph, each resource marked with what the newest runs found; `--export` writes a static copy |
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
@@ -523,7 +524,7 @@ Loads the bucket's files into an in-memory SQLite database, runs the statement a
 ## mcp
 
 ```text
-terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]
 ```
 
 Serves the Model Context Protocol on stdin and stdout until the client closes them, for an agent that reads the estate while it works. It reads the reports bucket that `reports` names (or `--bucket` in a single repo) with credentials from its own environment ([Reports](/terragucci/reference/environment/#reports) lists the variables). [Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/) connects a client.
@@ -540,15 +541,46 @@ Serves the Model Context Protocol on stdin and stdout until the client closes th
 | `dora` | `dora.json` | none |
 | `waiting` | the waves waiting on `chant/lifecycle` in the repo it runs in, each with the `terragucci approve` command a person runs | none |
 
-Every tool is marked read-only, and the server refuses these calls.
+With `--propose` it serves three tools more, for an agent that gets a change planned without leaving its client ([Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/)). They use the forge token in the variable `token_env` names (by default `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`) and git's own credentials, from the server's environment. A control repo has none of them.
+
+| Tool | Does | Arguments |
+|---|---|---|
+| `propose` | pushes a local branch to `origin` without force and opens a pull request from it, or returns the one already open; refuses the default branch, `chant/lifecycle` and every `apply.branches` branch | `branch`, `title`, `body`, `base` |
+| `request_plan` | comments `/terragucci plan [root]` on an open pull request | `pull_request`, `root` |
+| `plan_result` | the pull request's head and plan note, and the `tf-plan` report of that head from the bucket: each root's status and policy verdict, the policy check, and whether each wave's gate will hold it; waits up to `wait` seconds (default 120, at most 600) for the head's plan | `pull_request`, `wait`, `project` |
+
+Every other tool is marked read-only, and the server refuses these calls.
 
 | A call | The answer |
 |---|---|
-| to a tool it does not list, such as `approve`, `apply` or `override` | an error: the server is read-only, approvals belong to a person at a shell, and an approval made over MCP is refused |
+| to a tool it does not list, such as `approve`, `apply`, `override` or `merge` | an error: the server never approves, applies, overrides or merges, approvals belong to a person at a shell, and an approval made over MCP is refused |
 | with an argument the tool does not list | an error naming the argument; one named like a credential (`token`, `secret`, `key`) says credentials come from the server's environment |
 | with a `path` outside the reports prefix | an error |
 
-The server writes nothing. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
+Without `--propose` the server writes nothing, and with it only the branch, the pull request and the comment above. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
+
+## guard
+
+```text
+terragucci guard [--config <file>] [--dir <dir>] [--no-hook]
+```
+
+Writes a local guard for a coding agent in this checkout, so that the agent's shell cannot apply a root the pipeline owns. It writes, under the checkout's git directory (`.git/terragucci/guard`, or `--dir`), so that nothing of it is committed:
+
+| File | Does |
+|---|---|
+| `bin/tofu`, `bin/terraform`, `bin/terragrunt`, `bin/choudoufu` | wrappers to put ahead of the binaries on the agent's `PATH`; each runs the next binary of its name on `PATH` unless the guard refuses the command |
+| `guard.mjs` | the rule, with the repo and its roots as they were when it was written |
+
+It also adds a PreToolUse hook to `.claude/settings.local.json`, which Claude Code reads, keeping the rest of the file, and lists that file in `.git/info/exclude` unless git already ignores it. `--no-hook` leaves it alone. It prints the `export PATH=...` line for the agent's shell.
+
+| In a root of the pipeline (a Terragrunt unit in a Terragrunt repo) | |
+|---|---|
+| refused | `apply`, `destroy`, `import`, `taint`, `untaint`, `force-unlock`, `state rm`, `state mv`, `state push`, `state replace-provider`, and any command with `-auto-approve`; `-chdir` and `--working-dir` name the directory |
+| refused from a directory that holds a root | Terragrunt's `run --all`, `run-all` and `stack run` with any of the above |
+| run | everything else, such as `init`, `validate`, `fmt`, `plan`, `show` and `state list` |
+
+Outside the roots, the wrappers run every command. The hook applies the same rule to the agent's Bash commands, following `cd` and `sh -c`, and refuses `terragucci approve`, `override`, `stage tf-apply`, `unlock-state`, `pr-merge` and `--mode apply` anywhere in the repo. A refusal exits non-zero (3 from a wrapper, 2 from the hook) with a message that names `propose` on `terragucci mcp --propose`. Run it again after the roots change. The guard does not stop an agent that runs a binary another way; [the threat model](/terragucci/reference/threat-model/#trust) says what does.
 
 ## view
 
@@ -979,6 +1011,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 | `query` | rows printed | | a bad flag or config, a statement that does not run or writes | | |
 | `mcp` | the client closed stdin | | a bad flag or config | | |
+| `guard` | the guard written | | a bad flag or config, a control repo, no git checkout, or a Claude Code settings file that is not JSON | | |
 | `view` | stopped with Ctrl-C, or the view exported | behold stopped or refused the reports | a bad flag or config, or a source behold cannot read | | |
 | `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
 

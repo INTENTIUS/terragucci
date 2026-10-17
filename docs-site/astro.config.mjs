@@ -213,6 +213,7 @@ export default defineConfig({
 								{ label: 'Set up with a coding agent', slug: 'getting-started/agents' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
 								{ label: 'Read the estate over MCP', slug: 'guides/agent-read-over-mcp' },
+								{ label: 'Have an agent propose a change over MCP', slug: 'guides/agent-propose-over-mcp' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
 								{ label: 'Have an agent fix drift', slug: 'guides/agent-fix-drift' },
 								{ label: 'Have a model review a pull request', slug: 'guides/agent-review-a-pull-request' },

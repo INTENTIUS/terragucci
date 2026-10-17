@@ -1,0 +1,115 @@
+---
+title: Have an agent propose a change over MCP
+description: Let a coding agent in a local checkout push a branch, open a pull request and read its plan through terragucci mcp --propose, and keep it from applying a pipeline root with terragucci guard.
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-propose-over-mcp/.
+  Tell me the command line and the environment variables to add terragucci mcp --propose to my MCP client for this repo, and the terragucci guard command to run; do not add or run either yourself, and do not create or print credentials.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+A coding agent working in a checkout gets its change planned by the pipeline without leaving its MCP client. It commits to a branch, and `terragucci mcp --propose` pushes the branch, opens a pull request and reads back the plan note and the policy result. A person still approves the apply. `terragucci guard` makes the local shortcut, an `apply` with the agent's own credentials, refuse.
+
+## Result
+
+The agent's `plan_result` call on the pull request it opened:
+
+```json
+{
+  "pull_request": 7,
+  "state": "open",
+  "head": "9c1e0b7a4d2f8e6c3b5a1f0e9d8c7b6a5f4e3d2c",
+  "planned": true,
+  "report": "github.com/acme/infra/2026/10/9c1e0b7a4d2f8e6c3b5a1f0e9d8c7b6a5f4e3d2c/tf-plan",
+  "plan": {
+    "roots": [{ "path": "envs/prod/app", "status": "planned", "counts": { "update": 1 }, "policy": { "result": "passed", "denials": [], "warnings": [] } }],
+    "gate": [{ "wave": 1, "roots": ["envs/prod/app"], "waits": true }]
+  }
+}
+```
+
+`waits: true` says the wave's gate will hold it for an approval when the pull request merges.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The pipeline on the repo, with [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set | `plan_result` reads the head's plan report from the bucket |
+| A forge token in the environment the client starts the server from, in the variable `token_env` names (`GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` by default) | the server opens the pull request and posts comments with it, never with a token from the agent |
+| git credentials that can push a branch to `origin`, in the same environment | the server pushes with git's own credentials |
+
+## Steps
+
+<Steps>
+
+1. Add the server to your MCP client with `--propose`, from the repo's root:
+
+   ```json
+   {
+     "mcpServers": {
+       "terragucci": {
+         "command": "npx",
+         "args": ["-y", "@intentius/terragucci", "mcp", "--propose"],
+         "env": {
+           "GITHUB_TOKEN": "${GITHUB_TOKEN}",
+           "AWS_ACCESS_KEY_ID": "${AWS_ACCESS_KEY_ID}",
+           "AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
+           "AWS_REGION": "us-east-1"
+         }
+       }
+     }
+   }
+   ```
+
+   The AWS variables are the reports bucket's read credentials ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)). Give the forge token the least it needs: contents and pull requests write on one repository.
+
+2. Write the guard into the checkout:
+
+   ```bash
+   npx terragucci guard
+   ```
+
+   It writes wrappers for `tofu`, `terraform`, `terragrunt` and [choudoufu](/terragucci/concepts/glossary/#choudoufu) under the git directory, and a PreToolUse hook into `.claude/settings.local.json`, which Claude Code reads. For any other agent, put the wrappers ahead of the binaries in the agent's shell with the `export PATH=...` line it prints. Run it again after adding or moving a root.
+
+3. Have the agent work the loop:
+
+   | Step | Tool |
+   |---|---|
+   | commit the change to a local branch | git, in the checkout |
+   | push the branch and open a pull request | `propose`, with `branch`, `title` and `body` |
+   | wait for the pipeline's plan of the head, and read the note, the policy's denials and whether the gate will hold each wave | `plan_result`, with `pull_request` and `wait` |
+   | fix what the plan or the policy found, commit and push again | git, then `propose` again on the same branch |
+   | plan again without a push, or one root alone | `request_plan`, which comments `/terragucci plan [root]` |
+
+   Then the agent stops. A reviewer merges, and the merge's apply goes through the gate like any other.
+
+</Steps>
+
+## Tool refusals
+
+| A call | The answer |
+|---|---|
+| `propose` of the default branch, [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), or a branch [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) names | an error, and nothing is pushed |
+| `propose` of a branch with no local commit | an error |
+| `propose` of a branch origin has moved past | git's refusal: the push is never forced |
+| `propose` with the token's variable unset | an error naming the variable |
+| `approve`, `apply`, `override`, `merge`, or any tool not listed | an error: these belong to a person |
+
+## Guard refusals
+
+| In a root of the pipeline | The guard |
+|---|---|
+| `apply`, `destroy`, `import`, `taint`, `untaint`, `force-unlock`, `state rm`, `state mv`, `state push`, `state replace-provider`, any command with `-auto-approve` | refuses with a message naming `propose`, and runs nothing |
+| `terragrunt run --all apply` or `run-all apply` from a directory that holds a root | refuses |
+| `init`, `validate`, `fmt`, `plan`, `show`, `output`, `state list` | runs the real binary |
+
+Outside the pipeline's roots, the wrappers run every command. The hook also refuses `terragucci approve`, `override`, `stage tf-apply`, `unlock-state`, `pr-merge` and `--mode apply` anywhere in the repo.
+
+The guard catches an agent that holds credentials it should not use. An agent that calls a binary by a path the hook does not see, runs it from a script, or edits the hook gets past it. The control is the credentials: a plan role that cannot write, per-environment state roles ([`oidc.roles`](/terragucci/guides/scope-state-access/)), and approvals bound to the plan digest. The [threat model](/terragucci/reference/threat-model/#trust) lists what each one stops.
+
+## Next
+
+- [Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/) covers the read-only tools.
+- [Set up with a coding agent](/terragucci/getting-started/agents/) gives the agent's rules.
+- [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) explains what `request_plan`'s comment starts.
