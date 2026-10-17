@@ -346,7 +346,7 @@ REVIEWER_KEY="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_KEY)"
 tree_keys() { # dir, tool, [root.hcl]
   local dir="$1" f root key template
   case "$2" in
-    terraform|chant)
+    terraform|chant|terralith)
       for f in "$dir"/*/*.tf; do
         [ -f "$f" ] || continue
         key="$(awk '/backend "s3"/ { b = 1 } b && /^[[:space:]]*key[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f")"
