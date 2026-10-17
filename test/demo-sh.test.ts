@@ -389,6 +389,13 @@ describe("the terralith scenario", () => {
 
   /** Run the scenario with the forge and Docker stubbed, each run ending as `outcomes` says, and read back every write. */
   function cycle(outcomes: string[]) {
+    const r = run(outcomes);
+    expect(r.status, r.stderr).toBe(0);
+    return r.writes();
+  }
+
+  /** The scenario's run, its pushes' messages and the runs it waited for ("<before> <event> <sha>"), and its writes. */
+  function run(outcomes: string[]) {
     const tmp = mkdtempSync(join(tmpdir(), "demo-terralith-"));
     made.push(tmp);
     writeFileSync(join(tmp, "outcomes"), outcomes.join("\n") + "\n");
@@ -412,15 +419,14 @@ describe("the terralith scenario", () => {
       "overlay() { :; }",
       "tl_fill() { :; }",
       "tl_destroy_bg() { :; }",
-      "tl_stock_apply() { :; }",
       "tl_teams_push() { :; }",
       "tl_sync_team() { :; }",
       "lifecycle_back() { :; }",
-      "push_tree() { echo base; }",
+      `push_tree() { echo "$4" >> ${tmp}/pushes; echo base; }`,
       "last_run_id() { echo 0; }",
       "push_as_author() { echo head; }",
       "pr_open() { echo 40; }",
-      "run_started() { :; }",
+      `run_started() { echo "$*" >> ${tmp}/started; }`,
       "runs_mark() { :; }",
       "run_ended() { RUN_STATUS=success; }",
       "on_waiting() { default_waiting; }",
@@ -442,11 +448,18 @@ describe("the terralith scenario", () => {
     ].map(fn).join("\n");
     const body = `${stubs}\n${fns}\nTL_TEAMS=(team-a team-b team-c) TL_TEAM=team-b\nscenario_terralith\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
-    expect(r.status, r.stderr).toBe(0);
-    return readFileSync(join(tmp, "writes"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { step: string; beat: string | null; repo: string; about: string | null; next: string | null; from: boolean });
+    const lines = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8").trim().split("\n") : []);
+    return {
+      status: r.status,
+      stderr: r.stderr,
+      pushes: lines("pushes"),
+      started: lines("started"),
+      writes: () => lines("writes").map((l) => JSON.parse(l) as { step: string; beat: string | null; repo: string; about: string | null; next: string | null; from: boolean }),
+    };
   }
 
-  const migrate = ["migrate adopt sha256:a 1", "applied", "migrate split sha256:s 1", "applied", "applied"];
+  // The stock push's run first, then the adopt and split merges' (each a migration that waits, then its re-run) and the team's.
+  const migrate = ["applied", "migrate adopt sha256:a 1", "applied", "migrate split sha256:s 1", "applied", "applied"];
 
   it("writes each beat's steps, in order, each with its beat and card", () => {
     const writes = cycle([...migrate, "waiting - - 2", "applied"]);
@@ -464,6 +477,22 @@ describe("the terralith scenario", () => {
     for (const w of writes.filter((x) => x.beat)) expect(w.about, `${w.beat} ${w.step}`).toBe(card(w.beat!));
     // The reset is the cycle's, not a beat's: no beat and no card.
     expect(writes.at(-1)).toMatchObject({ beat: null, about: null, next: "start the next cycle" });
+  });
+
+  it("pushes the stock terralith to main with no [skip ci], and waits for that push's run", () => {
+    const r = run([...migrate, "applied"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.pushes[0]).toBe("The terralith, stock, for cycle 12");
+    // The first run the cycle waits for is the stock commit's push run.
+    expect(r.started[0]).toBe("0 push base");
+    expect(r.writes().slice(0, 2).map((w) => `${w.beat} ${w.step} ${w.next}`)).toEqual(["stock applying follow the stock apply", "stock applied open the adopt pull request"]);
+  });
+
+  it("stalls the stock beat when its run ends in anything but applied, before the adopt beat", () => {
+    const r = run(["failed"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("FAIL: the stock terralith of cycle 12 ended failed (u)");
+    expect(r.writes().map((w) => `${w.beat} ${w.step}`)).toEqual(["stock applying"]);
   });
 
   it("runs the team beat in team B's own repository, and the others in demo-terralith", () => {
