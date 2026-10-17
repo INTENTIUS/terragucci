@@ -430,7 +430,7 @@ pass:
   vars: [TF_VAR_region]
 ```
 
-Each name reaches the plan, apply and drift jobs as an environment variable of that name, read from `secrets.<name>` or `vars.<name>`; [Secrets and variables you pass](/terragucci/reference/environment/#secrets-and-variables-you-pass) lists the jobs. `config check` refuses a value in place of a name, a name listed twice or also set in `env`, and a name the forge or terragucci keeps for itself: one that starts with `GITHUB_`, `GITEA_`, `FORGEJO_`, `TG_` or `TERRAGUCCI_`, and `TF_IN_AUTOMATION` and `TF_INPUT`.
+Each name reaches the plan, apply and drift jobs as an environment variable of that name, read from `secrets.<name>` or `vars.<name>`; [Secrets and variables you pass](/terragucci/reference/environment/#secrets-and-variables-you-pass) lists the jobs. [Handle secrets](/terragucci/guides/keep-secrets-out-of-notes/) follows a secret from the forge's store to the state. `config check` refuses a value in place of a name, a name listed twice or also set in `env`, and a name the forge or terragucci keeps for itself: one that starts with `GITHUB_`, `GITEA_`, `FORGEJO_`, `TG_` or `TERRAGUCCI_`, and `TF_IN_AUTOMATION` and `TF_INPUT`.
 
 A passed secret reaches every job of its stage. The forges can scope one to an environment instead, and with [`environments`](#environments) each environment's apply jobs run in its forge environment, so a secret of the same name can hold each environment's value:
 

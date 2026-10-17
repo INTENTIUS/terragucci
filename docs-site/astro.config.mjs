@@ -155,7 +155,7 @@ export default defineConfig({
 								{ label: 'Write a policy', slug: 'guides/write-a-policy' },
 								{ label: 'Read the audit trail', slug: 'guides/read-the-audit-trail' },
 								{ label: 'Lock roots to a pull request', slug: 'guides/lock-roots' },
-								{ label: 'Keep secrets out of plan notes and logs', slug: 'guides/keep-secrets-out-of-notes' },
+								{ label: 'Handle secrets', slug: 'guides/keep-secrets-out-of-notes' },
 								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Separate environments', slug: 'guides/separate-environments' },
 							],
