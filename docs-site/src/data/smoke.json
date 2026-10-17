@@ -1952,7 +1952,7 @@
     },
     {
       "claim": "notify/webhook",
-      "says": "with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a chant.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1961,7 +1961,7 @@
     },
     {
       "claim": "notify/webhook",
-      "says": "with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a chant.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
       "needs": null,
       "verdict": "pass",
       "break": "caught",

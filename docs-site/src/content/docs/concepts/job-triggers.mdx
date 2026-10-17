@@ -28,7 +28,7 @@ Every job runs in your forge's CI. It starts in one of two ways: on an event the
 | the ephemeral sweep (`ephemeral/ttl`) | a schedule on GitHub and Forgejo, and a pipeline schedule with `TERRAGUCCI_SCHEDULE=ephemeral` on GitLab, where it is also what destroys a closed merge request's copy | 30 minutes, with `ephemeral` | one interval | `ephemeral.sweep`, 5 to 60 |
 | the estate page (`estate/job`) | a scheduled job you add to the [control repo](/terragucci/concepts/control-repo/), from [See every project](/terragucci/guides/see-every-project/) | none | your schedule | |
 
-`init` writes each scheduled job when its key is set. On GitLab the jobs are in the pipeline, and each runs only in a pipeline schedule you create under CI/CD, Schedules, with the variable the table names; `init` prints the steps for the drift, rollouts and comments schedules.
+`init` writes each scheduled job when its key is set, and on GitHub and Forgejo removes the workflow it wrote once the key goes. On GitLab the jobs are in the pipeline, and each runs only in a pipeline schedule you create under CI/CD, Schedules, with the variable the table names; `init` prints the steps for each schedule the config turns on.
 
 ## The schedules' reasons
 
