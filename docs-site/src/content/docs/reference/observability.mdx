@@ -73,6 +73,8 @@ terragucci tf-apply         project, commit, wave, result
   upload                    the report's copy in the reports bucket
 ```
 
+In wave 1, a [state migration](/terragucci/reference/migration-files/) runs in a `migrate` phase. When an estate migration writes, the phase holds a `migration <name>` span. Each resource whose tags land adds an event that carries the fields of its [progress line](/terragucci/reference/migration-files/#progress) and how many resources are left. Its attributes hold the counts of each outcome once the writes end.
+
 ### Finding a run's traces
 
 Each trace's resource names the run it came from, with the labels the metrics carry under `TERRAGUCCI_METRICS_PER_RUN`:

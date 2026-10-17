@@ -7,7 +7,9 @@
 # from its own example tree: terraform's scenarios run on <admin>/demo, from
 # example-demo/ (roots network, app, edge and other); terragrunt's on
 # <admin>/demo-terragrunt, from example-demo-terragrunt/; chant's on
-# <admin>/demo-chant, from example-demo-chant/. A loop walks its scenarios and
+# <admin>/demo-chant, from example-demo-chant/; terralith's on
+# <admin>/demo-terralith, from example-demo-terralith/, with one more repo per
+# team estate (see the terralith scenario below). A loop walks its scenarios and
 # switches repos between them. The roots and their state keys come from each
 # tree: a Terraform root's backend key (a chant tree's roots are Terraform
 # roots), and a Terragrunt unit's key from root.hcl's remote_state.
@@ -30,6 +32,8 @@
 #                                     the tree to its repo, apply its roots, and
 #                                     keep the base commit and each root's state
 #                                     as that repo's base snapshot. Run once.
+#                                     The terralith's repos get no base here:
+#                                     each of its cycles pushes and applies its own.
 #   stack/demo.sh loop [--once] [scenario...]
 #                                     run the scenarios one after another and
 #                                     reset to the base after each, forever (one
@@ -59,7 +63,7 @@
 #     "step": "waiting", "label": "Wave 2 stops and waits for a person to approve it. ...",
 #     "started_at": "2026-10-20T10:00:00Z",
 #     "next": { "action": "approve wave-2", "from": "2026-10-20T10:04:00Z", "at": "2026-10-20T10:04:20Z" },
-#     "pull": 41, "commit": "<sha>",
+#     "pull": 41, "commit": "<sha>", "beat": null,
 #     "about": { "changes": "...", "watch": "...", "shows": "..." },
 #     "delivery": "Counted from this demo loop's own runs, ..." }
 #
@@ -69,7 +73,15 @@
 # next.from is when the driver started waiting for that action: a write that
 # keeps the same action and at keeps its from, so a reader can draw how far the
 # wait has gone. An older driver leaves it out, so readers take it as
-# optional.
+# optional. While an estate migration of the cycle writes its resources,
+# next.action names it with its count, "carve: 36 of 79 moved" ("stamped" for
+# an adoption), read from the last line of the migration's progress.jsonl in
+# the reports bucket (migration_follow), and goes back to the action before
+# once every resource has its line.
+# beat is null but in a scenario told in beats: terralith writes stock, adopt,
+# split, team or cross, and each beat its own about, from
+# <tree>/scenarios/terralith-<beat>/about.json. Within a terralith cycle,
+# applied ends each beat, and only the last one's is followed by reset.
 # pull and commit are null until the cycle has them. about is the scenario's
 # card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
@@ -157,22 +169,24 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop terralith)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
 # chant-pr-loop stays out of the default list until a cycle of it has run to
-# its reset on the demo host. DEMO_SCENARIOS or a name runs it.
+# its reset on the demo host. DEMO_SCENARIOS or a name runs it. So does
+# terralith, which waits for the maintainer's go to run on the demo host.
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant)
+TOOLS=(terraform terragrunt chant terralith)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
     tg-planned-outputs) echo terragrunt ;;
     chant-pr-loop) echo chant ;;
+    terralith) echo terralith ;;
     *) return 1 ;;
   esac
 }
@@ -181,6 +195,7 @@ tool_repo() { # tool -> the repo's name under the admin
     terraform) echo demo ;;
     terragrunt) echo demo-terragrunt ;;
     chant) echo demo-chant ;;
+    terralith) echo demo-terralith ;;
     *) return 1 ;;
   esac
 }
@@ -189,6 +204,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     terraform) echo example-demo ;;
     terragrunt) echo example-demo-terragrunt ;;
     chant) echo example-demo-chant ;;
+    terralith) echo example-demo-terralith ;;
     *) return 1 ;;
   esac
 }
@@ -205,6 +221,10 @@ REPORT_PREFIX=demo
 # of the terraform repo runs in DEMO_IMAGE, the tofu CI image with SQL Yodeler
 # (stack/demo-yodel/Dockerfile), which example-demo/terragucci.yml names.
 DEMO_IMAGE=terragucci-demo-tofu:local
+# The choudoufu release DEMO_IMAGE carries, for the terralith's roots. Its
+# sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
+# the build checks the download against.
+CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.28.0}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 HOLD="${DEMO_HOLD:-20}"
@@ -379,9 +399,11 @@ use_repo() { # tool
   EXTRA_KEYS="$(grep -v '^$' <<<"$keys" | sort -u | grep -vxF -f <(printf '%s\n' "$BASE_KEYS") || true)"
   read -r -a ROOTS <<<"$(awk '{ print $1 }' <<<"$BASE_KEYS" | tr '\n' ' ')"
   INIT_PULL=""
-  [ "$1" != terragrunt ] || INIT_PULL=1
+  # terralith's split adds roots, whose pipeline init writes, as for Terragrunt's units.
+  case "$1" in terragrunt|terralith) INIT_PULL=1 ;; esac
   BASE_RUN=1
-  [ "$1" != chant ] || BASE_RUN=""
+  # The terralith's base commit says [skip ci]: the driver applies it itself.
+  case "$1" in chant|terralith) BASE_RUN="" ;; esac
 }
 
 root_key() { # root -> its state key in this repo, a scenario's own roots too
@@ -401,8 +423,12 @@ snapshot() { # root
 # up's, or the loop's scenarios'.
 LOOP_TOOLS=()
 loop_repos() {
-  local t
-  for t in ${LOOP_TOOLS[@]+"${LOOP_TOOLS[@]}"}; do echo "$USER/$(tool_repo "$t") $t"; done
+  local t team
+  for t in ${LOOP_TOOLS[@]+"${LOOP_TOOLS[@]}"}; do
+    echo "$USER/$(tool_repo "$t") $t"
+    # The terralith's team estates each have a repository of their own (tl_teams_push).
+    if [ "$t" = terralith ]; then for team in "${TL_TEAMS[@]}"; do echo "$USER/$(tl_team_repo "$team") $t"; done; fi
+  done
 }
 
 use_repo terraform
@@ -524,18 +550,69 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
       about: $about}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
-  log "cycle $CYCLE $SCENARIO: $step: $label"
+  log "cycle $CYCLE $SCENARIO: $step: $label${MIGRATION_WRITE:+ ($action)}"
+  # A migration's count stands in for the action only while it writes: the step's own action is kept to go back to.
+  [ -n "${MIGRATION_WRITE:-}" ] || DEMO_STEP="$step" DEMO_LABEL="$label" DEMO_ACTION="$action" DEMO_AT="$at" MIGRATION_SHOWN=""
   demo_put
 }
 
+# The estate migrations the scenario's change adds: migrations/<name>.yml in
+# its pull/ or push/ tree. Empty for the base and a scenario with none.
+scenario_migrations() { # scenario
+  local tree f
+  tree="$(tool_tree "$(scenario_tool "$1" 2>/dev/null)" 2>/dev/null)" || return 0
+  for f in "$HERE/../$tree/scenarios/$1"/{pull,push}/migrations/*.yml; do
+    if [ -f "$f" ]; then basename "$f" .yml; fi
+  done | sort -u
+}
+
+# While a migration of the cycle writes, its count: "carve: 36 of 79 moved".
+# Wave 1 copies <prefix>/<project>/migrations/<name>/progress.jsonl to the
+# bucket every few seconds while the writes land, each line carrying the counts
+# so far; this reads the last line of each. Empty when no migration has a line
+# from this cycle with resources left.
+migration_next() {
+  local name line text
+  for name in ${MIGRATIONS:-}; do
+    line="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/forgejo:3000/$REPO/migrations/$name/progress.jsonl" 2>/dev/null | tail -n 1)" || continue
+    [ -n "$line" ] || continue
+    text="$(jq -r --arg n "$name" --argjson since "${STARTED:-0}" '
+      select((.at // "" | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch 0) >= $since and .counts.left > 0)
+      | .counts as $c | ($c.moved + $c.stamped + $c.refused + $c.skipped + $c.left) as $t
+      | if .outcome == "stamped" or .estate_from == "" then "\($n): \($c.stamped) of \($t) stamped" else "\($n): \($c.moved) of \($t) moved" end' <<<"$line" 2>/dev/null)" || continue
+    [ -z "$text" ] || { echo "$text"; return 0; }
+  done
+  return 0
+}
+
+# Each poll of a wait: put the migration's count in next while it writes, at
+# most every 5 s, and the step's own action back once it is done.
+MIGRATION_AT=0 MIGRATION_SHOWN=""
+migration_follow() {
+  [ -n "${MIGRATIONS:-}" ] && [ -n "${DEMO_STEP:-}" ] || return 0
+  [ $(( $(now) - MIGRATION_AT )) -ge 5 ] || return 0
+  MIGRATION_AT="$(now)"
+  local text
+  text="$(migration_next)"
+  [ "$text" != "$MIGRATION_SHOWN" ] || return 0
+  if [ -n "$text" ]; then
+    MIGRATION_WRITE=1 demo_write "$DEMO_STEP" "$DEMO_LABEL" "$text"
+  else
+    MIGRATION_WRITE=1 demo_write "$DEMO_STEP" "$DEMO_LABEL" "$DEMO_ACTION" "$DEMO_AT"
+  fi
+  MIGRATION_SHOWN="$text"
+}
+
 # The fields of demo.json that say where the viewer is: the demo's intro, the
-# scenario's short name, and its place in this loop's list.
+# scenario's short name, its place in this loop's list, and the beat of a
+# scenario told in several (terralith's stock, adopt, split, team and cross).
 demo_where() {
   jq -cn --arg intro "$INTRO" --arg delivery "$DELIVERY" --arg name "$(scenario_name "$SCENARIO")" --arg index "$INDEX" --argjson count "$COUNT" \
-    --arg tool "$TOOL" --arg repo "$REPO" \
+    --arg tool "$TOOL" --arg repo "$REPO" --arg beat "${BEAT:-}" \
     '{intro: (if $intro == "" then null else $intro end), name: $name, tool: $tool, repo: $repo,
       index: (if $index == "" then null else ($index | tonumber) end), scenarios: $count,
-      delivery: (if $delivery == "" then null else $delivery end)}'
+      delivery: (if $delivery == "" then null else $delivery end),
+      beat: (if $beat == "" then null else $beat end)}'
 }
 
 # The problem the demo is about, from example-demo/scenarios/intro.json; empty when it can't be read.
@@ -846,6 +923,7 @@ run_ended() { # limit
   while :; do
     runner_watch
     runs_export
+    migration_follow
     run="$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID" 2>/dev/null || true)"
     status="$(jq -r '.status // empty' <<<"$run" 2>/dev/null || true)"
     case "$status" in success|failure|cancelled|skipped) break ;; esac
@@ -857,16 +935,30 @@ run_ended() { # limit
   RUN_URL="$(jq -r '.html_url // empty' <<<"$run" | sed "s#^http://forgejo:3000#$URL#")"
 }
 
-# What run RUN_ID ended in. Sets OUTCOME (applied, waiting, refused, failed or
-# cancelled) and WAVE (the wave that waited, refused or failed, when the run says).
+# What run RUN_ID ended in. Sets OUTCOME (applied, waiting, migrate, refused,
+# failed or cancelled) and WAVE (the wave that waited, refused or failed, when
+# the run says). migrate is a migration in wave 1 that waits for an approval of
+# its digest (packages/terragucci/src/migrate.ts), named in MIGRATION and
+# MIGRATE_DIGEST. A run after an approval may print the approved migration's
+# wait again before it finds the approval (chant#3847), so a migration this
+# cycle approved at that digest (MIGRATIONS_APPROVED) is not read as waiting.
+MIGRATION="" MIGRATE_DIGEST="" MIGRATIONS_APPROVED=""
 run_outcome() {
-  local logs line job
+  local logs line job m d
   OUTCOME="" WAVE=""
   case "$RUN_STATUS" in
     success) OUTCOME=applied; return 0 ;;
     cancelled|skipped) OUTCOME=cancelled; return 0 ;;
   esac
   logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  if line="$(grep -oE 'migration [^ ]+ waits for an approval of digest [^ ]+\. Read' <<<"$logs" | tail -1)" && [ -n "$line" ]; then
+    m="${line#migration }" d="${line##* of digest }"
+    m="${m%% *}" d="${d%. Read}"
+    case " $MIGRATIONS_APPROVED " in
+      *" $m@$d "*) ;;
+      *) OUTCOME=migrate MIGRATION="$m" MIGRATE_DIGEST="$d" WAVE=1; return 0 ;;
+    esac
+  fi
   # A wave whose plans moved after their approval (apply.ts) prints the approve
   # line too, so the refusal is read first.
   if line="$(grep -oE 'wave [0-9]+ changed after it was approved' <<<"$logs" | awk 'NR == 1')" && [ -n "$line" ]; then
@@ -918,6 +1010,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
+    terralith)  echo "One terralith adopted, split into team estates, then changed" ;;
     *) return 1 ;;
   esac
 }
@@ -934,6 +1027,7 @@ scenario_name() {
     b-composed) echo "one composed run" ;;
     tg-planned-outputs) echo "two new units" ;;
     chant-pr-loop) echo "a reviewed plan" ;;
+    terralith)  echo "the terralith carve" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -943,10 +1037,12 @@ scenario_name() {
 COST_STUB="Its cost line uses made-up prices"
 
 # The label of a step for this cycle's scenario; the generic one when the
-# scenario has none of its own.
+# scenario has none of its own. A scenario told in beats (terralith) has its
+# labels under <scenario>-<beat>:<step>.
 say() { # step
-  local values
-  case "$SCENARIO:$1" in
+  local values key="$SCENARIO:$1"
+  [ -z "${BEAT:-}" ] || key="$SCENARIO-$BEAT:$1"
+  case "$key" in
     a-known:pull-request)   echo "Pull request $PULL: network's http_proxy_port goes 8080 -> 9090, and its output reads .input" ;;
     a-known:planned)        echo "The plan note shows network going 8080 -> 9090. App's listener 9080 and edge's upstream http://app:9080 follow it. Other has no change. $COST_STUB." ;;
     a-known:applying)       echo "Wave 1 applies network, then wave 2 app and wave 3 edge, each in its own state; nothing is destroyed, so no wave waits" ;;
@@ -987,6 +1083,27 @@ say() { # step
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
+    terralith-stock:applying) echo "Cycle $CYCLE starts from a stock terralith under prefix $TL_PREFIX. The driver applies its 82 resources into one state file, outside the pipeline." ;;
+    terralith-stock:applied) echo "The terralith is applied: 82 resources in one state file on s3. A change to any team would plan all of them and wait on the one lock." ;;
+    terralith-adopt:pull-request) echo "Pull request $PULL swaps the terralith's backend block for a live block, and adds migrations/adopt.yml, which adopts its state." ;;
+    terralith-adopt:planned) echo "The plan is on the pull request. Under the live block the terralith would create each resource again, and the migration proves each one exists." ;;
+    terralith-adopt:applying) echo "Wave 1 runs the adopt migration before it plans the terralith." ;;
+    terralith-adopt:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. No resource is tagged yet, and the state file is as it was." ;;
+    terralith-adopt:applied) echo "Adopted. live-import tagged each resource it verified, and the terralith plans no change. Its state file is still in the bucket." ;;
+    terralith-split:pull-request) echo "Pull request $PULL adds the roots team-a, team-b and team-c with their resources, and migrations/split.yml, which moves them." ;;
+    terralith-split:planned) echo "The plan is on the pull request. The terralith would destroy each team resource and its team would create it; the migration accounts for each." ;;
+    terralith-split:applying) echo "Wave 1 runs the split migration before it plans the four roots." ;;
+    terralith-split:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. Every team resource still carries the terralith's owner tag." ;;
+    terralith-split:applied) echo "Split. live-mv moved each team resource to its team's estate with one tag write, and all four roots plan no change. Nothing was recreated." ;;
+    terralith-team:pull-request) echo "Pull request $PULL, in team B's own repository, adds dynamodb:Query to one of team B's inline policies." ;;
+    terralith-team:planned) echo "The plan is on the pull request: one update in team B's estate, planned as a cone. No other estate is planned." ;;
+    terralith-team:applying) echo "Wave 1 applies team B's estate, and nothing else." ;;
+    terralith-team:applied) echo "Team B's policy is updated, and the terralith and the other teams were never planned. The driver copies team B's root back to demo-terralith." ;;
+    terralith-cross:pull-request) echo "Pull request $PULL adds the terralith's output log_retention_days, 14, and each team's log group reads it." ;;
+    terralith-cross:planned) echo "The plan is on the pull request. Each team's log group goes from 7 to 14 days, planned on the terralith's planned output." ;;
+    terralith-cross:applying) echo "Wave 1 applies the terralith and records its output. Wave 2 plans the three teams on the recorded value." ;;
+    terralith-cross:applied) echo "Done. Each team's log group keeps the 14 days the terralith publishes. The next cycle starts from a new stock terralith." ;;
+    terralith-adopt:approved|terralith-split:approved) echo "The driver approves migration $MIGRATION's digest with the reviewer's key, as a person outside the change would." ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
     *:applied)
@@ -999,22 +1116,27 @@ say() { # step
 }
 
 # Open the scenario's pull request from the base: its files under
-# example-demo/scenarios/<scenario>/pull/ over main, @CYCLE@ filled in.
+# example-demo/scenarios/<scenario>/pull/ over main, @CYCLE@ filled in. A
+# scenario told in beats names each beat's files, branch and title in
+# PULL_FILES, PULL_BRANCH and PULL_TITLE.
+PULL_FILES="" PULL_BRANCH="" PULL_TITLE=""
 open_pull() {
-  local tree="$WORK/c$CYCLE/pull" sha before
+  local tree="$WORK/c$CYCLE/pull${PULL_BRANCH:+-$PULL_BRANCH}" sha before branch="${PULL_BRANCH:-demo-$SCENARIO}"
   clone_main "$tree"
-  overlay "$TREE/scenarios/$SCENARIO/pull" "$tree"
+  overlay "${PULL_FILES:-$TREE/scenarios/$SCENARIO/pull}" "$tree"
+  # The terralith's names carry the cycle's prefix.
+  [ "$TOOL" != terralith ] || tl_fill "$tree"
   # A pull request that adds units writes their pipeline as an author would: terragucci init.
   if [ -n "$INIT_PULL" ]; then
     (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on the $SCENARIO pull request"
   fi
   before="$(last_run_id)"
-  sha="$(push_as_author "$tree" "$REPO" "demo-$SCENARIO" "$TITLE (cycle $CYCLE)")"
-  PULL="$(pr_open "demo-$SCENARIO" "$TITLE")"
+  sha="$(push_as_author "$tree" "$REPO" "$branch" "${PULL_TITLE:-$TITLE} (cycle $CYCLE)")"
+  PULL="$(pr_open "$branch" "${PULL_TITLE:-$TITLE}")"
   COMMIT="$sha"
   demo_write pull-request "$(say pull-request)" "wait for the plan note"
   run_started "$before" pull_request "$sha"
-  runs_mark plan "$PULL" "demo-$SCENARIO"
+  runs_mark plan "$PULL" "$branch"
   run_ended "$LIMIT_PLAN"
   [ "$RUN_STATUS" = success ] || fail "the plan run of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
   # chant's plan job posts a note of its own.
@@ -1071,7 +1193,8 @@ merge_pull() { # the author merges -> COMMIT is the merge commit, RUN_ID its pus
 }
 
 # Follow run RUN_ID and every re-run the cycle needs, until its waves applied.
-# A waiting wave: hold, approve, resume (on_waiting). A failed one: the
+# A waiting wave: hold, approve, resume (on_waiting). A waiting migration: the
+# scenario's on_migrate, or a stall. A failed one: the
 # scenario's on_failed, or a stall. A refused one: the scenario's on_refused,
 # or a stall. A hook that ends the cycle itself sets CYCLE_DONE. The step a
 # re-run starts on (resumed) stays until that run ends.
@@ -1091,6 +1214,7 @@ follow() {
     [ "$resumes" -le "$RESUMES_MAX" ] || fail "the waves needed more than $RESUMES_MAX approvals and re-runs"
     case "$OUTCOME" in
       waiting) on_waiting ;;
+      migrate) on_migrate ;;
       failed) on_failed ;;
     esac
     [ -z "$CYCLE_DONE" ] || return 0
@@ -1116,11 +1240,13 @@ waiting_label() {
     b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
     failure:2)    echo "Wave 2 waits for a person to approve the migration's second run. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
+    terralith:*)  echo "Wave $WAVE waits for a person to approve the teams' plans, made on the output the terralith recorded." ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
 }
 
 default_failed()  { fail "wave ${WAVE:-?} failed ($RUN_URL)"; }
+default_migrate() { fail "migration $MIGRATION waits for an approval, which this scenario does not give ($RUN_URL)"; }
 default_refused() { fail "wave ${WAVE:-?} refused its plan ($RUN_URL)"; }
 
 # ── the scenarios ────────────────────────────────────────────────────────────
@@ -1415,12 +1541,319 @@ scenario_stale_plan() {
   follow
 }
 
+# terralith: one root that holds everything, carved into team estates on
+# choudoufu, the OpenTofu fork for AWS and Kubernetes that keeps ownership as
+# two tags on each resource (tofu-estate and tofu-address). The tree is
+# example-demo-terralith/: choudoufu's terralith-gen at scale 1, plus a log
+# group per team, 82 resources as one stock root on s3 state (generate.sh).
+# One cycle is five beats, each written to demo.json as beat, with its card
+# from scenarios/terralith-<beat>/about.json as about:
+#
+#   stock  the driver pushes the cycle's stock terralith to demo-terralith's
+#          main ([skip ci]) and applies it outside the pipeline, in the demo's
+#          job image: every name and the state key carry the cycle's prefix,
+#          tl<cycle>, so a cycle never meets the resources of the one before
+#   adopt  a pull request swaps the backend block for a live block and adds a
+#          backends migration; on the merge, wave 1's tf-migrate gate waits,
+#          the reviewer approves the digest, and live-import stamps the tags
+#   split  a pull request adds the team roots (team-a, team-b, team-c) and a
+#          moves migration; the gate waits the same way, and live-mv retags
+#          each team resource. The driver then pushes each team's root to a
+#          repository of its own, demo-terralith-<team>, with the root at the
+#          repository's top ([skip ci]), since choudoufu's cone reads no base
+#          for a root in a subdirectory (choudoufu#2062)
+#   team   a pull request in demo-terralith-team-b changes one of team B's
+#          policies, planned as team B's cone; once it applied, the driver
+#          copies the root back to demo-terralith's team-b/ ([skip ci]), so
+#          the next pull request there starts from what is live
+#   cross  a pull request in demo-terralith publishes log_retention_days from
+#          the terralith and has each team's log group read it: wave 1 applies
+#          the terralith, wave 2 the teams; a wave that waits is approved
+#
+# The reset destroys the cycle's resources in the background (tl_destroy_bg),
+# from the stock tree, whose state the adoption leaves in the bucket as it was.
+TL_TEAMS=(team-a team-b team-c)
+TL_TEAM="team-b"
+TL_RECORDS=demo-terralith-records
+TL_PREFIX=""
+
+tl_team_repo() { # team -> its repository's name under the admin
+  echo "demo-terralith-$1"
+}
+
+# Point the driver's forge calls at one of the terralith's repositories.
+tl_repo() { # repo name
+  REPO="$USER/$1"
+  REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
+  REVIEWER_REMOTE="${URL/#http:\/\//http://${REVIEWER}:${REVIEWER_TOKEN}@}/$REPO.git"
+}
+
+# Write the cycle's prefix over the generator's "tl" in a tree's .tf files and
+# migrations: tl-team-0000-role becomes tl<cycle>-team-0000-role, the zone
+# tl.terralith.test tl<cycle>.terralith.test, and the estates and state key
+# follow. A name that already carries a prefix is left as it is.
+tl_fill() { # dir
+  local p="tl$CYCLE"
+  find "$1" -type f \( -name '*.tf' -o -path '*/migrations/*.yml' \) -not -path '*/.git/*' -print0 \
+    | xargs -0 perl -pi -e "s/\\btl(?=[-.])/$p/g; s/(name_prefix\\s*=\\s*)\"tl\"/\${1}\"$p\"/"
+}
+
+# The admin's out-of-band work runs in the demo's job image on the stack's
+# network, with the jobs' plugin cache.
+tl_docker() { # docker run arguments...
+  docker run --rm --network "$TG_NETWORK" -v "${JOB_CACHE_VOLUME:-terragucci-job-cache}:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 "$@"
+}
+
+# Apply a stock terralith tree, outside the pipeline.
+tl_stock_apply() { # dir
+  local out
+  if ! out="$(tar -C "$1" -cf - --exclude ./.git . | tl_docker -i "$DEMO_IMAGE" \
+      sh -c 'set -e; mkdir /w; cd /w; tar xf -; cd terralith; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color' 2>&1)"; then
+    printf '%s\n' "$out" | tail -20 >&2
+    return 1
+  fi
+  log "stock: $(grep -E '^Apply complete' <<<"$out" || echo "applied")"
+}
+
+# The repositories up makes, the state bucket (versioned, so the adoption
+# binds the state's version) and choudoufu's record store bucket with the
+# settings choudoufu checks before it writes a record.
+tl_up() {
+  local r t ns='xmlns="http://s3.amazonaws.com/doc/2006-03-01/"' xml md5
+  for r in "$(tool_repo terralith)" $(for t in "${TL_TEAMS[@]}"; do tl_team_repo "$t"; done); do
+    tl_repo "$r"
+    if ! api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null; then
+      api -o /dev/null -H 'content-type: application/json' -X POST \
+        -d "$(jq -cn --arg n "$r" --arg d "$(repo_description)" '{name: $n, description: $d, private: false, auto_init: false, default_branch: "main"}')" \
+        "$URL/api/v1/user/repos"
+    fi
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
+    people_join
+  done
+  tl_repo "$(tool_repo terralith)"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$STATE_BUCKET?versioning" -H 'content-type: application/xml' \
+    --data-binary "<VersioningConfiguration $ns><Status>Enabled</Status></VersioningConfiguration>" || fail "could not turn on versioning in $STATE_BUCKET"
+  curl -s -o /dev/null -X PUT "$FLOCI/$TL_RECORDS" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$TL_RECORDS?versioning" -H 'content-type: application/xml' \
+    --data-binary "<VersioningConfiguration $ns><Status>Enabled</Status></VersioningConfiguration>" || fail "could not turn on versioning in $TL_RECORDS"
+  xml="<LifecycleConfiguration $ns><Rule><ID>expire-noncurrent</ID><Filter><Prefix></Prefix></Filter><Status>Enabled</Status><NoncurrentVersionExpiration><NoncurrentDays>1</NoncurrentDays></NoncurrentVersionExpiration></Rule></LifecycleConfiguration>"
+  md5="$(printf '%s' "$xml" | openssl md5 -binary | base64)"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$TL_RECORDS?lifecycle" -H 'content-type: application/xml' -H "Content-MD5: $md5" --data-binary "$xml" \
+    || fail "could not set $TL_RECORDS's lifecycle rule"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$TL_RECORDS?publicAccessBlock" -H 'content-type: application/xml' \
+    --data-binary "<PublicAccessBlockConfiguration $ns><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls><BlockPublicPolicy>true</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>" \
+    || fail "could not block public access to $TL_RECORDS"
+  mkdir -p "$RSTATE"
+  RUN_URL="(each cycle applies its own stock terralith)"
+  COMMIT=""
+  demo_write reset "$(base_label)" "start the first cycle"
+}
+
+# A loop's terralith is ready: its repositories and the record store front are up.
+tl_ready() {
+  local r t
+  [ "$(docker inspect -f '{{.State.Running}}' "${TG_PROJECT:-terragucci}-demo-records" 2>/dev/null || true)" = true ] \
+    || fail "demo-records is not running; run 'just demo up' again"
+  for r in "$(tool_repo terralith)" $(for t in "${TL_TEAMS[@]}"; do tl_team_repo "$t"; done); do
+    tl_repo "$r"
+    api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null || fail "no repository $REPO; run 'just demo up' again"
+    people_join
+  done
+  tl_repo "$(tool_repo terralith)"
+}
+
+# The beat at hand, its card, its next pull request's files, and the
+# migrations they add, whose counts migration_follow shows while they write.
+tl_beat() { # beat
+  local f
+  BEAT="$1" PULL="" PULL_FILES="$TREE/scenarios/terralith-$1/pull" PULL_BRANCH="demo-terralith-$1" MIGRATIONS=""
+  for f in "$PULL_FILES"/migrations/*.yml; do
+    if [ -f "$f" ]; then MIGRATIONS="${MIGRATIONS:+$MIGRATIONS }$(basename "$f" .yml)"; fi
+  done
+  ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/terralith-$1/about.json" 2>/dev/null || echo null)"
+  case "$1" in
+    adopt) PULL_TITLE="Adopt the terralith into a choudoufu estate" ;;
+    split) PULL_TITLE="Split the terralith into three team estates" ;;
+    team)  PULL_TITLE="team-b: one more action in an inline policy" ;;
+    cross) PULL_TITLE="Publish log_retention_days, and each team reads it" ;;
+    *)     PULL_TITLE="" ;;
+  esac
+}
+
+# Beat 1: the cycle's stock terralith. Its tree is kept in <state>/applied
+# with the cycle in applied.cycle until the reset destroys it, so a cycle that
+# stalls part way is destroyed too.
+tl_stock_beat() {
+  local bt="$WORK/c$CYCLE/stock" sha
+  tl_destroy_bg
+  mkdir -p "$bt"
+  (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./scripts --exclude ./generate.sh .) | (cd "$bt" && tar xf -)
+  tl_fill "$bt"
+  (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on the cycle's terralith"
+  mkdir -p "$bt/.chant"
+  echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"
+  quiet
+  sha="$(push_tree "$bt" "$REPO" main "The terralith, stock, for cycle $CYCLE [skip ci]")"
+  echo "$sha" > "$RSTATE/base.sha"
+  COMMIT="$sha"
+  rm -rf "$RSTATE/applied"
+  mkdir -p "$RSTATE/applied"
+  (cd "$bt" && tar cf - --exclude ./.git .) | (cd "$RSTATE/applied" && tar xf -)
+  cp "$HERE/demo-terralith-destroy.sh" "$RSTATE/applied/destroy.sh"
+  echo "$CYCLE" > "$RSTATE/applied.cycle"
+  demo_write applying "$(say applying)" "follow the stock apply"
+  tl_stock_apply "$bt" || fail "the stock terralith of cycle $CYCLE did not apply"
+  demo_hold applied "$(say applied)" "open the adopt pull request"
+}
+
+# A beat's pull request: opened, planned, merged and followed to its apply,
+# with the reviewer's approval at each gate that waits.
+tl_pull_beat() { # next action, empty for the cycle's last beat
+  open_pull
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  follow
+  [ "$OUTCOME" = applied ] || fail "the $BEAT beat ended $OUTCOME ($RUN_URL)"
+  HELD=""
+  [ -z "$1" ] || demo_hold applied "$(say applied)" "$1"
+}
+
+# A migration in wave 1 waits for its digest: hold, approve it as the
+# reviewer, and post /terragucci apply on the merged pull request.
+tl_migrate_waiting() {
+  HELD="tf-migrate $MIGRATION"
+  demo_hold waiting "$(say waiting)" "approve migration $MIGRATION"
+  approve_migration
+  MIGRATIONS_APPROVED="$MIGRATIONS_APPROVED $MIGRATION@$MIGRATE_DIGEST"
+  demo_write approved "$(say approved)" "post /terragucci apply on pull request $PULL"
+  resume_pull
+  demo_write resumed "$(say resumed)" "follow the waves"
+}
+
+# The reviewer's approval of a migration's digest, sealed with the reviewer's
+# key, from the reviewer's own clone, as approve_wave seals a wave's.
+approve_migration() {
+  local clone="$WORK/approve-$CYCLE-$MIGRATION-$RANDOM" out
+  git clone -q "$REVIEWER_REMOTE" "$clone" 2>/dev/null || fail "$REVIEWER could not clone $REPO"
+  git -C "$clone" config user.name "$REVIEWER"
+  git -C "$clone" config user.email "$REVIEWER@terragucci.local"
+  out="$(cd "$clone" && "$CHANT" approve tf-migrate "$MIGRATION" --plan "$MIGRATE_DIGEST" --actor "$REVIEWER" --sign "$REVIEWER_KEY" 2>&1)" \
+    || { echo "$out" >&2; fail "chant approve tf-migrate $MIGRATION failed"; }
+}
+
+# After the split: each team's root, as the merge left it, becomes the main of
+# its own repository, at the top, with the pipeline init writes for it.
+tl_teams_push() {
+  local main="$WORK/c$CYCLE/teams-main" team dir
+  git clone -q "$REMOTE" "$main" 2>/dev/null || fail "could not clone $REPO"
+  git -C "$main" checkout -q --detach "$COMMIT" 2>/dev/null || fail "could not check out ${COMMIT:0:8} in $REPO"
+  for team in "${TL_TEAMS[@]}"; do
+    dir="$WORK/c$CYCLE/team-$team"
+    mkdir -p "$dir/.chant"
+    cp "$main/$team/"*.tf "$dir/"
+    cp "$TREE/terragucci.yml" "$TREE/.gitignore" "$dir/"
+    cp "$main/.chant/allowed_signers" "$dir/.chant/"
+    (cd "$dir" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $team's root"
+    tl_repo "$(tl_team_repo "$team")"
+    lifecycle_back
+    quiet
+    push_tree "$dir" "$REPO" main "$team's estate, split from the terralith in cycle $CYCLE [skip ci]" >/dev/null
+  done
+  tl_repo "$(tool_repo terralith)"
+}
+
+# After the team beat: the team's root as its repository's main has it, back
+# into demo-terralith's <team>/, so the next pull request there plans from
+# what is live.
+tl_sync_team() {
+  local from="$WORK/c$CYCLE/sync-from" to="$WORK/c$CYCLE/sync-to"
+  git clone -q "$REMOTE" "$from" 2>/dev/null || fail "could not clone $REPO"
+  tl_repo "$(tool_repo terralith)"
+  git clone -q "$REMOTE" "$to" 2>/dev/null || fail "could not clone $REPO"
+  cp "$from/"*.tf "$to/$TL_TEAM/"
+  quiet
+  push_tree "$to" "$REPO" main "$TL_TEAM's root as its repository holds it after cycle $CYCLE's change [skip ci]" >/dev/null
+}
+
+scenario_terralith() {
+  on_migrate() { tl_migrate_waiting; }
+  TL_PREFIX="tl$CYCLE"
+  local r t
+  for r in $(for t in "${TL_TEAMS[@]}"; do tl_team_repo "$t"; done); do tl_repo "$r"; lifecycle_back; done
+  tl_repo "$(tool_repo terralith)"
+  tl_beat stock
+  tl_stock_beat
+  tl_beat adopt
+  tl_pull_beat "open the split pull request"
+  tl_beat split
+  tl_pull_beat "push each team's root to its own repository"
+  tl_teams_push
+  tl_beat team
+  tl_repo "$(tl_team_repo "$TL_TEAM")"
+  tl_pull_beat "copy team B's root back to demo-terralith"
+  tl_sync_team
+  tl_repo "$(tool_repo terralith)"
+  tl_beat cross
+  tl_pull_beat ""
+}
+
+# The reset: no run in progress and no pull request open in any of the
+# terralith's repositories, and the cycle's resources destroyed in the background.
+tl_reset_work() {
+  local r n t
+  HELD=""
+  for r in "$(tool_repo terralith)" $(for t in "${TL_TEAMS[@]}"; do tl_team_repo "$t"; done); do
+    tl_repo "$r"
+    quiet
+    for n in $(api "$URL/api/v1/repos/$REPO/pulls?state=open&limit=50" | jq -r '.[].number'); do
+      api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$REPO/pulls/$n" || true
+    done
+  done
+  tl_repo "$(tool_repo terralith)"
+  tl_destroy_bg
+  runs_export force "$FORGE_RUNS"
+  pulls_prune
+  reports_prune
+}
+
+# Destroy the stock terralith kept in <state>/applied, in a container of the
+# demo's job image that runs on after the driver goes on
+# (stack/demo-terralith-destroy.sh): its state, which the adoption left as it
+# was, lists every resource the cycle has, since no beat after the stock adds
+# one. The container then deletes the state and the cycle's records. One that
+# cannot start is logged, and the loop goes on.
+tl_destroy_bg() {
+  local n cid
+  n="$(cat "$RSTATE/applied.cycle" 2>/dev/null || true)"
+  [ -n "$n" ] && [ -d "$RSTATE/applied/terralith" ] || return 0
+  mv "$RSTATE/applied.cycle" "$RSTATE/destroyed.cycle"
+  if ! cid="$(docker create --rm --name "${TG_PROJECT:-terragucci}-demo-terralith-destroy-$n" --network "$TG_NETWORK" \
+      -v "${JOB_CACHE_VOLUME:-terragucci-job-cache}:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_IN_AUTOMATION=1 -e "TL_STATE=$STATE_BUCKET/tl$n-terralith.tfstate" -e "TL_RECORDS=$TL_RECORDS/tofu-records/tl$n-" \
+      "$DEMO_IMAGE" sh /w/destroy.sh 2>&1)"; then
+    log "terralith: could not start the destroy of cycle $n: $cid"
+    return 0
+  fi
+  if docker cp "$RSTATE/applied/." "$cid:/w" >/dev/null 2>&1 && docker start "$cid" >/dev/null 2>&1; then
+    log "terralith: destroying cycle $n's resources in the background ($cid)"
+  else
+    log "terralith: could not start the destroy of cycle $n"
+    docker rm -f "$cid" >/dev/null 2>&1 || true
+  fi
+}
+
 run_cycle() {
   SCENARIO="$1"
   TITLE="$(scenario_title "$1")" || fail "unknown scenario '$1' (${ALL_SCENARIOS[*]})"
   ABOUT="$(scenario_about "$1")"
-  PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL=""
+  MIGRATIONS="$(scenario_migrations "$1")"
+  PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE=""
   on_waiting() { default_waiting; }
+  on_migrate() { default_migrate; }
   on_failed() { default_failed; }
   on_refused() { default_refused; }
   mkdir -p "$WORK/c$CYCLE"
@@ -1433,6 +1866,7 @@ run_cycle() {
     stale-plan) scenario_stale_plan ;;
     tg-planned-outputs) scenario_tg_planned_outputs ;;
     chant-pr-loop) scenario_chant_pr_loop ;;
+    terralith) scenario_terralith ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
   if [ "$OUTCOME" = applied ]; then
@@ -1587,6 +2021,8 @@ reset_base() {
 
 reset_work() {
   local base n before
+  # The terralith keeps no base to go back to: each cycle pushes its own.
+  if [ "$TOOL" = terralith ]; then tl_reset_work; return 0; fi
   base="$(cat "$RSTATE/base.sha")"
   HELD=""
   quiet
@@ -1622,6 +2058,13 @@ reset_work() {
 
 reset_written() {
   local base
+  if [ "$TOOL" = terralith ]; then
+    PULL="" COMMIT="$(cat "$RSTATE/base.sha" 2>/dev/null || true)" BEAT="" ABOUT=null
+    tl_repo "$(tool_repo terralith)"
+    demo_write reset "Outside the pipeline, the driver destroys this cycle's resources in the background. The next cycle pushes and applies a new stock terralith." "start the next cycle"
+    cycle_publish
+    return 0
+  fi
   base="$(cat "$RSTATE/base.sha")"
   PULL="" COMMIT="$base"
   demo_write reset "Outside the pipeline, the driver resets every state to how it started. It also moves main back to ${base:0:8} for the next scenario." "start the next cycle"
@@ -1647,6 +2090,8 @@ attempt() {
 # before the one it applies, and the base is never in the range after it.
 up_repo() {
   local sha root
+  # The terralith's repos get their bases from each cycle (tl_stock_beat, tl_teams_push).
+  if [ "$TOOL" = terralith ]; then tl_up; return 0; fi
   if ! api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null; then
     api -o /dev/null -H 'content-type: application/json' -X POST \
       -d "$(jq -cn --arg n "${REPO#*/}" --arg d "$(repo_description)" '{name: $n, description: $d, private: false, auto_init: false, default_branch: "main"}')" \
@@ -1745,6 +2190,7 @@ repo_description() {
   case "$TOOL" in
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
+    terralith) echo "The terragucci demo's terralith on choudoufu: adopted, split into team estates, then changed" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -1760,12 +2206,14 @@ base_label() {
   case "$TOOL" in
     terraform) echo "The base is applied: $(applied_values), and other" ;;
     chant) echo "The base is applied. Network, app and edge are chant components, each with its own state." ;;
+    terralith) echo "The terralith's repositories are ready. Each cycle pushes and applies a stock terralith of its own." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
 
 # A loop's repo is ready: it has a base, and the base names the reviewer.
 loop_ready() {
+  if [ "$TOOL" = terralith ]; then tl_ready; return 0; fi
   [ -f "$RSTATE/base.sha" ] || fail "no base snapshot of $REPO; run 'just demo up' first"
   # A base pushed before the driver played two people names the driver's key
   # in .chant/allowed_signers, so the reviewer's seal would not verify.
@@ -1787,14 +2235,27 @@ case "$CMD" in
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
     for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
-    if tool_present terraform; then
-      grep -qx "image: $DEMO_IMAGE" "$HERE/../$(tool_tree terraform)/terragucci.yml" \
-        || fail "$(tool_tree terraform)/terragucci.yml does not name $DEMO_IMAGE as its image"
-      log "building $DEMO_IMAGE and starting demo-postgres…"
-      docker build -q -t "$DEMO_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" "$HERE/demo-yodel" >/dev/null \
+    if tool_present terraform || tool_present terralith; then
+      for t in terraform terralith; do
+        if tool_present "$t" && ! grep -qx "image: $DEMO_IMAGE" "$HERE/../$(tool_tree "$t")/terragucci.yml"; then
+          fail "$(tool_tree "$t")/terragucci.yml does not name $DEMO_IMAGE as its image"
+        fi
+      done
+      log "building $DEMO_IMAGE with choudoufu $CHOUDOUFU_VERSION…"
+      docker build -q -t "$DEMO_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
+        --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
-      docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \
-        || fail "demo-postgres did not start"
+      if tool_present terraform; then
+        log "starting demo-postgres…"
+        docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \
+          || fail "demo-postgres did not start"
+      fi
+      # The terralith's record store front, in the image just built: recreated, so it runs the new one.
+      if tool_present terralith; then
+        log "starting demo-records…"
+        docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait --force-recreate demo-records >/dev/null \
+          || fail "demo-records did not start"
+      fi
     fi
     # behold#571: the pipeline's metrics and traces. The demo trees'
     # terragucci.yml send each job's metrics and spans over OTLP to

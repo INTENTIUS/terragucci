@@ -1,0 +1,6 @@
+# The choudoufu releases the demo's job image can carry: version, arch and the
+# sha256 of choudoufu_v<version>_linux_<arch>.tar.gz, copied from the release's
+# SHA256SUMS. stack/demo.sh's CHOUDOUFU_VERSION picks the line; a version with
+# no line here does not build.
+0.28.0 amd64 63461038b43ea94c3089e71a5a3f70ed0d558b3dd47e1af036b422ffdee602f9
+0.28.0 arm64 b3befe2f228b047fed2ed4693475f10c2c392434c8eb8ac4034a2d4eb50c2c12

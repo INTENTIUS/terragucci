@@ -1,0 +1,5 @@
+{
+  "changes": "The driver applies a terralith of 82 AWS resources. Its network and its three teams share one state file.",
+  "watch": "Every resource lands in the one state. Any change to any team would plan the whole terralith and wait on its one lock.",
+  "shows": "Most estates start here. One root holds everything and applies the stock way."
+}

@@ -145,6 +145,7 @@ import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
 import { rootSecretEnv } from "./root-secrets";
+import type { ProgressSinks } from "./migrate-progress";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
@@ -2383,35 +2384,70 @@ async function listRecordVersions(repo: string, applied: PlannedRoot[], limit: n
   return out;
 }
 
+/** Where migration files go in the reports bucket: `<prefix>/<project>/<path>`. Undefined when the config names no bucket. */
+async function migrationBucket(repo: string, options: ApplyWaveOptions, env: NodeJS.ProcessEnv): Promise<{ store: ReturnType<typeof storeFromEnv>; bucket: string; prefix: string; project: string; key: (path: string) => string } | undefined> {
+  const configPath = options.config ?? findConfig(repo);
+  const read = await waveSettings(repo, options, configPath).catch(() => undefined);
+  if (!read || "error" in read || !read.settings.reports?.bucket) return undefined;
+  const reports = read.settings.reports;
+  const project = runFacts(repo, env, read.settings.forge).project;
+  return {
+    store: storeFromEnv(reports, env),
+    bucket: reports.bucket,
+    prefix: reports.prefix ?? "",
+    project,
+    key: (path) => [reports.prefix ?? "", project, path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/"),
+  };
+}
+
 /**
  * Copy each migration record to the reports bucket, when the config names
  * one, and the roster of each estate root an estate migration wrote
  * (./report/roster.ts). A copy that fails is logged.
  */
 async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, records: MigrationRecord[], env: NodeJS.ProcessEnv, rosters: { root: string; roster: Roster }[] = []): Promise<void> {
-  const configPath = options.config ?? findConfig(repo);
-  const read = await waveSettings(repo, options, configPath).catch(() => undefined);
-  if (!read || "error" in read || !read.settings.reports?.bucket) return;
-  const reports = read.settings.reports;
-  const project = runFacts(repo, env, read.settings.forge).project;
-  const store = storeFromEnv(reports, env);
+  const b = await migrationBucket(repo, options, env).catch(() => undefined);
+  if (!b) return;
   for (const r of records) {
-    const key = [reports.prefix ?? "", project, "migrations", `${r.name}.json`].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/");
+    const key = b.key(`migrations/${r.name}.json`);
     try {
-      await store.put(key, JSON.stringify(r, null, 2) + "\n", "application/json");
-      console.log(`migration ${r.name}: record copied to ${store.location}/${key}`);
+      await b.store.put(key, JSON.stringify(r, null, 2) + "\n", "application/json");
+      console.log(`migration ${r.name}: record copied to ${b.store.location}/${key}`);
     } catch (e) {
-      console.log(`migration ${r.name}: the record was not copied to ${reports.bucket}: ${(e as Error).message}`);
+      console.log(`migration ${r.name}: the record was not copied to ${b.bucket}: ${(e as Error).message}`);
     }
   }
   if (rosters.length === 0) return;
-  const writes: RosterWrite[] = rosters.map((r) => ({ ...r, project }));
+  const writes: RosterWrite[] = rosters.map((r) => ({ ...r, project: b.project }));
   try {
-    const keys = await uploadRosters(store, writes, reports.prefix);
+    const keys = await uploadRosters(b.store, writes, b.prefix);
     console.log(`migrations: rosters of ${writes.map((w) => `${w.roster.estate} (${w.roster.resources.length})`).join(", ")} written to ${keys[keys.length - 1]}`);
   } catch (e) {
-    console.log(`migrations: the rosters were not written to ${reports.bucket}: ${(e as Error).message}`);
+    console.log(`migrations: the rosters were not written to ${b.bucket}: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Where an estate migration's per-resource progress goes beyond
+ * `terragucci-report/` (./migrate-progress.ts): a span of its own under the
+ * wave's `migrate` phase, with an event per resource, and with a reports
+ * bucket, `<prefix>/<project>/migrations/<name>/progress.jsonl` and the
+ * record with its counts.
+ */
+function migrationProgress(w: WaveRun, bucket: Awaited<ReturnType<typeof migrationBucket>>): (name: string) => ProgressSinks {
+  return (name) => {
+    const span = w.observer.child(`migration ${name}`, { "terragucci.migration": name });
+    return {
+      ...(bucket ? { publish: async (path: string, body: string, type: string) => void (await bucket.store.put(bucket.key(path), body, type)) } : {}),
+      event: (n, attributes, at) => w.observer.event(span, n, attributes, at),
+      end: (status, counts, error) =>
+        w.observer.endPhase(
+          span,
+          { "terragucci.migration.status": status, ...(counts ? { "terragucci.migration.moved": counts.moved, "terragucci.migration.stamped": counts.stamped, "terragucci.migration.refused": counts.refused, "terragucci.migration.skipped": counts.skipped, "terragucci.migration.left": counts.left } : {}) },
+          status === "applied" ? undefined : (error ?? status),
+        ),
+    };
+  };
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
@@ -3387,10 +3423,13 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
     approved = undefined;
   }
   const rosters: { root: string; roster: Roster }[] = [];
+  // Only a run that may write (under chant's hold) streams progress: a proof writes nothing.
+  const bucket = hold ? await migrationBucket(repo, options, env).catch(() => undefined) : undefined;
   const run = await runMigrations(repo, {
     binary: options.binary,
     env,
     roster: (root, roster) => rosters.push({ root, roster }),
+    ...(hold ? { progress: migrationProgress(j.w, bucket) } : {}),
     // A Terragrunt unit is prepared by Terragrunt, and its binary then runs where Terragrunt runs it.
     ...(options.terragrunt ? { terragrunt: { ...(options.terragruntPath ? { path: options.terragruntPath } : {}), ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) } } : {}),
     ...(options.now ? { now: options.now } : {}),

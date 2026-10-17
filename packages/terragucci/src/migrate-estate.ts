@@ -39,6 +39,7 @@ import {
   takeLocks,
   versionOf,
   type BinaryExec,
+  type BinaryIo,
   type MigrateOptions,
   type Migration,
   type MigrationRecord,
@@ -48,6 +49,7 @@ import {
   type StateFile,
   MIGRATION_SCHEMA,
 } from "./migrate";
+import { MigrationProgress, PROGRESS_FLAG, takesProgressJson } from "./migrate-progress";
 import { detectShape } from "./shape";
 import { rosterOf, type RosterFacts } from "./report/roster";
 import type { S3Target } from "./report/s3";
@@ -119,9 +121,10 @@ interface MoveDoc {
   refusal?: { code?: string; summary?: string; detail?: string } | null;
 }
 
-/** Run `live-mv -json -from-estate` for one instance in the root it moves to; a dry run writes nothing. */
-async function liveMv(exec: BinaryExec, binary: string, place: Place, fromEstate: string, address: string, dry: boolean): Promise<MoveDoc> {
-  const ran = await exec(binary, ["live-mv", "-no-color", "-json", ...(dry ? ["-dry-run"] : []), `-from-estate=${fromEstate}`, address, address], place.dir, place.env);
+/** Run `live-mv -json -from-estate` for one instance in the root it moves to; a dry run writes nothing. With `progress`, the write's `-progress-json` lines go to it. */
+async function liveMv(exec: BinaryExec, binary: string, place: Place, fromEstate: string, address: string, dry: boolean, progress?: MigrationProgress): Promise<MoveDoc> {
+  const io: BinaryIo | undefined = progress && !dry ? { stderr: progress.take } : undefined;
+  const ran = await exec(binary, ["live-mv", "-no-color", "-json", ...(dry ? ["-dry-run"] : []), ...(io ? [PROGRESS_FLAG] : []), `-from-estate=${fromEstate}`, address, address], place.dir, place.env, ...(io ? [io] : []));
   let doc: MoveDoc | undefined;
   try {
     doc = JSON.parse(ran.stdout) as MoveDoc;
@@ -134,8 +137,8 @@ async function liveMv(exec: BinaryExec, binary: string, place: Place, fromEstate
 }
 
 /** Rewrite one resource's markers, and check the binary says it wrote them on the resource the plan found. */
-async function writeRetag(exec: BinaryExec, binary: string, place: Place, t: Retag, log: (line: string) => void): Promise<void> {
-  const doc = await liveMv(exec, binary, place, t.from_estate, t.address, false);
+async function writeRetag(exec: BinaryExec, binary: string, place: Place, t: Retag, log: (line: string) => void, progress?: MigrationProgress): Promise<void> {
+  const doc = await liveMv(exec, binary, place, t.from_estate, t.address, false, progress);
   if (doc.written !== true) throw new ConfigError(`live-mv wrote nothing on ${t.address}`);
   if (doc.resource?.live_id !== t.live_id) throw new ConfigError(`live-mv rewrote ${doc.resource?.live_id ?? "an unnamed resource"} for ${t.address}, not ${t.live_id}`);
   log(`${t.address}: retagged from estate ${t.from_estate} to estate ${t.to_estate}`);
@@ -173,8 +176,9 @@ export function stampFailures(text: string): number | undefined {
 /** The flag that makes `live-import` write the markers. */
 const STAMP = "-approve";
 
-async function liveImport(exec: BinaryExec, binary: string, place: Place, state: string, estate: string, write: boolean): Promise<string> {
-  const ran = await exec(binary, ["live-import", "-no-color", `-state=${resolve(state)}`, `-estate=${estate}`, ...(write ? [STAMP] : [])], place.dir, place.env);
+async function liveImport(exec: BinaryExec, binary: string, place: Place, state: string, estate: string, write: boolean, progress?: MigrationProgress): Promise<string> {
+  const io: BinaryIo | undefined = progress && write ? { stderr: progress.take } : undefined;
+  const ran = await exec(binary, ["live-import", "-no-color", `-state=${resolve(state)}`, `-estate=${estate}`, ...(write ? [STAMP] : []), ...(io ? [PROGRESS_FLAG] : [])], place.dir, place.env, ...(io ? [io] : []));
   if (ran.code !== 0) throw new ConfigError(`live-import ${write ? "could not stamp" : "could not verify"} ${state.replace(/^.*\//, "")}: ${firstLine(ran.out)}`);
   return ran.stdout;
 }
@@ -373,11 +377,45 @@ function rosterFacts(e: EstatePlan, record: MigrationRecord): { estates: Map<str
  * (retag) or stamp them (adopt), then plan every root and require no
  * change. An adoption holds the old state's lock file while it stamps,
  * and refuses when that state moved since the plan; it leaves the state
- * where it was.
+ * where it was. When the binary takes `-progress-json`, each resource's
+ * line goes to the migration's progress (./migrate-progress.ts) as its
+ * write lands, and the record ends with the counts.
  */
-export async function applyEstateMigration(plan: PlannedMigration, options: MigrateOptions & { now: string }): Promise<MigrationRecord> {
+export async function applyEstateMigration(repo: string, plan: PlannedMigration, options: MigrateOptions & { now: string }): Promise<MigrationRecord> {
   const exec = options.exec ?? runBinary;
   const log = options.log ?? (() => {});
+  const progress = await progressOf(repo, plan, exec, options, log);
+  let result: MigrationRecord;
+  try {
+    result = await writeEstate(plan, options, exec, log, progress);
+  } finally {
+    await progress?.stop();
+  }
+  return progress ? { ...result, progress: progress.progress } : result;
+}
+
+/** The migration's progress, when the binary writes `-progress-json` lines; undefined for one that does not. */
+async function progressOf(repo: string, plan: PlannedMigration, exec: BinaryExec, options: MigrateOptions, log: (line: string) => void): Promise<MigrationProgress | undefined> {
+  const e = plan.estate!;
+  const first = plan.places.get(e.kind === "retag" ? (e.retags[0]?.to ?? "") : (e.adopts[0]?.root ?? ""));
+  if (!first || !(await takesProgressJson(exec, options.binary, first.dir, first.env))) return undefined;
+  const total = e.kind === "retag" ? e.retags.reduce((n, t) => n + 1 + t.followers.length, 0) : (plan.record.stamps?.length ?? 0);
+  const p: MigrationProgress = new MigrationProgress({
+    repo,
+    name: plan.record.name,
+    change: e.kind,
+    total,
+    record: () => ({ ...plan.record, progress: p.progress }),
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.progress?.publish ? { publish: options.progress.publish } : {}),
+    ...(options.progress?.event ? { event: options.progress.event } : {}),
+    log,
+  });
+  log(`migration ${plan.record.name}: each resource's write goes to terragucci-report/migrations/${plan.record.name}/progress.jsonl as it lands`);
+  return p;
+}
+
+async function writeEstate(plan: PlannedMigration, options: MigrateOptions & { now: string }, exec: BinaryExec, log: (line: string) => void, progress: MigrationProgress | undefined): Promise<MigrationRecord> {
   const record = plan.record;
   const e = plan.estate!;
   const locks = e.kind === "adopt" ? await takeLocks(plan.files, options.now, options.fetch) : [];
@@ -386,7 +424,7 @@ export async function applyEstateMigration(plan: PlannedMigration, options: Migr
       const done: string[] = [];
       for (const t of e.retags) {
         try {
-          await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log);
+          await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log, progress);
         } catch (err) {
           return { ...record, status: "failed", error: `${(err as Error).message}${done.length ? `; already retagged: ${done.join(", ")}` : "; nothing was retagged"}` };
         }
@@ -402,7 +440,7 @@ export async function applyEstateMigration(plan: PlannedMigration, options: Migr
       for (const a of e.adopts) {
         let out: string;
         try {
-          out = await liveImport(exec, options.binary, plan.places.get(a.root)!, a.state, a.estate, true);
+          out = await liveImport(exec, options.binary, plan.places.get(a.root)!, a.state, a.estate, true, progress);
         } catch (err) {
           return { ...record, status: "failed", error: (err as Error).message };
         }
