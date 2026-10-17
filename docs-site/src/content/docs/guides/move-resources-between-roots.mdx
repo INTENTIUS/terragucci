@@ -129,7 +129,9 @@ With [choudoufu](/terragucci/concepts/glossary/#choudoufu) as the binary, a root
 | `moves` | both are estates | `choudoufu live-mv -from-estate` rewrites the tags of each resource, run in the root it moves to |
 | `backends` | the root's code now has a `live` block in place of its backend block | `choudoufu live-import` reads the old state once and stamps the tags on each resource it verifies |
 
-The proof reads the live system and writes nothing. Each root plans as its code stands, and every change it plans must be one the write removes: a destroy in the estate a resource leaves and a create in the one it joins, or a create of a resource the old state holds and the live system verifies. `live-mv -dry-run` must find each resource, and `live-import` without `-approve` must verify each one. The digest covers each root's planned changes, the live id of each resource and, for an adoption, the old state's version id and digest.
+The proof reads the live system and writes nothing. A `moves` file is proved by each root's plan as its code stands: every change it plans must be one the retag removes, a destroy in the estate a resource leaves and a create in the one it joins, and `live-mv -dry-run` must find what moves. The digest covers each root's planned changes and the live id of every resource that moves.
+
+An adoption is proved by `live-import` without `-approve`, and its root is not planned first. Until the stamp, each of its resources is a live object with no tags of the estate, and choudoufu refuses to plan a root while one sits where a resource of its code would be. Every instance of the old state must verify; any that does not is listed, and the migration does not apply. Its digest binds the old state's version id and digest and what `live-import` reported for each instance. While the migration waits, the pull request's plan and wave 1 show the root as planned by the migration, and once it has applied the root plans on its own.
 
 ```text
 migration carve-jobs: retagging aws_sqs_queue.jobs from the estate of mono to the estate of team
@@ -139,7 +141,7 @@ team: 1 planned change, each one the retag removes
 migration carve-jobs: every change each root plans is one the retag removes; digest jcs1-sha256:5c0e91d2...
 ```
 
-Once approved, wave 1 writes the tags, plans every root again and requires no change. An adoption holds the old state's lock file while it stamps, refuses if that state moved since the plan, and leaves it where it was, at the version the record names. A move from a root with a state to an estate is refused: adopt the state first, then move. `terragucci migrate revert` refuses both; move the resources back with a `moves` file the other way.
+Once approved, wave 1 writes the tags, plans every root and requires no change. An adoption holds the old state's lock file while it stamps, refuses if that state moved since the plan, and leaves it where it was, at the version the record names. A move from a root with a state to an estate is refused: adopt the state first, then move. `terragucci migrate revert` refuses both; move the resources back with a `moves` file the other way.
 
 ## Put a migration back
 

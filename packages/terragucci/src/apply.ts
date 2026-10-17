@@ -146,7 +146,7 @@ import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./
 import { rootRoleEnv } from "./roles";
 import { rootSecretEnv } from "./root-secrets";
 import type { ProgressSinks } from "./migrate-progress";
-import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
+import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, pendingAdoptions, runMigrations, sha as shaOf, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
@@ -1163,7 +1163,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     // allow_unattended at base: the gate is decided once the policy has read the plans, so chant's gate is never and the held hook holds (decideWaveGate).
     const unattended = rule?.policyOutcomes?.includes("allow_unattended") === true;
     if (unattended) console.log(`wave ${options.wave}: policy.outcomes at base names allow_unattended, so the wave's gate (${options.gate}) is decided once the policy reads its plans, and holds the wave through its held hook`);
-    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned, ...(unattended ? { unattended } : {}) };
+    const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned, ...(unattended ? { unattended } : {}), migrated: new Set() };
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
@@ -1287,6 +1287,8 @@ interface WavesContext {
    * the `held` hook, unless the policy lets every changing root through.
    */
   unattended?: boolean;
+  /** The migrations this job applied: a root one of them adopted into an estate plans on its own from then on (pendingAdoptions). */
+  migrated: Set<string>;
 }
 
 /** One call chant makes back into the wave's job. Returns the call's exit code. */
@@ -1352,7 +1354,7 @@ async function waveCallIn(repo: string, options: ApplyWaveOptions, ctx: WavesCon
       return j.held ? 1 : 0;
     case "migrate-check":
     case "migrate":
-      return migrationCall(repo, options, j, what === "migrate" ? r.env : undefined, r.cwd);
+      return migrationCall(repo, options, ctx, j, what === "migrate" ? r.env : undefined, r.cwd);
     case "gate":
       return gateCall(repo, options, ctx, j, r.env, r.cwd);
     default:
@@ -1792,7 +1794,14 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const ws = stepsRead.ws;
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, covered, settings, options.env ?? process.env);
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
-  const planned: PlannedRoot[] = new Array(own.length);
+  // A root a backends migration adopts into an estate, until the migration applies: choudoufu refuses its plan while its
+  // resources carry no marker of the estate, and the migration's proof (live-import's check) stands for it (pendingAdoptions).
+  const adopting = pendingAdoptions(repo, ctx.migrated);
+  const byMigration = own.filter((r) => adopting.has(r));
+  const planning = own.filter((r) => !adopting.has(r));
+  for (const r of byMigration) console.log(`${label}: ${r}: planned by migration ${adopting.get(r)!.name}, which adopts its state into the estate; it plans on its own once the migration applies`);
+  const adoptedMembers: WaveMember[] = byMigration.map((r) => ({ member: r, planDigest: shaOf(JSON.stringify({ migration: adopting.get(r)!.name, file: adopting.get(r)!.file_digest })) }));
+  const planned: PlannedRoot[] = new Array(planning.length);
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
   const cache = waveCache(work, process.env);
@@ -1810,7 +1819,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     console.log(`${label}: ${(e as Error).message}, so nothing in it was applied`);
     return EXIT.failed;
   }
-  await eachLimited(own, limit.value, async (r, i) => {
+  await eachLimited(planning, limit.value, async (r, i) => {
     planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined, options.base, settings.secrets);
   });
   // The composed run plans once, its roots' states locked and pulled; the report, the policy and the cost read each root's part.
@@ -1845,7 +1854,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   // The set digest covers the roots whose plan changes something, as a Terragrunt wave's and the plan note's do, so the digest a
   // pull request's note shows is the one this wave asks approval for when nothing moved. chant takes it over the plans that are not empty.
-  const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
+  const all = [...planned.map((p) => p.member!), ...adoptedMembers].sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
   // The composed run's target is no root: the run view's blast radius starts at its roots whose part changes something.
   w.changedRoots = [...changing].flatMap((r) => (r === target && composed ? composed.views.filter((v) => changesSomething(v.plan)).map((v) => v.root) : [r])).sort();
@@ -1888,7 +1897,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const env = options.env ?? process.env;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   writePlans(plansPath, {
-    runs: planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))),
+    runs: [...planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))), ...adoptedMembers.map((m) => planEntry(m.member, m.planDigest, true, 0))],
     ...(priced ? { members: [priced] } : {}),
     pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
@@ -3411,7 +3420,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
  * `reports.bucket`, to `<prefix>/<project>/migrations/<name>.json`. A share
  * job leaves the migrations to its wave's job.
  */
-async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob, hold: Record<string, string> | undefined, cwd: string): Promise<number> {
+async function migrationCall(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, hold: Record<string, string> | undefined, cwd: string): Promise<number> {
   delete j.code;
   delete j.migration;
   if (j.k !== 1 || options.share !== undefined || options.group !== undefined || !existsSync(join(repo, MIGRATIONS_DIR))) return EXIT.applied;
@@ -3438,6 +3447,7 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
     ...(options.config ? { config: options.config } : {}),
     ...(hold ? { hold: { file: join(cwd, hold.CHANT_HOLD ?? ".chant/op-waves/tf-apply/wave-1/hold.json"), ...(approved ? { approved } : {}) } } : { prove: true }),
   });
+  for (const r of run.records) if (r.status === "applied") ctx.migrated.add(r.name);
   if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env, rosters);
   if (run.code === EXIT.applied) return EXIT.applied;
   const last = run.records[run.records.length - 1];
