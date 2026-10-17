@@ -18,7 +18,8 @@ import { ESTATE_SCHEMA } from "../src/report/estate";
 import { CHANGES_SCHEMA, HISTORY_SCHEMA } from "../src/report/history";
 import { DORA_SCHEMA } from "../src/report/dora";
 import { INVENTORY_SCHEMA } from "../src/report/inventory";
-import { STATES_SCHEMA } from "../src/report/state-versions";
+import { readStateVersions, STATES_SCHEMA } from "../src/report/state-versions";
+import { unrecordedWrites } from "../src/report/unrecorded";
 import { RUN_SCHEMA, runSkeleton, withWave } from "../src/report/run-view";
 import { EDGES_SCHEMA } from "../src/report/state-edges";
 import { ESTATES_SCHEMA } from "../src/report/roster";
@@ -101,6 +102,29 @@ async function upload(s3: S3Client, reports: Report[]): Promise<void> {
     writeReportDir(dir, r, new Map());
     await uploadReport(s3, dir, r, "reports", async () => {});
   }
+}
+
+/**
+ * The audit's `unrecorded-write` entries for a project's states.json, from
+ * its comparison with a store that lists `v1` (the version the wave
+ * recorded), a write after it and a delete marker, judged the next day.
+ */
+async function unrecorded(project: string, states: string, root: string) {
+  const location = readStateVersions(states).roots.find((r) => r.root === root)!.location!;
+  const versions = [
+    { version_id: "d1", written_at: at(9, 40), latest: true, deleted: true },
+    { version_id: "v2", written_at: at(9, 30), latest: false },
+    { version_id: "v1", written_at: at(8, 54), latest: false },
+  ];
+  const { entries } = await unrecordedWrites({
+    project,
+    states: readStateVersions(states),
+    migrations: [],
+    list: async (l) => (l === location ? { versions } : { skipped: "elsewhere" }),
+    writers: { writer: async (q) => (q.version_id === "v2" ? { status: "found", who: "dana", how: "PutObject in trail-logs, with this version id" } : { status: "none", why: "no write in trail-logs names this version id" }) },
+    now: new Date("2026-10-08T12:00:00.000Z"),
+  });
+  return entries;
 }
 
 /** Every property name an object (and the objects under it, at `path`) carries. */
@@ -202,6 +226,10 @@ describe("terragucci.estate/v1", () => {
     const { objects, fetch, s3 } = bucket();
     await upload(s3, runs());
     objects.set("acme-reports:reports/audit.json", JSON.stringify({ schema: "terragucci.audit-summary/v1", generated: at(11, 30), entries: 3 }));
+    // The audit's unrecorded writes of the network project's root a, which the page lists beside its versions.
+    const writes = await unrecorded(NET, objects.get(`acme-reports:reports/${NET}/states.json`)!, "a");
+    expect(writes).toHaveLength(2);
+    objects.set("acme-reports:reports/audit.jsonl", appendEntries(readRecord(undefined), writes));
     // The run view of the network project's applied commit, as its waves' jobs write it.
     const netSkeleton = runSkeleton(NET, "b".repeat(40), [["a"], ["envs/dev/orders", "envs/dev/search"]], new Map([["envs/dev/orders", new Set(["a"])]]));
     const applied = withWave(undefined, netSkeleton, { number: 1, state: "applied" }, at(10, 40));
@@ -235,6 +263,7 @@ describe("terragucci.estate/v1", () => {
     const stateRoots: Json[] = projects.flatMap((p) => p.states ?? []);
     expect([...keys(stateRoots)].sort()).toEqual(named(ESTATE.$defs.stateRoot).sort());
     expect([...keys(stateRoots.flatMap((r) => r.versions))].sort()).toEqual(named(ESTATE.$defs.stateRoot.properties.versions.items).sort());
+    expect([...keys(stateRoots.flatMap((r) => r.unrecorded ?? []))].sort()).toEqual(named(ESTATE.$defs.stateRoot.properties.unrecorded.items).sort());
     expect([...keys(projects.flatMap((p) => (p.run_view ? [p.run_view] : [])))].sort()).toEqual(named(ESTATE.$defs.project.properties.run_view).sort());
     expect([...keys(projects.flatMap((p) => p.applying ?? []))].sort()).toEqual(named(ESTATE.$defs.project.properties.applying.items).sort());
     expect([...keys(page.graph.nodes)].sort()).toEqual(named(ESTATE.properties.graph.properties.nodes.items).sort());
@@ -360,7 +389,7 @@ describe("terragucci.audit/v1", () => {
   const denial = { version: 1, kind: "pending", op: "policy-override", gate: "envs/dev/orders", timestamp: at(9), expiresAt: "2026-10-09T09:00:00.000Z", planDigest: D, members: [{ member: "envs/dev/orders", planDigest: "sha256:p1" }], rules: ["main.deny"] };
   const allowed = { version: 1, kind: "resolution", op: "policy-override", gate: "envs/dev/orders", resolvedBy: "alice", timestamp: at(9, 5), planDigest: D, note: "why" };
 
-  it("holds every line the record appends, from the ledger and from wave reports", () => {
+  it("holds every line the record appends, from the ledger, from wave reports and from the state stores' versions", async () => {
     const approvals = ledgerEntries(RUN.project, APPLY_LEDGER, [line(pending, "c1"), line(bob, "c2"), line(carol, "c3"), line(bob, "c4", false)], (c) => `https://forge/commit/${c}`);
     const overrides = ledgerEntries(RUN.project, OVERRIDE_LEDGER_FILE, [line(denial, "c5"), line(allowed, "c6"), line(allowed, "c7", false)]);
     const wave = (approval: "approved" | "waiting", finished: string, refused?: { reason: "approval"; approved: string; by: string; roots: string[] }) =>
@@ -370,9 +399,11 @@ describe("terragucci.audit/v1", () => {
       reportEntry(wave("approved", at(10, 20)), "x", evidence, approvals)!,
       reportEntry(wave("waiting", at(11), { reason: "approval", approved: `sha256:${"c".repeat(64)}`, by: "carol", roots: ["envs/dev/orders"] }), "y", evidence, approvals)!,
     ];
-    const text = appendEntries(readRecord(undefined), [...approvals, ...overrides, ...fromReports]);
+    const states = JSON.stringify({ schema: STATES_SCHEMA, roots: [{ root: "envs/dev/orders", backend: "s3", location: "s3://state/orders.tfstate", versioning: "on", checked: at(9), versions: [{ version_id: "v1", commit: "c", started: at(8, 50), finished: at(8, 56), wave: 1, path: "x" }] }] });
+    const fromStates = await unrecorded(RUN.project, states, "envs/dev/orders");
+    const text = appendEntries(readRecord(undefined), [...approvals, ...overrides, ...fromReports, ...fromStates]);
     const lines = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Json);
-    expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused"]));
+    expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "unrecorded-write"]));
     for (const [i, l] of lines.entries()) expect(validate(AUDIT, l), `line ${i + 1}`).toEqual([]);
     expect([...keys(lines)].sort()).toEqual(named(AUDIT).sort());
     expect([...keys(lines.map((l) => l.evidence))].sort()).toEqual(named(AUDIT.properties.evidence).sort());

@@ -9,7 +9,7 @@
  */
 import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlText, type ObjectStore, type StoreCondition, type StoreFetch } from "./object-store";
+import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./object-store";
 import { tradedFromEnv, tradedRole } from "../traded";
 
 export type S3Fetch = StoreFetch;
@@ -308,6 +308,49 @@ export class S3Client implements ObjectStore {
     if (res.status === 404 || res.status === 400) return false;
     if (!res.ok) throw new StoreError(`HEAD s3://${this.target.bucket}/${key}?versionId=${versionId}: ${res.status}`);
     return true;
+  }
+
+  /**
+   * Every version the bucket keeps of one object, delete markers too, from
+   * ListObjectVersions: each one's id, its LastModified and whether it is the
+   * latest. Metadata only; it needs s3:ListBucketVersions. A bucket in
+   * another region than the client's answers 301 with its region, and the
+   * list is asked there.
+   */
+  async listVersions(key: string): Promise<ObjectVersion[]> {
+    const t = await this.signer();
+    let region = t.region;
+    const out: ObjectVersion[] = [];
+    let marker: { key: string; version: string } | undefined;
+    let redirected = false;
+    for (let page = 0; page < 1000; page++) {
+      const at = { ...t, region };
+      const query = [`prefix=${encodeStrict(key)}`, "versions=", ...(marker ? [`key-marker=${encodeStrict(marker.key)}`, `version-id-marker=${encodeStrict(marker.version)}`] : [])].join("&");
+      const url = `${objectUrl(at, "")}?${query}`;
+      const res = await this.fetchFn(url, { method: "GET", headers: sign(at, "GET", url, {}, sha256(""), new Date()) });
+      const moved = res.headers?.get("x-amz-bucket-region") ?? undefined;
+      if ((res.status === 301 || res.status === 400) && moved && moved !== region && !t.endpoint && !redirected) {
+        region = moved;
+        redirected = true;
+        continue;
+      }
+      const xml = await res.text();
+      if (!res.ok) throw new StoreError(`list the versions of s3://${this.target.bucket}/${key}: ${res.status} ${[xmlText(xml, "Code"), xmlText(xml, "Message")].filter(Boolean).join(": ") || xml.slice(0, 300)}`);
+      for (const [tag, deleted] of [["Version", false], ["DeleteMarker", true]] as const) {
+        for (const b of xmlBlocks(xml, tag)) {
+          const id = xmlText(b, "VersionId");
+          const when = xmlText(b, "LastModified");
+          // The prefix lists the lock file and any key that starts with this one: only the object itself counts.
+          if (xmlText(b, "Key") !== key || !id || id === "null" || !when) continue;
+          out.push({ version_id: id, written_at: new Date(when).toISOString(), latest: xmlText(b, "IsLatest") === "true", ...(deleted ? { deleted: true } : {}) });
+        }
+      }
+      const nextKey = xmlText(xml, "NextKeyMarker");
+      const nextVersion = xmlText(xml, "NextVersionIdMarker");
+      if (xmlText(xml, "IsTruncated") !== "true" || !nextKey || !nextVersion) break;
+      marker = { key: nextKey, version: nextVersion };
+    }
+    return out.sort((a, b) => Date.parse(b.written_at) - Date.parse(a.written_at));
   }
 
   /** Delete an object. One that is not there is deleted already. */

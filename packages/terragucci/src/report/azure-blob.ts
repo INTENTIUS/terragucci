@@ -20,7 +20,7 @@
  */
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { encodePath, isoSeconds, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlText, type ObjectStore, type StoreCondition, type StoreFetch } from "./object-store";
+import { encodePath, isoSeconds, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./object-store";
 
 /** The REST version every request names, and the SAS version: the 2020-12-06 string-to-sign layouts. */
 export const AZURE_VERSION = "2021-08-06";
@@ -254,6 +254,36 @@ export class AzureBlobClient implements ObjectStore {
     if (res.status === 404 || res.status === 400) return undefined;
     if (!res.ok) throw new StoreError(`GET ${this.location}/${key} ${JSON.stringify(at)}: ${res.status} ${why(await res.text())}`);
     return res.text();
+  }
+
+  /**
+   * Every version the account keeps of one blob, from List Blobs with
+   * `include=versions`: each one's version id, its Last-Modified and whether
+   * it is the current version. A blob with no version id (blob versioning
+   * off) lists nothing. Metadata only; it needs the container's list
+   * permission.
+   */
+  async listVersions(key: string): Promise<ObjectVersion[]> {
+    const t = this.target;
+    const out: ObjectVersion[] = [];
+    let marker: string | undefined;
+    for (let page = 0; page < 1000; page++) {
+      const q = ["restype=container", "comp=list", "include=versions", `prefix=${encodeURIComponent(key)}`, ...(marker ? [`marker=${encodeURIComponent(marker)}`] : []), ...("sas" in t ? [t.sas.replace(/^\?/, "")] : [])].join("&");
+      const url = `${t.endpoint}/${t.container}?${q}`;
+      const res = await this.fetchFn(url, { method: "GET", headers: await this.headers("GET", url, {}) });
+      const xml = await res.text();
+      if (!res.ok) throw new StoreError(`list the versions of ${this.location}/${key}: ${res.status} ${why(xml)}`);
+      for (const b of xmlBlocks(xml, "Blob")) {
+        const id = xmlText(b, "VersionId");
+        const when = xmlText(b, "Last-Modified");
+        // The prefix lists any blob whose name starts with this one: only the blob itself counts.
+        if (xmlText(b, "Name") !== key || !id || !when) continue;
+        out.push({ version_id: id, written_at: new Date(when).toISOString(), latest: xmlText(b, "IsCurrentVersion") === "true" });
+      }
+      marker = xmlText(xml, "NextMarker") || undefined;
+      if (!marker) break;
+    }
+    return out.sort((a, b) => Date.parse(b.written_at) - Date.parse(a.written_at));
   }
 
   /** Take a snapshot of a blob: its id, the time Azure gives it. */

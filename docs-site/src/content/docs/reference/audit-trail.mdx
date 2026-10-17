@@ -1,6 +1,6 @@
 ---
 title: The audit trail
-description: One record of every approval, apply, policy override and refused wave across your projects, as JSON lines in your bucket, built from your git history and your reports.
+description: One record of every approval, apply, policy override and refused wave across your projects, and every state version written outside them, as JSON lines in your bucket, built from your git history, your reports and your state buckets' version lists.
 prompt: |
   Read https://intentius.io/terragucci/reference/audit-trail/.
   Download audit.jsonl from the top of my reports prefix with a read-only identity, run the queries
@@ -13,7 +13,7 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-`terragucci audit` writes the record as JSON lines in your reports bucket. It reads the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo and the wave reports in the bucket; no terragucci server or account holds a copy.
+`terragucci audit` writes the record as JSON lines in your reports bucket. It reads the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo, the wave reports in the bucket, and the list of versions each root's state bucket keeps; no terragucci server or account holds a copy.
 
 ## Write it
 
@@ -38,8 +38,11 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
    | `chant/lifecycle` of each project, with its history | every approval, override and revocation |
    | `<prefix>/<project>/**/tf-apply-wave-*/report.json` | every apply and its result, every refused wave |
    | `<prefix>/audit.jsonl`, and writes it, `audit.html` and `audit.json` | the record, its page and its summary |
+   | `<prefix>/<project>/states.json` | the state versions each root's waves recorded |
+   | the list of versions of each root's state object: `s3:ListBucketVersions` on an S3 state bucket, `storage.objects.list` on a GCS one, list on an Azure container | [unrecorded writes](#unrecorded-writes); the list holds ids and times, and no state is read |
+   | with `audit_log_group`, `logs:FilterLogEvents` on that group | the writer of an unrecorded version |
 
-   The forge token is the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, with read access to the repo.
+   The forge token is the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, with read access to the repo. The state buckets are listed with the job's own credentials, the variables [Reports](/terragucci/reference/environment/#reports) names.
 
 3. Read the log:
 
@@ -54,7 +57,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
    https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/audit.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
    ```
 
-   A project whose ledger or index cannot be read makes the job exit 1 and is named on the page. The entries it could read still land.
+   A project whose ledger, index or `states.json` cannot be read makes the job exit 1 and is named on the page. The entries it could read still land. A root whose state's versions cannot be listed is named in the log and on the page, and leaves the exit code alone.
 
 </Steps>
 
@@ -66,7 +69,7 @@ The estate page links `audit.html` once `audit.json` is beside it, and its [reso
 |---|---|
 | `<prefix>/audit.jsonl` | the record: one entry per line, oldest first within each run's additions |
 | `<prefix>/audit.html` | the page: counts by kind, each project's ledger state, the newest 1000 entries with their evidence links |
-| `<prefix>/audit.json` | the summary, `terragucci.audit-summary/v1`: how many entries, how many the last run added, counts by kind, and each project's ledger state |
+| `<prefix>/audit.json` | the summary, `terragucci.audit-summary/v1`: how many entries, how many the last run added, counts by kind, and each project's ledger state and `states` (the roots whose versions were checked, skipped with why, or not listed with the error, and how many versions were too new to judge) |
 
 ## Entry fields
 
@@ -75,15 +78,15 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
 | Field | What it holds |
 |---|---|
 | `schema` | `terragucci.audit/v1`; a new field never changes an existing one |
-| `id` | `sha256:` over where the entry came from: the ledger line, or the report's path and finish time |
+| `id` | `sha256:` over where the entry came from: the ledger line, the report's path and finish time, or the state's location and version id |
 | `kind` | what happened; see the next table |
 | `project` | `<host>/<path>` of the repo |
-| `at` | when: the ledger line's `timestamp`, the commit that removed a line, or the run's finish |
-| `who` | the approver, the overrider, whoever removed the line, or for an apply the approver it applied under; `null` when nobody did |
-| `what` | the gate: `wave-<k>`, a migration's name, or for an override or a lock's release the root |
+| `at` | when: the ledger line's `timestamp`, the commit that removed a line, the run's finish, or when the store says a version was written |
+| `who` | the approver, the overrider, whoever removed the line, for an apply the approver it applied under, or for an unrecorded write the writer the bucket's log names; `null` when nobody did or no log names one |
+| `what` | the gate: `wave-<k>`, a migration's name, or for an override, a lock's release or an unrecorded write the root |
 | `digest` | the plan digest: the wave's set digest, or the digest an override binds; `null` when a root failed to plan |
 | `result` | the outcome; see the next table |
-| `evidence` | `source` (`ledger` or `report`); for the ledger `branch`, `path` and `commit`; for a report `bucket`, `key` and `job_url`; `url`, the commit's page or the run's `report.html`, when it is known |
+| `evidence` | `source` (`ledger`, `report` or `state`); for the ledger `branch`, `path` and `commit`; for a report `bucket`, `key` and `job_url`; for a state its `location` and `version_id`; `url`, the commit's page or the run's `report.html`, when it is known |
 | `detail` | what else the source says, by kind |
 
 ## Kinds and results
@@ -102,6 +105,7 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
 | `state-export` | a line in `_gates/tf-state-export/done.jsonl`, written by [`terragucci state export`](/terragucci/reference/cli/#state-export) before it writes the file; `who` is the person who exported, `what` the root | `exported` | `location`, `version_id`, `approved_by`, `approved_at`, `content_digest` (the digest of the bytes written, never the bytes) |
 | `ephemeral-apply` | a line in `_gates/tf-ephemeral/done.jsonl`, written when a pull request's [ephemeral copy](/terragucci/guides/ephemeral-environments/) applied; `who` is the forge's actor for the job, `what` the gate `pr-<n>`, `digest` the copy's plans | `applied` or `failed` | `pull_request`, `suffix`, `roots` (each root's state `location` and `result`), `expires`, `approved_by`, `commit`, `run_id` |
 | `ephemeral-destroy` | a line in `_gates/tf-ephemeral/done.jsonl`, written when a copy was destroyed; `digest` is the destroy plans' | `destroyed` or `failed` | `pull_request`, `suffix`, `roots`, `reason` (`closed` or `expired`), `commit` (the code the destroy ran), `run_id` |
+| `unrecorded-write` | a version a root's state store lists that no wave or migration recorded ([Unrecorded writes](#unrecorded-writes)); `what` is the root, `at` when the store says it was written, `digest` `null` | `unrecorded` | `location`, `recorded_version` (the newest version terragucci recorded before it, or `null`), `current_version` (the version written), `current_written_at`, `latest` (whether the store serves it now), `deleted` (an S3 delete marker), `who_source` (how `who` was found, or why it is `null`) |
 | `refused` | a `tf-apply` wave report's `waves[].refused` | `changed-after-approval`, `changed-after-review`, `changed-after-override`, `denied-by-policy`, `held-by-another-apply` or `superseded-by-a-newer-push` | `wave`, `commit`, `roots`, `pull_request`, `approved` (the digest approved), `moved` or `denied` (the roots), `rules` (by root, for a denial), `holder` (the run applying them, for `held-by-another-apply`) |
 
 `result` on an approval says how it was signed. Whether it counted is the wave's decision under the `approval:` mode at base, and the `apply` or `refused` entry of that wave records it.
@@ -122,6 +126,7 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
 | Re-derivable | the ledger is read from its git history every run, and the same records give the same `id`s; a new record built from the same sources holds the same entries |
 | Checked | `terragucci audit --check` builds the entries again, writes nothing, and exits 1 naming each one the record lacks, such as an approval on the ledger after the last run |
 | Revocations kept | removing a line from the ledger revokes it before its wave runs; the record keeps the approval and adds an `approval-revoked` entry with the commit that removed it |
+| Writes outside terragucci | each run lists the versions of every root's state and adds an `unrecorded-write` entry for each one no wave or migration recorded, one per version, so a later wave that records a newer version leaves the earlier write in the record ([Unrecorded writes](#unrecorded-writes)) |
 | Replaced reports | a second run of the same wave on the same commit replaces its report in the bucket; the record keeps the entry of the first run when an audit ran between them, so schedule the audit at least as often as waves run |
 
 ## Query the record
@@ -147,6 +152,11 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
     jq -c 'select(.project == "github.com/acme/network" and .what == "wave-2") | {at, kind, who, digest, result}' audit.jsonl
     ```
   </TabItem>
+  <TabItem label="Unrecorded writes">
+    ```bash
+    jq -r 'select(.kind == "unrecorded-write") | [.at, .project, .what, .detail.current_version, (.who // "unknown"), .detail.who_source] | @tsv' audit.jsonl
+    ```
+  </TabItem>
   <TabItem label="Applies with no approval">
     ```bash
     jq -r 'select(.kind == "apply" and .result == "applied" and .detail.gate == "approved" and .detail.approval == null) | [.at, .project, .what, .digest] | @tsv' audit.jsonl
@@ -164,9 +174,41 @@ Fetch the record with the store's own CLI, such as `aws s3 cp s3://acme-terraguc
 | An approval | `_gates/tf-apply.jsonl`, any other line, in a commit of its own | the wave, the plan digest it binds, who (`resolvedBy`) and when (`timestamp`) | `terragucci approve`; under `approval: pr-review`, the apply job |
 | A policy override | `_gates/policy-override.jsonl` | the root, its plan digest, the rules it overrides, who, when and the reason | `terragucci override` |
 | A run's report | the bucket, under one path per commit and stage | every root's plan digest and changes, each wave's set digest, approval state and, when it applied nothing, why (`waves[].refused`) | every `tf-plan`, `tf-apply` wave and `tf-drift` run |
-| The index | `index.json` at the project's path | one row per run; `terragucci audit` reads its `tf-apply` rows to find the reports | every upload |
+| The index | `index.json` at the project's path | one row per run; `terragucci audit` reads its `tf-apply` rows to find the reports |
+| The state versions | `states.json` at the project's path | each root's state location and the versions its waves recorded, with when each wave started and finished | every `tf-apply` wave's upload |
+| A migration's writes | `_gates/tf-migrate/done.jsonl` on `chant/lifecycle` | each root's state version before and after the migration wrote it | the apply job, when a [state migration](/terragucci/reference/migration-files/) writes |
+| A state's versions | the state's own bucket or container, through its list of versions | each version's id, when it was written, and whether it is current | your backend, and anything else that writes the state | every upload |
 
 A wave's report names its approval record's branch and path (`waves[].gate`) and never copies it. [Report JSON schema](/terragucci/reference/report-schema/) has every field. Without a bucket, each report is a CI artifact of its job and `terragucci audit` has nothing to read; [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) sets one up.
+
+## Unrecorded writes
+
+Each `tf-apply` wave records the version of each root's state it left, and each state migration the version after its write. An apply from a laptop, or anything else holding the state bucket's credentials, writes a version neither recorded. It shows up in a plan only when the result differs from the code; `terragucci audit` finds it from the versions the bucket keeps.
+
+For each root in a project's `states.json` or its migrations, the run lists the versions of the state where it is now: the location the newest wave recorded, or the one a newer migration moved it to. It reads ids and times from the store's list call and never the state. A version gets an `unrecorded-write` entry when it is:
+
+| Test | Why |
+|---|---|
+| newer than the oldest version terragucci recorded for the root that the store still lists | versions from before terragucci recorded the root are not judged |
+| neither a version a wave recorded in `states.json` nor one a migration recorded after its write | those are terragucci's own |
+| not written while a wave that recorded the root was running, from its report's start to its finish | the binary can write the state more than once during an apply, and the wave records the version it left |
+| written more than 6 hours before the run | a wave still applying has that long to upload its report; the run counts a younger version in `audit.json` and judges it on a later run |
+
+A root is skipped, and counted with why in `audit.json`, when its backend keeps no versions (`versioning: off`), terragucci does not read them (`unknown`), the state is not in `s3://`, `gs://` or `az://`, or the store lists no versions of it, such as an Azure container with blob versioning off.
+
+The estate page lists each root's unrecorded writes among its state versions, marked written outside a wave or migration, with the writer when one is named. [`terragucci notify unrecorded`](/terragucci/reference/cli/#notify), run after `terragucci audit`, posts the ones the run added to Slack and Teams.
+
+### The writer
+
+`who` names a writer only from a log of the bucket's object writes:
+
+| State | `who` |
+|---|---|
+| S3, with [`audit_log_group`](/terragucci/reference/config/#keys) set | the principal of the write in that CloudWatch Logs group whose `x-amz-version-id` is the version's, read through the `aws` CLI in `audit_region` as [drift attribution](/terragucci/reference/responses/) reads CloudTrail; the group is where a CloudTrail trail delivers the state buckets' S3 data events |
+| S3, without it | `null`: CloudTrail's event history, which drift attribution reads, keeps no S3 object writes |
+| GCS or Azure | `null`: terragucci reads no log of their object writes |
+
+`detail.who_source` says which write named the writer, or why `who` is `null`, such as the aws CLI missing from the job's image or no write in the group naming the version.
 
 ## Matching an apply to its approval
 

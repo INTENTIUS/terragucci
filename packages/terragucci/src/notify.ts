@@ -412,3 +412,101 @@ export async function notifyDrift(n: DriftNotice | undefined, env: NodeJS.Proces
   if (!config.slack && !config.teams) return [`no chat webhook: ${SLACK_WEBHOOK_ENV} and ${TEAMS_WEBHOOK_ENV} are empty`];
   return send(config, driftEvent(n, env), { slack: () => slackDrift(n), teams: () => teamsDrift(n) }, driftHeadline(n), env, opts);
 }
+
+// ── unrecorded writes ────────────────────────────────────────────────────
+
+/** One state version no wave or migration recorded, as the audit trail's `unrecorded-write` entry names it. */
+export interface UnrecordedWrite {
+  project: string;
+  root: string;
+  location: string;
+  version_id: string;
+  written_at: string;
+  who: string | null;
+}
+
+/** What the audit job tells the channel: the unrecorded writes its run added to the record. */
+export interface UnrecordedNotice {
+  writes: UnrecordedWrite[];
+  run?: string;
+}
+
+/**
+ * The unrecorded writes `terragucci audit` added on its run, from the files
+ * it wrote locally (`--out`, default `terragucci-audit`): `audit.json` says
+ * how many lines the run appended, and they are the last lines of
+ * `audit.jsonl`. Undefined when there are none, or the files are not there.
+ */
+export function unrecordedNotice(auditDir: string, env: NodeJS.ProcessEnv = process.env): UnrecordedNotice | undefined {
+  let added: number;
+  let lines: string[];
+  try {
+    added = (JSON.parse(readFileSync(join(auditDir, "audit.json"), "utf-8")) as { added?: unknown }).added as number;
+    lines = readFileSync(join(auditDir, "audit.jsonl"), "utf-8").split("\n").filter((l) => l.trim() !== "");
+  } catch {
+    return undefined;
+  }
+  if (!Number.isInteger(added) || added < 1) return undefined;
+  const writes: UnrecordedWrite[] = [];
+  for (const l of lines.slice(-added)) {
+    try {
+      const e = JSON.parse(l) as { kind?: string; project?: string; what?: string; at?: string; who?: string | null; detail?: { location?: string; current_version?: string } };
+      if (e.kind !== "unrecorded-write" || !e.project || !e.what || !e.at) continue;
+      writes.push({ project: e.project, root: e.what, location: e.detail?.location ?? "", version_id: e.detail?.current_version ?? "", written_at: e.at, who: e.who ?? null });
+    } catch {
+      continue;
+    }
+  }
+  if (writes.length === 0) return undefined;
+  const run = runUrl(env);
+  return { writes, ...(run ? { run } : {}) };
+}
+
+export const unrecordedHeadline = (n: UnrecordedNotice): string => `terragucci: ${n.writes.length} state ${n.writes.length === 1 ? "version" : "versions"} written outside every wave and migration`;
+
+const writeLine = (w: UnrecordedWrite): string => `${w.project} ${w.root}: ${w.version_id} at ${w.written_at}${w.who ? ` by ${w.who}` : ", writer unknown"}`;
+
+/** The unrecorded writes for Slack: one line each. */
+export function slackUnrecorded(n: UnrecordedNotice): { text: string } {
+  return { text: [`*${unrecordedHeadline(n)}*`, ...n.writes.map((w) => `${writeLine(w)} (\`${w.location}\`)`), ...(n.run ? [`Run: <${n.run}>`] : [])].join("\n") };
+}
+
+/** The unrecorded writes for Teams: an Adaptive Card with one fact each. */
+export function teamsUnrecorded(n: UnrecordedNotice): Record<string, unknown> {
+  const facts = [...n.writes.map((w) => ({ title: `${w.project} ${w.root}`, value: `${w.version_id} at ${w.written_at}${w.who ? ` by ${w.who}` : ", writer unknown"} (${w.location})` })), ...(n.run ? [{ title: "Run", value: n.run }] : [])];
+  return {
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            { type: "TextBlock", text: unrecordedHeadline(n), weight: "Bolder", wrap: true },
+            { type: "FactSet", facts },
+          ],
+          ...(n.run ? { actions: [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] } : {}),
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Post the unrecorded writes to the Slack and Teams webhooks the job holds,
+ * through chant's notify, in terragucci's own messages. chant's event names
+ * a wave's outcome or drift, and the state having moved outside the code's
+ * applies is drift of the state, so the event chant carries is `drift`; the
+ * generic webhook gets none. Never throws.
+ */
+export async function notifyUnrecorded(n: UnrecordedNotice | undefined, env: NodeJS.ProcessEnv = process.env, opts: SendOptions = {}): Promise<string[]> {
+  if (!n) return ["the audit run added no unrecorded write; nothing posted"];
+  const config = targets(env, false);
+  if (!config.slack && !config.teams) return [`no chat webhook: ${SLACK_WEBHOOK_ENV} and ${TEAMS_WEBHOOK_ENV} are empty`];
+  const projects = [...new Set(n.writes.map((w) => w.project))];
+  const event = makeNotifyEvent({ source: NOTIFY_SOURCE, event: "drift", summary: unrecordedHeadline(n).slice(`${NOTIFY_SOURCE}: `.length), project: projects.join(", "), targets: n.writes.map((w) => w.root), run: n.run ? { url: n.run } : {} }, { env });
+  return send(config, event, { slack: () => slackUnrecorded(n), teams: () => teamsUnrecorded(n) }, unrecordedHeadline(n), env, opts);
+}

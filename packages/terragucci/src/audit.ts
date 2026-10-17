@@ -9,7 +9,11 @@
  * approval, approval request, policy override and revocation, state
  * migration, state export and ephemeral environment, and each
  * project's `tf-apply` wave reports in the bucket, for every apply and its
- * result and every refused wave. Nothing else is read, and nothing is kept
+ * result and every refused wave. Beside them it lists the versions each
+ * root's state store keeps, ids and times only, and adds an
+ * `unrecorded-write` entry for each one no wave or migration recorded
+ * (report/unrecorded.ts), naming the writer when a log of the bucket's
+ * writes does (state-writers.ts). Nothing else is read, and nothing is kept
  * anywhere but the bucket.
  *
  * The record is append-only: the command reads it, keeps every line, and
@@ -28,7 +32,8 @@ import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, resolveRepo, type ForgeName, type TerragucciConfig } from "./config";
+import { listStateVersions } from "./backend";
+import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, resolveRepo, type ForgeName, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { clients, DEFAULT_LINK_SECONDS, named, parseIndex, sameBucket } from "./estate";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { where, withToken } from "./reconcile";
@@ -60,7 +65,10 @@ import {
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
 import type { Report } from "./report/schema";
 import { runFacts } from "./report/stage";
-import { INDEX_TRIES, reportsBase } from "./report/store";
+import { readStateVersions, type StateVersions } from "./report/state-versions";
+import { INDEX_TRIES, reportsBase, statesKey } from "./report/store";
+import { unrecordedWrites } from "./report/unrecorded";
+import { awsStateWriters, type StateWriters } from "./state-writers";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
 
@@ -73,6 +81,8 @@ export interface AuditOptions {
   reports?: Reports;
   /** Build the entries and compare them with the record; write nothing. */
   check?: boolean;
+  /** Who wrote a version no wave or migration recorded, in place of each project's `audit_log_group` reader. */
+  writers?: StateWriters;
   fetch?: StoreFetch;
   env?: NodeJS.ProcessEnv;
   now?: Date;
@@ -102,7 +112,12 @@ interface Source {
   ledger: LedgerSource;
   /** The page of a commit on the project's forge, when the project names one. */
   commitUrl: (commit: string) => string | undefined;
+  /** Who wrote a state version no wave or migration recorded. */
+  writers: StateWriters;
 }
+
+/** The project's reader of its state buckets' writes: `audit_log_group` in `audit_region`. */
+const writersOf = (settings: ResolvedSettings): StateWriters => awsStateWriters({ ...(settings.audit_log_group ? { logGroup: settings.audit_log_group } : {}), ...(settings.audit_region ? { region: settings.audit_region } : {}) });
 
 /** A commit's page: GitHub and Forgejo at `/commit/<sha>`, GitLab at `/-/commit/<sha>`. */
 function commitPage(project: string, origin: string | undefined, forge: ForgeName | undefined): (commit: string) => string | undefined {
@@ -136,7 +151,7 @@ function sources(cwd: string, config: TerragucciConfig, options: AuditOptions, e
       const { cloneUrl, origin } = where(p, settings.url);
       const tokenEnv = settings.token_env ?? (forge ? DEFAULT_TOKEN_ENV[forge] : undefined);
       const token = tokenEnv ? env[tokenEnv] : undefined;
-      return { project: p, ...(settings.reports ? { reports: settings.reports } : {}), ledger: { kind: "remote", url: cloneUrl, ...(token ? { token } : {}) }, commitUrl: commitPage(p, origin, forge) };
+      return { project: p, ...(settings.reports ? { reports: settings.reports } : {}), ledger: { kind: "remote", url: cloneUrl, ...(token ? { token } : {}) }, commitUrl: commitPage(p, origin, forge), writers: options.writers ?? writersOf(settings) };
     });
     const out = config.defaults?.reports;
     return { projects, ...(out ? { out } : {}) };
@@ -145,7 +160,7 @@ function sources(cwd: string, config: TerragucciConfig, options: AuditOptions, e
   const out = options.reports ?? settings.reports;
   if (!out?.bucket) throw new ConfigError("audit writes to the reports bucket: set reports.bucket in terragucci.yml, or pass --bucket with s3://<bucket>, gs://<bucket> or az://<account>/<container>");
   const project = runFacts(cwd, env, settings.forge).project;
-  return { projects: [{ project, reports: out, ledger: { kind: "checkout", dir: cwd }, commitUrl: commitPage(project, settings.url, settings.forge) }], out };
+  return { projects: [{ project, reports: out, ledger: { kind: "checkout", dir: cwd }, commitUrl: commitPage(project, settings.url, settings.forge), writers: options.writers ?? writersOf(settings) }], out };
 }
 
 function git(dir: string, args: string[], secret?: string): { ok: boolean; out: string; err: string } {
@@ -238,6 +253,16 @@ async function readReports(source: Source, out: Reports | undefined, client: (r:
   return { entries, read };
 }
 
+/** The project's states.json, when an apply recorded a root's state. */
+async function readStates(source: Source, client: (r: Reports) => ObjectStore): Promise<StateVersions | undefined> {
+  const reports = source.reports;
+  if (!reports?.bucket) return undefined;
+  const text = await client(reports).get(statesKey(source.project, reports.prefix ?? ""));
+  if (text === undefined) return undefined;
+  const states = readStateVersions(text);
+  return states.roots.length > 0 ? states : undefined;
+}
+
 /** Append the entries the record at `at` lacks, conditional on the copy read; on a conflict read it again and append what it still lacks. */
 async function writeRecord(store: ObjectStore, at: string, derived: AuditEntry[]): Promise<{ record: ReturnType<typeof readRecord>; added: AuditEntry[] }> {
   for (let attempt = 1; ; attempt++) {
@@ -297,6 +322,19 @@ export async function audit(cwd: string, config: TerragucciConfig, options: Audi
       if (!(e instanceof StoreError) && !(e instanceof TypeError)) throw e;
       state.error = state.error ? `${state.error}; ${e.message}` : `the index could not be read: ${e.message}`;
     }
+    // Each root's state versions against the ones its waves and migrations recorded: one entry per version neither wrote.
+    try {
+      const recorded = await readStates(p, client);
+      const migrations = [...approvals, ...before.entries].filter((e) => e.project === p.project && e.kind === "migration");
+      if (recorded || migrations.length > 0) {
+        const u = await unrecordedWrites({ project: p.project, ...(recorded ? { states: recorded } : {}), migrations, list: (location) => listStateVersions(location, env, options.fetch), writers: p.writers, known, now });
+        derived.push(...u.entries);
+        state.states = u.check;
+      }
+    } catch (e) {
+      if (!(e instanceof StoreError) && !(e instanceof TypeError)) throw e;
+      state.error = state.error ? `${state.error}; ${e.message}` : `states.json could not be read: ${e.message}`;
+    }
     states.push(state);
   }
   const unreadable = states.filter((s) => s.error !== undefined).map((s) => s.project);
@@ -344,6 +382,7 @@ export function describeAudit(r: AuditResult, cwd: string, check = false): strin
     if (p.ledger === "error") lines.push(`  ${p.project}: the ledger could not be read: ${p.error}`);
     else if (p.error) lines.push(`  ${p.project}: ${p.error}`);
     else if (p.ledger === "none") lines.push(`  ${p.project}: no ${LEDGER_BRANCH} yet`);
+    for (const u of p.states?.unreadable ?? []) lines.push(`  ${p.project} ${u.root}: its state's versions could not be listed: ${u.error}`);
   }
   if (r.files.length) lines.push(`wrote ${r.files.map((f) => (f.startsWith(cwd + "/") ? f.slice(cwd.length + 1) : f)).join(", ")}`);
   if (r.uploaded) lines.push(`copied to ${named(r.uploaded.bucket)}/${r.uploaded.keys.join(", ")}`);

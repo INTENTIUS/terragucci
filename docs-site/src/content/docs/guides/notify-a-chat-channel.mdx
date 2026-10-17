@@ -129,6 +129,18 @@ The Re-plan button opens the page where you run the check again under your own l
 
 The generic webhook gets no drift event: its events are a wave's.
 
+## State versions written outside a wave
+
+The estate job's `terragucci audit` step records each state version that no wave or migration wrote ([Unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes)). Give that job the webhook secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and run `terragucci notify unrecorded` after the audit step; it posts the writes that run added, and nothing when it added none:
+
+```text
+terragucci: 1 state version written outside every wave and migration
+github.com/acme/infra envs/prod/app: Ox6LTnNaF7lxBz8JmbUJ1rTsr0e0v7qa at 2026-10-09T14:02:11.000Z, writer unknown (`s3://acme-state/envs/prod/app.tfstate`)
+Run: https://github.com/acme/control/actions/runs/91
+```
+
+The generic webhook gets no event for them either.
+
 ## Approve from the message, by review
 
 With [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review), a waiting wave's message opens with a link to the pull request's review page when an approving review of its head would approve the wave. The approval is still a person's own review on the forge, and it binds the plans the pull request's note recorded. The chat app holds no key and approves nothing.

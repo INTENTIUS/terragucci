@@ -180,7 +180,7 @@ A project's `states.json` holds the version ids its roots' applies left (never a
 | `roots[].root`, `backend`, `location` | the root, its backend type, and `s3://<bucket>/<key>` or the local file |
 | `roots[].versioning`, `note` | `on`, `off` (the backend keeps no history) or `unknown` (it may keep versions terragucci does not read) as the newest apply found it, and why there is no version |
 | `roots[].checked` | when that apply finished |
-| `roots[].versions[]` | newest first: `version_id`, the `commit`, `wave` and `finished` time of the wave that recorded it, and its directory as `path` |
+| `roots[].versions[]` | newest first: `version_id`, the `commit`, `wave`, `started` and `finished` times of the wave that recorded it, and its directory as `path`. `terragucci audit` counts a version its store says was written between `started` and `finished` as that wave's ([Unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes)) |
 
 ## Estate rosters
 

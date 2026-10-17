@@ -64,5 +64,20 @@ export const xmlText = (xml: string, tag: string): string | undefined => {
   return m?.[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&").trim();
 };
 
+/**
+ * One version of an object, as the store's list of the object's versions
+ * names it: its id, when it was written, whether it is the one the store
+ * serves now, and, on S3, whether it is a delete marker. Metadata only.
+ */
+export interface ObjectVersion {
+  version_id: string;
+  written_at: string;
+  latest: boolean;
+  deleted?: boolean;
+}
+
+/** Each block of an XML element in a list answer, such as every `<Version>` in a ListObjectVersions page. */
+export const xmlBlocks = (xml: string, tag: string): string[] => [...xml.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"))].map((m) => m[1]);
+
 /** A time as the stores write it in a query: `2026-10-07T12:00:00Z`, no milliseconds. */
 export const isoSeconds = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, "Z");

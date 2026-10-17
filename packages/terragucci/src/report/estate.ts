@@ -28,6 +28,7 @@ import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
 import type { ReportResource } from "./schema";
 import type { ChangeRow } from "./history";
+import type { AuditEntry } from "./audit";
 import type { StateVersions } from "./state-versions";
 import { edgesOf, type Edge, type EdgeRun, type StateEdges } from "./state-edges";
 import { renderDoraSection, type Dora } from "./dora";
@@ -76,6 +77,8 @@ export interface EstateStateRoot {
   /** When the newest apply that recorded it finished. */
   checked: string;
   versions: { version_id: string; commit: string; finished: string; wave?: number; report?: string }[];
+  /** The versions its store lists that no wave or migration recorded, from the audit trail's `unrecorded-write` entries, newest first. */
+  unrecorded?: { version_id: string; written_at: string; who: string | null; deleted?: boolean }[];
 }
 
 /** One root's resources, as its newest applied wave left them. */
@@ -392,6 +395,29 @@ export function estateGraph(indexes: readonly ProjectIndex[]): EstateGraph | und
 }
 
 /** The estate from every project's index. Projects keep the order given. */
+/**
+ * Put each `unrecorded-write` entry of the audit trail on its root's state,
+ * newest first: the versions the store lists that no wave or migration
+ * recorded.
+ */
+export function linkUnrecorded(page: Estate, entries: AuditEntry[]): void {
+  const by = new Map<string, AuditEntry[]>();
+  for (const e of entries) {
+    if (e.kind !== "unrecorded-write") continue;
+    const k = `${e.project}\n${e.what}`;
+    by.set(k, [...(by.get(k) ?? []), e]);
+  }
+  for (const p of page.projects) {
+    for (const r of p.states ?? []) {
+      const found = by.get(`${p.project}\n${r.root}`);
+      if (!found) continue;
+      r.unrecorded = found
+        .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+        .map((e) => ({ version_id: String(e.detail?.current_version ?? e.evidence.version_id ?? ""), written_at: e.at, who: e.who, ...(e.detail?.deleted === true ? { deleted: true } : {}) }));
+    }
+  }
+}
+
 export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Estate {
   const projects = indexes.map((p) => projectState(p, now));
   const overridden = projects.reduce((n, p) => n + (p.overridden ?? 0), 0);
@@ -517,7 +543,8 @@ function resourcesSection(estate: Estate, now: Date): string {
 
 /**
  * The state versions section: per project, each root's state, and either the
- * versions its applies left, newest first, or why there are none.
+ * versions its applies left, newest first, with any version its store lists
+ * that no wave or migration recorded among them, or why there are none.
  */
 function statesSection(estate: Estate, now: Date): string {
   const projects = estate.projects.filter((p) => p.states && p.states.length > 0);
@@ -531,8 +558,11 @@ function statesSection(estate: Estate, now: Date): string {
           : r.versioning === "unknown"
             ? `<span class="warn">versions not read</span>${r.note ? `: ${esc(r.note)}` : ""}`
             : `${r.versions.length} ${r.versions.length === 1 ? "version" : "versions"}`;
-      const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${esc(r.backend)}${where}, ${state}</th></tr>`;
-      const rows = r.versions.map((v) => `<tr><td><code>${esc(v.version_id)}</code></td><td>${link(v.report, v.wave !== undefined ? `wave ${v.wave}` : "applied")} ${short(v.commit)}</td><td>${when(v.finished, now)}</td></tr>`);
+      const flagged = r.unrecorded?.length ? `, <span class="warn">${r.unrecorded.length} unrecorded ${r.unrecorded.length === 1 ? "write" : "writes"}</span>` : "";
+      const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${esc(r.backend)}${where}, ${state}${flagged}</th></tr>`;
+      const recorded = r.versions.map((v) => ({ at: v.finished, row: `<tr><td><code>${esc(v.version_id)}</code></td><td>${link(v.report, v.wave !== undefined ? `wave ${v.wave}` : "applied")} ${short(v.commit)}</td><td>${when(v.finished, now)}</td></tr>` }));
+      const unrecorded = (r.unrecorded ?? []).map((u) => ({ at: u.written_at, row: `<tr class="unrecorded"><td><code>${esc(u.version_id)}</code></td><td><span class="warn">${u.deleted ? "deleted" : "written"} outside a wave or migration</span>${u.who ? ` by ${esc(u.who)}` : ""}</td><td>${when(u.written_at, now)}</td></tr>` }));
+      const rows = [...recorded, ...unrecorded].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).map((x) => x.row);
       return `<tbody class="states" data-root="${esc(r.root)}">${head}${rows.join("")}</tbody>`;
     });
     return `<h3>${link(p.index, esc(p.project))}</h3>
