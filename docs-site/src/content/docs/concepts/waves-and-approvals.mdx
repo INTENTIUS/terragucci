@@ -10,8 +10,6 @@ prompt: |
   Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import ApplyProgress from '../../../components/ApplyProgress.astro';
-
 A shared module change goes out in batches, each after the last; a batch waits only when the [gate policy](#waiting-waves) holds it.
 
 ## Waves
@@ -108,7 +106,7 @@ A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a u
 
 ## Across projects
 
-Waves order the roots of one project. A root that reads the state of a root in another project is not ordered behind it: each project keeps its own pipeline, approvals and blast radius, and the [estate page](/terragucci/guides/see-every-project/) shows the read.
+Waves order the roots of one project. A root that reads the state of a root in another project is not ordered behind it, since each project applies on its own pipeline under its own approvals. The [estate page](/terragucci/guides/see-every-project/) shows the read.
 
 | | Within a project | Between projects |
 |---|---|---|
@@ -120,7 +118,7 @@ Waves order the roots of one project. A root that reads the state of a root in a
 
 With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a root that reads another project's estate through `data "terraform_estate_outputs"` reads the outputs that estate last recorded, and the estate page draws the read the same way.
 
-A `terraform_remote_state` read whose address is not plain strings, such as one built from `var.env`, matches no root, so nothing orders it and no edge is drawn. terragucci names it: `config check` warns, and the report lists it under `roots[].unknown_reads` ([Addresses that can't be matched](/terragucci/guides/track-cross-state-edges/#addresses-that-cant-be-matched)).
+A `terraform_remote_state` read whose address is not plain strings, such as one built from `var.env`, matches no root, so nothing orders it and no edge is drawn. `config check` warns about it, and the report lists it under `roots[].unknown_reads` ([Addresses that can't be matched](/terragucci/guides/track-cross-state-edges/#addresses-that-cant-be-matched)).
 
 ## A composed run
 
@@ -147,7 +145,7 @@ Each root's `backend` block is cut from its files while it is composed, so the c
 
 Steps run for each root at the same moments as on a wave. Policy and cost read each root's part of the composed plan as that root's plan, and a denied root refuses the whole run.
 
-One limit nothing detects: a root that finds another root's resources by a lookup with known arguments, rather than by reading its state, reads them when the run plans, before anything applies. On the waves it reads them after the earlier wave applied.
+Nothing detects one limit. A root that finds another root's resources by a lookup with known arguments, rather than by reading its state, reads them when the run plans, before anything applies. On the waves it reads them after the earlier wave applied.
 
 ### Approval
 
@@ -179,37 +177,9 @@ The kind and the reason are `compose.fallback` in the [report](/terragucci/refer
 
 ## The run view
 
-With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply also writes one page for its commit, `<prefix>/<project>/runs/<commit>/run.html`, and its data, `run.json`. It shows the waves left to right with their roots and the roots each reads, and where each wave stands:
+With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply writes one page for its commit, `run.html`, with the waves left to right, where each stands, the commit's blast radius and a timeline of each wave's plan, wait and apply. [Read the run view](/terragucci/guides/read-the-run-view/) has what it shows and how to read a waiting or refused wave from it.
 
-| State | The wave |
-|---|---|
-| not started | no job of it has run on this commit yet |
-| waiting | waits for an approval; the page gives its digest and the approval command |
-| applying | is applying, or its [share jobs](#a-wide-wave-across-jobs) are |
-| applied | applied, or had nothing to apply |
-| refused | applied nothing: its plans changed after an approval, or the policy denied a root |
-| failed | a root failed to plan or apply |
-
-Each wave's job rewrites its own column when it starts applying and when it ends, and links its report. A wave's `report.json` says the same in `waves[].state`, and a pull request's report marks the waves that plan again in `waves[].replans_after`.
-
-Below the waves the page has two more parts:
-
-| Part | Shows |
-|---|---|
-| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state` or that `waves.after` puts after them (in a Terragrunt repo, every unit whose `dependency` or `dependencies` block names it), followed through, and the dependency graph of the commit's roots with both marked |
-| Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
-
-A wave that waited shows the plan that asked for the approval and the later plan that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something), `totals` and `totals_roots` (its changes by action and how many roots they count, once it planned) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
-
-### Progress
-
-With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave's column also follows each resource its plans change while it applies:
-
-<ApplyProgress />
-
-The wave reads its estate's records every 5 seconds (`TG_PROGRESS_SECONDS`), not the apply's output. A resource is done once its record is written or removed, which choudoufu does as each resource's apply returns. It is in flight once the resources it depends on are done, and waiting before that. A resource with no record of its own is done when its root's apply returns. While a wave applies, the page reloads every 15 seconds, the job writes the same list to `terragucci-report/progress.json`, `run.json` carries it in `waves[].progress`, and the [estate page](/terragucci/guides/see-every-project/) shows the counts.
-
-### Blast radius in the plan note
+## Blast radius in the plan note
 
 Pull requests get the same radius in their plan note, by wave: the roots whose plan changes something and each downstream root that reads their state. A root the run did not plan, such as one `--root` left out, is marked "not planned in this run".
 
@@ -231,7 +201,7 @@ In a Terragrunt repo the radius is the units whose own plan changes something, n
 
 The note leaves it out when nothing reads or depends on a changed root. `report.json` carries it as `blast`.
 
-### Resources in the radius
+## Resources in the radius
 
 For plain roots, the note also lists each changed resource and the resources that depend on it, in its own root and in each root that reads an output it reaches:
 
@@ -260,7 +230,7 @@ A waiting wave exits with code 3 and prints the approval command; run it, then r
 
 ## Everything that waits for a person
 
-The gate is one of several holds. Each binds exactly what was reviewed, a digest or a lock ID, and is released by a record in the repo, so it holds the same whether the change came from a person, a [rollout](/terragucci/guides/roll-out-a-module-version/) or an agent. The keys below are read at base, the applied commit's first parent, so a pull request cannot loosen them for itself. The top-level `gate` is the exception: `init` writes it into the pipeline, so review a change to it as you would a change to the pipeline.
+The gate is one of several holds. Each binds exactly what was reviewed, a digest or a lock ID. A record in the repo releases it, so it holds the same whether the change came from a person, a [rollout](/terragucci/guides/roll-out-a-module-version/) or an agent. The keys below are read at base, the applied commit's first parent, so a pull request cannot loosen them for itself. The top-level `gate` is the exception: `init` writes it into the pipeline, so review a change to it as you would a change to the pipeline.
 
 | Hold | Turned on by | Bound to | Released by | Page |
 |---|---|---|---|---|
@@ -276,7 +246,7 @@ The gate is one of several holds. Each binds exactly what was reviewed, a digest
 | A state lock a killed job left (`state/unlock`) | always | the lock's ID | `terragucci approve unlock` | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
 | A wave whose gate asks a decision point | `apply.point` | the wave's set digest, as the point's question | an answer from the point's deciders that meets its quorum | [A gate that asks a decision point](/terragucci/guides/approve-a-wave/#a-gate-that-asks-a-decision-point) |
 
-`approval_rules` holds nothing of its own: it raises what releases a wave its roots hold, to a number of approvers, a role or someone other than the author ([More than one approver](/terragucci/guides/approve-a-wave/#more-than-one-approver)). An `allow_unattended` rule in `policy.outcomes` is the one way a rule lets a wave apply with no approval, and the cost, step and unreviewed-read holds above still hold it.
+`approval_rules` holds nothing of its own. It asks more of the approvals that release a held wave ([More than one approver](/terragucci/guides/approve-a-wave/#more-than-one-approver)). An `allow_unattended` rule in `policy.outcomes` is the one way a rule lets a wave apply with no approval, and the cost, step and unreviewed-read holds above still hold it.
 
 ## Stricter for some roots
 

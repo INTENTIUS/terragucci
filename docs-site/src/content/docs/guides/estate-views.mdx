@@ -1,0 +1,36 @@
+---
+title: Estate views
+description: Which view answers which question about your estate, from what is waiting for you to how often you deploy, each built from files in your own bucket with nothing to host or sign in to.
+claims: [estate/tofu, estate/graph, estate/inventory, estate/history, estate/dora, estate/state-edges, estate/mcp, estate/query, estate/job, report/drill-down, report/wave, telemetry/dash-estate, telemetry/dash-waves, telemetry/alerts, behold/view, behold/serve]
+prompt: |
+  Read https://intentius.io/terragucci/guides/estate-views/.
+  Using the estate over MCP (`terragucci mcp`, its `waiting`, `estate` and `report` tools), tell me what is waiting for an approval now and what drifted this week, with the project and roots of each.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+## Result
+
+The view that answers your question. Each is built from files in your own reports bucket: static pages, dashboards in your own observability stack, or queries, with nothing to host or sign in to.
+
+## Questions and views
+
+| Question | Look at |
+|---|---|
+| What is applying now, and how far is it? | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), each resource done, in flight or waiting in the [run view](/terragucci/guides/read-the-run-view/#progress)'s column and the estate page's applying row ([Watch a choudoufu wave apply](/terragucci/guides/watch-a-choudoufu-wave/)); for any binary, each wave's state in the run view |
+| What is waiting for me? | the [estate page](/terragucci/guides/see-every-project/)'s waiting waves (`estate/tofu`), the `waiting` tool of [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/) (`estate/mcp`), or `terragucci approve --dry-run` in the repo; the Rollouts and waves dashboard and the `TerragucciWaveWaiting` alert for how long |
+| Why did this wave refuse? | its column in the [run view](/terragucci/guides/read-the-run-view/) and its wave report (`report/wave`), which names the roots whose plans moved or the rule that denied one; the `TerragucciWaveRefused` alert |
+| What changed on this resource, and who approved it? | the estate page's Resources section and its change history (`estate/inventory`, `estate/history`), and with choudoufu each record's past versions; `terragucci query` over the `history` table (`estate/query`) |
+| Which roots read this state? | the estate page's dependency graph, between projects too (`estate/graph`), and its Cross-state edges, each `stale` or `current` (`estate/state-edges`); the `edges` table in `terragucci query` |
+| How often do we deploy, and how often does it fail? | the estate page's Delivery section and `dora.json` (`estate/dora`), and the Estate dashboard (`telemetry/dash-estate`) |
+| Is drift checked? | the estate page's latest drift check per project, the Drift dashboard, and the `TerragucciDriftOld` and `TerragucciDriftStopped` alerts (`telemetry/alerts`) |
+| Which roots are slow, and where does a run spend its time? | the Runs and Rollouts and waves dashboards (`telemetry/dash-waves`) with each run's trace, and the run view's timeline |
+| What will this pull request change, down to each resource? | the plan note and its [report](/terragucci/reference/report/) (`report/drill-down`) |
+| Which resources in one repo drifted or will change, as a graph? | [behold](/terragucci/guides/see-your-estate-in-behold/), on your machine or published beside the estate page (`behold/view`, `behold/serve`) |
+
+The estate page comes from a scheduled job in your [control repo](/terragucci/concepts/control-repo/) (`estate/job`); the run view and the reports from the pipeline's own jobs; the dashboards from [`dashboards`](/terragucci/reference/observability/#dashboards-and-alerts). [The reports bucket](/terragucci/reference/reports-bucket/) lists where each file lives.
+
+## Next
+
+- [Read the run view](/terragucci/guides/read-the-run-view/)
+- [See every project in one page](/terragucci/guides/see-every-project/)
+- [Query the estate with SQL](/terragucci/guides/query-with-sql/)

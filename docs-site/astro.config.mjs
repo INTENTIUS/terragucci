@@ -165,6 +165,8 @@ export default defineConfig({
 							label: 'Watch and keep',
 							collapsed: true,
 							items: [
+								{ label: 'Estate views', slug: 'guides/estate-views' },
+								{ label: 'Read the run view', slug: 'guides/read-the-run-view' },
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
 								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
