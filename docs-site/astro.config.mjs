@@ -257,6 +257,7 @@ export default defineConfig({
 						{ label: 'Locking and staleness', slug: 'concepts/locking-and-staleness' },
 						{ label: 'Job triggers', slug: 'concepts/job-triggers' },
 						{ label: 'Control repo', slug: 'concepts/control-repo' },
+						{ label: 'Setting levels', slug: 'concepts/setting-levels' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},

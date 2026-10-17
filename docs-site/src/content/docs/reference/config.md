@@ -50,7 +50,7 @@ drift: "17 4 * * *"
 
 ## A file for many repos
 
-In a [control repo](/terragucci/concepts/control-repo/), a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
+[Setting levels](/terragucci/concepts/setting-levels/) shows every level together and how each glob-keyed key matches. In a [control repo](/terragucci/concepts/control-repo/), a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
 
 A key the control repo sets away from its default reaches each project one of two ways:
 
