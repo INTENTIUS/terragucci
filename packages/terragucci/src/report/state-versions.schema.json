@@ -29,6 +29,7 @@
               "properties": {
                 "version_id": { "type": "string" },
                 "commit": { "type": "string" },
+                "started": { "type": "string", "description": "When the wave that recorded the version started. terragucci audit counts a version its store says was written between this and finished as the wave's." },
                 "finished": { "type": "string", "description": "When the wave that recorded the version finished." },
                 "wave": { "type": "integer" },
                 "path": { "type": "string", "description": "The wave's run directory, relative to the project's index.json." }

@@ -8,25 +8,27 @@
   "properties": {
     "schema": { "const": "terragucci.audit/v1" },
     "id": { "type": "string", "description": "sha256: over where the entry came from; the same records give the same id." },
-    "kind": { "enum": ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy"] },
+    "kind": { "enum": ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write"] },
     "project": { "type": "string", "description": "<host>/<path> of the repo." },
     "at": { "type": "string", "description": "When it happened, ISO 8601." },
-    "who": { "type": ["string", "null"], "description": "The approver, the overrider, whoever removed the line, or for an apply the approver it applied under. Null when nobody did." },
-    "what": { "type": "string", "description": "The gate (wave-<k>, or a migration's name) or, for an override or a state export, the root." },
+    "who": { "type": ["string", "null"], "description": "The approver, the overrider, whoever removed the line, for an apply the approver it applied under, or for an unrecorded write the writer a log of the state bucket names. Null when nobody did, or no log names one." },
+    "what": { "type": "string", "description": "The gate (wave-<k>, or a migration's name) or, for an override, a state export or an unrecorded write, the root." },
     "digest": { "type": ["string", "null"], "description": "The wave's set digest, or the digest an override binds. Null when a root failed to plan." },
     "result": { "type": "string" },
     "evidence": {
       "type": "object",
       "required": ["source"],
       "properties": {
-        "source": { "enum": ["ledger", "report"] },
+        "source": { "enum": ["ledger", "report", "state"] },
         "branch": { "type": "string" },
         "path": { "type": "string" },
         "commit": { "type": "string" },
         "bucket": { "type": "string" },
         "key": { "type": "string" },
         "url": { "type": "string" },
-        "job_url": { "type": "string" }
+        "job_url": { "type": "string" },
+        "location": { "type": "string", "description": "An unrecorded write: the state's location." },
+        "version_id": { "type": "string", "description": "An unrecorded write: the version the store lists." }
       }
     },
     "detail": { "type": "object", "description": "What else the source says, by kind." }

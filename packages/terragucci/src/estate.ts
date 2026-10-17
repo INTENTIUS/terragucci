@@ -17,6 +17,7 @@
  * `terragucci audit` writes (./audit.ts), so the page can link the audit
  * trail, and, when an apply changed a resource, the record `audit.jsonl`,
  * for the approver of each apply in `history.html` (report/history.ts).
+ * Its `unrecorded-write` entries go beside each root's state versions.
  * The same record and the index rows give the DORA metrics (report/dora.ts):
  * `dora.json` beside the page, a section on it, and, when an OTLP endpoint
  * is set, gauges beside the stages' metrics.
@@ -24,7 +25,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from "./config";
-import { age, buildEstate, renderEstateHtml, type Estate, type ProjectIndex } from "./report/estate";
+import { age, buildEstate, linkUnrecorded, renderEstateHtml, type Estate, type ProjectIndex } from "./report/estate";
 import { storeFromEnv } from "./report/bucket";
 import { bucketUrl, parseReportsBucket, PRESIGN_MAX_SECONDS, StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
 import { AUDIT_FILES, readRecord, type AuditEntry } from "./report/audit";
@@ -297,6 +298,8 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
     if (trail) page.audit = trail;
   }
   const audit = out?.bucket ? await auditEntries(client(out), out.prefix ?? "") : undefined;
+  // The state versions no wave or migration recorded, beside each root's.
+  if (audit) linkUnrecorded(page, audit);
   // The DORA metrics from the audit trail and the index rows.
   const dora = buildDora(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
   page.dora = { file: DORA_FILE, generated: dora.generated, deployments: dora.estate.deployments };

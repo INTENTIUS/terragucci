@@ -642,6 +642,13 @@ export interface ProjectSettings {
   decide?: DecideSettings;
   /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
   audit_region?: string;
+  /**
+   * The CloudWatch Logs group a CloudTrail trail delivers the state buckets'
+   * S3 data events to, in `audit_region`: `terragucci audit` reads it to name
+   * who wrote a state version no wave or migration recorded. Read by the
+   * audit job where it runs; no project's jobs read it.
+   */
+  audit_log_group?: string;
   /** Dashboards and alert rules written next to the pipeline. Off unless set. */
   dashboards?: boolean | DashboardSettings;
   /**
@@ -1006,7 +1013,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1080,6 +1087,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   checkGenerate(s.generate, `${where}.generate`, problems);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
+  }
+  if (s.audit_log_group !== undefined && !(typeof s.audit_log_group === "string" && /^[A-Za-z0-9._\-/#]{1,512}$/.test(s.audit_log_group))) {
+    problems.push(`${where}.audit_log_group must be a CloudWatch Logs group name, such as aws-cloudtrail-logs-state`);
   }
   if (s.notify !== undefined) {
     const n = s.notify;

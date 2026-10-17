@@ -21,6 +21,8 @@ export const STATE_VERSIONS_KEPT = 20;
 export interface StateVersionRow {
   version_id: string;
   commit: string;
+  /** When the wave that recorded it started; `terragucci audit` counts a version its store says was written between this and `finished` as the wave's. */
+  started?: string;
   /** When the wave that recorded it finished. */
   finished: string;
   wave?: number;
@@ -53,6 +55,7 @@ export interface StateRecord {
   root: string;
   state: ReportStateVersion;
   commit: string;
+  started?: string;
   finished: string;
   wave?: number;
   path: string;
@@ -63,7 +66,7 @@ export function stateRecords(report: Report, path: string): StateRecord[] {
   if (report.run.stage !== "tf-apply") return [];
   return report.roots
     .filter((r) => r.state !== undefined)
-    .map((r) => ({ root: r.path, state: r.state!, commit: report.run.commit, finished: report.run.finished, ...(report.run.wave !== undefined ? { wave: report.run.wave } : {}), path }));
+    .map((r) => ({ root: r.path, state: r.state!, commit: report.run.commit, ...(report.run.started ? { started: report.run.started } : {}), finished: report.run.finished, ...(report.run.wave !== undefined ? { wave: report.run.wave } : {}), path }));
 }
 
 /** Read the file; anything unreadable is an empty one, rebuilt from the next apply on. */
@@ -95,7 +98,7 @@ export function addToStateVersions(existing: string | undefined, records: StateR
     const versions = [...(old?.versions ?? [])];
     const id = rec.state.version_id;
     if (id && !versions.some((v) => v.version_id === id)) {
-      versions.push({ version_id: id, commit: rec.commit, finished: rec.finished, ...(rec.wave !== undefined ? { wave: rec.wave } : {}), path: rec.path });
+      versions.push({ version_id: id, commit: rec.commit, ...(rec.started !== undefined ? { started: rec.started } : {}), finished: rec.finished, ...(rec.wave !== undefined ? { wave: rec.wave } : {}), path: rec.path });
     }
     versions.sort((a, b) => at(b.finished) - at(a.finished));
     const { backend, location, versioning, note } = newer ? rec.state : old!;

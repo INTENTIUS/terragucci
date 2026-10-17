@@ -494,6 +494,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     decide: { ...decide, description: "The typed-decision service." },
     audit_region: { type: "string", pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$", description: "The AWS region whose CloudTrail drift attribution reads." },
+    audit_log_group: { type: "string", pattern: "^[A-Za-z0-9._\\-/#]{1,512}$", description: "The CloudWatch Logs group a CloudTrail trail delivers the state buckets' S3 data events to; terragucci audit reads it to name who wrote a state version no wave or migration recorded." },
     dashboards: { ...dashboards, description: "Dashboards and alert rules written next to the pipeline." },
     own_jobs: {
       anyOf: [

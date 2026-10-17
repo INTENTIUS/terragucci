@@ -25,7 +25,7 @@
  */
 import { createHash, createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type StoreCondition, type StoreFetch } from "./object-store";
+import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./object-store";
 import { tradedFromEnv } from "../traded";
 
 export const GCS_ENDPOINT = "https://storage.googleapis.com";
@@ -343,6 +343,37 @@ export class GcsClient implements ObjectStore {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Every generation the bucket keeps of one object, from an object listing
+   * with `versions=true`: each one's generation, when it was written
+   * (`timeCreated`) and whether it is live (no `timeDeleted`). Metadata only;
+   * it needs storage.objects.list on the bucket.
+   */
+  async listVersions(key: string): Promise<ObjectVersion[]> {
+    const out: ObjectVersion[] = [];
+    let token: string | undefined;
+    for (let page = 0; page < 1000; page++) {
+      const url = `${this.target.endpoint}/storage/v1/b/${encodeURIComponent(this.target.bucket)}/o?prefix=${encodeStrict(key)}&versions=true&fields=${encodeStrict("items(name,generation,timeCreated,timeDeleted),nextPageToken")}${token ? `&pageToken=${encodeStrict(token)}` : ""}`;
+      const res = await this.fetchFn(url, { method: "GET", headers: { authorization: `Bearer ${await this.bearer()}` } });
+      const text = await res.text();
+      if (!res.ok) throw new StoreError(`list the generations of ${this.location}/${key}: ${res.status} ${why(text)}`);
+      let doc: { items?: { name?: unknown; generation?: unknown; timeCreated?: unknown; timeDeleted?: unknown }[]; nextPageToken?: unknown };
+      try {
+        doc = JSON.parse(text) as typeof doc;
+      } catch {
+        throw new StoreError(`list the generations of ${this.location}/${key}: the answer is not JSON`);
+      }
+      for (const i of doc.items ?? []) {
+        // The prefix lists the lock object and any name that starts with this one: only the object itself counts.
+        if (i.name !== key || i.generation === undefined || typeof i.timeCreated !== "string") continue;
+        out.push({ version_id: String(i.generation), written_at: new Date(i.timeCreated).toISOString(), latest: i.timeDeleted === undefined });
+      }
+      token = typeof doc.nextPageToken === "string" && doc.nextPageToken !== "" ? doc.nextPageToken : undefined;
+      if (!token) break;
+    }
+    return out.sort((a, b) => Date.parse(b.written_at) - Date.parse(a.written_at));
   }
 
   /** Write an object only when there is none (ifGenerationMatch=0): true when this write made it, false when one was there. */

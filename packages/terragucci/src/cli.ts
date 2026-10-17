@@ -59,6 +59,7 @@
  *   terragucci review post --dir <dir> [--forge gitlab]   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *   terragucci notify drift [--report <dir>]   (post the drift job's findings to Slack and Teams, with a Re-plan button; run by the generated pipeline)
+ *   terragucci notify unrecorded [--audit <dir>]   (post the state versions no wave or migration recorded that the audit run added to Slack and Teams; run after terragucci audit)
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
@@ -136,7 +137,7 @@ import { exportState } from "./export";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
-import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type WaveEvent } from "./notify";
+import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";
 import { startRelay } from "./relay";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
@@ -188,6 +189,7 @@ const USAGE = `usage:
   terragucci review post --dir <dir> [--forge gitlab]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci notify drift [--report <dir>]
+  terragucci notify unrecorded [--audit <dir>]
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
@@ -845,8 +847,12 @@ export async function main(argv: string[]): Promise<number> {
           for (const line of await notifyDrift(driftNotice(resolve(cwd, str(flags, "report") ?? "terragucci-report")))) console.log(`terragucci notify: ${line}`);
           return 0;
         }
+        if (args[0] === "unrecorded") {
+          for (const line of await notifyUnrecorded(unrecordedNotice(resolve(cwd, str(flags, "audit") ?? "terragucci-audit")))) console.log(`terragucci notify: ${line}`);
+          return 0;
+        }
         const event = args[0] as WaveEvent;
-        if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${[...NOTIFY_EVENTS, "drift"].join(", ")}`);
+        if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${[...NOTIFY_EVENTS, "drift", "unrecorded"].join(", ")}`);
         const wave = Number(str(flags, "wave"));
         if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("terragucci notify needs --wave <n>");
         const file = str(flags, "outcome");

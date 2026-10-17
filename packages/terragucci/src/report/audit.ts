@@ -1,6 +1,7 @@
 /**
  * The audit trail: one JSON line per event, `terragucci.audit/v1`, built
- * from the records terragucci already keeps and from nothing else.
+ * from the records terragucci already keeps and the versions each state's
+ * store lists, and from nothing else.
  *
  *   the ledger on chant/lifecycle   every line added to `_gates/tf-apply.jsonl`
  *                                   and `_gates/policy-override.jsonl`, and every
@@ -10,9 +11,11 @@
  *                                   (`@intentius/chant/lifecycle/gate-audit`)
  *   the reports in the bucket       every `tf-apply` wave report a project's
  *                                   index lists
+ *   each root's state store         every version it lists that no wave or
+ *                                   migration recorded (./unrecorded.ts)
  *
- * Each entry's `id` is a digest of where it came from (the ledger line, or
- * the report's path and finish time), so building the entries again from the
+ * Each entry's `id` is a digest of where it came from (the ledger line, the
+ * report's path and finish time, or the state's location and version id), so building the entries again from the
  * same records gives the same ids. The record is append-only: `terragucci
  * audit` (../audit.ts) keeps every line the record holds and appends the
  * entries whose id it lacks.
@@ -30,12 +33,12 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
-/** Where an entry was read: a ledger line and the commit that added or removed it, or a report in the bucket. */
+/** Where an entry was read: a ledger line and the commit that added or removed it, a report in the bucket, or a state's list of versions. */
 export interface AuditEvidence {
-  source: "ledger" | "report";
+  source: "ledger" | "report" | "state";
   /** Ledger: the branch, the file and the commit. */
   branch?: string;
   path?: string;
@@ -47,6 +50,9 @@ export interface AuditEvidence {
   url?: string;
   /** Report: the CI job that ran the wave. */
   job_url?: string;
+  /** State: where the state is, and the version its store lists. */
+  location?: string;
+  version_id?: string;
 }
 
 export interface AuditEntry {
@@ -85,7 +91,8 @@ export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
 export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
 export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
 
-const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
+/** An entry's id: `sha256:` over the parts that say where it came from. */
+export const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
 
 type Line = Record<string, unknown>;
 
@@ -463,6 +470,8 @@ export interface AuditProject {
   reports: number;
   /** Why the ledger or the index could not be read. */
   error?: string;
+  /** The check of each root's state versions against the ones the waves and migrations recorded (./unrecorded.ts): roots checked, skipped and unreadable, and versions left for a later run. Absent when the project has no states.json and no migration. */
+  states?: { checked: number; skipped: { root: string; reason: string }[]; unreadable: { root: string; error: string }[]; pending: number };
 }
 
 export interface AuditSummary {
@@ -498,11 +507,20 @@ export function renderAuditHtml(summary: AuditSummary, entries: AuditEntry[]): s
   const tiles = AUDIT_KINDS.filter((k) => summary.kinds[k]).map((k) => `<div class="tile"><b>${summary.kinds[k]}</b><span>${esc(k)}</span></div>`);
   const projects = summary.projects.map((p) => {
     const ledger = p.ledger === "error" ? `<span class="bad">could not be read: ${esc(p.error ?? "")}</span>` : p.ledger === "none" ? `<span class="none">no ${LEDGER_BRANCH} yet</span>` : "read";
-    return `<tr><td>${esc(p.project)}</td><td>${ledger}</td><td>${p.reports}${p.ledger !== "error" && p.error ? ` <span class="bad">${esc(p.error)}</span>` : ""}</td></tr>`;
+    const st = p.states;
+    const states = !st
+      ? `<span class="none">none recorded</span>`
+      : [
+          `${st.checked} checked`,
+          ...(st.skipped.length ? [`${st.skipped.length} skipped <small>(${st.skipped.map((x) => `${esc(x.root)}: ${esc(x.reason)}`).join("; ")})</small>`] : []),
+          ...(st.unreadable.length ? [`<span class="bad">${st.unreadable.length} not listed: ${st.unreadable.map((x) => `${esc(x.root)}: ${esc(x.error)}`).join("; ")}</span>`] : []),
+          ...(st.pending ? [`${st.pending} too new to judge`] : []),
+        ].join(", ");
+    return `<tr><td>${esc(p.project)}</td><td>${ledger}</td><td>${p.reports}${p.ledger !== "error" && p.error ? ` <span class="bad">${esc(p.error)}</span>` : ""}</td><td>${states}</td></tr>`;
   });
   const rows = newest.map((e) => {
-    const link = e.evidence.url ? `<a href="${esc(e.evidence.url)}">${e.evidence.source}</a>` : esc(e.evidence.source);
-    const cls = e.kind === "refused" || e.result === "failed" || e.kind.endsWith("-revoked") ? ` class="warn"` : "";
+    const link = e.evidence.url ? `<a href="${esc(e.evidence.url)}">${e.evidence.source}</a>` : e.evidence.source === "state" && e.evidence.location ? `state <code>${esc(e.evidence.location)}</code>` : esc(e.evidence.source);
+    const cls = e.kind === "refused" || e.kind === "unrecorded-write" || e.result === "failed" || e.kind.endsWith("-revoked") ? ` class="warn"` : "";
     return `<tr${cls}><td><time datetime="${esc(e.at)}">${esc(e.at)}</time></td><td>${esc(e.project)}</td><td>${esc(e.kind)}</td><td>${esc(e.what)}</td><td>${esc(e.who ?? "")}</td><td>${short(e.digest)}</td><td>${esc(e.result)}</td><td>${link}</td></tr>`;
   });
   const json = JSON.stringify(summary).replace(/</g, "\\u003c");
@@ -513,12 +531,12 @@ ${TACO_ICON}
 <style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1200px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}.none{color:var(--dim)}tr.warn td{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}.none,small{color:var(--dim)}tr.warn td{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Audit trail</h1>
-<p>${summary.entries} entries in <a href="${AUDIT_FILES.record}">${AUDIT_FILES.record}</a>, ${summary.added} added by the run of <time datetime="${esc(summary.generated)}">${esc(summary.generated)}</time>. Built from each project's ${LEDGER_BRANCH} history and its wave reports.</p>
+<p>${summary.entries} entries in <a href="${AUDIT_FILES.record}">${AUDIT_FILES.record}</a>, ${summary.added} added by the run of <time datetime="${esc(summary.generated)}">${esc(summary.generated)}</time>. Built from each project's ${LEDGER_BRANCH} history, its wave reports and the versions its states' stores list.</p>
 <div class="tiles">${tiles.join("")}</div>
 <h2>Projects</h2>
-<div class="scroll"><table><tr><th>Project</th><th>Ledger</th><th>Wave reports read</th></tr>
+<div class="scroll"><table><tr><th>Project</th><th>Ledger</th><th>Wave reports read</th><th>State versions</th></tr>
 ${projects.join("\n")}
 </table></div>
 <h2>${newest.length < entries.length ? `The newest ${newest.length} entries` : "Entries"}</h2>

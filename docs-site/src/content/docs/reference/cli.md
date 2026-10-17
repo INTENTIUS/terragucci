@@ -16,7 +16,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
-| `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
+| `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it, and every state version no wave or migration wrote; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
@@ -187,7 +187,7 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 
 | | `estate` |
 |---|---|
-| Reads | each project's `index.json`, `inventory.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there |
+| Reads | each project's `index.json`, `inventory.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there, for the approvers and each root's [unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes) |
 | Writes | `estate.html`, `estate.json` and `dora.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
 | Projects | in a control repo, its `projects:`, each read from its own `reports`, the page written to `defaults.reports`; in a repo of its own, the ones the top `index.json` lists |
 | Also | links the audit trail when `audit.json` is beside the page; computes the [delivery metrics](/terragucci/reference/delivery-metrics/) and sends them as gauges when an OTLP endpoint is set |
@@ -210,10 +210,10 @@ terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>]
 
 | | `audit` |
 |---|---|
-| Reads | each project's `chant/lifecycle` history and its `tf-apply` wave reports |
+| Reads | each project's `chant/lifecycle` history, its `tf-apply` wave reports and its `states.json`; the list of versions each root's state store keeps (ids and times, never a state); with `audit_log_group`, the CloudWatch Logs group that names who wrote a version |
 | Writes | the entries `audit.jsonl` lacks, appended, and `audit.html` and `audit.json` beside it at the top of the prefix |
 | Projects | in a control repo, its `projects:`, each ledger fetched from the project's repo and its reports read from its own `reports`, the record written to `defaults.reports`; in a repo of its own, the checkout's, its ledger read from `origin` |
-| Exit 1 | a project's ledger or index could not be read, or with `--check` the record lacks an entry |
+| Exit 1 | a project's ledger, index or `states.json` could not be read, or with `--check` the record lacks an entry. A root whose state's versions could not be listed is named in the log and on the page, and does not fail the run |
 
 [The audit trail](/terragucci/reference/audit-trail/) describes every entry.
 
@@ -478,6 +478,12 @@ terragucci notify drift [--report <dir>]
 ```
 
 Posts to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK` the drift job's findings in `--report` (default `terragucci-report`): the roots found drifted and the roots that could not be refreshed. Its Re-plan button opens the page where a person reruns the drift check with their own login (the workflow's Run workflow page on GitHub and Forgejo; the pipeline schedules on GitLab). With no drift and every root refreshed it posts nothing. The generic webhook gets no drift event. The generated drift job runs it when `notify` names `slack` or `teams`.
+
+```text
+terragucci notify unrecorded [--audit <dir>]
+```
+
+Posts to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK` the [unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes) the last `terragucci audit` run added: each project, root, version, time and writer. It reads the files that run wrote in `--audit` (default `terragucci-audit`, the audit's own `--out`), so run it after `terragucci audit` in the same job. A run that added none posts nothing. The generic webhook gets no event.
 
 A webhook that answers a 5xx or does not answer within 10 seconds is tried twice more. One that still fails leaves a line in the log, and the command, which never prints a webhook's address, exits 0.
 
