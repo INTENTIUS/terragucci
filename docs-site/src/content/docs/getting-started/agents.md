@@ -37,6 +37,7 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 - Set terragucci up or change its config from the shell with `--json`, and parse the envelope ([JSON output](/terragucci/reference/cli-json/)).
 - Read what terragucci already wrote through `terragucci mcp`, when the user has added it ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
+- To get a change planned, commit it to a branch and call `propose` on `terragucci mcp --propose`, then `plan_result`, rather than applying a pipeline root from the shell ([Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/)). With `terragucci guard` written, the binaries refuse `apply`, `destroy` and `-auto-approve` in a root.
 - Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
 - Approvals belong to people. Print the `terragucci approve` command for a waiting wave but never run it; an approval made over MCP or ACP is refused.
 - [Responses to pipeline events](/terragucci/reference/responses/) need no model.
@@ -48,10 +49,11 @@ A key that `terragucci config check` refuses is not part of terragucci.
 |---|---|---|
 | find the roots, binary and forge, write a config, check it, write the pipeline | the CLI with `--json` | these commands write files in the repo, and the envelope gives each finding and the exit code |
 | plan a root, or run a response in dry run | the CLI with `--json` | they run the binary in the checkout |
-| read the estate, a root's last apply, a run's report, the state versions, the audit trail or the DORA figures | `terragucci mcp` | it reads the reports bucket with the credentials in its own environment, and every tool only reads |
+| read the estate, a root's last apply, a run's report, the state versions, the audit trail or the DORA figures | `terragucci mcp` | it reads the reports bucket with the credentials in its own environment, and these tools only read |
 | find a waiting wave and its digest | `terragucci mcp`'s `waiting` tool | it prints the `terragucci approve` command for a person to run |
+| push a branch, open a pull request, ask for its plan and read the note and policy result | `terragucci mcp --propose`'s `propose`, `request_plan` and `plan_result` | they write to the forge with the server's token and never approve, apply or merge |
 | approve, apply, override or merge | neither | these belong to a person at a shell; the server has no such tool, and an approval made over MCP is refused |
 
 ## Next
 
-After setup, see [read the estate over MCP](/terragucci/guides/agent-read-over-mcp/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), [fix drift](/terragucci/guides/agent-fix-drift/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).
+After setup, see [read the estate over MCP](/terragucci/guides/agent-read-over-mcp/), [propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), [fix drift](/terragucci/guides/agent-fix-drift/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).
