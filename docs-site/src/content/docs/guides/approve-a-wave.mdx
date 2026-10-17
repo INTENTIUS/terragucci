@@ -351,6 +351,42 @@ Protection keeps history from being rewritten.
 | GitLab | a protected branch with push and merge allowed to a role your approvers and `GITLAB_TOKEN` both hold, force push off. |
 | Forgejo | a protected branch rule with push for everyone with write access and force push off. |
 
+## A gate that asks a decision point
+
+With `apply.point` set, every wave gate asks a chant [decision point](https://intentius.io/chant/guide/ops/#a-gate-that-asks-a-decision-point) in your workspace instead of waiting for an approval. The point's deciders and quorum decide, whoever answers: from a checkout with `chant workspace points answer`, or with Approve in [chat](/terragucci/guides/approve-from-chat/#a-gate-that-asks-a-decision-point).
+
+```yaml
+approval: ledger
+apply:
+  point: prod-apply
+```
+
+The point is declared in the workspace's points file, and must declare `gate.planDigest`, so each wave's plans are their own question:
+
+```json
+{
+  "points": {
+    "prod-apply": {
+      "title": "Apply this wave's plans",
+      "question": { "type": "noul", "instructions": "Should these plans be applied?", "criteria": { "true": "Apply them.", "false": "Do not apply them." } },
+      "inputs": { "gate.component": "the op", "gate.name": "the wave's gate", "gate.planDigest": "the plans the gate binds" },
+      "deciders": [{ "kind": "quorum", "count": 2, "roles": ["maintainer"] }]
+    }
+  }
+}
+```
+
+| Step | What happens |
+|---|---|
+| The wave reaches its gate | it asks the point with `gate.component` `tf-apply`, `gate.name` `wave-<k>` and `gate.planDigest`, keeps the question on `chant/lifecycle`, and waits (exit 3), printing `chant workspace points answer <id> --answer true --by <name>` |
+| Someone clicks Approve | the relay answers the question yes as the clicker's principal, with `--relayed-by` the relay, from the default branch's tip. The relay never counts toward the quorum |
+| The clicker holds the `agent` role in `.chant/trust.json` at base | not counted; with too few people the relay replies `quorum-not-met` and nothing is answered |
+| An agent answers over MCP or ACP | counted for nobody, and refused for a wave gate, whose pending fact is marked never over MCP |
+| The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) runs | it reads the question's answer, and starts the wave again when the answer passes the gate, as it does for an approval |
+| The wave runs again | the answer passes the gate: the wave records a resolution that cites the answer record, then applies. Any other answer applies nothing (exit 4) |
+
+`chant workspace points` and `chant workspace records` list the question and its answer, with who answered and who relayed it. `terragucci approve` does not pass a gate that asks a point. Without `apply.resume`, run the wave's job again after the answer, or comment `/terragucci apply`.
+
 ## Refused wave
 
 A root whose plan changed between your approval and the apply makes the wave apply nothing ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)). After a wave has applied, the next change waits for a new approval.
