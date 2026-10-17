@@ -33,7 +33,8 @@
 #                                     keep the base commit and each root's state
 #                                     as that repo's base snapshot. Run once.
 #                                     The terralith's repos get no base here:
-#                                     each of its cycles pushes and applies its own.
+#                                     each of its cycles pushes its own, and
+#                                     the push's pipeline applies it.
 #   stack/demo.sh loop [--once] [scenario...]
 #                                     run the scenarios one after another and
 #                                     reset to the base after each, forever (one
@@ -380,7 +381,8 @@ tree_bucket() { # dir
 # which a reset deletes) and ROOTS. INIT_PULL is set when a scenario's pull
 # request runs terragucci init after its files, as an author adding units does.
 # BASE_RUN is empty for a repo whose base commit starts no run (the chant
-# repo's says [skip ci]), so a reset does not wait for one.
+# repo's says [skip ci]), so a reset does not wait for one. The terralith's
+# reset pushes no base (tl_reset_work); its stock commit starts a run.
 use_repo() { # tool
   local d keys=""
   TOOL="$1"
@@ -402,8 +404,8 @@ use_repo() { # tool
   # terralith's split adds roots, whose pipeline init writes, as for Terragrunt's units.
   case "$1" in terragrunt|terralith) INIT_PULL=1 ;; esac
   BASE_RUN=1
-  # The terralith's base commit says [skip ci]: the driver applies it itself.
-  case "$1" in chant|terralith) BASE_RUN="" ;; esac
+  # The chant repo's base commit says [skip ci]: the driver applies it itself.
+  [ "$1" != chant ] || BASE_RUN=""
 }
 
 root_key() { # root -> its state key in this repo, a scenario's own roots too
@@ -1083,7 +1085,7 @@ say() { # step
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
-    terralith-stock:applying) echo "Cycle $CYCLE starts from a stock terralith under prefix $TL_PREFIX. The driver applies its 82 resources into one state file, outside the pipeline." ;;
+    terralith-stock:applying) echo "Cycle $CYCLE starts from a stock terralith under prefix $TL_PREFIX. Wave 1 of the push's run applies its 82 resources into one state file." ;;
     terralith-stock:applied) echo "The terralith is applied: 82 resources in one state file on s3. A change to any team would plan all of them and wait on the one lock." ;;
     terralith-adopt:pull-request) echo "Pull request $PULL swaps the terralith's backend block for a live block, and adds migrations/adopt.yml, which adopts its state." ;;
     terralith-adopt:planned) echo "The plan is on the pull request. Under the live block the terralith would create each resource again, and the migration proves each one exists." ;;
@@ -1550,8 +1552,12 @@ scenario_stale_plan() {
 # from scenarios/terralith-<beat>/about.json as about:
 #
 #   stock  the driver pushes the cycle's stock terralith to demo-terralith's
-#          main ([skip ci]) and applies it outside the pipeline, in the demo's
-#          job image: every name and the state key carry the cycle's prefix,
+#          main, and the push's run applies it as wave 1's tf-apply, as it
+#          applies any base. That wave writes the terralith's roster to
+#          <prefix>/estates/terralith/roster.json with every resource
+#          unmarked, beside its report, so the carve view opens on one estate
+#          drawn from a real run. The driver waits for the run as it waits for a
+#          merge's. Every name and the state key carry the cycle's prefix,
 #          tl<cycle>, so a cycle never meets the resources of the one before
 #   adopt  a pull request swaps the backend block for a live block and adds a
 #          backends migration; on the merge, wave 1's tf-migrate gate waits,
@@ -1596,25 +1602,6 @@ tl_fill() { # dir
   local p="tl$CYCLE"
   find "$1" -type f \( -name '*.tf' -o -path '*/migrations/*.yml' \) -not -path '*/.git/*' -print0 \
     | xargs -0 perl -pi -e "s/\\btl(?=[-.])/$p/g; s/(name_prefix\\s*=\\s*)\"tl\"/\${1}\"$p\"/"
-}
-
-# The admin's out-of-band work runs in the demo's job image on the stack's
-# network, with the jobs' plugin cache.
-tl_docker() { # docker run arguments...
-  docker run --rm --network "$TG_NETWORK" -v "${JOB_CACHE_VOLUME:-terragucci-job-cache}:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-    -e TF_IN_AUTOMATION=1 "$@"
-}
-
-# Apply a stock terralith tree, outside the pipeline.
-tl_stock_apply() { # dir
-  local out
-  if ! out="$(tar -C "$1" -cf - --exclude ./.git . | tl_docker -i "$DEMO_IMAGE" \
-      sh -c 'set -e; mkdir /w; cd /w; tar xf -; cd terralith; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color' 2>&1)"; then
-    printf '%s\n' "$out" | tail -20 >&2
-    return 1
-  fi
-  log "stock: $(grep -E '^Apply complete' <<<"$out" || echo "applied")"
 }
 
 # The repositories up makes, the state bucket (versioned, so the adoption
@@ -1682,11 +1669,12 @@ tl_beat() { # beat
   esac
 }
 
-# Beat 1: the cycle's stock terralith. Its tree is kept in <state>/applied
-# with the cycle in applied.cycle until the reset destroys it, so a cycle that
-# stalls part way is destroyed too.
+# The first beat pushes the cycle's stock terralith to main, where the push's
+# run applies it (wave 1, tf-apply). Its tree is kept in <state>/applied with the
+# cycle in applied.cycle before the run starts and until the reset destroys
+# it, so a cycle that stalls part way, in that run too, is destroyed.
 tl_stock_beat() {
-  local bt="$WORK/c$CYCLE/stock" sha
+  local bt="$WORK/c$CYCLE/stock" sha before
   tl_destroy_bg
   mkdir -p "$bt"
   (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./scripts --exclude ./generate.sh .) | (cd "$bt" && tar xf -)
@@ -1695,7 +1683,8 @@ tl_stock_beat() {
   mkdir -p "$bt/.chant"
   echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"
   quiet
-  sha="$(push_tree "$bt" "$REPO" main "The terralith, stock, for cycle $CYCLE [skip ci]")"
+  before="$(last_run_id)"
+  sha="$(push_tree "$bt" "$REPO" main "The terralith, stock, for cycle $CYCLE")"
   echo "$sha" > "$RSTATE/base.sha"
   COMMIT="$sha"
   rm -rf "$RSTATE/applied"
@@ -1704,7 +1693,11 @@ tl_stock_beat() {
   cp "$HERE/demo-terralith-destroy.sh" "$RSTATE/applied/destroy.sh"
   echo "$CYCLE" > "$RSTATE/applied.cycle"
   demo_write applying "$(say applying)" "follow the stock apply"
-  tl_stock_apply "$bt" || fail "the stock terralith of cycle $CYCLE did not apply"
+  run_started "$before" push "$sha"
+  runs_mark base
+  run_ended "$LIMIT_RUN"
+  run_outcome
+  [ "$OUTCOME" = applied ] || fail "the stock terralith of cycle $CYCLE ended $OUTCOME ($RUN_URL)"
   demo_hold applied "$(say applied)" "open the adopt pull request"
 }
 
