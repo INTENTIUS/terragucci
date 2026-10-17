@@ -122,6 +122,7 @@ import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
+import { uploadRosters, waveRosters, type Roster, type RosterWrite } from "./report/roster";
 import { nowNanos, telemetryFromEnv, type Attrs } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule, type ApprovalRule } from "./approval";
@@ -1641,6 +1642,14 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       uploadProblem = (e as Error).message;
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
     }
+    // Each applied root's roster, from the plan it applied (./report/roster.ts). A roster that is not written never fails the wave.
+    const rosters = waveRosters(report, new Map(w.planned.filter((p) => p.plan !== undefined).map((p) => [p.root, { plan: p.plan, estate: estateOf(join(repo, p.root)).estate }])));
+    try {
+      const keys = await uploadRosters(storeFromEnv(settings.reports, env), rosters, settings.reports.prefix);
+      if (rosters.length > 0) console.log(`wave ${wave}: rosters of ${rosters.map((r) => `${r.roster.estate} (${r.roster.resources.length})`).join(", ")} written to ${keys[keys.length - 1]}`);
+    } catch (e) {
+      console.log(`wave ${wave}: the rosters were not written to ${settings.reports.bucket}: ${(e as Error).message}`);
+    }
   }
   // The run view: a share that applied adds itself to its wave's row; any other ending is the wave's state.
   if (w.state && w.share !== undefined) {
@@ -2374,8 +2383,12 @@ async function listRecordVersions(repo: string, applied: PlannedRoot[], limit: n
   return out;
 }
 
-/** Copy each migration record to the reports bucket, when the config names one. A copy that fails is logged. */
-async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, records: MigrationRecord[], env: NodeJS.ProcessEnv): Promise<void> {
+/**
+ * Copy each migration record to the reports bucket, when the config names
+ * one, and the roster of each estate root an estate migration wrote
+ * (./report/roster.ts). A copy that fails is logged.
+ */
+async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, records: MigrationRecord[], env: NodeJS.ProcessEnv, rosters: { root: string; roster: Roster }[] = []): Promise<void> {
   const configPath = options.config ?? findConfig(repo);
   const read = await waveSettings(repo, options, configPath).catch(() => undefined);
   if (!read || "error" in read || !read.settings.reports?.bucket) return;
@@ -2390,6 +2403,14 @@ async function uploadMigrationRecords(repo: string, options: ApplyWaveOptions, r
     } catch (e) {
       console.log(`migration ${r.name}: the record was not copied to ${reports.bucket}: ${(e as Error).message}`);
     }
+  }
+  if (rosters.length === 0) return;
+  const writes: RosterWrite[] = rosters.map((r) => ({ ...r, project }));
+  try {
+    const keys = await uploadRosters(store, writes, reports.prefix);
+    console.log(`migrations: rosters of ${writes.map((w) => `${w.roster.estate} (${w.roster.resources.length})`).join(", ")} written to ${keys[keys.length - 1]}`);
+  } catch (e) {
+    console.log(`migrations: the rosters were not written to ${reports.bucket}: ${(e as Error).message}`);
   }
 }
 
@@ -3365,9 +3386,11 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
   } catch {
     approved = undefined;
   }
+  const rosters: { root: string; roster: Roster }[] = [];
   const run = await runMigrations(repo, {
     binary: options.binary,
     env,
+    roster: (root, roster) => rosters.push({ root, roster }),
     // A Terragrunt unit is prepared by Terragrunt, and its binary then runs where Terragrunt runs it.
     ...(options.terragrunt ? { terragrunt: { ...(options.terragruntPath ? { path: options.terragruntPath } : {}), ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) } } : {}),
     ...(options.now ? { now: options.now } : {}),
@@ -3376,7 +3399,7 @@ async function migrationCall(repo: string, options: ApplyWaveOptions, j: WaveJob
     ...(options.config ? { config: options.config } : {}),
     ...(hold ? { hold: { file: join(cwd, hold.CHANT_HOLD ?? ".chant/op-waves/tf-apply/wave-1/hold.json"), ...(approved ? { approved } : {}) } } : { prove: true }),
   });
-  if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env);
+  if (run.records.length > 0) await uploadMigrationRecords(repo, options, run.records, env, rosters);
   if (run.code === EXIT.applied) return EXIT.applied;
   const last = run.records[run.records.length - 1];
   if (last) j.migration = { roots: last.roots.map((r) => r.root), members: beforeMembers(last.roots) };
