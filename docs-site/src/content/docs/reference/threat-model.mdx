@@ -5,13 +5,26 @@ prompt: |
   Read https://intentius.io/terragucci/reference/threat-model/.
   For this repo's forge, compare the branch protection, the merge methods and the apply role's trust policy with the page's "Branch protection" tab, reading them through the forge's API or CLI.
   List each setting that differs and what it leaves open; do not change settings, tokens or trust policies yourself.
+  Then read `runner` in terragucci.yml and the forge's runner settings, and say whether a plan job and an apply job can run on the same machine, and which other jobs can run on the apply runners (the page's "Runners" section).
   Do not run `terragucci override`.
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+claims: [init/runner-label, apply/runner-nudge, security/plan-token-free, security/fork, security/token-scrub, security/protected-token, oidc/state-roles, apply/provider-cache]
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The pipeline runs as jobs in your CI, so its trust is your forge's.
+The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage gets the least it needs, and the runner settings let you put apply on machines that pull request code never reaches.
+
+## Each job's reach
+
+| Guard | What it keeps apart | Section |
+|---|---|---|
+| The plan job holds no apply role, and on GitHub and Forgejo no forge token in the steps that run the change's code | a pull request's code from the apply role and, in those steps, from the forge token | [Job access](#job-access) |
+| Forks get no plan job | an outside author's code from every cloud role | [Job access](#job-access) |
+| Forge tokens removed from the binary's, Terragrunt's and the policy engine's environment | a root's code from the job's forge token | [Token scrub limits](#token-scrub-limits) |
+| A plan and an apply role per environment | one environment's roots from another's state | [State access per environment](#state-access-per-environment) |
+| `runner.apply` on runners of its own | the apply role, and the network its runners reach, from the machines where pull request code runs | [Runners](#runners) |
+| Signing keys in `publish` alone; on GitLab, as protected variables | the jobs that run a pull request's code from the keys that sign module releases | [Job access](#job-access) |
 
 ## Trust
 
@@ -147,6 +160,58 @@ Forgejo sets the run token's scope itself; a job with a cloud role asks only for
 With groups, a root's code in an `apply-wave-<k>-<group>` job holds its group's apply identities and no other group's, so it reaches the states those identities reach. Its token can still be traded for any role whose trust admits the token's subject and audience, so on GitHub and GitLab each apply role's trust names its own environment ([State access per environment](#state-access-per-environment)). On Forgejo every group's token has the same subject.
 
 With `reports.bucket` set and no `reports.role`, the bucket keys also reach `plan`, `replan` and `drift` ([Credentials](/terragucci/reference/pipeline/#credentials)).
+
+## Runners
+
+A plan job runs the change's code. An apply job holds the apply role. On a runner that keeps anything between jobs, the first can leave files or processes behind for the second: a changed provider in a cache, a script on the path, a process that waits for the apply's credentials. [`runner`](/terragucci/reference/config/#runners) puts the plan and apply stages on runners of their own, so `runner.apply` is an isolation setting as well as a placement one.
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+| Runner | What a plan job can leave for a later apply | Kept apart by |
+|---|---|---|
+| GitHub-hosted (`ubuntu-latest` and the other hosted labels) | nothing: each job gets a new virtual machine | the forge |
+| Self-hosted, one job per runner (registered with `--ephemeral`, or a scale set of Actions Runner Controller) | nothing on the runner; only what its host keeps outside it, such as a mounted volume or the Docker daemon's images | a runner per job, started from a clean image |
+| Self-hosted, kept between jobs, taking plan and apply jobs | files in the runner's work and home directories, a cache directory a job sets, Docker images, containers and volumes, and processes the runner does not stop | `runner.plan` and `runner.apply` on different labels or [runner groups](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access), or one job per runner |
+
+Who can run a job on the apply runner: any workflow in the repository, unless its runner group is limited to selected workflows. A label in `runner.apply` keeps terragucci's own plan jobs off the runner and nothing more, since a branch can edit its workflow to ask for the label.
+
+</TabItem>
+<TabItem label="GitLab">
+
+| Runner | What a plan job can leave for a later apply | Kept apart by |
+|---|---|---|
+| GitLab.com's hosted runners (`saas-` tags) | nothing: each job gets a new virtual machine | the forge |
+| Self-managed, one job per machine (an autoscaler with `max_use_count = 1`) | nothing on the machine | a machine per job, started from a clean image |
+| Self-managed, kept between jobs, taking plan and apply jobs | with the Docker executor, the cache and build volumes it reuses for the project and the Docker daemon's images; with the shell executor, everything the runner's user can write | `runner.plan` and `runner.apply` on different tags, or one job per machine |
+
+Who can run a job on the apply runner: any job of the project, unless the runner is [protected](https://docs.gitlab.com/ci/runners/configure_runners/#prevent-runners-from-revealing-sensitive-information), which limits it to jobs on protected branches and tags.
+
+</TabItem>
+<TabItem label="Forgejo">
+
+| Runner | What a plan job can leave for a later apply | Kept apart by |
+|---|---|---|
+| A runner you register, one job per runner ([ephemeral](https://forgejo.org/docs/latest/admin/actions/security/#ephemeral-runners)) | nothing on the runner; only what its host keeps outside it, such as a mounted volume or the Docker daemon's images | a runner per job |
+| Kept between jobs, with `docker://` labels, taking plan and apply jobs | each job's container is new; the Docker daemon's images and volumes, and anything `container.valid_volumes` lets a job mount, stay | `runner.plan` and `runner.apply` on different labels, or one job per runner |
+| Kept between jobs, with host labels | everything the runner's user can write, and processes the runner does not stop | as above |
+
+Who can run a job on the apply runner: any job of a repository the runner is registered to, whether that is the repository, its organization or the instance. Forgejo has no limit by workflow or branch.
+
+</TabItem>
+</Tabs>
+
+The provider cache and the binaries terragucci installs live in the job's temporary directory by default. A runner that sets `TF_PLUGIN_CACHE_DIR` or `TOFU_INSTALL_DIR` to a directory it keeps shares that directory with every later job on it, a plan's included ([Applies side by side](/terragucci/reference/pipeline/#applies-side-by-side)). On a runner that takes both stages, leave them unset, or give the apply runners a directory no plan job writes.
+
+A runner whose host holds credentials of its own (an instance profile, a metadata endpoint, mounted keys, cloud config files) gives them to every job it takes, with no OIDC token and no trust condition in the way. That holds for a one-job runner too. [Runner hosts](/terragucci/guides/separate-environments/#runner-hosts) lists each and how to keep it off.
+
+| Guard | Covers | Does not cover |
+|---|---|---|
+| `runner.plan` and `runner.apply` on different labels or groups | terragucci's plan jobs landing on the apply runners | another job that asks for the apply labels: a branch's edited workflow, or another workflow in the repository |
+| a GitHub runner group limited to selected workflows; GitLab protected runners | other workflows' jobs, and on GitLab unprotected refs' jobs, on the apply runners | Forgejo, which has neither; on GitLab, every job of a protected ref |
+| one job per runner | leftovers from one job reaching the next | credentials the host gives every job; anything the host keeps outside the runner |
+| the tip [`terragucci-persistent-runner`](/terragucci/reference/tips/#terragucci-persistent-runner) from `config check` | a config whose plan and apply runners, or two environments' apply runners, one runner can take | whether a runner is kept between jobs: `config check` reads the config, never the runners |
+| with `environments`, each apply job's [own check](/terragucci/reference/environment/#the-apply-jobs-own-check) | an environment's apply on a runner without its GitLab tags, or, on GitHub and Forgejo, on a hosted runner when its `runner` is self-hosted | someone who edits the workflow and removes the check |
 
 ## State access per environment
 
