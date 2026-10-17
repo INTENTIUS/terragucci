@@ -1,5 +1,5 @@
-# versions.tf - provider wiring only, copied from the terralith's. The
-# estate's live block is in state.tf.
+# versions.tf - provider wiring only, copied from the shared root's.
+# The estate's live block is in state.tf.
 #
 # Endpoint, region and credentials come from the environment
 # (AWS_ENDPOINT_URL, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY);

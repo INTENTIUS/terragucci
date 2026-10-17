@@ -1,5 +1,5 @@
 # The shared layer: one VPC, subnet and security group that no team owns. It
-# stays in the terralith when team-b is carved out.
+# stays in the shared root when team-b is carved out.
 
 resource "aws_vpc" "main" {
   cidr_block = "10.42.0.0/16"
@@ -21,7 +21,7 @@ resource "aws_subnet" "main" {
 
 resource "aws_security_group" "main" {
   name        = "tl-shared-sg"
-  description = "The terralith's shared security group"
+  description = "The shared root's security group"
   vpc_id      = aws_vpc.main.id
 
   egress {

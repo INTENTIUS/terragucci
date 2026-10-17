@@ -1,10 +1,10 @@
-# Carve team-b out of the terralith: each of its resources moves to
+# Carve team-b out of the shared root: each of its resources moves to
 # its own estate. choudoufu live-mv -from-estate rewrites each resource's
 # tags, run in the root it moves to; a count block's instances move one by
 # one. The untaggable ones (inline policies) follow their role with no write
 # of their own.
 moves:
-  - from: terralith
+  - from: shared
     to: team-b
     addresses:
       - aws_iam_role.team_b_role
