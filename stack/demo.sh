@@ -69,7 +69,11 @@
 # next.from is when the driver started waiting for that action: a write that
 # keeps the same action and at keeps its from, so a reader can draw how far the
 # wait has gone. An older driver leaves it out, so readers take it as
-# optional.
+# optional. While an estate migration of the cycle writes its resources,
+# next.action names it with its count, "carve: 36 of 79 moved" ("stamped" for
+# an adoption), read from the last line of the migration's progress.jsonl in
+# the reports bucket (migration_follow), and goes back to the action before
+# once every resource has its line.
 # pull and commit are null until the cycle has them. about is the scenario's
 # card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
@@ -524,8 +528,57 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
       about: $about}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
-  log "cycle $CYCLE $SCENARIO: $step: $label"
+  log "cycle $CYCLE $SCENARIO: $step: $label${MIGRATION_WRITE:+ ($action)}"
+  # A migration's count stands in for the action only while it writes: the step's own action is kept to go back to.
+  [ -n "${MIGRATION_WRITE:-}" ] || DEMO_STEP="$step" DEMO_LABEL="$label" DEMO_ACTION="$action" DEMO_AT="$at" MIGRATION_SHOWN=""
   demo_put
+}
+
+# The estate migrations the scenario's change adds: migrations/<name>.yml in
+# its pull/ or push/ tree. Empty for the base and a scenario with none.
+scenario_migrations() { # scenario
+  local tree f
+  tree="$(tool_tree "$(scenario_tool "$1" 2>/dev/null)" 2>/dev/null)" || return 0
+  for f in "$HERE/../$tree/scenarios/$1"/{pull,push}/migrations/*.yml; do
+    if [ -f "$f" ]; then basename "$f" .yml; fi
+  done | sort -u
+}
+
+# While a migration of the cycle writes, its count: "carve: 36 of 79 moved".
+# Wave 1 copies <prefix>/<project>/migrations/<name>/progress.jsonl to the
+# bucket every few seconds while the writes land, each line carrying the counts
+# so far; this reads the last line of each. Empty when no migration has a line
+# from this cycle with resources left.
+migration_next() {
+  local name line text
+  for name in ${MIGRATIONS:-}; do
+    line="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/forgejo:3000/$REPO/migrations/$name/progress.jsonl" 2>/dev/null | tail -n 1)" || continue
+    [ -n "$line" ] || continue
+    text="$(jq -r --arg n "$name" --argjson since "${STARTED:-0}" '
+      select((.at // "" | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch 0) >= $since and .counts.left > 0)
+      | .counts as $c | ($c.moved + $c.stamped + $c.refused + $c.skipped + $c.left) as $t
+      | if .outcome == "stamped" or .estate_from == "" then "\($n): \($c.stamped) of \($t) stamped" else "\($n): \($c.moved) of \($t) moved" end' <<<"$line" 2>/dev/null)" || continue
+    [ -z "$text" ] || { echo "$text"; return 0; }
+  done
+  return 0
+}
+
+# Each poll of a wait: put the migration's count in next while it writes, at
+# most every 5 s, and the step's own action back once it is done.
+MIGRATION_AT=0 MIGRATION_SHOWN=""
+migration_follow() {
+  [ -n "${MIGRATIONS:-}" ] && [ -n "${DEMO_STEP:-}" ] || return 0
+  [ $(( $(now) - MIGRATION_AT )) -ge 5 ] || return 0
+  MIGRATION_AT="$(now)"
+  local text
+  text="$(migration_next)"
+  [ "$text" != "$MIGRATION_SHOWN" ] || return 0
+  if [ -n "$text" ]; then
+    MIGRATION_WRITE=1 demo_write "$DEMO_STEP" "$DEMO_LABEL" "$text"
+  else
+    MIGRATION_WRITE=1 demo_write "$DEMO_STEP" "$DEMO_LABEL" "$DEMO_ACTION" "$DEMO_AT"
+  fi
+  MIGRATION_SHOWN="$text"
 }
 
 # The fields of demo.json that say where the viewer is: the demo's intro, the
@@ -846,6 +899,7 @@ run_ended() { # limit
   while :; do
     runner_watch
     runs_export
+    migration_follow
     run="$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID" 2>/dev/null || true)"
     status="$(jq -r '.status // empty' <<<"$run" 2>/dev/null || true)"
     case "$status" in success|failure|cancelled|skipped) break ;; esac
@@ -1419,6 +1473,7 @@ run_cycle() {
   SCENARIO="$1"
   TITLE="$(scenario_title "$1")" || fail "unknown scenario '$1' (${ALL_SCENARIOS[*]})"
   ABOUT="$(scenario_about "$1")"
+  MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL=""
   on_waiting() { default_waiting; }
   on_failed() { default_failed; }
