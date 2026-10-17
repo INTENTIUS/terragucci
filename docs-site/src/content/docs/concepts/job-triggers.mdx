@@ -50,7 +50,7 @@ Every job runs in your forge's CI. It starts in one of two ways: on an event the
 
 ## Outbound messages
 
-Outbound, an apply job posts a wave that waits, is refused or fails to Slack and Teams (`notify/chat`) and as a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event to `notify.webhook` (`notify/webhook`). The drift job posts drift to Slack and Teams, with a Re-plan button. None of these starts a job by itself: the chat buttons reach your [relay](/terragucci/guides/approve-from-chat/), and the Re-plan button a dispatch.
+Outbound, an apply job posts a wave that waits, is refused or fails to Slack and Teams (`notify/chat`) and as a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event to `notify.webhook` (`notify/webhook`). The drift job posts drift to Slack and Teams, with a Re-plan button, and `terragucci notify unrecorded`, run in the estate job after `terragucci audit`, posts each state version written outside every wave and migration to Slack and Teams ([State versions written outside a wave](/terragucci/guides/notify-a-chat-channel/#state-versions-written-outside-a-wave)). None of these starts a job by itself: the chat buttons reach your [relay](/terragucci/guides/approve-from-chat/), and the Re-plan button a dispatch.
 
 ## Next
 
