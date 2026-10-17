@@ -225,7 +225,7 @@ DEMO_IMAGE=terragucci-demo-tofu:local
 # The choudoufu release DEMO_IMAGE carries, for the terralith's roots. Its
 # sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
-CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.0}"
+CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.1}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 HOLD="${DEMO_HOLD:-20}"
