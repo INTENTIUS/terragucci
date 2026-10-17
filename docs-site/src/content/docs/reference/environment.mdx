@@ -43,7 +43,7 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 ### Jobs that run a pull request's code
 
-On GitHub and Forgejo these jobs hold no forge token while the change's code runs.
+On GitHub and Forgejo these jobs hold no forge token while the change's code runs, apart from Forgejo's token-request variables: with `oidc` set they carry the run's token, and the plan job's plan step keeps them unless `oidc.audience` is a map ([Token scrub limits](/terragucci/reference/threat-model/#token-scrub-limits)).
 
 | Guard | Covers |
 |---|---|
