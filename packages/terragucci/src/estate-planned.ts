@@ -14,6 +14,11 @@
  * output and that wave; a sensitive one fails the root, since choudoufu never
  * hands a sensitive output to another estate, planned or recorded.
  *
+ * The flag goes whenever the upstream planned in the run, even when its
+ * plan marks every output a no-op: choudoufu recomputes an output's prior
+ * value rather than reading what its estate recorded, so a no-op does not
+ * say the records hold it (an output a change adds is one).
+ *
  * That plan is for review. The apply wave plans again on the outputs the
  * upstream's wave recorded, with no `-estate-outputs-from`, so choudoufu's
  * apply-time check of a plan made on planned outputs (exit 3 until the
@@ -68,9 +73,12 @@ export function estateLinks(
       applied("it did not plan in this run");
       continue;
     }
+    // An upstream that planned hands its plan whatever its outputs' actions say. choudoufu keeps no state file, so an
+    // output's `before` is its value recomputed against the estate, not the one the estate recorded: an output a change
+    // adds plans as a no-op although nothing recorded it yet, and a read of the records would fail (the terralith demo's
+    // log_retention_days, demo-terralith#5). The planned value is the one the upstream's apply records either way.
     const outputs = plannedOutputs(p.plan);
-    if (!outputs) applied("its plan names no output changes");
-    else if (!outputs.changed) applied("its plan changes no output, so its records stand");
+    if (!outputs) applied("its plan names no outputs");
     else {
       out.push({ upstream: up, data: b.name, outputs: "planned" });
       if (!upstreamOf.has(b.estate)) {

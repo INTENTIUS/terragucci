@@ -46,7 +46,7 @@ describe("estate outputs from an upstream's plan", () => {
     expect(plansOnPlannedEstates("terraform")).toBe(false);
   });
 
-  it("hands a reader one flag per estate whose root planned with an output change, and says why each other read stands on the records", () => {
+  it("hands a reader one flag per estate whose root planned, output change or not, and says why each other read stands on the records", () => {
     const owner = new Map([["shop-net", "net"], ["shop-dns", "dns"], ["shop-db", "db"], ["shop-app", "app"], ["shop-q", "q"]]);
     const plans = new Map([
       ["net", { plan: netPlan, file: "/w/0.tfplan.json" }],
@@ -67,12 +67,12 @@ describe("estate outputs from an upstream's plan", () => {
       (r) => r !== "q",
       (r) => plans.get(r),
     );
-    expect(got.args).toEqual(["-estate-outputs-from=shop-net=/w/0.tfplan.json"]);
-    expect([...got.upstreamOf]).toEqual([["shop-net", "net"]]);
+    expect(got.args).toEqual(["-estate-outputs-from=shop-net=/w/0.tfplan.json", "-estate-outputs-from=shop-dns=/w/1.tfplan.json"]);
+    expect([...got.upstreamOf]).toEqual([["shop-net", "net"], ["shop-dns", "dns"]]);
     expect(got.reads).toEqual([
       { upstream: "net", data: "net", outputs: "planned" },
       { upstream: "net", data: "net_again", outputs: "planned" },
-      { upstream: "dns", data: "dns", outputs: "applied", why: "its plan changes no output, so its records stand" },
+      { upstream: "dns", data: "dns", outputs: "planned" },
       { upstream: "db", data: "db", outputs: "applied", why: "it did not plan in this run" },
       { upstream: "q", data: "q", outputs: "applied", why: "this change does not reach it, so its records stand" },
     ]);
@@ -185,12 +185,43 @@ describe("tf-plan plans a choudoufu root on the planned outputs of the estates i
     expect(validate(REPORT_SCHEMA, report)).toEqual([]);
   });
 
-  it("plans on the records, with no flag, when the upstream's plan changes no output or the change does not reach it", async () => {
+  it("hands the upstream's plan when it marks every output a no-op, as choudoufu plans an output a change adds", async () => {
     const unchanged = estate({ "net/plan.json": JSON.stringify(unchangedPlan) });
     const a = await runStage("tf-plan", unchanged, { binary: standIn(tmp()), layers, out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, () => {});
-    expect(readFileSync(join(unchanged, "app/eof.seen"), "utf-8")).toBe("");
-    expect(a.report.roots.find((r) => r.path === "app")!.reads).toEqual([{ upstream: "net", data: "net", outputs: "applied", why: "its plan changes no output, so its records stand" }]);
+    expect(readFileSync(join(unchanged, "app/eof.seen"), "utf-8")).toMatch(/^shop-net=\/.+\.tfplan\.json;$/);
+    expect(a.report.roots.find((r) => r.path === "app")!.reads).toEqual([{ upstream: "net", data: "net", outputs: "planned" }]);
+  });
 
+  it("plans the teams on the terralith's plan when it adds an output its estate never recorded (demo-terralith#5)", async () => {
+    // The terralith demo's cross-estate pull request at cycle 5: the estates carry the cycle's prefix, the terralith adds
+    // log_retention_days, and choudoufu's plan of it says no-op (before 14, after 14), since it recomputes an output's
+    // prior value rather than reading the record. Each team read the records and failed on the output nothing recorded.
+    const addsOutput = planJson([], { output_changes: { log_retention_days: { actions: ["no-op"], before: 14, after: 14, after_unknown: false, before_sensitive: false, after_sensitive: false } } });
+    const team = (t: string) =>
+      live(`tl5-${t}`) +
+      `resource "aws_cloudwatch_log_group" "${t}" {\n  name              = "tl5-${t}-logs"\n  retention_in_days = data.terraform_estate_outputs.platform.values.log_retention_days\n}\n` +
+      `data "terraform_estate_outputs" "platform" {\n  estate = "tl5-terralith"\n  names  = ["log_retention_days"]\n}\n`;
+    const repo = write(tmp(), {
+      "terragucci.yml": "binary: choudoufu\ngate: on-destructive\n",
+      "terralith/state.tf": live("tl5-terralith"),
+      "terralith/outputs.tf": `output "log_retention_days" {\n  value = 14\n}\n`,
+      "terralith/plan.json": JSON.stringify(addsOutput),
+      ...Object.fromEntries(["team-a", "team-b", "team-c"].flatMap((t) => [[`${t}/logs.tf`, team(t)], [`${t}/plan.json`, JSON.stringify(appPlan)]])),
+    });
+    const logs: string[] = [];
+    const { report } = await runStage("tf-plan", repo, { binary: standIn(tmp()), layers: [["terralith"], ["team-a", "team-b", "team-c"]], out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));
+    expect(readFileSync(join(repo, "terralith/eof.seen"), "utf-8")).toBe("");
+    for (const t of ["team-a", "team-b", "team-c"]) {
+      expect(readFileSync(join(repo, `${t}/eof.seen`), "utf-8")).toMatch(/^tl5-terralith=\/.+\.tfplan\.json;$/);
+      expect(JSON.parse(readFileSync(join(repo, `${t}/eof.json`), "utf-8"))).toEqual(addsOutput);
+      expect(logs).toContain(`${t}: plans on the planned outputs of terralith`);
+      expect(report.roots.find((r) => r.path === t)).toMatchObject({ status: "planned", reads: [{ upstream: "terralith", data: "platform", outputs: "planned" }] });
+    }
+    expect(report.waves.map((w) => w.roots)).toEqual([["terralith"], ["team-a", "team-b", "team-c"]]);
+    expect(validate(REPORT_SCHEMA, report)).toEqual([]);
+  });
+
+  it("plans on the records, with no flag, when the change does not reach the upstream", async () => {
     const alone = estate();
     const b = await runStage("tf-plan", alone, { binary: standIn(tmp()), layers, root: "app", out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, () => {});
     expect(readFileSync(join(alone, "app/eof.seen"), "utf-8")).toBe("");

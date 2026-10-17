@@ -92,7 +92,8 @@ With `binary: choudoufu`, a root that reads another root's estate through `data 
 | an output the upstream's plan knows | the new value; the note lists the root under the roots planned on another's planned outputs, and `roots[].reads` says `planned` |
 | an output known only once the upstream applies | not planned. The note names the output and the wave that settles it: ``reads `stamp` of net, unknown until wave 1 applies``. Its wave plans again once that wave applied, and the note gives no digest for it |
 | a sensitive output | not planned, and the root fails: choudoufu hands no sensitive output to another estate, planned or recorded |
-| an estate whose root's plan changes no output, or that the change does not reach | the outputs it last recorded, and `roots[].reads` says why |
+| an output the upstream's plan marks a no-op | the planned value as well. choudoufu recomputes an output's prior value instead of reading what the estate recorded, so an output the change adds plans as a no-op |
+| an estate that the change does not reach | the outputs it last recorded, and `roots[].reads` says why |
 
 The wave that applies the reading root plans it again on the outputs its upstream's wave recorded, without `-estate-outputs-from`.
 
