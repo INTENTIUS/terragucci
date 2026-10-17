@@ -66,7 +66,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Which directories | `projects[].dir`, `autodiscover` | `projects[].dir`, `generate_projects` | detected: every directory with a backend, `cloud` block or provider; `roots` globs to narrow, which an import writes from the projects' directories |
 | Project name | `projects[].name` | `projects[].name` | none: a root goes by its path from the repo root |
 | Workspace | `projects[].workspace` | `projects[].workspace` | none: each root is a directory with one state |
-| What triggers a plan | `autoplan.when_modified`, `autoplan.enabled` | `include_patterns`, `exclude_patterns`, `on_pull_request_pushed` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state; [Roots a change plans](/terragucci/reference/report/#roots-a-change-plans) |
+| What triggers a plan | `autoplan.when_modified`, `autoplan.enabled` | `include_patterns`, `exclude_patterns`, `on_pull_request_pushed` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
 | Binary version | `terraform_version` | a project's `opentofu`, or the action's `terraform-version` or `opentofu-version` input | `binary` and `version`, or the pins the roots carry |
 | Order | `execution_order_group`, `depends_on`, `abort_on_execution_order_fail` | `depends_on`, layering | waves from `terraform_remote_state` reads; `waves.after`, which an import writes from `depends_on`, for an order the reads do not give; `waves.canary` puts roots first; Terragrunt's dependency layers |
 | Concurrency | `parallel_plan`, `parallel_apply` | | `parallelism` within a job: 1 when either is false, otherwise read from the state backend; `waves.jobs` to spread one wave over several jobs (plain roots on GitHub and Forgejo) |
@@ -84,6 +84,8 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Many repos | the server's repo config | | a [control repo](/terragucci/concepts/control-repo/)'s `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
 | Terragrunt | a custom workflow, or terragrunt-atlantis-config | `generate_projects` with Terragrunt parsing, or a project's `terragrunt` | detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/)) |
 | Drift | drift webhooks | drift detection | `drift`, a cron schedule |
+
+[Roots a change plans](/terragucci/reference/report/#roots-a-change-plans) lists, per repo shape, which roots a change plans.
 
 ## Apply before or after merge
 
