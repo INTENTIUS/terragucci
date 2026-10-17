@@ -1,5 +1,5 @@
-# The terralith demo (stack/demo.sh, scenario terralith): a thin terralith as
-# one stock root on s3 state, adopted into a choudoufu estate, then with
+# The demo's shared root (stack/demo.sh): one root of 14 resources on s3
+# state, adopted into a choudoufu estate, then with
 # team-b carved out into an estate of its own, by pull requests that carry
 # terragucci migrations. Every root runs on choudoufu, the OpenTofu fork for AWS and
 # Kubernetes that keeps ownership as tags on each resource.
@@ -16,7 +16,7 @@ reports:
 env:
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   TERRAGUCCI_METRICS_PER_RUN: "true"
-  # The thin terralith's migrations write a few resources each, so their
+  # The shared root's migrations write a few resources each, so their
   # progress goes to the reports bucket every 2 s rather than 5, and the
   # driver's count (stack/demo.sh, migration_follow) has lines to show.
   TG_PROGRESS_SECONDS: "2"

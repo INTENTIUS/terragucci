@@ -1,13 +1,13 @@
-# Adopt the terralith: choudoufu live-import reads its s3 state once and
+# Adopt the shared root: choudoufu live-import reads its s3 state once and
 # stamps tofu-estate and tofu-address on every resource it verifies. The
 # state file is left in the bucket as it was.
 backends:
-  - root: terralith
+  - root: shared
     from:
       backend: s3
       config:
         bucket: demo-terralith-state
-        key: tl-terralith.tfstate
+        key: tl-shared.tfstate
         region: us-east-1
         use_lockfile: true
         use_path_style: true

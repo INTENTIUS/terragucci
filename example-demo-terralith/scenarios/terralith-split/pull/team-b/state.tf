@@ -1,4 +1,4 @@
-# team-b's estate, carved from the terralith.
+# team-b's estate, carved from the shared root.
 terraform {
   live {
     estate = "tl-team-b"

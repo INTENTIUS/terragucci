@@ -1,4 +1,4 @@
-# team-b's identity resources, moved from the terralith's iam.tf.
+# team-b's identity resources, moved from the shared root's iam.tf.
 
 resource "aws_iam_role" "team_b_role" {
   name = "tl-team-b-role"

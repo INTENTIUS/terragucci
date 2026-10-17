@@ -1,4 +1,4 @@
-# The terralith's team log groups. team-b's moved to its own root.
+# The shared root's team log groups. team-b's moved to its own root.
 
 resource "aws_cloudwatch_log_group" "team_a" {
   name              = "tl-team-a-logs"
