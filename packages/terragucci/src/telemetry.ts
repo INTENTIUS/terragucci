@@ -111,6 +111,15 @@ export interface Span {
   end?: bigint;
   attributes: Attrs;
   error?: string;
+  /** Things that happened at one time inside the span, such as one resource's write in a migration. */
+  events?: SpanEvent[];
+}
+
+export interface SpanEvent {
+  name: string;
+  /** Unix nanoseconds. */
+  time: bigint;
+  attributes: Attrs;
 }
 
 const hex = (bytes: number): string => randomBytes(bytes).toString("hex");
@@ -148,6 +157,13 @@ export class Trace {
     if (error) span.error = error;
   }
 
+  /** An event inside `span`, at `at` (an RFC 3339 time) or now. */
+  event(span: Span, name: string, attributes: Attrs = {}, at?: string): void {
+    const ms = at ? Date.parse(at) : NaN;
+    const time = Number.isFinite(ms) ? BigInt(Math.round(ms)) * 1_000_000n : nowNanos();
+    (span.events ??= []).push({ name, time, attributes: { ...attributes } });
+  }
+
   /** The W3C header that makes `span` the parent of what a process sends. */
   traceparent(span: Span): string {
     return `00-${this.traceId}-${span.spanId}-01`;
@@ -181,6 +197,7 @@ export function tracesBody(spans: Span[], resource: Attrs, version: string): unk
           startTimeUnixNano: String(s.start),
           endTimeUnixNano: String(s.end ?? s.start),
           attributes: attrList(s.attributes),
+          ...(s.events?.length ? { events: s.events.map((e) => ({ timeUnixNano: String(e.time), name: e.name, attributes: attrList(e.attributes) })) } : {}),
           status: s.error ? { code: 2, message: s.error } : { code: 1 },
         })),
       }],

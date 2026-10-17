@@ -17445,7 +17445,7 @@ claim_choudoufu/migrate() {
     [ $rc = 0 ] && log "one change carried both migrations: the jobs queue moved estates by a retag, app's state became an estate with its state left as it was, each approved by its digest, and the next plan of every root shows no change"
     return $rc
   fi
-  if break_bundle "$work/carve.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log);' 'void 0;'; then
+  if break_bundle "$work/carve.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log, progress);' 'void 0;'; then
     if cdf_migrations "$work/carve" "$work/carve.mjs" carve; then missed+=" carve"; else caught+=" carve"; fi
   else
     log "the carve BREAK bundle did not build"; caught+=" carve"
