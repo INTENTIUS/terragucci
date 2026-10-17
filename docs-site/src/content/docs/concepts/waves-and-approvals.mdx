@@ -1,11 +1,12 @@
 ---
 title: Waves and approvals
 description: Why a change goes out in waves, what an approval binds, everything that waits for a person, and when a wave refuses to apply.
-claims: [waves/tofu, refuse/tofu, refuse/approve-plan, cost/gate, steps/gate, policy/override, migrate/split, ephemeral/pr, state/export, state/unlock, apply/branches]
+claims: [waves/tofu, linked/states, linked/plan, estate/graph, estate/state-edges, comment/dispatch, drift/tofu, refuse/tofu, refuse/approve-plan, cost/gate, steps/gate, policy/override, migrate/split, ephemeral/pr, state/export, state/unlock, apply/branches]
 prompt: |
   Read https://intentius.io/terragucci/concepts/waves-and-approvals/.
   List every hold this repo's config turns on, from the section "Everything that waits for a person": read terragucci.yml on the default branch (`gate`, `environments`, `cost.approve_above`, `steps` with `on_failure: approve`, `policy.outcomes` and `policy.override`, `approval_rules`, `apply.point`, `ephemeral`) and the files in `migrations/`.
   For each hold, say which roots it covers by matching its globs against the roots `npx terragucci init --dry-run` lists, and who can release it.
+  Then list the reads between this project and others, from the estate page's Between projects list, and which readers in this project the Cross-state edges section marks stale.
   Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -104,6 +105,22 @@ With `binary: choudoufu`, a root that reads another root's estate through `data 
 The wave that applies the reading root plans it again on the outputs its upstream's wave recorded, without `-estate-outputs-from`.
 
 A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#later-layers).
+
+## Across projects
+
+Waves order the roots of one project. A root that reads the state of a root in another project is not ordered behind it: each project keeps its own pipeline, approvals and blast radius, and the [estate page](/terragucci/guides/see-every-project/) shows the read.
+
+| | Within a project | Between projects |
+|---|---|---|
+| Order | the reader goes in a later wave than the root it reads (`waves/tofu`, `linked/states`) | none: each project applies on its own pipeline, in its own order |
+| A change that reaches both | the reader plans on the upstream's planned outputs, and plans again once its wave applies (`linked/plan`) | each project plans the roots its own change reaches; the reader plans on the upstream's applied state |
+| Approvals | one per wave | each project's own |
+| On the estate page | an edge with its status: `stale` when the producer applied a change after the reader's last plan, `current`, or `unknown` (`estate/state-edges`) | a dashed arrow on the graph and a line under Between projects, matched by the state address the reader names (`estate/graph`); no status |
+| Re-planning a reader | `/terragucci plan` on a pull request, a `workflow_dispatch` re-plan (`comment/dispatch`), or the next drift check (`drift/tofu`) | the same, in the reader's project |
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a root that reads another project's estate through `data "terraform_estate_outputs"` reads the outputs that estate last recorded, and the estate page draws the read the same way.
+
+A `terraform_remote_state` read whose address is not plain strings, such as one built from `var.env`, matches no root, so nothing orders it and no edge is drawn. terragucci names it: `config check` warns, and the report lists it under `roots[].unknown_reads` ([Addresses that can't be matched](/terragucci/guides/track-cross-state-edges/#addresses-that-cant-be-matched)).
 
 ## A composed run
 
