@@ -592,6 +592,13 @@ export interface ProjectSettings {
    */
   pass?: PassSettings;
   /**
+   * Values fetched at job time from a cloud's secret store, by root glob,
+   * with the identity the root plans or applies with (./root-secrets.ts), and
+   * set in that root's binary environment alone. Read from the project's
+   * terragucci.yml by the stage.
+   */
+  secrets?: SecretSource[];
+  /**
    * The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, such as a collector's API
    * key, and `trace_url`: a link to a run's trace with `{trace_id}` in it
    * (Grafana's Explore, Tempo, Jaeger), which the report links.
@@ -750,6 +757,103 @@ export interface PassSettings {
   vars?: string[];
 }
 
+/** The clouds whose secret store `secrets` reads. */
+export const SECRET_STORES = ["aws", "gcp", "azure"] as const;
+export type SecretStore = (typeof SECRET_STORES)[number];
+/** The keys of one `secrets` entry. */
+export const SECRET_SOURCE_KEYS = ["roots", "from", "values"];
+
+/**
+ * One `secrets` entry: the roots its globs match get each of `values`, an
+ * environment variable name mapped to where the value is in `from`'s secret
+ * store, with `#<key>` to take one key of a JSON secret:
+ *
+ *   aws    a Secrets Manager secret's name or ARN: `prod/app/db#password`
+ *   gcp    a Secret Manager secret, its version `latest` unless named:
+ *          `projects/<project>/secrets/<secret>[/versions/<version>]`
+ *   azure  a Key Vault secret, its current version unless named:
+ *          `<vault>/<secret>[/<version>]`, the vault a name or a host
+ */
+export interface SecretSource {
+  roots: string[];
+  from: SecretStore;
+  values: Record<string, string>;
+}
+
+/** Where a value is in each store, as `secrets` takes it. */
+export const SECRET_PATH: Record<SecretStore, string> = {
+  aws: "^[^\\s#]+(#[^\\s#]+)?$",
+  gcp: "^projects/[^/\\s#]+/secrets/[^/\\s#]+(/versions/[^/\\s#]+)?(#[^\\s#]+)?$",
+  azure: "^[A-Za-z0-9.-]+/[A-Za-z0-9-]+(/[A-Za-z0-9]+)?(#[^\\s#]+)?$",
+};
+const SECRET_PATH_FORM: Record<SecretStore, string> = {
+  aws: "the Secrets Manager secret's name or ARN, and #<key> for one key of a JSON secret",
+  gcp: "projects/<project>/secrets/<secret>, then /versions/<version> for one version and #<key> for one key of a JSON secret",
+  azure: "<vault>/<secret>, then /<version> for one version and #<key> for one key of a JSON secret",
+};
+const SECRET_PATH_EXAMPLE: Record<SecretStore, string> = { aws: "prod/app/db#password", gcp: "projects/acme-prod/secrets/db-password", azure: "acme-prod-kv/db-password" };
+/** Names `secrets` refuses beside `pass`'s: the variables a root's binary takes its cloud identity from. */
+export const SECRET_IDENTITY_PREFIXES = ["AWS_", "ARM_", "AZURE_", "GOOGLE_", "CLOUDSDK_"];
+
+/** Why `secrets` is refused beside `waves.compose`: a composed run plans its roots in one binary environment. */
+export const SECRETS_COMPOSE = "a composed run plans and applies its roots in one run, and secrets sets each value in its own root's binary environment alone; leave waves.compose unset";
+/** Why `secrets` is refused beside `ephemeral`: a pull request's copies plan and apply without the store's values. */
+export const SECRETS_EPHEMERAL = "an ephemeral copy plans and applies without the values secrets fetches; leave ephemeral unset, or keep the copies' values in pass.secrets";
+
+/** Whether `oidc` gives the jobs an AWS identity: a pair for every root, roles by root glob, or an environment's pair. */
+function hasAwsIdentity(s: ProjectSettings): boolean {
+  const o = s.oidc;
+  if (isObject(o) && ((o.plan_role && o.apply_role) || (isObject(o.roles) && Object.keys(o.roles).length > 0))) return true;
+  return Object.values(s.environments ?? {}).some((e) => isObject(e) && isObject(e.oidc) && Boolean(e.oidc.plan_role));
+}
+
+/**
+ * The problems with `secrets`: a list of entries, each with root globs, a
+ * store and names mapped to paths in it. `whole` when `s` is a repo's own
+ * file: then a name `pass` or `env` sets too, a store whose cloud `oidc`
+ * does not configure, and the keys that plan or apply a root without its
+ * values are refused as well.
+ */
+export function secretsProblems(v: unknown, where: string, s: ProjectSettings, whole: boolean): string[] {
+  if (!Array.isArray(v) || v.length === 0) return [`${where} must be a list of entries, each with roots, from (${SECRET_STORES.join(", ")}) and values`];
+  const out: string[] = [];
+  const passed = new Map<string, string>();
+  for (const k of ["secrets", "vars"] as const) for (const n of s.pass?.[k] ?? []) passed.set(n, `pass.${k}`);
+  for (const n of Object.keys(s.env ?? {})) passed.set(n, "env");
+  const stores = new Set<string>();
+  v.forEach((e, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(e)) {
+      out.push(`${at} must be a map with roots, from and values`);
+      return;
+    }
+    for (const k of Object.keys(e)) if (!SECRET_SOURCE_KEYS.includes(k)) out.push(`${at}.${k} is not a setting (settings: ${SECRET_SOURCE_KEYS.join(", ")})`);
+    if (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every((g) => typeof g === "string" && g.trim() !== "")) out.push(`${at}.roots must be a list of root globs, such as ["envs/prod/**"]`);
+    const from = typeof e.from === "string" && (SECRET_STORES as readonly string[]).includes(e.from) ? (e.from as SecretStore) : undefined;
+    if (!from) out.push(`${at}.from must be aws, gcp or azure: the cloud whose secret store holds the values`);
+    else stores.add(from);
+    if (!isObject(e.values) || Object.keys(e.values).length === 0) {
+      out.push(`${at}.values must map each environment variable name to where its value is, such as TF_VAR_db_password: ${SECRET_PATH_EXAMPLE[from ?? "aws"]}`);
+      return;
+    }
+    for (const [name, path] of Object.entries(e.values)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) out.push(`${at}.values: ${JSON.stringify(name)} is not a variable name, such as TF_VAR_db_password`);
+      else if (PASS_RESERVED_PREFIXES.some((p) => name.toUpperCase().startsWith(p)) || PASS_RESERVED.includes(name)) out.push(`${at}.values: ${name} is reserved: terragucci and the forge set ${[...PASS_RESERVED_PREFIXES.map((p) => `${p}...`), ...PASS_RESERVED].join(", ")} themselves`);
+      else if (SECRET_IDENTITY_PREFIXES.some((p) => name.toUpperCase().startsWith(p))) out.push(`${at}.values: ${name} would replace the cloud identity the root runs with; ${SECRET_IDENTITY_PREFIXES.map((p) => `${p}...`).join(", ")} are the identity's`);
+      else if (whole && passed.has(name)) out.push(`${at}.values: ${name} is set by ${passed.get(name)} too; a root's binary gets one variable of that name, so take it from the store or from the forge, not both`);
+      if (typeof path !== "string" || path.trim() === "") out.push(`${at}.values.${name} must be where the value is, such as ${SECRET_PATH_EXAMPLE[from ?? "aws"]}`);
+      else if (from && !new RegExp(SECRET_PATH[from]).test(path)) out.push(`${at}.values.${name}: ${JSON.stringify(path)} is not where a ${from} secret is: give ${SECRET_PATH_FORM[from]}, such as ${SECRET_PATH_EXAMPLE[from]}`);
+    }
+  });
+  if (!whole) return out;
+  const configured: Record<SecretStore, boolean> = { aws: hasAwsIdentity(s), gcp: isObject(s.oidc) && isObject(s.oidc.gcp), azure: isObject(s.oidc) && isObject(s.oidc.azure) };
+  const needs: Record<SecretStore, string> = { aws: "oidc with an AWS role (plan_role and apply_role, roles, or an environment's)", gcp: "oidc.gcp", azure: "oidc.azure" };
+  for (const c of SECRET_STORES) if (stores.has(c) && !configured[c]) out.push(`${where}: from ${c} needs ${needs[c]}: each root reads the store with the identity it plans and applies with`);
+  if (s.waves?.compose === true) out.push(`${where}: ${SECRETS_COMPOSE}`);
+  if (s.ephemeral !== undefined) out.push(`${where}: ${SECRETS_EPHEMERAL}`);
+  return out;
+}
+
 /** Whether `runner` is a map of stage to runner, rather than one runner. */
 export function runnerByStage(v: RunnerSettings): v is Partial<Record<RunnerStage | "default", RunnerSpec>> {
   return isObject(v) && !("group" in v);
@@ -870,6 +974,7 @@ export const PROJECT_FILE_KEYS = [
   "generate",
   "ephemeral",
   "environments",
+  "secrets",
 ] as const satisfies ReadonlyArray<keyof ProjectSettings>;
 
 export class ConfigError extends Error {
@@ -901,7 +1006,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1014,6 +1119,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.ephemeral !== undefined) checkEphemeral(s.ephemeral, `${where}.ephemeral`, problems, s);
   if (s.runner !== undefined) problems.push(...runnerProblems(s.runner, `${where}.runner`, s.forge));
   if (s.pass !== undefined) problems.push(...passProblems(s.pass, `${where}.pass`, s.env));
+  if (s.secrets !== undefined) problems.push(...secretsProblems(s.secrets, `${where}.secrets`, s as ProjectSettings, where === "config"));
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }

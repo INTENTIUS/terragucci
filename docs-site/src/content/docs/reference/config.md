@@ -160,6 +160,7 @@ dashboards: true
 | `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers`, `required_version` and, for Terragrunt units, `disable_init` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `pass` | none | `secrets` and `vars`: names of CI secrets and variables that the jobs that plan, apply and check drift get as environment variables of the same name, such as `TF_VAR_db_password`; never their values. On GitLab every job has the CI/CD variables already, so the key changes nothing there; see [Secrets and variables](#secrets-and-variables) |
+| `secrets` | none | values a root's binary gets from a cloud's secret store, read at job time with the identity the root runs with: a list of entries, each with `roots` (root globs), `from` (`aws`, `gcp` or `azure`) and `values`, a map of variable name to where the value is. Plain roots only; not with `waves.compose` or `ephemeral`; see [From a cloud's secret store](#from-a-clouds-secret-store) |
 | `runner` | the forge's: `ubuntu-latest` on GitHub, `docker` on Forgejo, no tags on GitLab | the runner each job runs on: a label, a list of labels, or on GitHub `group` with optional `labels`; or `default`, `plan`, `apply` and `drift`, each one of those. Written as `runs-on` on GitHub and Forgejo and `tags` on GitLab; see [Runners](#runners) |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -425,6 +426,52 @@ pass:
 ```
 
 Each name reaches the plan, apply and drift jobs as an environment variable of that name, read from `secrets.<name>` or `vars.<name>`; [Secrets and variables you pass](/terragucci/reference/environment/#secrets-and-variables-you-pass) lists the jobs. `config check` refuses a value in place of a name, a name listed twice or also set in `env`, and a name the forge or terragucci keeps for itself: one that starts with `GITHUB_`, `GITEA_`, `FORGEJO_`, `TG_` or `TERRAGUCCI_`, and `TF_IN_AUTOMATION` and `TF_INPUT`.
+
+A passed secret reaches every job of its stage. The forges can scope one to an environment instead, and with [`environments`](#environments) each environment's apply jobs run in its forge environment, so a secret of the same name can hold each environment's value:
+
+| Forge | A secret one environment's jobs alone get |
+|---|---|
+| GitHub | an [environment secret](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#environment-secrets) of the forge environment, which only the jobs that run in it read |
+| GitLab | a [protected variable](https://docs.gitlab.com/ci/variables/#protect-a-cicd-variable) with the forge environment's name as its [environment scope](https://docs.gitlab.com/ci/variables/#environment-scope), which only that environment's jobs on protected refs get |
+| Forgejo | none: a repository's [secrets](https://forgejo.org/docs/latest/user/actions/reference/#secrets) reach every workflow run in it |
+
+Plan jobs run in no forge environment, so an environment secret reaches the apply jobs alone; a root that needs the value to plan takes it from a cloud's store.
+
+### From a cloud's secret store
+
+```yaml
+oidc:
+  roles:
+    "envs/prod/**": { plan: arn:aws:iam::222222222222:role/prod-plan, apply: arn:aws:iam::222222222222:role/prod-apply }
+    "envs/dev/**": { plan: arn:aws:iam::111111111111:role/dev-plan, apply: arn:aws:iam::111111111111:role/dev-apply }
+secrets:
+  - roots: ["envs/prod/**"]
+    from: aws
+    values:
+      TF_VAR_db_password: prod/app/db#password
+  - roots: ["envs/dev/**"]
+    from: aws
+    values:
+      TF_VAR_db_password: dev/app/db#password
+```
+
+The stage that runs a root reads each of its values from the store with the identity the root runs with in that job, its plan identity to plan and check drift and its apply identity to apply, and sets each in that root's binary environment alone. No other root, no step and no other job gets it, and the forge holds neither the value nor a copy to keep in sync. A prod root's password is then readable by the prod roles alone, not by every job that can name a forge secret. [Secrets from a cloud's store](/terragucci/reference/environment/#secrets-from-a-clouds-store) has what each store is read as, and how the values are kept out of the plan, the note, the report and the log.
+
+| `from` | A value's path | Example |
+|---|---|---|
+| `aws` | a Secrets Manager secret's name or ARN | `prod/app/db` |
+| `gcp` | `projects/<project>/secrets/<secret>`, then `/versions/<version>` for one version, `latest` when unset | `projects/acme-prod/secrets/db-password` |
+| `azure` | `<vault>/<secret>`, then `/<version>` for one version; the vault a name in Azure's public cloud, or its host | `acme-prod-kv/db-password` |
+
+`#<key>` after a path takes one key of a secret that holds JSON, such as `prod/app/db#password`. A value that cannot be read fails the root with the variable, the path and the identity named. `config check` refuses:
+
+- an entry without `roots`, `from` or `values`, and a path that is not the store's;
+- a name `pass` or `env` sets too, a name `pass` refuses, and a name that starts with `AWS_`, `ARM_`, `AZURE_`, `GOOGLE_` or `CLOUDSDK_`, which would replace the root's identity;
+- `from: aws` without an AWS role in `oidc` (`plan_role` and `apply_role`, `roles`, or an environment's), `from: gcp` without `oidc.gcp`, and `from: azure` without `oidc.azure`;
+- a root that two entries give the same name;
+- `secrets` beside `waves.compose` or `ephemeral`, and in a Terragrunt repo, which plan or apply a root without its own binary environment.
+
+`pass.secrets` stays for values kept in the forge. A root can take some values from each, under different names.
 
 ## Jobs of your own
 

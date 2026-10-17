@@ -15,6 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { rootRoleEnv } from "../roles";
+import { rootSecretEnv } from "../root-secrets";
 import { workspaceEnv, workspaceInit } from "../backend";
 import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
@@ -1221,9 +1222,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     // The root's own role, when `oidc.roles` names one (../roles.ts).
     // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
     const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);
+    // The binary's own: rootEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its steps keep rootEnv.
+    let binaryEnv = rootEnv;
     const runIn = (env: NodeJS.ProcessEnv, ...args: string[]) =>
       observer.commandAsync(timing, path, args, env, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
-    const run = (...args: string[]) => runIn(rootEnv, ...args);
+    const run = (...args: string[]) => runIn(binaryEnv, ...args);
     const ran: ReportStep[] = [];
     const holds: string[] = [];
     /** Run one moment's steps; the error when one failed the root. */
@@ -1256,6 +1259,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const planStep = drift ? "drift" : "plan";
     try {
       try {
+        binaryEnv = await rootSecretEnv(rootEnv, root, settings.secrets);
+      } catch (e) {
+        return failed((e as Error).message, `${root}: not ${drift ? "checked" : "planned"}, a value of secrets could not be read: ${(e as Error).message}`);
+      }
+      try {
         const resolved = await binariesOf(root).resolve(root);
         ({ path } = resolved);
         bin = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
@@ -1265,7 +1273,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
       let stepError = await step("before-init");
       if (stepError) return failed(stepError, `${root}: a step before init failed`);
-      const wsInit = workspaceInit(rootEnv, dir);
+      const wsInit = workspaceInit(binaryEnv, dir);
       const init = await initTurn(() => (wsInit ? runIn(wsInit.init, "init", "-input=false", "-no-color") : run("init", "-input=false", "-no-color")));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
       if (wsInit) {

@@ -130,6 +130,28 @@ pass:
 
 The pipeline holds the names alone. The check job, the note jobs, `fmt`, `tips`, `publish` and the agent jobs get none. The plan job runs a pull request's code, so a passed secret reaches that code, as the providers' credentials do; a fork's pull request gets no plan job. Forgejo keeps a secret's or variable's name in capitals and reads it in any case, so the job gets `TF_VAR_db_password` spelled as the root's variable is.
 
+## Secrets from a cloud's store
+
+With [`secrets`](/terragucci/reference/config/#from-a-clouds-secret-store), the stage that runs a root (plan, re-plan, each apply job, `confirm`, drift) reads each of the root's values from the store after it gives the root its identity, and sets it in that root's binary environment alone. The pipeline holds no value and no path. Each store is read as the identity the root runs with in that job:
+
+| `from` | Reads | As | Address |
+|---|---|---|---|
+| `aws` | Secrets Manager `GetSecretValue` | the root's role from `oidc.roles` (or its environment's), else the job's role, assumed with the job's token; in a re-plan, the keys its trade step left | `AWS_ENDPOINT_URL_SECRETS_MANAGER`, else `AWS_ENDPOINT_URL`, else the region's |
+| `gcp` | Secret Manager's `versions/<version>:access`, `latest` unless the path names one | the root's service account from `oidc.gcp.roles`, else the job's; in a re-plan, the token its trade step left | `https://secretmanager.googleapis.com` |
+| `azure` | Key Vault's `secrets/<name>`, its current version unless the path names one | the root's client from `oidc.azure.roles`, else the job's, traded at Entra ID for a token for the vault | the vault's host: `<vault>.vault.azure.net` for a bare name |
+
+A value that cannot be read fails the root before its `init`, naming the variable, the store, the path and the identity that asked; the error the store answered follows, and no value is printed. The identity needs read access to that secret alone: `secretsmanager:GetSecretValue` on its ARN, Secret Manager Secret Accessor on the secret, or a Key Vault role or access policy that lets it get secrets.
+
+Each value read is kept out of what terragucci writes:
+
+| Where | How |
+|---|---|
+| The plan and its text | a value counts as one the plan marks sensitive, so it is replaced wherever it is a whole value, at any length |
+| The note, the report and its files | each value of eight characters or more is replaced wherever it appears |
+| The job's log | each value of eight characters or more is replaced in what terragucci prints; on GitHub and Forgejo, where `GITHUB_ACTIONS` is `true`, each value is also masked with `::add-mask::`, which the runner applies to the whole log |
+
+No step gets a value. The binary holds it, as it holds a value from `pass.secrets`: a provider or an `external` data source in the root's code can read it, and on a pull request that is the pull request's code. The plan file the binary writes in the job's work directory holds it too, as it holds every variable's value.
+
 ## The relay
 
 [`terragucci relay`](/terragucci/guides/approve-from-chat/) reads these from its own environment, in your cloud. No generated job gets them.
@@ -208,6 +230,8 @@ The plan role is used on the pull request and on the default branch: re-plan, dr
 | GitHub | `repo:<owner>/<repo>:pull_request` and `repo:<owner>/<repo>:ref:refs/heads/<default branch>` | `repo:<owner>/<repo>:ref:refs/heads/<default branch>` |
 | GitLab | `project_path:<group>/<project>:ref_type:branch:ref:*` | `project_path:<group>/<project>:ref_type:branch:ref:<default branch>` |
 | Forgejo | `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` and `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` |
+
+With [`environments`](/terragucci/reference/config/#environments), an environment's apply jobs on GitHub run in its forge environment, so their subject is `repo:<owner>/<repo>:environment:<name>` in place of the ref's, and the environment's apply role trusts that subject alone ([Trust per environment](#trust-per-environment)). Plan jobs run in no forge environment and keep the subjects above.
 
 On GitLab a merge request's plan job carries its source branch in the subject, so the plan role trusts every branch of the project. Anyone who can push a branch can assume it; keep it read-only. Azure matches a federated credential's subject exactly, so on GitLab the plan identity needs a credential that matches on a claims expression instead.
 
@@ -354,7 +378,7 @@ A local run needs none of these.
 
 | Forge | Variables |
 |---|---|
-| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
+| GitHub and Forgejo | `GITHUB_ACTIONS`, `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | An environment's apply job ([its check](#the-apply-jobs-own-check)) | GitHub and Forgejo: `GITHUB_REF`, `RUNNER_ENVIRONMENT`; GitLab: `CI_ENVIRONMENT_NAME`, `CI_COMMIT_REF_NAME`, `CI_COMMIT_REF_PROTECTED`, `CI_RUNNER_TAGS` |
 | GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_NAME`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
