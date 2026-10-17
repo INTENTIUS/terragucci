@@ -444,9 +444,9 @@ describe("the terralith scenario", () => {
     ].join("\n");
     const fns = [
       "demo_where", "scenario_name", "say", "waiting_label", "demo_write", "demo_hold", "open_pull", "merge_pull", "follow", "default_waiting",
-      "tool_repo", "tl_team_repo", "tl_repo", "tl_beat", "tl_stock_beat", "tl_pull_beat", "tl_migrate_waiting", "scenario_terralith", "reset_written",
+      "tool_repo", "tl_team_repo", "tl_repo", "tl_count", "tl_beat", "tl_stock_beat", "tl_pull_beat", "tl_migrate_waiting", "scenario_terralith", "reset_written",
     ].map(fn).join("\n");
-    const body = `${stubs}\n${fns}\nTL_TEAMS=(team-a team-b team-c) TL_TEAM=team-b\nscenario_terralith\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
+    const body = `${stubs}\n${fns}\nTL_TEAMS=(team-b) TL_TEAM=team-b\nscenario_terralith\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
     const lines = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8").trim().split("\n") : []);
     return {
@@ -511,7 +511,7 @@ describe("the terralith scenario", () => {
     expect(at("adopt", "waiting")).toBe("approve migration adopt");
     expect(at("adopt", "applied")).toBe("open the split pull request");
     expect(at("split", "waiting")).toBe("approve migration split");
-    expect(at("split", "applied")).toBe("push each team's root to its own repository");
+    expect(at("split", "applied")).toBe("push team B's root to its own repository");
     expect(at("team", "applied")).toBe("copy team B's root back to demo-terralith");
   });
 
@@ -560,13 +560,14 @@ describe("tl_fill", () => {
       const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
       expect(r.status, r.stderr).toBe(0);
       const read = (...p: string[]) => readFileSync(join(tmp, ...p), "utf8");
-      expect(read("terralith", "iam.tf")).toContain('name = "tl7-team-0000-role"');
+      expect(read("terralith", "iam.tf")).toContain('name = "tl7-team-a-role"');
+      expect(read("terralith", "iam.tf")).toContain('name  = "tl7-team-b-worker-${count.index}-role"');
       expect(read("terralith", "iam.tf")).not.toMatch(/"tl-/);
-      expect(read("terralith", "dns.tf")).toContain('name = "tl7.terralith.test"');
-      expect(read("terralith", "main.tf")).toContain('name_prefix = "tl7"');
+      expect(read("terralith", "network.tf")).toContain('Name = "tl7-vpc"');
       expect(read("terralith", "state.tf")).toContain('key            = "tl7-terralith.tfstate"');
       expect(read("terralith", "state.tf")).toContain('bucket         = "demo-terralith-state"');
-      expect(read("scenarios", "terralith-split", "pull", "team-a", "state.tf")).toContain('estate = "tl7-team-a"');
+      expect(read("scenarios", "terralith-split", "pull", "team-b", "state.tf")).toContain('estate = "tl7-team-b"');
+      expect(read("scenarios", "terralith-split", "pull", "migrations", "split.yml")).toContain("- aws_iam_role.team_b_worker");
       expect(read("scenarios", "terralith-adopt", "pull", "migrations", "adopt.yml")).toContain("key: tl7-terralith.tfstate");
       expect(read("scenarios", "terralith-cross", "pull", "team-b", "logs.tf")).toContain('estate = "tl7-terralith"');
     } finally {
@@ -575,7 +576,25 @@ describe("tl_fill", () => {
   });
 });
 
-// The terralith scenario counts each hold down from 8 s, every other scenario
+// The thin terralith's resource counts in the labels come from the tree: one
+// per resource block, or its literal count.
+describe("tl_count", () => {
+  const count = (text: string) => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tl_count")}\ntl_count`], { cwd: root, encoding: "utf8", input: text });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("counts a block once and a count block by its count", () => {
+    expect(count('resource "a" "x" {\n  name = "x"\n}\n\nresource "a" "y" {\n  count = 3\n  name  = "y"\n}\n')).toBe("4");
+  });
+
+  it("reads no count from a nested block", () => {
+    expect(count('resource "a" "x" {\n  b {\n    count = 5\n  }\n}\n')).toBe("1");
+  });
+});
+
+// The terralith scenario counts each hold down from 6 s, every other scenario
 // from DEMO_HOLD (20 s), and the loop sets HOLD from the scenario before each cycle.
 describe("scenario_hold", () => {
   const hold = (scenario: string, env = "") => {
@@ -586,8 +605,8 @@ describe("scenario_hold", () => {
     return r.stdout.trim();
   };
 
-  it("is 8 s for terralith and DEMO_HOLD's 20 s for the rest", () => {
-    expect(hold("terralith")).toBe("8");
+  it("is 6 s for terralith and DEMO_HOLD's 20 s for the rest", () => {
+    expect(hold("terralith")).toBe("6");
     for (const s of ["a-known", "a-output", "b-waves", "failure", "stale-plan", "b-composed", "tg-planned-outputs", "chant-pr-loop", "base"]) expect(hold(s), s).toBe("20");
   });
 
@@ -595,7 +614,7 @@ describe("scenario_hold", () => {
     expect(hold("terralith", "DEMO_HOLD_TERRALITH=3")).toBe("3");
     expect(hold("b-waves", "DEMO_HOLD_TERRALITH=3")).toBe("20");
     expect(hold("b-waves", "DEMO_HOLD=30")).toBe("30");
-    expect(hold("terralith", "DEMO_HOLD=30")).toBe("8");
+    expect(hold("terralith", "DEMO_HOLD=30")).toBe("6");
   });
 
   it("is what the loop holds each cycle for", () => {
