@@ -93,6 +93,47 @@
       ],
       "description": "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed."
     },
+    "approval_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "roots": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[^\\s,;=']+$"
+            },
+            "description": "Root globs: a wave with a root one matches takes the rule."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many distinct people approve the wave's set digest. Default 1."
+          },
+          "roles": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "description": "Each approver counted holds one of these roles in .chant/trust.json at base."
+          },
+          "not_author": {
+            "type": "boolean",
+            "description": "At least one approver counted is not the change's author."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "roots"
+        ]
+      },
+      "description": "More approvers, or approvers with a role, for the waves whose roots a glob names."
+    },
     "apply": {
       "type": "object",
       "properties": {
@@ -1034,8 +1075,69 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "type": "string",
-            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "roots": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\s,;=']+$"
+                    },
+                    "description": "Root globs: the entry covers a denial of a root one matches."
+                  },
+                  "who": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                    },
+                    "description": "The forge identities or signers who may override such a denial."
+                  },
+                  "roles": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]*$"
+                    },
+                    "description": "Roles in .chant/trust.json at base whose holders may override such a denial (approval: sealed)."
+                  },
+                  "rules": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^\\S+$"
+                    },
+                    "description": "Only an override of these rule ids, every one of them."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "roots"
+                ]
+              }
+            ]
+          }
+        },
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "deny",
+              "hold",
+              "allow_unattended"
+            ]
           }
         }
       },
@@ -1775,6 +1877,47 @@
             }
           ],
           "description": "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed."
+        },
+        "approval_rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "roots": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\s,;=']+$"
+                },
+                "description": "Root globs: a wave with a root one matches takes the rule."
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "How many distinct people approve the wave's set digest. Default 1."
+              },
+              "roles": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                },
+                "description": "Each approver counted holds one of these roles in .chant/trust.json at base."
+              },
+              "not_author": {
+                "type": "boolean",
+                "description": "At least one approver counted is not the change's author."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "roots"
+            ]
+          },
+          "description": "More approvers, or approvers with a role, for the waves whose roots a glob names."
         },
         "apply": {
           "type": "object",
@@ -2709,8 +2852,69 @@
               "type": "array",
               "minItems": 1,
               "items": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "roots": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[^\\s,;=']+$"
+                        },
+                        "description": "Root globs: the entry covers a denial of a root one matches."
+                      },
+                      "who": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                        },
+                        "description": "The forge identities or signers who may override such a denial."
+                      },
+                      "roles": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]*$"
+                        },
+                        "description": "Roles in .chant/trust.json at base whose holders may override such a denial (approval: sealed)."
+                      },
+                      "rules": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^\\S+$"
+                        },
+                        "description": "Only an override of these rule ids, every one of them."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "roots"
+                    ]
+                  }
+                ]
+              }
+            },
+            "outcomes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "deny",
+                  "hold",
+                  "allow_unattended"
+                ]
               }
             }
           },

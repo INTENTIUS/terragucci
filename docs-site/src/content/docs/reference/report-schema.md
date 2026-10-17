@@ -44,6 +44,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `cost` | with `cost` set, on a `tf-plan` run or a `tf-apply` wave: the estimator, the currency, the monthly change and the totals before and after over the roots estimated, and per root (`roots[]`) the same three figures, the path of the estimator's output (`output`) or why there is no estimate (`error`) |
 | `policy` | the policy check, when `policy` is on: engine, input mode, namespace, whether the policy came from the checkout or the base branch, the roots it denied and the warning count; with `policy.override` at base, `overriders` and the denied roots an override stands for, `overridden` |
 | `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the ids of the rules that denied (`rules`), the warnings and, for `error`, why it could not run; a denied root is `failed` and keeps its `changes` |
+| `roots[].policy.overriders` | a denied root under [scoped overriders](/terragucci/reference/policy/#scoped-overriders) (minor 40) | who may override its denial by its rules: names, then each role as `role <name> (<holders>)` |
+| `roots[].policy.held_by`, `roots[].policy.allowed_by` | a root a `hold` or `allow_unattended` rule matched (minor 40) | the ids of those rules; `roots[].policy.holds` has the hold rules' messages |
 | `roots[].policy.override` | the [override](/terragucci/reference/policy/#overriding-a-denial) that stands for the root's plan and rules: `by`, `at`, `rules`, `reason`, `plan_digest`, the ledger line's `digest`, and `sealed`; on a `tf-apply` wave the root then applies and is `planned` |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
@@ -76,6 +78,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `waiting_since` | a waiting wave | when it began waiting for an approval of this digest |
 | `refused` | a `tf-apply` wave that planned but applied nothing | the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied |
 | `review` | a waiting `tf-apply` wave under `approval: pr-review` | the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
+| `policy_gate` | a wave the policy's `hold` or `allow_unattended` rules decided (minor 40) | the `outcome`, `held` or `unattended`, the `rules` that decided it and, on a `tf-apply` wave, the `commit` the policy was read at |
+| `approval_rules` | a wave whose roots `approval_rules` at base names (minor 40) | each rule it takes: its `roots`, `count`, `roles` and `not_author`, and on a `tf-apply` wave the `approvers` of its digest the rule counted and whether it is `met` |
 | `excluded_approvers` | a `tf-apply` wave whose approval left someone out (minor 39) | each person whose approval of the wave's digest did not count because they had a hand in the change: their `login`, and the `reason`, such as `bob asked for abc1234` |
 | `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |
 | `waits` | a plan's wave | whether the gate or `cost.approve_above` will hold it |

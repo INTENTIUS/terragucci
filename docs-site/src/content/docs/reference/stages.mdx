@@ -243,6 +243,8 @@ The plan and drift stages group identical changes and name each destroy, replace
 | `on-destructive` | the wave's plans destroy or replace something, or a root of it that changes something read an upstream output known only once the upstream applied ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)) |
 | `never` | never; only pull request review and default-branch protection stand before the apply |
 
+With `hold` or `allow_unattended` in [`policy.outcomes`](/terragucci/reference/policy/#holding-or-releasing-a-wave), the policy's rules can hold a wave whatever the policy says, or let a wave whose every changing root they allow apply without an approval; the policy decides the waves no rule speaks to.
+
 `on-destroy` is an older name for `on-destructive`, and `terragucci.yml` and `--gate` still accept it, so a pipeline rendered with it keeps working. SQL Yodeler and chant's Op waves call the same policy `on-destructive`.
 
 Run the approval command a waiting wave prints and run the stage again.

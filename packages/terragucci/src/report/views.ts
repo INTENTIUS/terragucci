@@ -11,6 +11,7 @@ import { groupAnchor, planFiles, rootAnchor } from "./build";
 import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
+import { ruleAsks } from "../approval-rules";
 import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
@@ -348,7 +349,9 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const rules = (o?.rules ?? r.policy!.rules ?? []).map(code).join(", ") || "its rules";
       t += o
         ? `- ${to(code(r.path), rootAnchor(r.path))}: ${rules} overridden by ${o.by} at ${o.at}${o.sealed ? ", sealed" : ""}, for plan ${code(o.plan_digest)}: ${o.reason.split(/\s+/).join(" ")}${run.stage === "tf-plan" ? ". tf-apply applies this plan; this run still fails it" : ""}\n`
-        : `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. ${report.policy!.overriders!.join(", ")} may override it once a tf-apply wave records the denial: ${code(overrideCommand(r.path, r.policy!.rules ?? [], options.sealed))}\n`;
+        : r.policy!.overriders?.length === 0 || (r.policy!.overriders === undefined && !report.policy?.overriders?.length)
+          ? `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. policy.override names nobody who may override it\n`
+          : `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. ${(r.policy!.overriders ?? report.policy!.overriders!).join(", ")} may override it once a tf-apply wave records the denial: ${code(overrideCommand(r.path, r.policy!.rules ?? [], options.sealed))}\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
@@ -378,10 +381,16 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
         ? `${again}${w.waits ? "waits for an approval of that plan" : "applies"}`
         : w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
       const unknownBy = w.composed?.held_by_unknown?.length ? w.composed.held_by_unknown : [];
+      // The policy's hold and allow_unattended rules, by id.
+      const policyRules = (w.policy_gate?.rules ?? []).map(code).join(", ");
       const by = w.waits && unknownBy.length
         ? ` (since ${joinAnd(unknownBy.map(code))} ${unknownBy.length === 1 ? "reads" : "read"} a value unknown at plan time)`
-        : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
-      t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
+        : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)`
+        : w.waits && w.policy_gate?.outcome === "held" ? ` (held by ${policyRules})`
+        : w.policy_gate?.outcome === "unattended" ? (w.waits ? ` (the policy allows it unattended, ${policyRules}, and something else holds it)` : ` without an approval: allowed unattended by ${policyRules}`) : "";
+      // approval_rules at base: what the approval takes, rule by rule.
+      const rules = w.waits && w.approval_rules?.length ? `; approval_rules: ${w.approval_rules.map((r) => `${r.roots.map(code).join(", ")} ${ruleAsks(r)}`).join("; ")}` : "";
+      t += `| ${w.number} | ${w.roots.length}${w.composed ? ", composed" : ""} |${envCell(w)} ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by}${rules} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     const previews = notePreviews(report.roots);

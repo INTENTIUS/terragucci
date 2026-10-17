@@ -66,12 +66,53 @@ export function approvalModeOf(v: Approval | ApprovalSettings | undefined): Appr
 export function requireSignedOf(v: Approval | ApprovalSettings | undefined): boolean {
   return !!v && typeof v === "object" && v.require_signed === true;
 }
+
+/** The keys of a scoped `policy.override` entry. */
+export const OVERRIDE_ENTRY_KEYS = ["roots", "who", "roles", "rules"] as const;
+
+/**
+ * A scoped `policy.override` entry (./override.ts): `who` (forge identities
+ * or signers) and the holders of `roles` in `.chant/trust.json` at base may
+ * override a denial of a root a glob of `roots` matches, for any rule, or
+ * with `rules` only when every rule the override names is one of them.
+ */
+export interface OverrideEntry {
+  roots: string[];
+  who?: string[];
+  roles?: string[];
+  rules?: string[];
+}
+
+/** The keys of one `approval_rules` entry. */
+export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author"] as const;
+
+/**
+ * One `approval_rules` entry (./approval-rules.ts): a wave with a root a glob
+ * of `roots` matches waits for `count` distinct approvers of its set digest
+ * (default 1), each holding one of `roles` in `.chant/trust.json` at base when
+ * `roles` is set, and with `not_author` at least one who is not the change's
+ * author. Read at base, like `approval:`.
+ */
+export interface ApprovalRuleSettings {
+  roots: string[];
+  count?: number;
+  roles?: string[];
+  not_author?: boolean;
+}
 /** Every stage runs on the forge's CI. */
 export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
 /** What a pull request does with the dependents of a changed unit when terragrunt.dependents is unset. */
 export const DEFAULT_DEPENDENTS: Dependents = "plan";
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
+/**
+ * What a policy rule can do to a root's wave (./report/policy.ts): `deny`
+ * fails the root, `hold` makes its wave wait for an approval whatever `gate`
+ * says, `allow_unattended` lets a wave whose every changing root it allows
+ * apply without one.
+ */
+export const POLICY_OUTCOMES = ["deny", "hold", "allow_unattended"] as const;
+export type PolicyOutcome = (typeof POLICY_OUTCOMES)[number];
 export const POLICY_INPUTS = ["plan", "hcp"] as const;
 /**
  * When a pull request takes its root locks (`locks:`). `apply` (the default):
@@ -213,10 +254,19 @@ export interface PolicySettings {
   input?: PolicyInput;
   /**
    * Who may override a denial: the forge identities or signers whose recorded
-   * override (`terragucci override`) lets `tf-apply` apply one denied plan.
-   * Read at base, like `approval:`. Unset, no override counts.
+   * override (`terragucci override`) lets `tf-apply` apply one denied plan,
+   * each for every root and rule, or scoped entries (OverrideEntry) for the
+   * roots a glob names. Read at base, like `approval:`. Unset, no override
+   * counts.
    */
-  override?: string[];
+  override?: (string | OverrideEntry)[];
+  /**
+   * The rule outcomes the policy has: `deny` always, and `hold` and
+   * `allow_unattended` when listed, read from `hold`, `hold_*`,
+   * `allow_unattended` and `allow_unattended_*` rules (engine `opa`). Read
+   * at base. Default `[deny]`.
+   */
+  outcomes?: PolicyOutcome[];
 }
 
 /**
@@ -446,6 +496,8 @@ export interface ProjectSettings {
   gate?: GateName;
   /** What counts as a waiting wave's approval; see APPROVALS, or a map with the mode and `require_signed` (ApprovalSettings). Read from the config at base, never the applied commit's own. */
   approval?: Approval | ApprovalSettings;
+  /** More approvers, or approvers with a role, for the waves whose roots a glob names; see ApprovalRuleSettings. Read from the config at base. */
+  approval_rules?: ApprovalRuleSettings[];
   /** When a change applies; see ApplySettings. */
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
@@ -796,6 +848,7 @@ export const PROJECT_FILE_KEYS = [
   "sources",
   "reports",
   "approval",
+  "approval_rules",
   "gate",
   "roots",
   "waves",
@@ -847,7 +900,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 export const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments",
 ]);
 
@@ -909,6 +962,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   } else oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   const mode = isObject(s.approval) ? s.approval.mode : s.approval;
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, mode);
+  if (s.approval_rules !== undefined) checkApprovalRules(s.approval_rules, `${where}.approval_rules`, problems, mode, isObject(s.apply) && s.apply.point !== undefined);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
@@ -1057,7 +1111,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
   if (s.atmos !== undefined) checkAtmos(s.atmos, `${where}.atmos`, problems);
   if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
-  if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems);
+  if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems, mode);
   if (s.sources !== undefined) checkSources(s.sources, `${where}.sources`, problems);
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
@@ -1106,7 +1160,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
-export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override"];
+export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes"];
 export const SOURCES_KEYS = ["modules", "providers"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
@@ -1471,17 +1525,77 @@ function checkApplyBranches(b: unknown, where: string, problems: string[], when:
   }
 }
 
-function checkPolicy(p: unknown, where: string, problems: string[]): void {
+/** A role name, as `.chant/trust.json` names one under `roles`. */
+export const TRUST_ROLE = /^[a-z][a-z0-9-]*$/;
+
+/** Why `roles` and `not_author` need a mode that proves who approved. */
+export const LEDGER_PROVES_NOBODY = "approval: ledger does not prove who wrote an approval, so it cannot tell a role or the author; set approval to sealed or pr-review";
+
+function checkApprovalRules(v: unknown, where: string, problems: string[], mode: unknown, point: boolean): void {
+  if (!Array.isArray(v) || v.length === 0) {
+    problems.push(`${where} must be a list of rules, each with roots and count, roles or not_author, such as - roots: ["envs/prod/**"]`);
+    return;
+  }
+  if (point) problems.push(`${where} is set, and apply.point is too: a wave gate that asks a decision point takes its deciders and quorum from the point; drop one of them`);
+  const proves = mode === "sealed" || mode === "pr-review";
+  v.forEach((r, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(r)) {
+      problems.push(`${at} must be a map (keys: ${APPROVAL_RULE_KEYS.join(", ")})`);
+      return;
+    }
+    for (const k of Object.keys(r)) if (!(APPROVAL_RULE_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a key of an approval rule (keys: ${APPROVAL_RULE_KEYS.join(", ")})`);
+    if (!Array.isArray(r.roots) || r.roots.length === 0 || !r.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+      problems.push(`${at}.roots must be a list of root globs, such as ["envs/prod/**"]`);
+    }
+    if (r.count !== undefined && !(Number.isInteger(r.count) && (r.count as number) >= 1)) problems.push(`${at}.count must be a whole number of 1 or more: how many distinct people approve the wave`);
+    if (r.roles !== undefined && !(Array.isArray(r.roles) && r.roles.length > 0 && r.roles.every((x) => typeof x === "string" && TRUST_ROLE.test(x)))) {
+      problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
+    }
+    if (r.not_author !== undefined && typeof r.not_author !== "boolean") problems.push(`${at}.not_author must be true or false`);
+    if (r.count === undefined && r.roles === undefined && r.not_author !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
+    if (!proves && (r.roles !== undefined || r.not_author === true)) problems.push(`${at}: ${LEDGER_PROVES_NOBODY}`);
+  });
+}
+
+/** Why an override's role needs `approval: sealed`. */
+export const OVERRIDE_ROLE_NEEDS_SEALED = "an override names whoever wrote it, and only approval: sealed proves who that was, so a role cannot be checked; set approval to sealed, or name the people in who";
+
+function checkOverride(o: unknown, where: string, problems: string[], mode: unknown): void {
+  const flat = (x: unknown): boolean => typeof x === "string" && x.trim() !== "" && !/[\r\n]/.test(x);
+  if (!Array.isArray(o) || o.length === 0 || !o.every((x) => flat(x) || isObject(x))) {
+    problems.push(`${where} must be a list of the forge identities or signers who may override a denial, such as [github:alice], or of entries with roots and who or roles`);
+    return;
+  }
+  o.forEach((e, i) => {
+    if (!isObject(e)) return;
+    const at = `${where}[${i}]`;
+    for (const k of Object.keys(e)) if (!(OVERRIDE_ENTRY_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a key of an override entry (keys: ${OVERRIDE_ENTRY_KEYS.join(", ")})`);
+    if (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) problems.push(`${at}.roots must be a list of root globs, such as ["envs/dev/**"]`);
+    if (e.who !== undefined && !(Array.isArray(e.who) && e.who.length > 0 && e.who.every(flat))) problems.push(`${at}.who must be a list of forge identities or signers, such as [github:alice]`);
+    if (e.roles !== undefined && !(Array.isArray(e.roles) && e.roles.length > 0 && e.roles.every((r) => typeof r === "string" && TRUST_ROLE.test(r)))) problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
+    if (e.rules !== undefined && !(Array.isArray(e.rules) && e.rules.length > 0 && e.rules.every((r) => typeof r === "string" && /^\S+$/.test(r)))) problems.push(`${at}.rules must be a list of rule ids, such as [main.deny_untagged]`);
+    if (e.who === undefined && e.roles === undefined) problems.push(`${at} names nobody; give who, roles or both`);
+    if (e.roles !== undefined && mode !== "sealed") problems.push(`${at}.roles: ${OVERRIDE_ROLE_NEEDS_SEALED}`);
+  });
+}
+
+function checkPolicy(p: unknown, where: string, problems: string[], mode?: unknown): void {
   if (!isObject(p)) {
-    problems.push(`${where} must be a map (settings: engine, path, namespace, input, source, override)`);
+    problems.push(`${where} must be a map (settings: ${POLICY_KEYS.join(", ")})`);
     return;
   }
   for (const k of Object.keys(p)) if (!POLICY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${POLICY_KEYS.join(", ")})`);
-  if (p.override !== undefined && !(Array.isArray(p.override) && p.override.length > 0 && p.override.every((o) => typeof o === "string" && o.trim() !== "" && !/[\r\n]/.test(o)))) {
-    problems.push(`${where}.override must be a list of the forge identities or signers who may override a denial, such as [github:alice]`);
-  }
+  if (p.override !== undefined) checkOverride(p.override, `${where}.override`, problems, mode);
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
   oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
+  if (p.outcomes !== undefined) {
+    const o = p.outcomes;
+    if (!Array.isArray(o) || o.length === 0 || !o.every((x) => (POLICY_OUTCOMES as readonly unknown[]).includes(x))) problems.push(`${where}.outcomes must be a list of ${POLICY_OUTCOMES.join(", ")}`);
+    else if (new Set(o).size !== o.length) problems.push(`${where}.outcomes names an outcome twice`);
+    else if (!o.includes("deny")) problems.push(`${where}.outcomes leaves out deny, and a deny rule always fails its root; list deny first, such as [deny, hold]`);
+    else if (o.some((x) => x !== "deny") && p.engine !== "opa") problems.push(`${where}.outcomes names ${o.filter((x) => x !== "deny").join(" and ")}, which only engine: opa reads (conftest reports deny, violation and warn rules alone); set engine to opa`);
+  }
   if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
     problems.push(`${where}.path must be a directory inside the repo, such as policy`);
   }

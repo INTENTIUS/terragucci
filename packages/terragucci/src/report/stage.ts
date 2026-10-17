@@ -29,8 +29,9 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
-import { decideOverride, OVERRIDE_LEDGER, overrideRule } from "../override";
-import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { ruleProgress, rulesFor, trustRolesAt } from "../approval-rules";
+import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
+import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ApprovalRuleSettings, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
@@ -2034,27 +2035,46 @@ export async function planOverrides(repo: string, options: StageOptions, env: No
   const configPath = options.config ?? findConfig(repo);
   try {
     const rule = await approvalRule(repo, { ...(base ? { at: base } : {}), ...(configPath ? { config: configPath } : {}) });
-    if (rule.overriders.length === 0) return inputs;
-    policy.overriders = rule.overriders;
+    if (rule.overriders.length === 0 && !rule.overrideEntries) return inputs;
+    // Scoped entries (../override.ts): each denied root has its own overriders, roles read at base under sealed alone.
+    const roles = rule.overrideEntries?.some((e) => e.roles?.length) && rule.mode === "sealed" ? trustRolesAt(repo, rule.base).roles : {};
+    const whoFor = (root: string, rules: readonly string[]) => overridersFor({ overriders: rule.overriders, ...(rule.overrideEntries ? { entries: rule.overrideEntries } : {}), roles }, root, rules);
+    const union = [...new Set(denied.flatMap((i) => whoFor(i.path, i.policy!.rules ?? []).principals))];
+    if (union.length === 0) return inputs;
+    policy.overriders = rule.overrideEntries ? union : rule.overriders;
     const ledger = readLedger(repo, OVERRIDE_LEDGER);
-    const judge = overrideRule(repo, rule);
     const now = new Date().toISOString();
     const overridden: string[] = [];
     const out = inputs.map((i) => {
       if (!denied.includes(i)) return i;
+      const who = whoFor(i.path, i.policy!.rules ?? []);
+      const scoped = rule.overrideEntries ? { ...i, policy: { ...i.policy!, overriders: who.shown } } : i;
       const planDigest = terraformChangeSetPart({ member: i.path, plan: i.plan, planner: i.planner ?? "terraform" }).member.planDigest;
-      if (!planDigest) return i;
+      if (!planDigest || who.principals.length === 0) return scoped;
+      const judge = overrideRule(repo, { ...rule, overriders: who.principals });
       const decision = decideOverride(ledger, judge, i.path, planDigest, i.policy!.rules ?? [], now);
-      if (decision.status !== "overridden") return i;
+      if (decision.status !== "overridden") return scoped;
       overridden.push(i.path);
       log(`${i.path}: the policy denial is overridden by ${decision.override.by} at ${decision.override.at}, so tf-apply applies this plan; the plan still fails here`);
-      return { ...i, policy: { ...i.policy!, override: decision.override } };
+      return { ...scoped, policy: { ...scoped.policy!, override: decision.override } };
     });
     if (overridden.length > 0) policy.overridden = overridden.sort();
     return out;
   } catch (e) {
     log(`policy override: ${(e as Error).message}, so no override is shown`);
     return inputs;
+  }
+}
+
+/** `approval_rules` in the config at base, for a plan's waves; none for a control repo's project, or when the base cannot be read. */
+async function baseApprovalRules(repo: string, options: StageOptions, env: NodeJS.ProcessEnv): Promise<ApprovalRuleSettings[] | undefined> {
+  if (options.project) return undefined;
+  const base = options.base ?? baseRef(env);
+  const configPath = options.config ?? findConfig(repo);
+  try {
+    return (await approvalRule(repo, { ...(base ? { at: base } : {}), ...(configPath ? { config: configPath } : {}) })).approvalRules;
+  } catch {
+    return undefined;
   }
 }
 
@@ -2116,7 +2136,9 @@ async function finish(
   if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
     const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
-    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
+    // hold and allow_unattended come from the base's policy key alone: a pull request's own outcomes key turns nothing on.
+    const settled = governing.from === "base" || !(options.base ?? baseRef(env)) ? governing.policy : { ...governing.policy, outcomes: undefined };
+    ({ inputs, policy } = await applyPolicy(repo, settled, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
     if (governing.policy.override?.length) inputs = await planOverrides(repo, options, env, inputs, policy, log);
   }
   // With environments, each root names its environment, and each wave its roots' environments and the gate they give it (../environments.ts).
@@ -2124,15 +2146,21 @@ async function finish(
   const envs = settings.environments;
   const terragruntRun = inputs.some((i) => i.terragrunt !== undefined);
   const envNames = (roots: readonly string[]): string[] => [...new Set(roots.map((r) => environmentOf(r, settings)).filter((e): e is string => e !== undefined))].sort();
+  // approval_rules at base: what each wave's approval will take, as the base's config has it.
+  const approvalRules = drift ? undefined : await baseApprovalRules(repo, options, env);
+  const ruled = <W extends { roots: string[] }>(w: W): W & { approvalRules?: ReturnType<typeof ruleProgress>[] } => {
+    const rules = rulesFor(approvalRules, w.roots);
+    return rules.length ? { ...w, approvalRules: rules.map((r) => ruleProgress(r, [])) } : w;
+  };
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: envs ? inputs.map((i) => withEnvironment(i, environmentOf(i.path, settings))) : inputs,
     waves: envs
       ? costWaves.map((w) => {
           const names = envNames(w.roots);
-          return { ...w, ...(drift ? {} : { policy: terragruntRun ? anyRootGate(settings, settings.gate) : rootsGate(w.roots, settings, settings.gate) }), ...(names.length ? { environments: names } : {}) };
+          return ruled({ ...w, ...(drift ? {} : { policy: terragruntRun ? anyRootGate(settings, settings.gate) : rootsGate(w.roots, settings, settings.gate) }), ...(names.length ? { environments: names } : {}) });
         })
-      : costWaves,
+      : costWaves.map(ruled),
     redacted,
     // The waves of a plan say which the gate will hold, and carry the digest approval: pr-review binds a review to.
     ...(drift ? {} : { gate: settings.gate }),

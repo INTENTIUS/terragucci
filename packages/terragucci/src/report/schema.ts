@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 39;
+export const REPORT_MINOR = 40;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -484,6 +484,19 @@ export interface ReportRootPolicy {
   warnings: string[];
   /** Why the policy could not be checked, with `result: error`. */
   error?: string;
+  /** With `hold` in `policy.outcomes` at base (minor 40): the ids of the `hold` rules that matched, sorted. Its wave waits for an approval. */
+  held_by?: string[];
+  /** The messages of those `hold` rules (minor 40). */
+  holds?: string[];
+  /** With `allow_unattended` in `policy.outcomes` at base (minor 40): the ids of the `allow_unattended` rules that matched, sorted. */
+  allowed_by?: string[];
+  /**
+   * With scoped `policy.override` entries at base (minor 40): who may override
+   * this root's denial by its rules, names first, then each role as `role
+   * <name> (<holders>)`. Absent with a flat list, where `policy.overriders`
+   * says it for every root.
+   */
+  overriders?: string[];
   /**
    * The override that stands for this root's plan and rules (minor 10). On a
    * `tf-apply` wave the root then applies, and is `planned` with its denial
@@ -529,6 +542,20 @@ export interface ReportPolicy {
   overriders?: string[];
 }
 
+/** One `approval_rules` entry a wave takes, and where it stands (minor 40). */
+export interface ReportApprovalRule {
+  roots: string[];
+  /** How many distinct approvers it asks for. */
+  count: number;
+  /** The roles of `.chant/trust.json` at base an approver counted holds one of. */
+  roles?: string[];
+  /** At least one approver counted is not the change's author. */
+  not_author?: boolean;
+  /** A `tf-apply` wave's: the approvers of its digest the rule counted, oldest first. Empty on a plan. */
+  approvers: string[];
+  met: boolean;
+}
+
 export interface ReportWave {
   number: number;
   roots: string[];
@@ -562,6 +589,22 @@ export interface ReportWave {
    * as `bob asked for abc1234`. Absent when nobody was left out.
    */
   excluded_approvers?: { login: string; reason: string }[];
+  /**
+   * The `approval_rules` entries at base its roots take (minor 40): what each
+   * asks for and, on a `tf-apply` wave, the approvers of its digest it
+   * counted and whether it is met. Absent when no rule applies to the wave.
+   */
+  approval_rules?: ReportApprovalRule[];
+  /**
+   * What the policy's `hold` and `allow_unattended` rules did to the wave's
+   * gate (minor 40): `held`, a root that changes something matched a `hold`
+   * rule, so it waits for an approval whatever `gate` says; `unattended`,
+   * every root that changes something matched an `allow_unattended` rule and
+   * none holds, so `gate` does not hold it. `rules` are those rules' ids, and
+   * on a `tf-apply` wave `commit` is the commit the policy was read at.
+   * Absent when no such rule decided anything.
+   */
+  policy_gate?: { outcome: "held" | "unattended"; rules: string[]; commit?: string };
   /**
    * The roots whose `on_failure: approve` step failed (minor 17): the gate
    * holds the wave whatever the gate policy says, when it changes anything.

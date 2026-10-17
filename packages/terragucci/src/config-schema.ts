@@ -23,6 +23,7 @@ import {
   APPLY_REQUIRES,
   APPLY_WHEN,
   APPROVALS,
+  APPROVAL_RULE_KEYS,
   ATMOS_KEYS,
   AUDIENCE_STAGES,
   BINARIES,
@@ -51,6 +52,8 @@ import {
   PASS_RESERVED_PREFIXES,
   POLICY_ENGINES,
   POLICY_INPUTS,
+  POLICY_OUTCOMES,
+  OVERRIDE_ENTRY_KEYS,
   POLICY_KEYS,
   QUESTION_TYPES,
   REGISTRY_KEYS,
@@ -68,6 +71,7 @@ import {
   STEP_STAGES,
   TELEMETRY_KEYS,
   TERRAGRUNT_KEYS,
+  TRUST_ROLE,
   TOKEN_PROTECTIONS,
   WIF_PROVIDER,
   type ApplySettings,
@@ -235,13 +239,21 @@ const terragrunt = map(TERRAGRUNT_KEYS as (keyof TerragruntSettings)[], {
   credentials: { type: "object", additionalProperties: rolePair },
 } satisfies Record<keyof TerragruntSettings, JsonSchema>);
 
+const overrideEntry = map(OVERRIDE_ENTRY_KEYS, {
+  roots: { type: "array", minItems: 1, items: glob, description: "Root globs: the entry covers a denial of a root one matches." },
+  who: { type: "array", minItems: 1, items: oneLine, description: "The forge identities or signers who may override such a denial." },
+  roles: { type: "array", minItems: 1, items: pat(TRUST_ROLE), description: "Roles in .chant/trust.json at base whose holders may override such a denial (approval: sealed)." },
+  rules: { type: "array", minItems: 1, items: { type: "string", pattern: "^\\S+$" }, description: "Only an override of these rule ids, every one of them." },
+} satisfies Record<(typeof OVERRIDE_ENTRY_KEYS)[number], JsonSchema>, { required: ["roots"] });
+
 const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
   engine: enumOf(POLICY_ENGINES),
   path: repoPath,
   source: { type: "string", pattern: "^git\\+(https?|file)://.*@" },
   namespace: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_.]*$" },
   input: enumOf(POLICY_INPUTS),
-  override: { type: "array", minItems: 1, items: oneLine },
+  override: { type: "array", minItems: 1, items: { anyOf: [oneLine, overrideEntry] } },
+  outcomes: { type: "array", minItems: 1, uniqueItems: true, items: enumOf(POLICY_OUTCOMES) },
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
 const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };
@@ -300,6 +312,13 @@ const dashboards: JsonSchema = {
   ],
 };
 
+const approvalRule = map(APPROVAL_RULE_KEYS, {
+  roots: { type: "array", minItems: 1, items: glob, description: "Root globs: a wave with a root one matches takes the rule." },
+  count: { ...whole(1), description: "How many distinct people approve the wave's set digest. Default 1." },
+  roles: { type: "array", minItems: 1, items: pat(TRUST_ROLE), description: "Each approver counted holds one of these roles in .chant/trust.json at base." },
+  not_author: { ...bool, description: "At least one approver counted is not the change's author." },
+} satisfies Record<(typeof APPROVAL_RULE_KEYS)[number], JsonSchema>, { required: ["roots"] });
+
 const ephemeral = map(EPHEMERAL_KEYS as (keyof EphemeralSettings)[], {
   roots: { type: "array", minItems: 1, items: glob },
   ttl: { type: "string", pattern: "^[1-9]\\d*[mhd]$" },
@@ -353,6 +372,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       ],
       description: "What counts as a waiting wave's approval: the mode, or a map with the mode and require_signed.",
     },
+    approval_rules: { type: "array", minItems: 1, items: approvalRule, description: "More approvers, or approvers with a role, for the waves whose roots a glob names." },
     apply: { ...apply, description: "When a change applies." },
     locks: { ...enumOf(LOCKS), description: "When a pull request takes its root locks." },
     waves: {
