@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# The command that wrote terralith/: choudoufu's terralith-gen at scale 1
-# with prefix tl, formatted by tofu, from a checkout of choudoufu (its
-# origin/main at 7431c46634 wrote the committed files). state.tf and logs.tf
-# are this tree's own, and the generator leaves them as they are. Then
-# scripts/phases.py writes the scenario's pull requests from the result.
+# terralith/ is kept by hand. It is a thin terralith of 14 resources, small
+# enough that each beat of the demo loop is short. The tree began as the output
+# of choudoufu's terralith-gen at scale 1 (82 resources with logs.tf and
+# state.tf), cut down by hand. What is
+# left is a shared network that stays with the terralith (VPC, subnet and
+# security group) and the teams team-a, team-b and team-c. Each team has a role
+# with an inline policy and a log group, and team-b also has two workers from
+# one count-expanded block. Change the .tf files there by hand, since no tool
+# writes them.
 #
-#   CHOUDOUFU_SRC=~/checkouts/intentius/choudoufu ./generate.sh
+# This script writes the scenario's pull requests from that tree
+# (scripts/phases.py), so run it after any change to terralith/:
+#
+#   ./generate.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-src="${CHOUDOUFU_SRC:?set CHOUDOUFU_SRC to a checkout of INTENTIUS/choudoufu}"
-(cd "$src" && go run ./tools/terralith-gen -scale 1 -prefix tl -fmt-bin tofu -out "$here/terralith")
 python3 "$here/scripts/phases.py"
