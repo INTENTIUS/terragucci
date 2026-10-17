@@ -30,6 +30,11 @@
  * azurerm takes a lease on the state blob, with the lock info in its
  * metadata.
  *
+ * listStateVersions lists every version a state's store keeps, by the
+ * location a wave recorded, for `terragucci audit` (./report/unrecorded.ts):
+ * each version's id and when it was written, from the store's list call,
+ * with the audit job's own identity.
+ *
  * Requests are signed with the credentials the backend would use: those its
  * configuration names, else the job's own (the variables report/s3.ts,
  * report/gcs.ts and report/azure-blob.ts read). A backend that assumes an
@@ -40,9 +45,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { currentSerial, gitlabState, isGitLabAddress, shownUrl, type GitLabState } from "./gitlab-state";
-import { AZURE_AUTHORITY, AzureBlobClient, type AzureOidc, type AzureTarget, type BlobAt } from "./report/azure-blob";
-import { GCS_ENDPOINT, GcsClient, type GcsTarget } from "./report/gcs";
-import { StoreError, type StoreFetch } from "./report/object-store";
+import { AZURE_AUTHORITY, AzureBlobClient, azureFromEnv, type AzureOidc, type AzureTarget, type BlobAt } from "./report/azure-blob";
+import { GCS_ENDPOINT, GcsClient, gcsFromEnv, type GcsTarget } from "./report/gcs";
+import { StoreError, type ObjectVersion, type StoreFetch } from "./report/object-store";
 import { S3Client, s3FromEnv, type S3Fetch, type S3Target } from "./report/s3";
 import type { ReportStateVersion } from "./report/schema";
 import { literal, stateAddress } from "./state-address";
@@ -626,5 +631,35 @@ export async function stateVersion(dir: string, env: NodeJS.ProcessEnv = process
     return { backend: o.backend, location, versioning: "unknown", note: "the store gave no version id" };
   } catch (e) {
     return { backend: o.backend, location, versioning: "unknown", note: (e as Error).message };
+  }
+}
+
+/** What a state's store lists of its versions: each one, newest first; why none are listed; or why the list could not be read. */
+export type StateVersionList = { versions: ObjectVersion[] } | { skipped: string } | { error: string };
+
+/**
+ * Every version a state's store keeps, by the state's location as a wave
+ * recorded it (`s3://<bucket>/<key>`, `gs://<bucket>/<key>`,
+ * `az://<account>/<container>/<key>`), from the store's list of the
+ * object's versions with the job's own identity: ids and times, never a
+ * state's contents. Any other location is skipped, with why.
+ */
+export async function listStateVersions(location: string, env: NodeJS.ProcessEnv = process.env, fetchFn?: StoreFetch): Promise<StateVersionList> {
+  const m = /^(s3|gs|az):\/\/([^/]+)\/(.+)$/.exec(location);
+  if (!m) return { skipped: "terragucci lists the versions of s3, gcs and azurerm states only" };
+  const [, scheme, bucket, rest] = m as unknown as [string, string, string, string];
+  try {
+    let versions: ObjectVersion[];
+    if (scheme === "s3") versions = await new S3Client(s3FromEnv({ bucket }, env), fetchFn).listVersions(rest);
+    else if (scheme === "gs") versions = await new GcsClient(gcsFromEnv({ bucket }, env), fetchFn).listVersions(rest);
+    else {
+      const [container, ...key] = rest.split("/");
+      if (!container || key.length === 0) return { skipped: `${location} names no blob` };
+      versions = await new AzureBlobClient(azureFromEnv({ account: bucket, container }, env), fetchFn).listVersions(key.join("/"));
+    }
+    return versions.length > 0 ? { versions } : { skipped: "the store lists no versions of the state" };
+  } catch (e) {
+    if (!(e instanceof StoreError) && !(e instanceof TypeError)) throw e;
+    return { error: e.message };
   }
 }

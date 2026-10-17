@@ -59,6 +59,8 @@ A key the control repo sets away from its default reaches each project one of tw
 | `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `reports`, `approval`, `approval_rules`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too), `environments` (each environment's roles are in the pipeline too, by its root globs) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
+`audit_log_group` reaches no project: `terragucci audit` reads it in the control repo.
+
 ```yaml
 defaults:
   binary: tofu
@@ -185,6 +187,7 @@ dashboards: true
 | `review` | none (off) | `agent`, `command`, `key_secret`, `instructions`, `timeout`: a model reviews each pull request's description against its plan; see [The review](#the-review) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
+| `audit_log_group` | none | the CloudWatch Logs group a CloudTrail trail delivers the state buckets' S3 data events to, in `audit_region`: `terragucci audit` reads it to name who wrote a state version no wave or migration recorded ([The writer](/terragucci/reference/audit-trail/#the-writer)). Read by the audit job where it runs, in a control repo per project from its settings over `defaults`; no project's jobs read it |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 | `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
 | `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) |

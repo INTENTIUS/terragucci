@@ -122,7 +122,8 @@ export interface AuditLog {
   lookup(q: AuditQuery): Promise<AuditAnswer>;
 }
 
-interface TrailEvent {
+/** A CloudTrail record, cut to what attribution reads. */
+export interface TrailEvent {
   eventName?: string;
   eventTime?: string;
   readOnly?: boolean | string;
@@ -168,12 +169,21 @@ export function newestActor(events: TrailEvent[]): AuditAnswer {
   return e && c ? { status: "found", ...c, event: e.eventName ?? "an event", at: e.eventTime ?? "" } : { status: "silent" };
 }
 
+/** Runs the `aws` CLI with its arguments. */
+export type AwsRun = (args: string[]) => { status: number | null; stdout: string; stderr: string; error?: Error };
+
+/** The `aws` CLI on the job's PATH, with the credentials it already has. */
+export const spawnAws: AwsRun = (args) => {
+  const p = spawnSync("aws", args, { encoding: "utf-8", maxBuffer: 1 << 26 });
+  return { status: p.status, stdout: p.stdout ?? "", stderr: p.stderr ?? "", error: p.error };
+};
+
 export interface AwsAuditOptions {
   /** How far back to read. Default 14 days. */
   days?: number;
   region?: string;
   /** Runs `aws`; the default spawns the CLI. */
-  run?: (args: string[]) => { status: number | null; stdout: string; stderr: string; error?: Error };
+  run?: AwsRun;
   now?: () => Date;
 }
 
@@ -182,12 +192,7 @@ export interface AwsAuditOptions {
  * with the credentials it already has. Only `aws_` resources are searched.
  */
 export function awsAuditLog(o: AwsAuditOptions = {}): AuditLog {
-  const run =
-    o.run ??
-    ((args: string[]) => {
-      const p = spawnSync("aws", args, { encoding: "utf-8", maxBuffer: 1 << 26 });
-      return { status: p.status, stdout: p.stdout ?? "", stderr: p.stderr ?? "", error: p.error };
-    });
+  const run = o.run ?? spawnAws;
   return {
     async lookup(q) {
       if (!q.type.startsWith("aws_")) return { status: "unavailable", reason: `no audit log reader for ${q.type}` };
