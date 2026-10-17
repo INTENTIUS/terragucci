@@ -25,6 +25,8 @@ prompt: |
 | `<prefix>/<project>/ephemeral.json` | the [ephemeral](/terragucci/guides/ephemeral-environments/) job and the sweep, each time a pull request's copy applies or is destroyed | the live copies: each pull request's roots and state keys, its commit, when it applied and when it expires (`terragucci.ephemeral/v1`, the rows of the estate's `projects[].ephemeral`) |
 | `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
 | `<prefix>/<project>/runs/<commit>/run.json`, `run.html` | each `tf-apply` wave job | the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view): every wave of the commit's apply, its roots and what they read, where it stands, its blast radius and its timeline; `terragucci estate` reads it for the dependency graph |
+| `<prefix>/estates/<estate>/roster.json` | a `tf-apply` wave's upload, for each root it applied, and wave 1 of `tf-apply` after an estate migration writes its markers | the estate's [roster](/terragucci/reference/report-schema/#estate-rosters): each resource's address and type, whether it carries the estate's marker, and never a value |
+| `<prefix>/estates.json` | the same uploads | each estate with a roster, its resource count, and the key of its roster |
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
 | `<prefix>/estate.json`, `estate.html` | [`terragucci estate`](/terragucci/guides/see-every-project/) | every project's latest plan, drift check and apply waves |
 | `<prefix>/history.json`, `history.html` | [`terragucci estate`](/terragucci/guides/see-every-project/#change-history) | every resource address with each apply that changed it |
@@ -56,7 +58,7 @@ Links inside a run's files are relative, so they resolve wherever the bucket is 
 
 ## JSON Schemas
 
-Each object a program reads names its schema in its `schema` field. The package's `dist/` directory ships the matching JSON Schema:
+Each object a program reads names its schema in its `schema` field, except a roster, whose fields are fixed at `estate`, `at` and `resources`. The package's `dist/` directory ships the matching JSON Schema:
 
 | Object | `schema` | JSON Schema |
 |---|---|---|
@@ -71,6 +73,7 @@ Each object a program reads names its schema in its `schema` field. The package'
 | `edges.json` | `terragucci.state-edges/v1` | `dist/state-edges.schema.json` |
 | `dora.json` | `terragucci.dora/v1` | `dist/dora.schema.json` |
 | `run.json` | `terragucci.run/v1` | `dist/run.schema.json` |
+| `estates.json` | `terragucci.estates/v1` | `dist/estates.schema.json` |
 
 Within `v1` a release only adds fields, and an existing field keeps its meaning. A reader checks `schema` and ignores fields it does not know. The schemas leave objects open, so a validator accepts a field a later release added.
 
@@ -79,11 +82,11 @@ npm pack @intentius/terragucci
 tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
 ```
 
-[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json`, `states.json` and `edges.json`, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#entry-fields) the fields of an audit entry.
+[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json`, `states.json`, `edges.json`, `estates.json` and each roster, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#entry-fields) the fields of an audit entry.
 
 ## The views prefix
 
-terragucci never writes or reads under `<prefix>/views/`. A tool that renders your reports, such as a static page built in a scheduled job, writes its files under `<prefix>/views/<tool>/`. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
+terragucci never writes or reads under `<prefix>/views/`. Put the files of a tool that renders your reports (a static page a scheduled job builds, say) under `<prefix>/views/<tool>/`. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
 
 Whatever serves the bucket serves `views/` too. A presigned link opens one object, and the [front door](/terragucci/guides/keep-reports-in-a-bucket/#the-front-door) serves every key under the prefix to whoever your identity provider signs in.
 
@@ -95,6 +98,7 @@ Whatever serves the bucket serves `views/` too. A presigned link opens one objec
 | every project's resources | `GetObject` on `<prefix>/*inventory.json` |
 | every root's state versions | `GetObject` on `<prefix>/*states.json` |
 | every root's cross-state edges | `GetObject` on `<prefix>/*edges.json` |
+| every estate's roster and count | `GetObject` on `<prefix>/estates.json` and `<prefix>/estates/*` |
 | every live ephemeral environment | `GetObject` on `<prefix>/*ephemeral.json` |
 | every resource's history | `GetObject` on `<prefix>/history.json`, or on `<prefix>/*changes.json` for the rows without approvers |
 | a run's report | `GetObject` on `<prefix>/*/report.json` |

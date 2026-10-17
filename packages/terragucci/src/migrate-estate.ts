@@ -51,6 +51,7 @@ import {
 } from "./migrate";
 import { MigrationProgress, PROGRESS_FLAG, takesProgressJson } from "./migrate-progress";
 import { detectShape } from "./shape";
+import { rosterOf, type RosterFacts } from "./report/roster";
 import type { S3Target } from "./report/s3";
 
 /** One resource instance a retag moves: its address in both roots, the estates, and the live resource the markers are on. */
@@ -349,6 +350,29 @@ function estateRecord(m: Migration, change: "retag" | "adopt", roots: MigrationR
 // ── applying ─────────────────────────────────────────────────────────────
 
 /**
+ * What an estate migration's write names beyond the plans, by root: each
+ * root's estate, the live id of each resource it retagged or stamped, and
+ * the resource each follower moved with.
+ */
+function rosterFacts(e: EstatePlan, record: MigrationRecord): { estates: Map<string, string>; byRoot: Map<string, RosterFacts> } {
+  const estates = new Map<string, string>();
+  const byRoot = new Map<string, RosterFacts>();
+  const of = (root: string): RosterFacts => byRoot.get(root) ?? byRoot.set(root, new Map()).get(root)!;
+  if (e.kind === "retag") {
+    for (const t of e.retags) {
+      estates.set(t.from, t.from_estate);
+      estates.set(t.to, t.to_estate);
+      of(t.to).set(t.address, { live_id: t.live_id });
+      for (const f of t.followers) of(t.to).set(f, { follows: t.address });
+    }
+  } else {
+    for (const a of e.adopts) estates.set(a.root, a.estate);
+    for (const s of record.stamps ?? []) if (s.live_id) of(s.root).set(s.address, { live_id: s.live_id });
+  }
+  return { estates, byRoot };
+}
+
+/**
  * Write an approved estate migration: rewrite each resource's markers
  * (retag) or stamp them (adopt), then plan every root and require no
  * change. An adoption holds the old state's lock file while it stamps,
@@ -426,9 +450,12 @@ async function writeEstate(plan: PlannedMigration, options: MigrateOptions & { n
       }
     }
     const roots: MigrationRoot[] = [];
+    const facts = rosterFacts(e, record);
     for (const [i, r] of record.roots.entries()) {
       const at = plan.places.get(r.root)!;
-      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `estate-${i}-verify`, true);
+      // The plan after the write is the estate as it stands: its roster, with the live ids the write named.
+      const keep = options.roster ? (json: unknown) => options.roster!(r.root, rosterOf(r.root, facts.estates.get(r.root), json, options.now, facts.byRoot.get(r.root))) : undefined;
+      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `estate-${i}-verify`, true, keep);
       roots.push({ ...r, verify });
       log(`${r.root}: ${verify.changes.length === 0 ? "no changes" : `${verify.changes.length} changes: ${verify.changes.join(", ")}`}`);
     }

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/estates/v1/estates.schema.json",
+  "title": "terragucci.estates/v1",
+  "description": "estates.json at the top of a reports prefix: each estate whose roster a tf-apply wave or an estate migration wrote, with its resource count. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "estates"],
+  "properties": {
+    "schema": { "const": "terragucci.estates/v1" },
+    "estates": {
+      "type": "array",
+      "description": "By estate name.",
+      "items": {
+        "type": "object",
+        "required": ["estate", "count", "at", "project", "root", "roster"],
+        "properties": {
+          "estate": { "type": "string", "description": "The estate a choudoufu root's live block names, or a stock root's path." },
+          "count": { "type": "integer", "description": "How many resources the roster holds." },
+          "at": { "type": "string", "description": "When the roster was read: the wave's end, or the migration's write." },
+          "project": { "type": "string" },
+          "root": { "type": "string" },
+          "roster": { "type": "string", "description": "The roster's key, relative to estates.json: estates/<estate>/roster.json." }
+        }
+      }
+    }
+  }
+}

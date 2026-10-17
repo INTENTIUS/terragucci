@@ -78,6 +78,7 @@ import { applyEstateMigration, planEstateMigration, type EstatePlan, type Retag,
 import type { MigrationCounts, ProgressSinks } from "./migrate-progress";
 import { EXTERNAL_BACKENDS, externalProblems, externalSource, type ExternalSource } from "./state-source";
 import { literal, stateAddress } from "./state-address";
+import type { Roster } from "./report/roster";
 
 export const MIGRATE_OP = "tf-migrate";
 export const MIGRATE_LEDGER = `_gates/${MIGRATE_OP}.jsonl`;
@@ -604,7 +605,7 @@ export function resourceChanges(plan: unknown): string[] {
 export const firstLine = (s: string, n = 4): string => s.trim().split("\n").slice(-n).join(" ").slice(0, 400);
 
 /** Plan a root and read its resource changes; with `-lock=false` when the job holds the lock itself. */
-export async function planChanges(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv, work: string, tag: string, lock: boolean): Promise<{ changes: string[]; summary: string }> {
+export async function planChanges(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv, work: string, tag: string, lock: boolean, keep?: (plan: unknown) => void): Promise<{ changes: string[]; summary: string }> {
   const planFile = join(work, `${tag}.tfplan`);
   const plan = await exec(binary, ["plan", "-input=false", "-no-color", ...(lock ? [] : ["-lock=false"]), `-out=${planFile}`], dir, env);
   if (plan.code !== 0) throw new ConfigError(`the plan of ${tag} failed: ${firstLine(plan.out)}`);
@@ -615,6 +616,7 @@ export async function planChanges(exec: BinaryExec, binary: string, dir: string,
   } catch {
     throw new ConfigError(`show -json of ${tag} printed no plan: ${firstLine(show.out)}`);
   }
+  keep?.(json);
   return { changes: resourceChanges(json), summary: plan.out.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned" };
 }
 
@@ -630,6 +632,8 @@ export interface MigrateOptions {
   /** Where new states and proof plans are kept; removed by the caller. */
   work: string;
   log?: (line: string) => void;
+  /** Each estate root's roster, from the plan it makes after an estate migration's write (./report/roster.ts). */
+  roster?: (root: string, roster: Roster) => void;
   /** Where an estate migration's per-resource progress goes beyond `terragucci-report/` (./migrate-progress.ts). */
   progress?: ProgressSinks;
 }
@@ -1326,6 +1330,8 @@ export interface RunMigrationsOptions {
   /** Under `chant run wave`: chant settles the migration's gate (MigrationHold). */
   hold?: MigrationHold;
   log?: (line: string) => void;
+  /** Each estate root's roster after an estate migration writes (MigrateOptions.roster). */
+  roster?: MigrateOptions["roster"];
   /** Where an estate migration's per-resource progress goes beyond `terragucci-report/`, given the migration's name (./migrate-progress.ts). */
   progress?: (name: string) => ProgressSinks;
 }
@@ -1544,7 +1550,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   let result: MigrationRecord;
   const sinks = plan.estate ? options.progress?.(m.name) : undefined;
   try {
-    result = await applyMigration(repo, plan, { binary: options.binary, env, work, log, now, ...(sinks ? { progress: sinks } : {}), ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
+    result = await applyMigration(repo, plan, { binary: options.binary, env, work, log, now, ...(options.roster ? { roster: options.roster } : {}), ...(sinks ? { progress: sinks } : {}), ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
   } catch (e) {
     log(`${label}: ${(e as Error).message}`);
     sinks?.end?.("failed", undefined, (e as Error).message);
