@@ -42,7 +42,7 @@ runner:
   apply: [self-hosted, prod]
 ```
 
-Every job then asks for a runner with both labels of its stage: `runs-on` on GitHub and Forgejo, `tags` on GitLab. Here the apply jobs run on runners labelled `prod`, such as ones inside the network the apply role reaches, and every other job on the rest. `runner: [self-hosted, linux]` alone puts every job on one set. On GitHub, `group: <name>` picks a runner group.
+Every job then asks for a runner with both labels of its stage: `runs-on` on GitHub and Forgejo, `tags` on GitLab. Here the apply jobs run on runners labelled `prod`, such as ones inside the network the apply role reaches, and every other job on the rest. `runner: [self-hosted, linux]` alone puts every job on one set. On GitHub, `group: <name>` picks a runner group. Apply runners of their own also keep the apply role away from pull request code, which plan jobs run; [Runners](/terragucci/reference/threat-model/#runners) in the threat model has what each setup keeps apart.
 
 Each job runs in terragucci's image, so the runner must start containers: Docker on a GitHub runner, the Docker executor on GitLab, a `docker://` label on Forgejo. Run `npx terragucci init` to write the labels in; [Runners](/terragucci/reference/config/#runners) has the rest.
 

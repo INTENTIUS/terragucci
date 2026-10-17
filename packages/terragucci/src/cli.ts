@@ -81,7 +81,7 @@ import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
 import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
-import { environmentTips } from "./environment-tips";
+import { environmentTips, planApplyRunnerTip } from "./environment-tips";
 import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
@@ -1094,6 +1094,11 @@ export async function main(argv: string[]): Promise<number> {
             } catch {
               // The roots could not be listed (no Atmos on the path): no tip.
             }
+          }
+          // Plan and apply jobs on one self-hosted runner: a tip, read from runner alone, with or without groups.
+          if (problems.length === 0) {
+            const tip = planApplyRunnerTip(config, config.forge ?? detectForge(repoDir)?.value);
+            if (tip) tips.push(tip);
           }
           // agent.token_env without agent.login: the agent's account can approve a change (./involved.ts).
           for (const agent of [config.agent, ...Object.values(config.projects ?? {}).map((p) => (p as { agent?: typeof config.agent }).agent)]) {
