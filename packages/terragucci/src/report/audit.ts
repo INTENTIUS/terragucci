@@ -393,14 +393,18 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
   }
   const failed = failedRoots(report);
   const result = failed.length > 0 ? "failed" : wave.approval === "waiting" ? "waiting" : "applied";
-  const approval =
+  const standing =
     wave.approval === "approved" && wave.set_digest
       ? approvals
           .filter((a) => a.project === project && a.kind === "approval" && a.what === gate && samePlanDigest(a.digest ?? undefined, wave.set_digest!) && at(a.at) <= at(report.run.finished))
           // An approval the rule left out (../involved.ts) is not the one the wave applied under.
           .filter((a) => !(wave.excluded_approvers ?? []).some((e) => a.who !== null && e.login.toLowerCase() === a.who.toLowerCase()))
-          .sort((a, b) => at(b.at) - at(a.at))[0]
-      : undefined;
+          .sort((a, b) => at(b.at) - at(a.at))
+      : [];
+  const approval = standing[0];
+  // approval_rules (../approval-rules.ts): every approval the rules counted, newest first, each approver's newest.
+  const ruled = new Set((wave.approval_rules ?? []).flatMap((r) => r.approvers.map((who) => who.toLowerCase())));
+  const counted = ruled.size > 0 ? standing.filter((a, i) => a.who !== null && ruled.has(a.who.toLowerCase()) && standing.findIndex((b) => b.who?.toLowerCase() === a.who!.toLowerCase()) === i) : [];
   const overrides = report.roots
     .filter((r) => r.policy?.override)
     .map((r) => ({ root: r.path, by: r.policy!.override!.by, rules: r.policy!.override!.rules, reason: r.policy!.override!.reason, digest: r.policy!.override!.digest }));
@@ -409,7 +413,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     kind: "apply",
     who: approval?.who ?? (overrides.length > 0 ? overrides.map((o) => o.by).join(", ") : null),
     result,
-    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, excluded: excludedOf(wave.excluded_approvers), changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
+    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, approvals: counted.length > 0 ? counted.map((a) => a.id) : undefined, approvers: ruled.size > 0 ? [...new Set((wave.approval_rules ?? []).flatMap((r) => r.approvers))] : undefined, policy: wave.policy_gate ? { outcome: wave.policy_gate.outcome, rules: wave.policy_gate.rules, commit: wave.policy_gate.commit } : undefined, excluded: excludedOf(wave.excluded_approvers), changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
   };
 }
 

@@ -35,6 +35,15 @@
  *
  * An override never touches the policy, and `tf-plan` still fails the root;
  * the plan note shows the override that stands for it.
+ *
+ * `policy.override` can scope who may override (overridersFor): beside the
+ * flat names, which may override every root and rule, an entry names `who`
+ * and `roles` (holders in `.chant/trust.json` at base, under `sealed`) for
+ * the roots its globs match and, with `rules`, only an override of rules it
+ * lists. chant's override gate takes one list per wave, so a wave hands it
+ * everyone who may override any of its denied roots, and once chant decided,
+ * the wave refuses an override whose writer the entries at base do not name
+ * for that root and its rules, before anything applies or is spent.
  */
 import { gateSignersAt, type GateSigners } from "@intentius/chant/gate-decision";
 import {
@@ -47,7 +56,8 @@ import {
   type PendingGateRecord,
 } from "@intentius/chant/override-gate";
 import type { AppliedRecord, GateLedger, PendingRecord } from "./apply";
-import type { Approval } from "./config";
+import type { Approval, OverrideEntry } from "./config";
+import { globMatch } from "./detect";
 import type { ReportOverride } from "./report/schema";
 
 export { OVERRIDE_APPLIED, OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest, sortedRules } from "@intentius/chant/override-gate";
@@ -61,6 +71,53 @@ export interface OverridePending extends PendingRecord {
   plan?: string;
   rules?: string[];
 }
+
+/** Who may override one root's denial by `rules`, as `policy.override` at base says. */
+export interface Overriders {
+  /** The principals: the flat names, each matching entry's `who`, and the holders of its `roles`. */
+  principals: string[];
+  /** How the denial message names them: names, then `role <r>` with its holders. */
+  shown: string[];
+}
+
+const norm = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
+
+/**
+ * Who may override a denial of `root` by `rules`: every flat name of
+ * `policy.override`, and each entry whose roots match the root and whose
+ * `rules`, when set, hold every rule denied. A role counts only under
+ * `sealed` (`roles` is the trust.json grants at base, `{}` otherwise), since
+ * only a seal proves who wrote the override.
+ */
+export function overridersFor(o: { overriders: readonly string[]; entries?: readonly OverrideEntry[]; roles: Record<string, string[]> }, root: string, rules: readonly string[]): Overriders {
+  const principals: string[] = [];
+  const shown: string[] = [];
+  const add = (p: string): void => {
+    if (!principals.some((x) => norm(x) === norm(p))) principals.push(p);
+  };
+  for (const p of o.overriders) {
+    add(p);
+    if (!shown.includes(p)) shown.push(p);
+  }
+  for (const e of o.entries ?? []) {
+    if (!e.roots.some((g) => globMatch(g, root))) continue;
+    if (e.rules && !rules.every((r) => e.rules!.includes(r))) continue;
+    for (const p of e.who ?? []) {
+      add(p);
+      if (!shown.includes(p)) shown.push(p);
+    }
+    for (const r of e.roles ?? []) {
+      const holders = o.roles[r] ?? [];
+      holders.forEach(add);
+      const line = `role ${r} (${holders.length ? holders.join(", ") : "nobody holds it at base"})`;
+      if (!shown.includes(line)) shown.push(line);
+    }
+  }
+  return { principals, shown };
+}
+
+/** Whether `by`, an override's writer as chant names them, is one of `principals`. */
+export const mayOverride = (principals: readonly string[], by: string): boolean => principals.some((p) => norm(p) === norm(by));
 
 /** The command that overrides a denial. */
 export function overrideCommand(root: string, rules: readonly string[], sealed = false): string {
