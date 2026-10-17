@@ -23,7 +23,7 @@ Each step names its stage and the identity it runs with. All of them run on GitH
 
 5. The approval: no stage runs. A waiting job exits 3 and prints the approve command for its [set digest](/terragucci/concepts/glossary/#set-digest). A person runs `terragucci approve` to record an approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), using their push access to that branch; under `approval: pr-review` a review of the head also counts. With `approval: sealed` the approval also carries a seal that must verify against `.chant/allowed_signers` from the commit before the applied one.
 
-6. The apply: `tf-apply`, with the apply identity. `terragucci approve` or a rerun of the job restarts the waiting wave. So does a push or a `/terragucci apply` comment (on GitLab, with the `comments` schedule). The wave re-plans and refuses on a changed digest, and never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#ignored-comments) runs nothing.
+6. The apply: `tf-apply`, with the apply identity. `terragucci approve` or a rerun of the job restarts the waiting wave. So does a push or a `/terragucci apply` comment (on GitLab, with the `comments` schedule), and, with [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) set, the resume job, which picks up an approval from chat, a review or the ledger within that many minutes. The wave re-plans and refuses on a changed digest, and never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#ignored-comments) runs nothing.
 
 7. Drift: with `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only` under the plan identity and keeps one issue updated, closing it when drift is gone. It never applies.
 
@@ -46,5 +46,6 @@ The plan identity is read-only because pull request code runs with it. Applying 
 - [Get your first plan note](/terragucci/getting-started/) sets it up on a repository.
 - [The tutorial](/terragucci/tutorial/) runs each step on a 15-root example on your laptop.
 - [Waves and approvals](/terragucci/concepts/waves-and-approvals/) explains the waves and the gate.
+- [Job triggers](/terragucci/concepts/job-triggers/) lists what starts each job, and when.
 - [The approvals runbook](/terragucci/guides/approvals-runbook/) has the commands for signers, pending waves and refusals.
 - [The glossary](/terragucci/concepts/glossary/) defines terragucci's words and lists the ones that mean something else in Terraform.

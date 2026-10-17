@@ -193,7 +193,7 @@ dashboards: true
 | `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
-`terragucci config check` rejects a key this table does not list and names the keys it accepts.
+`terragucci config check` rejects a key this table does not list and names the keys it accepts. [Job triggers](/terragucci/concepts/job-triggers/) lists which keys start a scheduled job and what each job starts on.
 
 ## A version per root
 
