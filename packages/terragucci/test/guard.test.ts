@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { resolveRepo } from "../src/config";
 import { CLAUDE_SETTINGS, GUARD_BINARIES, withHook, writeGuard } from "../src/guard";
 import { backend, git, tmp, write } from "./helpers";
@@ -83,6 +83,14 @@ describe("terragucci guard: the wrappers", () => {
 
 describe("terragucci guard: the hook", () => {
   it("writes a PreToolUse hook into Claude Code's local settings, kept out of commits, and keeps what else the file holds", () => {
+    // A global excludes file that already ignores the settings would skip the exclude line; read none.
+    const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    process.env.XDG_CONFIG_HOME = tmp();
+    onTestFinished(() => {
+      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    });
     const { repo, g } = guarded();
     const settings = JSON.parse(readFileSync(join(repo, CLAUDE_SETTINGS), "utf-8"));
     expect(settings.hooks.PreToolUse).toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: `"${process.execPath}" "${g.script}" hook` }] }]);
