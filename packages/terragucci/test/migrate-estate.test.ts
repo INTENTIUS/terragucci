@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendLifecycle } from "../src/apply";
-import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingAdoptions, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
+import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
 import { isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
 import { runStage } from "../src/report/stage";
 import { renderNote } from "../src/report/views";
@@ -21,8 +21,9 @@ const git = (cwd: string, ...args: string[]): string => execFileSync("git", args
 // declare. live-mv rewrites the markers of the resource the source estate
 // holds under the address; live-import verifies each resource of a state by
 // its id and, with -approve, stamps it. With `refuseUnmarked`, plan refuses
-// while a live object carries no marker, as choudoufu does when one sits at
-// a resource's identity.
+// while a live object carries no marker, and with `refuseForeign` while a
+// resource the root declares is live under another estate's marker, as
+// choudoufu does when such an object sits at a resource's identity.
 
 interface Live {
   id: string;
@@ -34,7 +35,7 @@ type Calls = string[];
 const liveOf = (repo: string): Live[] => JSON.parse(readFileSync(join(repo, "live.json"), "utf-8")) as Live[];
 const setLive = (repo: string, l: Live[]) => writeFileSync(join(repo, "live.json"), JSON.stringify(l));
 
-function choudoufu(repo: string, calls: Calls = [], opts: { refuseUnmarked?: boolean } = {}): BinaryExec {
+function choudoufu(repo: string, calls: Calls = [], opts: { refuseUnmarked?: boolean; refuseForeign?: boolean } = {}): BinaryExec {
   return async (_binary, args, dir) => {
     calls.push(`${dir.slice(repo.length + 1)}: ${args.join(" ")}`);
     const ok = (stdout = "", out = stdout) => ({ code: 0, stdout, out });
@@ -44,6 +45,8 @@ function choudoufu(repo: string, calls: Calls = [], opts: { refuseUnmarked?: boo
     if (args[0] === "plan") {
       const unmarked = liveOf(repo).find((l) => l.estate === undefined);
       if (opts.refuseUnmarked && unmarked) return { code: 1, stdout: "", out: `Error: a live aws_sqs_queue exists at ${unmarked.id} and does not carry estate "${estate}"'s ownership marker` };
+      const foreign = liveOf(repo).find((l) => l.estate !== undefined && l.estate !== estate && want().includes(l.address!));
+      if (opts.refuseForeign && foreign) return { code: 1, stdout: "", out: `Error: a live aws_sqs_queue exists at ${foreign.id} and does not carry estate "${estate}"'s ownership marker` };
       const owned = liveOf(repo).filter((l) => l.estate === estate).map((l) => l.address!);
       const changes = [...want().filter((a) => !owned.includes(a)).map((a) => ({ address: a, change: { actions: ["create"] } })), ...owned.filter((a) => !want().includes(a)).map((a) => ({ address: a, change: { actions: ["delete"] } })), ...owned.filter((a) => want().includes(a)).map((a) => ({ address: a, change: { actions: ["no-op"] } }))];
       writeFileSync(args.find((a) => a.startsWith("-out="))!.slice(5), JSON.stringify({ resource_changes: changes }));
@@ -104,14 +107,14 @@ function approve(work: string, gate: string, digest: string, at: string): void {
 }
 
 /** Estate mono owns the queues jobs and keep; the code now declares jobs in team. */
-const retagRepo = (teamWants = ["aws_sqs_queue.jobs"]) =>
+const retagRepo = (teamWants = ["aws_sqs_queue.jobs"], monoWants = ["aws_sqs_queue.keep"]) =>
   repo({
     "live.json": JSON.stringify([
       { id: "q-jobs", estate: "mono", address: "aws_sqs_queue.jobs" },
       { id: "q-keep", estate: "mono", address: "aws_sqs_queue.keep" },
     ]),
     "mono/main.tf": `${liveBlock("mono")}resource "aws_sqs_queue" "keep" {}\n`,
-    "mono/want.json": JSON.stringify(["aws_sqs_queue.keep"]),
+    "mono/want.json": JSON.stringify(monoWants),
     "team/main.tf": `${liveBlock("team")}resource "aws_sqs_queue" "jobs" {}\n`,
     "team/want.json": JSON.stringify(teamWants),
     "migrations/carve-jobs.yml": "moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs]\n",
@@ -128,7 +131,10 @@ describe("a move between two estates", () => {
     const rec = first.records[0]!;
     expect(rec).toMatchObject({ change: "retag", status: "waiting", retags: [{ address: "aws_sqs_queue.jobs", from: "mono", to: "team", from_estate: "mono", to_estate: "team", live_id: "q-jobs" }] });
     expect(rec.roots.map((r) => [r.root, r.proof.changes])).toEqual([["mono", []], ["team", []]]);
-    expect(lines.join("\n")).toContain("every change each root plans is one the retag removes; digest");
+    expect(lines.join("\n")).toContain("live-mv -dry-run finds each resource that moves, and every change a root it leaves plans is one the retag removes; digest");
+    // team, which the queue joins, is not planned before the retag; mono, which it leaves, is.
+    expect(calls.filter((c) => c.startsWith("team: plan"))).toEqual([]);
+    expect(calls.filter((c) => c.startsWith("mono: plan"))).toHaveLength(1);
     // Nothing was written: init never asked choudoufu to reconfigure, and the only live-mv was a dry run.
     expect(calls.filter((c) => c.includes("live-mv"))).toEqual(["team: live-mv -no-color -json -dry-run -from-estate=mono aws_sqs_queue.jobs aws_sqs_queue.jobs"]);
     expect(liveOf(work).find((l) => l.id === "q-jobs")?.estate).toBe("mono");
@@ -157,14 +163,60 @@ describe("a move between two estates", () => {
     expect(liveOf(work).find((l) => l.id === "q-other")?.estate).toBe("mono");
   });
 
-  it("fails its proof when a root plans a change the retag does not remove", async () => {
-    const { work } = retagRepo(["aws_sqs_queue.jobs", "aws_sqs_queue.extra"]);
+  it("fails its proof when the root resources leave plans a change the retag does not remove", async () => {
+    const { work } = retagRepo(undefined, ["aws_sqs_queue.keep", "aws_sqs_queue.extra"]);
     const lines: string[] = [];
     const run = await runMigrations(work, { binary: "choudoufu", exec: choudoufu(work), env: {}, now: T(1), log: (l) => void lines.push(l) });
     expect(run.code).toBe(1);
     expect(run.records[0]!.status).toBe("proof-failed");
-    expect(run.records[0]!.roots.find((r) => r.root === "team")?.proof.changes).toEqual(["aws_sqs_queue.extra: create"]);
-    expect(lines.join("\n")).toContain("team would still change; nothing was written");
+    expect(run.records[0]!.roots.find((r) => r.root === "mono")?.proof.changes).toEqual(["aws_sqs_queue.extra: create"]);
+    expect(lines.join("\n")).toContain("mono would still change; nothing was written");
+  });
+
+  it("is proved by the dry runs when choudoufu refuses to plan the joining root before the retag, and plans it once retagged", async () => {
+    const { work } = retagRepo();
+    const calls: Calls = [];
+    const exec = choudoufu(work, calls, { refuseForeign: true });
+    const lines: string[] = [];
+    expect([...pendingEstateMigrations(work)]).toEqual([["team", { name: "carve-jobs", file_digest: expect.stringMatching(/^sha256:/), change: "retag" }]]);
+    const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: (l) => void lines.push(l) });
+    expect(first.code).toBe(3);
+    const rec = first.records[0]!;
+    expect(rec).toMatchObject({ change: "retag", status: "waiting", retags: [{ address: "aws_sqs_queue.jobs", live_id: "q-jobs" }] });
+    expect(rec.roots.find((r) => r.root === "team")!.proof).toEqual({ changes: [], summary: "live-mv -dry-run: 1 resource found in the estate it leaves" });
+    expect(calls.filter((c) => c.startsWith("team: plan"))).toEqual([]);
+    expect(lines.join("\n")).toContain("team: not planned before the retag; live-mv -dry-run found the resource that joins it");
+
+    approve(work, "carve-jobs", rec.digest, T(2));
+    calls.length = 0;
+    const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
+    expect(second.code).toBe(0);
+    expect(second.records[0]).toMatchObject({ status: "applied" });
+    expect(second.records[0]!.roots.map((r) => [r.root, r.verify?.changes])).toEqual([["mono", []], ["team", []]]);
+    // The write comes first, then team's first plan.
+    const write = calls.findIndex((c) => c.startsWith("team: live-mv") && !c.includes("-dry-run"));
+    expect(write).toBeGreaterThanOrEqual(0);
+    expect(calls.findIndex((c) => c.startsWith("team: plan"))).toBeGreaterThan(write);
+    expect(pendingEstateMigrations(work).size).toBe(0);
+  });
+
+  it("is stopped by a refused dry run, and retags nothing", async () => {
+    const { work } = retagRepo();
+    const calls: Calls = [];
+    const base = choudoufu(work, calls, { refuseForeign: true });
+    // choudoufu's preview refuses the retag, as it does for a resource whose markers it cannot read.
+    const exec: BinaryExec = async (b, args, dir, env) =>
+      args[0] === "live-mv" && args.includes("-dry-run")
+        ? { code: 1, stdout: JSON.stringify({ dry_run: true, written: false, refusal: { code: "markers", summary: "the tofu-address marker of aws_sqs_queue.jobs cannot be read" } }), out: "refused" }
+        : base(b, args, dir, env);
+    const lines: string[] = [];
+    const run = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: (l) => void lines.push(l) });
+    expect(run.code).toBe(1);
+    expect(run.records[0]).toMatchObject({ status: "failed" });
+    expect(run.records[0]!.error).toContain("live-mv -dry-run refuses aws_sqs_queue.jobs: the tofu-address marker of aws_sqs_queue.jobs cannot be read");
+    expect(lines.join("\n")).toContain("nothing was written");
+    expect(calls.some((c) => c.includes("live-mv") && !c.includes("-dry-run"))).toBe(false);
+    expect(liveOf(work).find((l) => l.id === "q-jobs")?.estate).toBe("mono");
   });
 
   it("is refused when the estate it leaves holds no such resource, or the binary is not choudoufu, or one root keeps a state", async () => {
@@ -222,7 +274,7 @@ describe("adopting a state into an estate", () => {
     const calls: Calls = [];
     const exec = choudoufu(work, calls, { refuseUnmarked: true });
     const lines: string[] = [];
-    expect([...pendingAdoptions(work)]).toEqual([["app", { name: "adopt-app", file_digest: expect.stringMatching(/^sha256:/) }]]);
+    expect([...pendingEstateMigrations(work)]).toEqual([["app", { name: "adopt-app", file_digest: expect.stringMatching(/^sha256:/), change: "adopt" }]]);
     const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: (l) => void lines.push(l) });
     expect(first.code).toBe(3);
     const rec = first.records[0]!;
@@ -245,7 +297,7 @@ describe("adopting a state into an estate", () => {
     expect(stamp).toBeGreaterThanOrEqual(0);
     expect(plan).toBeGreaterThan(stamp);
     // Applied, the root is no longer one a pending migration adopts.
-    expect(pendingAdoptions(work).size).toBe(0);
+    expect(pendingEstateMigrations(work).size).toBe(0);
   });
 
   it("still fails its proof on an instance that does not verify when choudoufu refuses to plan the root, and stamps nothing", async () => {
@@ -349,12 +401,36 @@ describe("a pull request's plan of a root a backends migration adopts", () => {
     git(lifecycle, "add", "-A");
     git(lifecycle, "commit", "-q", "-m", "done");
     git(repo, "fetch", "-q", lifecycle, "chant/lifecycle:refs/remotes/origin/chant/lifecycle");
-    expect(pendingAdoptions(repo).size).toBe(0);
+    expect(pendingEstateMigrations(repo).size).toBe(0);
     const logs: string[] = [];
     const { report } = await runStage("tf-plan", repo, { binary: planStandIn(tmp()), layers, out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));
     expect(logs.some((l) => l.includes("planned by migration"))).toBe(false);
     expect(report.roots.map((r) => r.path)).toEqual(["app", "web"]);
     expect(report.deferred).toBeUndefined();
+  });
+});
+
+describe("a pull request's plan of a root a moves migration retags resources into", () => {
+  const live = (e: string): string => `terraform {\n  live {\n    estate = "${e}"\n  }\n}\n`;
+  const monoPlan = planJson([rc("aws_sqs_queue.jobs", ["delete"], { name: "jobs" }, null)]);
+
+  it("does not plan the joining root on its own: it is planned by the migration, and the root resources leave plans", async () => {
+    const repo = write(tmp(), {
+      "terragucci.yml": "binary: choudoufu\n",
+      "mono/main.tf": live("mono") + 'resource "aws_sqs_queue" "keep" {}\n',
+      "mono/plan.json": JSON.stringify(monoPlan),
+      "team/main.tf": live("team") + 'resource "aws_sqs_queue" "jobs" {}\n',
+      // The queue still carries mono's markers, so choudoufu refuses team's plan.
+      "team/unmarked": "",
+      "team/plan.json": JSON.stringify(planJson([])),
+      "migrations/carve-jobs.yml": "moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs]\n",
+    });
+    const logs: string[] = [];
+    const { report } = await runStage("tf-plan", repo, { binary: planStandIn(tmp()), layers: [["mono", "team"]], out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));
+    expect(logs).toContain("team: planned by migration carve-jobs");
+    expect(logs.some((l) => l.startsWith("team: plan failed"))).toBe(false);
+    expect(report.roots.map((r) => [r.path, r.status])).toEqual([["mono", "planned"]]);
+    expect(report.deferred).toEqual([{ unit: "team", after: [], why: expect.stringContaining("live-mv -dry-run of each one is the proof"), previewed: false }]);
   });
 });
 
