@@ -146,7 +146,7 @@ import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./
 import { rootRoleEnv } from "./roles";
 import { rootSecretEnv } from "./root-secrets";
 import type { ProgressSinks } from "./migrate-progress";
-import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, pendingAdoptions, runMigrations, sha as shaOf, type MigrationHold, type MigrationRecord } from "./migrate";
+import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, pendingEstateMigrations, pendingWhy, runMigrations, sha as shaOf, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
@@ -1287,7 +1287,7 @@ interface WavesContext {
    * the `held` hook, unless the policy lets every changing root through.
    */
   unattended?: boolean;
-  /** The migrations this job applied: a root one of them adopted into an estate plans on its own from then on (pendingAdoptions). */
+  /** The migrations this job applied: a root one of them adopted or retagged resources into plans on its own from then on (pendingEstateMigrations). */
   migrated: Set<string>;
 }
 
@@ -1794,13 +1794,13 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const ws = stepsRead.ws;
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, covered, settings, options.env ?? process.env);
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
-  // A root a backends migration adopts into an estate, until the migration applies: choudoufu refuses its plan while its
-  // resources carry no marker of the estate, and the migration's proof (live-import's check) stands for it (pendingAdoptions).
-  const adopting = pendingAdoptions(repo, ctx.migrated);
-  const byMigration = own.filter((r) => adopting.has(r));
-  const planning = own.filter((r) => !adopting.has(r));
-  for (const r of byMigration) console.log(`${label}: ${r}: planned by migration ${adopting.get(r)!.name}, which adopts its state into the estate; it plans on its own once the migration applies`);
-  const adoptedMembers: WaveMember[] = byMigration.map((r) => ({ member: r, planDigest: shaOf(JSON.stringify({ migration: adopting.get(r)!.name, file: adopting.get(r)!.file_digest })) }));
+  // A root an estate migration adopts or retags resources into, until the migration applies: choudoufu refuses its plan while a
+  // live object at a resource's identity carries no marker of its estate, and the migration's proof stands for it (pendingEstateMigrations).
+  const pending = pendingEstateMigrations(repo, ctx.migrated);
+  const byMigration = own.filter((r) => pending.has(r));
+  const planning = own.filter((r) => !pending.has(r));
+  for (const r of byMigration) console.log(`${label}: ${r}: planned by migration ${pending.get(r)!.name}: ${pendingWhy(pending.get(r)!)}; it plans on its own once the migration applies`);
+  const migrationMembers: WaveMember[] = byMigration.map((r) => ({ member: r, planDigest: shaOf(JSON.stringify({ migration: pending.get(r)!.name, file: pending.get(r)!.file_digest })) }));
   const planned: PlannedRoot[] = new Array(planning.length);
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
@@ -1854,7 +1854,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   // The set digest covers the roots whose plan changes something, as a Terragrunt wave's and the plan note's do, so the digest a
   // pull request's note shows is the one this wave asks approval for when nothing moved. chant takes it over the plans that are not empty.
-  const all = [...planned.map((p) => p.member!), ...adoptedMembers].sort((a, b) => (a.member < b.member ? -1 : 1));
+  const all = [...planned.map((p) => p.member!), ...migrationMembers].sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
   // The composed run's target is no root: the run view's blast radius starts at its roots whose part changes something.
   w.changedRoots = [...changing].flatMap((r) => (r === target && composed ? composed.views.filter((v) => changesSomething(v.plan)).map((v) => v.root) : [r])).sort();
@@ -1897,7 +1897,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const env = options.env ?? process.env;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   writePlans(plansPath, {
-    runs: [...planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))), ...adoptedMembers.map((m) => planEntry(m.member, m.planDigest, true, 0))],
+    runs: [...planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))), ...migrationMembers.map((m) => planEntry(m.member, m.planDigest, true, 0))],
     ...(priced ? { members: [priced] } : {}),
     pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),

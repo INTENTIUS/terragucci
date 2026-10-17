@@ -1310,28 +1310,37 @@ export function doneLine(record: MigrationRecord, approvedBy: string, now: strin
   };
 }
 
-/** A root a pending `backends` migration adopts into an estate: the migration's name and its file's digest. */
-export interface PendingAdoption {
+/** A root a pending estate migration plans for: the migration's name, its file's digest, and whether it adopts the root's state or retags resources into it. */
+export interface PendingEstateRoot {
   name: string;
   file_digest: string;
+  change: "adopt" | "retag";
 }
 
+/** Why a root a pending estate migration plans for is not planned on its own, for the logs and the report. */
+export const pendingWhy = (p: PendingEstateRoot): string =>
+  p.change === "adopt"
+    ? `migration ${p.name} adopts its state into the estate, and live-import's check of every resource is the proof`
+    : `migration ${p.name} retags resources into its estate, and live-mv -dry-run of each one is the proof`;
+
 /**
- * The roots a `backends` migration adopts into a choudoufu estate while it
- * has not applied, by root: not recorded applied in
- * `_gates/tf-migrate/done.jsonl` on chant/lifecycle, nor in `applied` (the
- * migrations this job applied). Such a root is not planned on its own:
- * choudoufu refuses a plan while its resources are live objects with no
- * marker of the estate, and the migration's proof (live-import's
- * ratification) is its plan. Once the migration applies, the root plans as
- * any other. A repo whose migrations cannot be read adopts nothing here;
- * the migration step reports why.
+ * The roots a pending choudoufu estate migration plans for, by root: each
+ * root a `backends` migration adopts into an estate, and each root a `moves`
+ * migration between estates retags resources into. Pending means not
+ * recorded applied in `_gates/tf-migrate/done.jsonl` on chant/lifecycle, nor
+ * in `applied` (the migrations this job applied). Such a root is not planned
+ * on its own: choudoufu refuses a plan while a live object at a resource's
+ * identity carries no marker of the root's estate, which is how an adopted
+ * root's resources stand before the stamp and a joining root's before the
+ * retag. The migration's proof stands for its plan. Once the migration
+ * applies, the root plans as any other. A repo whose migrations cannot be
+ * read gives none here; the migration step reports why.
  */
-export function pendingAdoptions(repo: string, applied: ReadonlySet<string> = new Set()): Map<string, PendingAdoption> {
-  const out = new Map<string, PendingAdoption>();
+export function pendingEstateMigrations(repo: string, applied: ReadonlySet<string> = new Set()): Map<string, PendingEstateRoot> {
+  const out = new Map<string, PendingEstateRoot>();
   let migrations: Migration[];
   try {
-    migrations = listMigrations(repo).filter((m) => m.kind === "backends" && !applied.has(m.name));
+    migrations = listMigrations(repo).filter((m) => (m.kind === "backends" || m.kind === "moves") && !applied.has(m.name));
   } catch {
     return out;
   }
@@ -1340,7 +1349,14 @@ export function pendingAdoptions(repo: string, applied: ReadonlySet<string> = ne
   const done = doneMigrations(show.status === 0 ? show.stdout : "");
   for (const m of migrations) {
     if (done.get(m.name)?.status === "applied") continue;
-    for (const root of liveRoots(repo, m.backends.map((b) => b.root))) if (!out.has(root)) out.set(root, { name: m.name, file_digest: m.digest });
+    let roots: string[];
+    if (m.kind === "backends") roots = liveRoots(repo, m.backends.map((b) => b.root));
+    else {
+      // A moves file is an estate migration only when every root it names is an estate; one that mixes is refused by the migration.
+      const all = [...new Set(m.moves.flatMap((x) => [x.from, x.to]))];
+      roots = liveRoots(repo, all).length === all.length ? [...new Set(m.moves.map((x) => x.to))] : [];
+    }
+    for (const root of roots) if (!out.has(root)) out.set(root, { name: m.name, file_digest: m.digest, change: m.kind === "backends" ? "adopt" : "retag" });
   }
   return out;
 }
@@ -1497,7 +1513,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   }
   const record = plan.record;
   for (const r of record.roots) log(`${r.root}: state ${r.location ?? r.backend}${r.before.version_id ? ` version ${r.before.version_id}` : ""}, ${r.before.digest ? `digest ${r.before.digest}` : "no state yet"}`);
-  const proved = record.change === "retag" ? "every change each root plans is one the retag removes" : record.change === "adopt" ? "every resource instance of the state verifies against the live system, so the stamp adopts each one, and the root plans once it is stamped" : "every root plans with no change against its new state";
+  const proved = record.change === "retag" ? "live-mv -dry-run finds each resource that moves, and every change a root it leaves plans is one the retag removes" : record.change === "adopt" ? "every resource instance of the state verifies against the live system, so the stamp adopts each one, and the root plans once it is stamped" : "every root plans with no change against its new state";
   if (record.status === "proof-failed") {
     const failing = record.roots.filter((r) => r.proof.changes.length > 0).map((r) => r.root).join(", ");
     log(`${label}: ${record.change === "adopt" ? `every resource instance of the state must verify against the live system, and in ${failing} some do not` : record.change === "retag" ? `${proved}, and ${failing} would still change` : `every root must plan with no change against its new state, and ${failing} would change`}; nothing was written`);
