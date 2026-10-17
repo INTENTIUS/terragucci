@@ -2,7 +2,7 @@
 // change, apply for the jobs that apply (confirm among them), drift for drift. On GitLab each job's id_tokens
 // declares its stage's audience alone. On GitHub and Forgejo a step that takes credentials asks for its tokens
 // first and restarts without the token-request variables, so nothing it runs can ask for another audience.
-// A string, or no audience, renders what it always did.
+// A string, or no audience, renders what it always did on GitHub and GitLab; Forgejo fetches first with any oidc.
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -177,7 +177,7 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
 });
 
 describe("opt in", () => {
-  it.each(["github", "forgejo", "gitlab"] as const)("%s: a string or no audience renders no stage tokens and one audience everywhere", (forge) => {
+  it.each(["github", "gitlab"] as const)("%s: a string or no audience renders no stage tokens and one audience everywhere", (forge) => {
     for (const oidc of [{ plan_role: PLAN, apply_role: APPLY }, { plan_role: PLAN, apply_role: APPLY, audience: "custom.example" }]) {
       const text = render(forge, oidc);
       expect(text).not.toMatch(/TG_NO_OIDC_REQUEST|TERRAGUCCI_OIDC_FILE/);
@@ -185,6 +185,22 @@ describe("opt in", () => {
       const aud = oidc.audience ?? "sts.amazonaws.com";
       if (forge === "gitlab") expect([...text.matchAll(/aud: (.*)/g)].map((m) => m[1]).every((a) => a === aud)).toBe(true);
       else expect([...text.matchAll(/tg oidc "\$AWS_WEB_IDENTITY_TOKEN_FILE" '([^']*)'/g)].map((m) => m[1]).every((a) => a === aud)).toBe(true);
+    }
+  });
+});
+
+describe("forgejo: any oidc fetches first", () => {
+  // Forgejo's token-request token is the run's runtime token, which the forge takes as the run's token.
+  it("a string or no audience still fetches the tokens first, with one audience everywhere, and restarts without the request variables", () => {
+    for (const oidc of [{ plan_role: PLAN, apply_role: APPLY }, { plan_role: PLAN, apply_role: APPLY, audience: "custom.example" }]) {
+      const text = render("forgejo", oidc);
+      expect(text).toContain("TG_NO_OIDC_REQUEST=1");
+      expect(stageTokens("forgejo", oidc, "apply").at(-1)).toContain("-u ACTIONS_ID_TOKEN_REQUEST_TOKEN");
+      const aud = oidc.audience ?? "sts.amazonaws.com";
+      const asked = [...text.matchAll(/tg oidc "\$TERRAGUCCI_OIDC_FILE" '([^']*)'/g)].map((m) => m[1]);
+      expect(asked.length).toBeGreaterThan(0);
+      expect(asked.every((a) => a === aud)).toBe(true);
+      expect(text).not.toMatch(/tg oidc "\$AWS_WEB_IDENTITY_TOKEN_FILE"/);
     }
   });
 });

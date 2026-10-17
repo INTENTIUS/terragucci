@@ -129,7 +129,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `check` | a push to any branch; a fork's pull request | the pushed branch | the run's own in the steps before the branch's code, dropped from the step that runs it, which is the job's last | none |
 | `check-report` | after `check` | none of the change's; the check job's report read as data | the run's own | none |
 | `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | the run's own | none |
-| `plan` | a pull request from the repo | the change | the run's own in the steps before the change's code, dropped from the step that runs it, which is the job's last; with `oidc` set and `oidc.audience` not a map, that step keeps the token-request variables, which carry the run's token ([Token scrub limits](#token-scrub-limits)) | plan role |
+| `plan` | a pull request from the repo | the change | the run's own in the steps before the change's code, dropped from the step that runs it, which is the job's last | plan role |
 | `plan-note` | after `plan` | none of the change's; the plan job's report, note and status read as data | the run's own | none |
 | `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own in the steps before the change's code, dropped from the step that runs it, which is the job's last | plan role, as keys traded for the job's OIDC token before the change's code runs; with `oidc.azure`, the token ([Re-plan](#re-plan)) |
 | `replan-note` | after `replan` | as `plan-note` | the run's own | none |
@@ -262,7 +262,7 @@ To harden this, set `oidc.audience` to a map of `plan`, `apply` and `drift` ([Au
 |---|---|---|
 | the apply role trusting the apply audience alone | a `plan`, `replan` or `drift` token assuming the apply role, whatever its subject | `confirm`, an apply job, whose token carries the apply audience |
 | on GitLab, each job's `id_tokens` declaring its stage's audience alone | a job holding a token for another stage's audience | the job's own token, which the code it runs can read |
-| on GitHub and Forgejo, a step that takes the job's cloud identity fetching its tokens first and starting again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | the binary, a root's code and the step's other commands asking for a token for another audience | the job's other steps, which keep the variables: a process the step's code leaves running could read them there ([Token scrub limits](#token-scrub-limits)); the step's own token, which the code it runs can read |
+| on GitHub, and on Forgejo with any `oidc`, a step that takes the job's cloud identity fetching its tokens first and starting again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | the binary, a root's code and the step's other commands asking for a token for another audience | the job's other steps, which keep the variables: a process the step's code leaves running could read them there ([Token scrub limits](#token-scrub-limits)); the step's own token, which the code it runs can read |
 
 GCP and Azure tokens keep their audiences.
 
@@ -428,8 +428,8 @@ terragucci starts the binary, Terragrunt and the policy engine with every forge 
 | Where | Forge token reachable |
 |---|---|
 | The binary, Terragrunt and the policy engine, started by `terragucci stage`, `respond`, `check-root` and `check-policy` | no; a `TF_` variable passes as set, even holding a token |
-| On GitHub and Forgejo, the steps of `check`, `plan` and `replan` that run the change's code, their parent processes and their checkout's git config | no, apart from the Forgejo `oidc` row below |
-| On Forgejo with `oidc` set, a step that keeps `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | yes: with OIDC on, Forgejo's `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is the same token as the run's `ACTIONS_RUNTIME_TOKEN`, which the forge accepts as the run's token. The steps that keep it are the `plan` job's plan step, which runs the change's code, unless `oidc.audience` is a map; a re-plan's plan step with `oidc.azure`, which runs the change's code; the steps before the change's code in `plan` and `replan`; and every step of the jobs that run merged code. The steps that start again without it are a re-plan's plan step without `oidc.azure`, and with `oidc.audience` a map, every step that takes the job's cloud identity |
+| On GitHub and Forgejo, the steps of `check`, `plan` and `replan` that run the change's code, their parent processes and their checkout's git config | no |
+| On Forgejo with `oidc` set, the token-request variables `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | no in any step that runs the change's code: `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is the same token as the run's `ACTIONS_RUNTIME_TOKEN`, which the forge accepts as the run's token, so every step that takes the job's cloud identity fetches its tokens first and starts again without both variables, before any of the change's code runs; the `check` job gets no OIDC token |
 | On Forgejo, a process the change's code leaves running in the `check`, `plan` or `replan` job's container | no: the step that runs the code is the job's last, and the job hands its report on as its outputs, so the container is gone before the job that keeps the report and posts the note starts |
 | On GitHub, a process the change's code leaves running in the `check`, `plan` or `replan` job's container | no API token: the later steps hold only `ACTIONS_RUNTIME_TOKEN`, which the artifact upload uses |
 | GitLab's `check` job | no variable once its script starts; the runner's job token stays in the checkout's remote |

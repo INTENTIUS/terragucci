@@ -8,7 +8,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, forgejoSkipLevels, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, forgejoSkipLevels, stageTokens, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -2613,9 +2613,18 @@ describe("GCP and Azure credentials", () => {
       if (forge === "forgejo") expect(doc.jobs[j]["enable-openid-connect"]).toBe(true);
     }
     const plan = doc.jobs.plan.steps.map((s: any) => s.run).filter(Boolean).join("\n");
-    expect(plan).toContain(`tg oidc "$TERRAGUCCI_GCP_TOKEN_FILE" 'https://iam.googleapis.com/${PROVIDER}' || exit 1`);
-    expect(plan).toContain(`tg oidc "$ARM_OIDC_TOKEN_FILE_PATH" 'api://AzureADTokenExchange' || exit 1`);
-    expect(plan.match(/tg oidc /g)).toHaveLength(2);
+    if (forge === "github") {
+      expect(plan).toContain(`tg oidc "$TERRAGUCCI_GCP_TOKEN_FILE" 'https://iam.googleapis.com/${PROVIDER}' || exit 1`);
+      expect(plan).toContain(`tg oidc "$ARM_OIDC_TOKEN_FILE_PATH" 'api://AzureADTokenExchange' || exit 1`);
+      expect(plan.match(/tg oidc /g)).toHaveLength(2);
+    } else {
+      // Forgejo fetches every token first, then starts again without the request variables, which carry the run's token.
+      expect(plan).toContain(`tg oidc "$TERRAGUCCI_OIDC_GCP_FILE" 'https://iam.googleapis.com/${PROVIDER}'`);
+      expect(plan).toContain(`tg oidc "$TERRAGUCCI_OIDC_AZURE_FILE" 'api://AzureADTokenExchange'`);
+      expect(plan).toContain('mv -f "$TERRAGUCCI_OIDC_GCP_FILE" "$TERRAGUCCI_GCP_TOKEN_FILE"');
+      expect(plan).toContain('mv -f "$TERRAGUCCI_OIDC_AZURE_FILE" "$ARM_OIDC_TOKEN_FILE_PATH"');
+      expect(plan).toContain("TG_NO_OIDC_REQUEST=1");
+    }
     // A fork's pull request still gets no plan job, and apply runs only on the default branch.
     expect(doc.jobs.plan.if).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(doc.jobs["apply-wave-1"].if).toContain("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
@@ -2691,7 +2700,7 @@ describe("GCP and Azure credentials", () => {
   });
 
   it("a runner that serves no token stops the job before it plans", async () => {
-    const r = await run([forgeApi("forgejo"), ...cloudScripts("forgejo", { gcp: GCP }, "plan", "terragucci-plan"), "echo planned"].join("\n"), { ACTIONS_ID_TOKEN_REQUEST_URL: "" });
+    const r = await run([...stageTokens("forgejo", { gcp: GCP }, "plan"), forgeApi("forgejo"), ...cloudScripts("forgejo", { gcp: GCP }, "plan", "terragucci-plan"), "echo planned"].join("\n"), { ACTIONS_ID_TOKEN_REQUEST_URL: "" });
     expect(r.status).toBe(1);
     expect(r.out).not.toContain("planned");
   });
@@ -2707,10 +2716,12 @@ describe("GCP and Azure credentials", () => {
   });
 
   it.each(["github", "forgejo"] as const)("%s: the no-token check runs once per script however many clouds are set", (forge) => {
+    // On Forgejo the check is in the lines that fetch the tokens first (stageTokens), and the cloud scripts copy them.
     const count = (s: string): number => s.split("ACTIONS_ID_TOKEN_REQUEST_URL:-").length - 1;
-    expect(count(cloudScripts(forge, { ...OIDC, ...CLOUDS }, "plan", "terragucci-plan").join("\n"))).toBe(1);
-    expect(count(cloudScripts(forge, CLOUDS, "apply", "terragucci-apply").join("\n"))).toBe(1);
-    expect(count(cloudScripts(forge, OIDC, "plan", "terragucci-plan").join("\n"))).toBe(1);
+    const step = (oidc: Parameters<typeof cloudScripts>[1], stage: "plan" | "apply"): string => [...stageTokens(forge, oidc, stage), ...cloudScripts(forge, oidc, stage, `terragucci-${stage}`)].join("\n");
+    expect(count(step({ ...OIDC, ...CLOUDS }, "plan"))).toBe(1);
+    expect(count(step(CLOUDS, "apply"))).toBe(1);
+    expect(count(step(OIDC, "plan"))).toBe(1);
   });
 
   it("the config takes a token_url and an audience, and refuses empty or non-https ones", () => {

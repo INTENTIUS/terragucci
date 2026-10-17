@@ -128,6 +128,38 @@
         name: Trade the job's OIDC token for the plan identities
         shell: bash
         run: |
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
+          export TG_FORGE=forgejo
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else if (cmd === "alive") {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@" ;; esac; }
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo 'terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true; on an older Forgejo leave oidc unset and give the runner static credentials' >&2
+            exit 1
+          fi
+          export TERRAGUCCI_OIDC_FILE="$(mktemp)"
+          tg oidc "$TERRAGUCCI_OIDC_FILE" 'sts.amazonaws.com' || exit 1
+          fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN TG_NO_OIDC_REQUEST=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
           export TG_FORGE=forgejo
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -153,12 +185,9 @@
           }' -- "$@" ;; esac; }
           export AWS_ROLE_ARN='arn:aws:iam::111111111111:role/plan-ro' AWS_ROLE_SESSION_NAME='terragucci-plan'
           export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo 'terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true; on an older Forgejo leave oidc unset and give the runner static credentials' >&2
-            exit 1
-          fi
-          tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" 'sts.amazonaws.com' || exit 1
+          mv -f "$TERRAGUCCI_OIDC_FILE" "$AWS_WEB_IDENTITY_TOKEN_FILE" || exit 1
           terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
+          for f in "${TERRAGUCCI_OIDC_FILE:-}" "${TERRAGUCCI_OIDC_GCP_FILE:-}" "${TERRAGUCCI_OIDC_AZURE_FILE:-}"; do [ -z "$f" ] || rm -f "$f"; done
       - if: steps.decide.outputs.go == '1'
         id: plan
         name: Re-plan the pull request on request and write the plan report

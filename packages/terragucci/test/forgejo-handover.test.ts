@@ -70,6 +70,35 @@ describe("Forgejo: the jobs that run the change's code end with the step that ru
     }
   });
 
+  it.each([
+    ["aws", { oidc: OIDC }],
+    ["gcp", { oidc: { gcp: { workload_identity_provider: "projects/1/locations/global/workloadIdentityPools/p/providers/f", plan_service_account: "plan@p.iam.gserviceaccount.com", apply_service_account: "apply@p.iam.gserviceaccount.com" } } }],
+    ["azure", { oidc: { ...OIDC, azure: { tenant_id: "t", subscription_id: "s", plan_client_id: "p", apply_client_id: "a" } } }],
+    ["terragrunt", { layers: [["live/dev/app"]], terragrunt: { ...TG, credentials: { "live/**": { plan: "arn:aws:iam::1:role/p", apply: "arn:aws:iam::1:role/a" } } }, oidc: OIDC }],
+  ] as [string, Partial<PipelineInput>][])("%s: with plain oidc no step that runs the change's code keeps the token-request variables, which carry the run's token", (_, extra) => {
+    const doc = render("forgejo", extra as never);
+    for (const name of ["check", "plan", "replan"]) {
+      const run = (doc.jobs[name].steps as Step[]).find(runsCode)!.run!;
+      const lines = run.split("\n");
+      // The step restarts without them before any of its own lines run: from the first line, or once its tokens are fetched.
+      const restart = lines.findIndex((l) => l.includes("exec env") && l.includes("-u ACTIONS_ID_TOKEN_REQUEST_TOKEN") && l.includes("-u ACTIONS_ID_TOKEN_REQUEST_URL"));
+      if (name === "check") {
+        expect(JSON.stringify(doc.jobs.check), name).not.toContain("enable-openid-connect");
+        continue;
+      }
+      expect(restart, name).toBeGreaterThanOrEqual(0);
+      const before = lines.slice(0, restart).join("\n");
+      expect(before, name).not.toMatch(/terragucci stage|synth|terragrunt |tofu /);
+      expect(lines.slice(restart + 1).join("\n"), name).not.toMatch(/tg oidc |ACTIONS_ID_TOKEN_REQUEST_URL:-/);
+    }
+  });
+
+  it("github keeps the token-request variables in its plan step with plain oidc, as before", () => {
+    const run = (render("github", { oidc: OIDC }).jobs.plan.steps as Step[]).find(runsCode)!.run!;
+    expect(run).not.toContain("TG_NO_OIDC_REQUEST");
+    expect(run).toContain('tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE"');
+  });
+
   it("the re-plan's step sweeps what the code left running before it hands the report on", () => {
     const run = (render("forgejo").jobs.replan.steps as Step[]).find(runsCode)!.run!;
     expect(run).toContain("trap 'tg_sweep; tg_handover' EXIT");

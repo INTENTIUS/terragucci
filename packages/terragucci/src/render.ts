@@ -659,13 +659,16 @@ export function stageAudience(oidc: OidcSettings | undefined, stage: AudienceSta
 export const audienceByStage = (oidc: OidcSettings | undefined): boolean => oidc?.audience !== undefined && typeof oidc.audience !== "string";
 
 /**
- * With `oidc.audience` a map, a GitHub or Forgejo step that takes cloud
- * credentials asks for its tokens before anything else, and restarts without
- * the token-request variables (ACTIONS_ID_TOKEN_REQUEST_URL and _TOKEN). The
- * change's code and the binary then cannot ask for a token for another
- * stage's audience. GitLab declares each job's audience in its `id_tokens`.
+ * With `oidc.audience` a map on GitHub, and with any `oidc` on Forgejo, a step
+ * that takes cloud credentials asks for its tokens before anything else, and
+ * restarts without the token-request variables (ACTIONS_ID_TOKEN_REQUEST_URL
+ * and _TOKEN). The change's code and the binary then cannot ask for a token
+ * for another stage's audience. On Forgejo the request token is the run's
+ * runtime token, which the forge takes as the run's token, so no step that
+ * runs the change's code may keep it. GitLab declares each job's audience in
+ * its `id_tokens`.
  */
-const fetchesFirst = (forge: ForgeName, oidc: OidcSettings | undefined): boolean => forge !== "gitlab" && audienceByStage(oidc);
+const fetchesFirst = (forge: ForgeName, oidc: OidcSettings | undefined): boolean => (forge === "forgejo" ? oidc !== undefined : forge === "github" && audienceByStage(oidc));
 
 /** What a job that got no OIDC token needs, by forge. */
 const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
@@ -797,14 +800,13 @@ export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, s
 }
 
 /**
- * With `oidc.audience` a map on GitHub or Forgejo (fetchesFirst), the first
+ * With `oidc.audience` a map on GitHub, or any `oidc` on Forgejo (fetchesFirst), the first
  * lines of a step that takes cloud credentials: the job's tokens, the AWS one
  * for the stage's audience alone, each in a file TERRAGUCCI_OIDC_FILE (and
  * TERRAGUCCI_OIDC_GCP_FILE, TERRAGUCCI_OIDC_AZURE_FILE) names, then the
  * step's restart without the token-request variables, as dropForgeTokens
  * restarts it without the forge tokens. The restarted step skips the fetch,
- * and cloudScripts copies the tokens from those files. Without the map,
- * nothing.
+ * and cloudScripts copies the tokens from those files. Otherwise, nothing.
  */
 export function stageTokens(forge: ForgeName, oidc: OidcSettings | undefined, stage: AudienceStage): string[] {
   if (!oidc || !fetchesFirst(forge, oidc)) return [];
@@ -813,7 +815,7 @@ export function stageTokens(forge: ForgeName, oidc: OidcSettings | undefined, st
     `if [ -z "\${${OIDC_RESTART}:-}" ]; then`,
     forgeApi(forge),
     tokenCheck(forge),
-    // The AWS token is the Terragrunt auth provider's too, so it is fetched whenever the map is set.
+    // The AWS token is the Terragrunt auth provider's too, so it is fetched whenever the step fetches first.
     ...fetch("TERRAGUCCI_OIDC", stageAudience(oidc, stage)),
     ...(oidc.gcp ? fetch(GITLAB_GCP_TOKEN, gcpAudience(oidc.gcp.workload_identity_provider)) : []),
     ...(oidc.azure ? fetch(GITLAB_AZURE_TOKEN, oidc.azure.audience ?? AZURE_AUDIENCE) : []),
@@ -1838,6 +1840,8 @@ export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: Pip
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...terragruntCredentials(forge, "plan", oidc, credentials),
     `terragucci oidc-trade --out ${TRADED_FILE}${reportsRole ? ` --reports-role ${sh(reportsRole)}` : ""} || { ${refuse("the re-plan could not trade the job's OIDC token for the plan identities")}; }`,
+    // A token fetched first (stageTokens) that no cloud script moved, such as the AWS one beside GCP alone, goes too.
+    ...(forge === "forgejo" ? ['for f in "${TERRAGUCCI_OIDC_FILE:-}" "${TERRAGUCCI_OIDC_GCP_FILE:-}" "${TERRAGUCCI_OIDC_AZURE_FILE:-}"; do [ -z "$f" ] || rm -f "$f"; done'] : []),
   ].join("\n");
 }
 

@@ -48,7 +48,8 @@ describe("the re-plan's rendered steps", () => {
     expect(s.indexOf(t)).toBeLessThan(s.indexOf(planStep(s)));
     expect(t.if).toBe("steps.decide.outputs.go == '1'");
     // The trade step runs terragucci alone: the token request, the trade, and none of the change's code.
-    expect(t.run).toContain("tg oidc \"$AWS_WEB_IDENTITY_TOKEN_FILE\" 'sts.amazonaws.com'");
+    // Forgejo fetches the token first and starts again without the request variables (stageTokens).
+    expect(t.run).toContain(forge === "forgejo" ? "tg oidc \"$TERRAGUCCI_OIDC_FILE\" 'sts.amazonaws.com'" : "tg oidc \"$AWS_WEB_IDENTITY_TOKEN_FILE\" 'sts.amazonaws.com'");
     expect(t.run).toContain(`export AWS_ROLE_ARN='${PLAN}'`);
     expect(t.run).toContain(`terragucci oidc-trade --out ${TRADED_FILE}`);
     expect(t.run).not.toContain(APPLY);
