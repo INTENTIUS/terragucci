@@ -376,3 +376,170 @@ describe("demo_write's next.from", () => {
     expect(n.map((x) => x?.from)).toEqual(["2026-10-14T17:46:40Z", "2026-10-14T17:46:50Z"]);
   });
 });
+
+// #1131: the terralith scenario, five beats in one cycle. Each write names its
+// beat and carries that beat's card from example-demo-terralith/scenarios.
+describe("the terralith scenario", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const tree = join(root, "example-demo-terralith");
+  const card = (beat: string) => JSON.parse(readFileSync(join(tree, "scenarios", `terralith-${beat}`, "about.json"), "utf8")).changes as string;
+
+  /** Run the scenario with the forge and Docker stubbed, each run ending as `outcomes` says, and read back every write. */
+  function cycle(outcomes: string[]) {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-terralith-"));
+    made.push(tmp);
+    writeFileSync(join(tmp, "outcomes"), outcomes.join("\n") + "\n");
+    writeFileSync(join(tmp, "n"), "0");
+    const stubs = [
+      'log() { echo "$*" >&2; }',
+      'fail() { echo "FAIL: $*" >&2; exit 1; }',
+      "now() { date +%s; }",
+      demo.split("\n").find((l) => l.startsWith("iso()"))!,
+      `HERE=${join(root, "stack")} TREE=${tree} WORK=${tmp}/work RSTATE=${tmp}/rstate DEMO_STATE=${tmp}/state`,
+      `mkdir -p ${tmp}/work ${tmp}/rstate ${tmp}/state`,
+      'USER=admin TOKEN=t REVIEWER=demo-reviewer REVIEWER_TOKEN=r REVIEWER_KEY=/nowhere URL=http://forge:3000',
+      'CYCLE=12 SCENARIO=terralith TITLE=t STARTED="" PULL="" COMMIT="" ABOUT=null HOLD=0 TOOL=terralith REPO=admin/demo-terralith',
+      'INTRO="" DELIVERY="" INDEX=1 COUNT=1 INIT_PULL=1 HELD="" OUTCOME="" RUN_STATUS="" RUN_URL=u RESUMES_MAX=3 POLL=0 TERRAGUCCI=true',
+      'NEXT_KEY="" NEXT_FROM="" BEAT="" MIGRATIONS_APPROVED="" PULL_FILES="" PULL_BRANCH="" PULL_TITLE=""',
+      'view_follow() { :; }',
+      `demo_put() { jq -c '{step, beat, repo, about: (.about.changes // null), next: (.next.action // null), from: (.next.from != null)}' "$DEMO_STATE/demo.json" >> ${tmp}/writes; }`,
+      'clone_main() { mkdir -p "$1"; }',
+      "overlay() { :; }",
+      "tl_fill() { :; }",
+      "tl_destroy_bg() { :; }",
+      "tl_stock_apply() { :; }",
+      "tl_teams_push() { :; }",
+      "tl_sync_team() { :; }",
+      "lifecycle_back() { :; }",
+      "push_tree() { echo base; }",
+      "last_run_id() { echo 0; }",
+      "push_as_author() { echo head; }",
+      "pr_open() { echo 40; }",
+      "run_started() { :; }",
+      "runs_mark() { :; }",
+      "run_ended() { RUN_STATUS=success; }",
+      "on_waiting() { default_waiting; }",
+      "on_failed() { exit 1; }",
+      "on_refused() { exit 1; }",
+      // Each run ends as the next line of outcomes says: OUTCOME, then MIGRATION, MIGRATE_DIGEST and WAVE.
+      `run_outcome() { local i; i=$(( $(cat ${tmp}/n) + 1 )); echo "$i" > ${tmp}/n; set -- $(sed -n "\${i}p" ${tmp}/outcomes); OUTCOME="$1" MIGRATION="\${2:-}" MIGRATE_DIGEST="\${3:-}" WAVE="\${4:-}"; }`,
+      "approve_migration() { :; }",
+      "approve_wave() { :; }",
+      "resume_pull() { :; }",
+      "quiet() { :; }",
+      "as_author() { :; }",
+      "cycle_publish() { :; }",
+      `api() { case "$*" in *comments*) echo '[{"body":"terragucci tf-plan"}]' ;; *) echo '{"merge_commit_sha":"merge"}' ;; esac; }`,
+    ].join("\n");
+    const fns = [
+      "demo_where", "scenario_name", "say", "waiting_label", "demo_write", "demo_hold", "open_pull", "merge_pull", "follow", "default_waiting",
+      "tool_repo", "tl_team_repo", "tl_repo", "tl_beat", "tl_stock_beat", "tl_pull_beat", "tl_migrate_waiting", "scenario_terralith", "reset_written",
+    ].map(fn).join("\n");
+    const body = `${stubs}\n${fns}\nTL_TEAMS=(team-a team-b team-c) TL_TEAM=team-b\nscenario_terralith\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return readFileSync(join(tmp, "writes"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { step: string; beat: string | null; repo: string; about: string | null; next: string | null; from: boolean });
+  }
+
+  const migrate = ["migrate adopt sha256:a 1", "applied", "migrate split sha256:s 1", "applied", "applied"];
+
+  it("writes each beat's steps, in order, each with its beat and card", () => {
+    const writes = cycle([...migrate, "waiting - - 2", "applied"]);
+    const gated = ["pull-request", "planned", "merged", "applying", "waiting", "approved", "resumed", "applied"];
+    expect(writes.map((w) => `${w.beat} ${w.step}`)).toEqual([
+      "stock applying",
+      "stock applied",
+      ...gated.map((s) => `adopt ${s}`),
+      ...gated.map((s) => `split ${s}`),
+      ...["pull-request", "planned", "merged", "applying", "applied"].map((s) => `team ${s}`),
+      // The last beat's applied is the cycle's, written with reset as its next action.
+      ...gated.map((s) => `cross ${s}`),
+      "null reset",
+    ]);
+    for (const w of writes.filter((x) => x.beat)) expect(w.about, `${w.beat} ${w.step}`).toBe(card(w.beat!));
+    // The reset is the cycle's, not a beat's: no beat and no card.
+    expect(writes.at(-1)).toMatchObject({ beat: null, about: null, next: "start the next cycle" });
+  });
+
+  it("runs the team beat in team B's own repository, and the others in demo-terralith", () => {
+    const writes = cycle([...migrate, "applied"]);
+    for (const w of writes) expect(w.repo, `${w.beat} ${w.step}`).toBe(w.beat === "team" ? "admin/demo-terralith-team-b" : "admin/demo-terralith");
+  });
+
+  it("names the next action at every beat's step, and when the wait for it started", () => {
+    const writes = cycle([...migrate, "applied"]);
+    for (const w of writes) {
+      expect(w.next, `${w.beat} ${w.step}`).not.toBeNull();
+      expect(w.from, `${w.beat} ${w.step}`).toBe(true);
+    }
+    const at = (beat: string, step: string) => writes.find((w) => w.beat === beat && w.step === step)!.next;
+    expect(at("stock", "applied")).toBe("open the adopt pull request");
+    expect(at("adopt", "waiting")).toBe("approve migration adopt");
+    expect(at("adopt", "applied")).toBe("open the split pull request");
+    expect(at("split", "waiting")).toBe("approve migration split");
+    expect(at("split", "applied")).toBe("push each team's root to its own repository");
+    expect(at("team", "applied")).toBe("copy team B's root back to demo-terralith");
+  });
+
+  it("stalls a beat whose waves end in anything but applied", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-terralith-stall-"));
+    made.push(tmp);
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\nfail() { echo "FAIL: $*" >&2; exit 1; }\nOUTCOME=refused RUN_URL=u BEAT=adopt\n${fn("tl_pull_beat").replace(/^tl_pull_beat\(\) \{[^\n]*\n[\s\S]*?follow\n/, "tl_pull_beat() {\n")}\ntl_pull_beat next`], { cwd: root, encoding: "utf8" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("FAIL: the adopt beat ended refused (u)");
+  });
+});
+
+// #1131: a migration in wave 1 that waits for its digest, read from the run's log.
+describe("run_outcome on a waiting migration", () => {
+  const outcome = (logs: string, approved = "") => {
+    const body = [
+      `run_logs() { printf '%s\\n' ${JSON.stringify(logs)}; }`,
+      "api() { echo '[]'; }",
+      `REPO=admin/demo-terralith RUN_ID=9 RUN_STATUS=failure URL=http://forge MIGRATIONS_APPROVED=${JSON.stringify(approved)}`,
+      fn("run_outcome"),
+      'run_outcome; echo "$OUTCOME ${MIGRATION:-} ${MIGRATE_DIGEST:-} ${WAVE:-}"',
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("names the migration and the digest it waits for", () => {
+    expect(outcome("2026-10-16T10:00:00Z migration adopt waits for an approval of digest sha256:4e1f. Read the proof above, then approve it with:")).toBe("migrate adopt sha256:4e1f 1");
+  });
+
+  it("reads past a migration this cycle approved at that digest, to the wave that waits after it", () => {
+    const logs = "migration split waits for an approval of digest sha256:77. Read the proof above\nterragucci approve wave-2 --plan x";
+    expect(outcome(logs, " split@sha256:77")).toBe("waiting   2");
+  });
+});
+
+// #1131: each cycle's names, estates and state key carry its own prefix.
+describe("tl_fill", () => {
+  it("writes the cycle's prefix over the generator's, once", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-terralith-fill-"));
+    try {
+      const copy = spawnSync("bash", ["-c", `cp -R example-demo-terralith/terralith example-demo-terralith/scenarios ${tmp}/`], { cwd: root, encoding: "utf8" });
+      expect(copy.status, copy.stderr).toBe(0);
+      const body = `CYCLE=7\n${fn("tl_fill")}\ntl_fill ${tmp}\ntl_fill ${tmp}`;
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      const read = (...p: string[]) => readFileSync(join(tmp, ...p), "utf8");
+      expect(read("terralith", "iam.tf")).toContain('name = "tl7-team-0000-role"');
+      expect(read("terralith", "iam.tf")).not.toMatch(/"tl-/);
+      expect(read("terralith", "dns.tf")).toContain('name = "tl7.terralith.test"');
+      expect(read("terralith", "main.tf")).toContain('name_prefix = "tl7"');
+      expect(read("terralith", "state.tf")).toContain('key            = "tl7-terralith.tfstate"');
+      expect(read("terralith", "state.tf")).toContain('bucket         = "demo-terralith-state"');
+      expect(read("scenarios", "terralith-split", "pull", "team-a", "state.tf")).toContain('estate = "tl7-team-a"');
+      expect(read("scenarios", "terralith-adopt", "pull", "migrations", "adopt.yml")).toContain("key: tl7-terralith.tfstate");
+      expect(read("scenarios", "terralith-cross", "pull", "team-b", "logs.tf")).toContain('estate = "tl7-terralith"');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
