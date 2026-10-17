@@ -174,6 +174,14 @@ describe("apply groups: the pipeline", () => {
     expect(jobs["apply-wave-1-prod"].needs).toEqual(["apply-wave-1"]);
   });
 
+  it.each(["github", "gitlab"] as const)("%s: only an environment's apply jobs run in a forge environment; plan jobs carry none", (forge) => {
+    const jobs = jobsOf(renderPipeline(input(forge)).content);
+    expect(jobs.plan).toBeDefined();
+    expect(jobs.plan.environment).toBeUndefined();
+    const named = Object.entries(jobs).filter(([, j]) => (j as any).environment !== undefined).map(([n]) => n).sort();
+    expect(named).toEqual(["apply-wave-1-dev", "apply-wave-1-prod", "apply-wave-2-dev", "apply-wave-2-prod"]);
+  });
+
   it("forgejo: no environment on any job", () => {
     const jobs = jobsOf(renderPipeline(input("forgejo", { ...ENVS, environments: { prod: ENVS.environments!.prod, dev: { roots: ["envs/dev/**"], oidc: DEV } } })).content);
     expect(jobs["apply-wave-1-prod"]).toBeDefined();

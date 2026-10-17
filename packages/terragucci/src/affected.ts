@@ -24,12 +24,13 @@ import type { ResolvedSettings, RolePair } from "./config";
 import { globMatch } from "./detect";
 import { withEnvironmentRoles } from "./environments";
 import { rootSettings, versionPin } from "./generate";
+import { secretsOf } from "./root-secrets";
 
 /** The variables whose `-var-file` arguments a root's plan reads. */
 export const VAR_FILE_ENV = ["TF_CLI_ARGS", "TF_CLI_ARGS_plan"] as const;
 
 /** The terragucci.yml keys whose change selects the roots it changes. */
-export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc"] as const;
+export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "secrets"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
 /** Directories under a root that hold no file of the root's own. */
@@ -153,7 +154,9 @@ export function planSettings(s: Partial<ResolvedSettings>, root: string): Record
       ...(azure ? { azure: (({ roles: _z, plan_client_id, apply_client_id, ...z }) => ({ ...z, pair: pairOf(azure.roles, plan_client_id, apply_client_id, root) }))(azure) } : {}),
     };
   }
-  return { version: versionPin(s.version, root)?.version, generate, pass: s.pass, env: s.env && Object.keys(s.env).length ? s.env : undefined, oidc };
+  // The values a root takes from `secrets`, by name and path (./root-secrets.ts): a change to them reaches that root alone.
+  const secrets = secretsOf(root, s.secrets);
+  return { version: versionPin(s.version, root)?.version, generate, pass: s.pass, env: s.env && Object.keys(s.env).length ? s.env : undefined, oidc, secrets: secrets.length ? secrets : undefined };
 }
 
 /** JSON with its keys sorted, so two equal values read the same. */

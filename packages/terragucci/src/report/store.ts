@@ -31,6 +31,7 @@ import { addToStateVersions, stateRecords } from "./state-versions";
 import { addToStateEdges, hasEdgeFacts } from "./state-edges";
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import { failedRoots, type Report } from "./schema";
+import { scrubText } from "../secret-values";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
 
@@ -52,7 +53,8 @@ export function writeReportDir(dir: string, report: Report, plans: Map<string, {
   for (const [rel, content] of Object.entries(files)) {
     const path = join(dir, rel);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, content);
+    // No value `secrets:` fetched reaches a file of the report, the note among them (../secret-values.ts).
+    writeFileSync(path, scrubText(content));
   }
   return Object.keys(files).sort();
 }

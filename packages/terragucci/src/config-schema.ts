@@ -50,6 +50,9 @@ import {
   PASS_KEYS,
   PASS_RESERVED,
   PASS_RESERVED_PREFIXES,
+  SECRET_IDENTITY_PREFIXES,
+  SECRET_SOURCE_KEYS,
+  SECRET_STORES,
   POLICY_ENGINES,
   POLICY_INPUTS,
   POLICY_OUTCOMES,
@@ -126,6 +129,18 @@ const passName: JsonSchema = {
   type: "string",
   pattern: `^(?!(?:${PASS_RESERVED_PREFIXES.map(anyCase).join("|")}))(?!(?:${PASS_RESERVED.join("|")})$)[A-Za-z_][A-Za-z0-9_]*$`,
 };
+
+/** A `secrets` name: as `pass` takes one, and none of the identity's variables. */
+const secretName: JsonSchema = {
+  type: "string",
+  pattern: `^(?!(?:${[...PASS_RESERVED_PREFIXES, ...SECRET_IDENTITY_PREFIXES].map(anyCase).join("|")}))(?!(?:${PASS_RESERVED.join("|")})$)[A-Za-z_][A-Za-z0-9_]*$`,
+};
+
+const secretSource: JsonSchema = map(SECRET_SOURCE_KEYS, {
+  roots: { type: "array", minItems: 1, items: nonBlank },
+  from: enumOf(SECRET_STORES),
+  values: { type: "object", minProperties: 1, propertyNames: secretName, additionalProperties: { type: "string", pattern: "^[^\\s]+$" } },
+}, { required: [...SECRET_SOURCE_KEYS] });
 
 const rolePair: JsonSchema = map(["plan", "apply"], { plan: { type: "string", minLength: 1 }, apply: { type: "string", minLength: 1 } }, { required: ["plan", "apply"] });
 
@@ -488,6 +503,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       description: "Jobs of your own, in the forge's syntax, or the path of a YAML file holding them.",
     },
     ephemeral: { ...ephemeral, description: "Roots each pull request gets a copy of." },
+    secrets: { type: "array", minItems: 1, items: secretSource, description: "Values a root's binary gets from a cloud's secret store, fetched at job time with the root's own identity." },
     environments: {
       type: "object",
       minProperties: 1,

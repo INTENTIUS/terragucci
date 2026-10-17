@@ -12,6 +12,7 @@
  */
 import { isObject, redactPlan } from "./redact";
 import { REDACTED } from "./schema";
+import { secretValues } from "../secret-values";
 
 /** What the binary prints in place of a sensitive value, and what the scrub writes. */
 export const SENSITIVE_TEXT = "(sensitive value)";
@@ -148,7 +149,8 @@ export function scrubPlanText(text: string, plan: unknown): { text: string; valu
   let values = 0;
   let out = text;
   // Longest first, so a secret that contains another is masked whole.
-  for (const v of sensitiveValues(plan).sort((a, b) => b.length - a.length)) {
+  // The values `secrets:` fetched are masked as the plan's sensitive values are (../secret-values.ts).
+  for (const v of [...new Set([...sensitiveValues(plan), ...secretValues()])].sort((a, b) => b.length - a.length)) {
     const forms = new Set<string>([JSON.stringify(v)]);
     for (const line of v.split("\n")) if (line.trim().length >= 8) forms.add(line.trim());
     for (const f of forms) {

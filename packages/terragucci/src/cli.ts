@@ -78,6 +78,7 @@ import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } fro
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
+import { secretRootProblems } from "./root-secrets";
 import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
 import { environmentTips } from "./environment-tips";
@@ -1057,6 +1058,11 @@ export async function main(argv: string[]): Promise<number> {
                 : shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path)
                   : findRoots(repoDir, config.roots);
             problems.push(...environmentRootProblems(found, config));
+          }
+          // A root two secrets entries give the same variable, read from the roots found (a Terragrunt repo refuses secrets).
+          if (shape && problems.length === 0 && config.secrets && shape.kind !== "terragrunt") {
+            const found = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
+            problems.push(...secretRootProblems(found, config.secrets));
           }
           // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients, and each environment's.
           const oidc = withEnvironmentRoles(config.oidc, config.environments);

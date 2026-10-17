@@ -143,13 +143,14 @@ import { backendBootstrap } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
+import { rootSecretEnv } from "./root-secrets";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, runMigrations, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
-import type { StepSettings } from "./config";
+import type { SecretSource, StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
 import { readRecords, recordStoreOf } from "./cdf-records";
@@ -678,26 +679,35 @@ interface RootSources {
   check?: SourceChecker;
 }
 
-async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string): Promise<PlannedRoot> {
+async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string, secrets?: readonly SecretSource[]): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
-    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws, sources, coneBase);
+    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws, sources, coneBase, secrets);
   } finally {
     observer.endRoot(timing);
   }
 }
 
-async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string): Promise<PlannedRoot> {
+async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string, secrets?: readonly SecretSource[]): Promise<PlannedRoot> {
   const dir = join(repo, root);
   // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
   // An Atmos instance names its workspace (./atmos.ts): it plans and applies there, not in default.
   const expected = binaries.expected(root);
-  const env = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir), dir, expected.name);
+  const roleEnv = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir), dir, expected.name);
   const planFile = join(work, `${i}.tfplan`);
-  const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
+  const failed = { root, timing, planFile, env: roleEnv, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
   // sources: a root using a source outside the list at base is not initialised (./sources.ts).
   const refused = sources?.refused;
   if (refused?.length) return { ...failed, error: `refused by sources, so it was not initialised\n${refused.join("\n")}` };
+  // The binary's own: the values `secrets` gives the root, read as its identity (./root-secrets.ts); it plans and applies with them, and its steps never get them.
+  let env: NodeJS.ProcessEnv;
+  try {
+    env = await rootSecretEnv(roleEnv, root, secrets);
+  } catch (e) {
+    return { ...failed, error: `a value of secrets could not be read, so it was not planned\n${(e as Error).message}` };
+  }
+  // The root applies with what it planned with.
+  failed.env = env;
   let resolved: RootBinary;
   try {
     resolved = await binaries.resolve(root);
@@ -1791,7 +1801,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     return EXIT.failed;
   }
   await eachLimited(own, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined, options.base);
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws, sourcesOf ? { refused: outside.get(r), check: sourcesOf } : undefined, options.base, settings.secrets);
   });
   // The composed run plans once, its roots' states locked and pulled; the report, the policy and the cost read each root's part.
   const composed = target ? await planComposedWave(repo, options, { label, target, work, binaries, cache, ws, sourcesOf, outside }, w) : undefined;
