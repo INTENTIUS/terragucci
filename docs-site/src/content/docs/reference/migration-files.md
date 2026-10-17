@@ -7,6 +7,10 @@ A migration file is `migrations/<name>.yml` at the top of the repo, and holds on
 
 A repo whose pipeline applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity) cannot run migrations: wave 1's deciding job runs them, and it holds the plan roles alone, which cannot write a state. A pull request's plan fails on a migration that has not applied, naming the file.
 
+| A migration is released by | Never by |
+|---|---|
+| `terragucci approve <name>` from a checkout, of its digest, sealed with `--sign` under `approval: sealed` | a pull request review under any `approval` mode, a click in chat, or a `/terragucci` comment |
+
 ## Moves
 
 ```yaml

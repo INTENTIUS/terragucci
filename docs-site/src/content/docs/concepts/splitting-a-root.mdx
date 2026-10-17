@@ -1,0 +1,52 @@
+---
+title: Splitting a root
+description: The signs that a root has grown too big, where to draw the line, what a split costs, and the two ways to split one today, with a migration file for stock state and a tag rewrite under choudoufu.
+claims: [migrate/split, migrate/resume, migrate/terragrunt-split, approval/sealed-migrate, choudoufu/migrate, choudoufu/shared-bucket, estate/inventory, note/blast, telemetry/traces]
+prompt: |
+  Read https://intentius.io/terragucci/concepts/splitting-a-root/.
+  Find the largest roots in this repo by resource count, from the estate's inventory (the `inventory` table of `terragucci query`, or `terragucci mcp`), and for each suggest where it could split by the boundaries on the page, naming the resources on each side and the reads the split would add.
+  Do not change anything and do not write a migration file.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Splitting is an ordinary reviewed change: a pull request with a plan, a digest and an approval. With [choudoufu](/terragucci/concepts/glossary/#choudoufu) it moves no state at all.
+
+## Signs a root is too big
+
+| Sign | Where it shows |
+|---|---|
+| its plan takes long | the Runs dashboard's slowest roots and each run's trace, with a span per root (`telemetry/traces`), and the plan's bar on the [run view](/terragucci/guides/read-the-run-view/)'s timeline |
+| it holds many resources | the estate page's Resources section, and the `inventory` table of [`terragucci query`](/terragucci/guides/query-with-sql/) (`estate/inventory`) |
+| small changes reach far | the plan note's blast radius by resource, which lists every resource a change reaches (`note/blast`) |
+| many teams change it | the root's own commit history: every change waits on one plan and one approval |
+
+## Boundaries
+
+| Boundary | Split when |
+|---|---|
+| environment | dev and prod share a root, so one approval covers both |
+| lifecycle | long-lived resources, such as a network or a database, sit beside ones that change daily |
+| team | two teams change the same root and wait on each other's reviews |
+| rate of change | a few resources change on most pull requests and the rest almost never |
+
+## Costs of a split
+
+| Cost | Because |
+|---|---|
+| a read between roots | a value one side used directly becomes a `terraform_remote_state` read (or `terraform_estate_outputs` under choudoufu) of the other |
+| a later wave | the reading root now applies after the one it reads ([Waves](/terragucci/concepts/waves-and-approvals/#waves)) |
+| a plan after the upstream applies | a change that moves an output the reader reads holds the reader's wave for its own approval ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)) |
+
+## Two ways to split
+
+| Root | How | Proved by | Released by |
+|---|---|---|---|
+| a stock root, on OpenTofu or Terraform (`migrate/split`, `migrate/terragrunt-split`) | a [migration file](/terragucci/reference/migration-files/) in the pull request that moves the resources' state, applied as a gated wave 1 before any root plans | every root it touches plans with no change against its new state | `terragucci approve <name>` from a checkout; a pull request review never counts (`approval/sealed-migrate`) |
+| a choudoufu estate (`choudoufu/migrate`) | a `moves` file: choudoufu rewrites each resource's estate tags with `live-mv`, with no state file to cut | `live-mv -dry-run`, which must find each resource in the estate it leaves | the same approval of the migration's digest |
+
+A stock root becomes an estate first, by a `backends` file that adopts its state with `live-import`, and is split with `moves` after. Two estates can share one record store bucket, each under its own prefix (`choudoufu/shared-bucket`). With `apply.resume`, the resume job applies a migration once it is approved (`migrate/resume`). A repo that applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity) runs no migrations. [Move resources between roots](/terragucci/guides/move-resources-between-roots/) has the steps.
+
+## Next
+
+- [Move resources between roots](/terragucci/guides/move-resources-between-roots/)
+- [Migration files](/terragucci/reference/migration-files/)

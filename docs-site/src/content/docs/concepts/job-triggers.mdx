@@ -1,0 +1,59 @@
+---
+title: Job triggers
+description: Every terragucci job starts on a forge event your CI already receives or on a schedule in that same CI, with nothing to host and no inbound endpoint; this page lists what starts each one, its default, how long to expect, and the faster path where there is one.
+claims: [comment/plan, comment/poll, comment/dispatch, approval/resume, approval/resume-schedule, drift/tofu, ephemeral/ttl, estate/job, notify/chat, notify/webhook, chat/slack, chat/teams]
+prompt: |
+  Read https://intentius.io/terragucci/concepts/job-triggers/.
+  For this repo, read terragucci.yml on the default branch and the generated pipeline, and list each row of the page's table that is on here, with its key's value and the latency to expect; on GitLab, also list the pipeline schedules each row needs and whether the project has them, through the GitLab API or CLI.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Every job runs in your forge's CI. It starts in one of two ways: on an event the forge already delivers to that CI (a push, a pull request, a comment on GitHub and Forgejo, a `workflow_dispatch`), or on a schedule in the same CI. There is nothing to host, no endpoint that takes requests from outside, and no inbound webhook secret, on GitHub, GitLab and Forgejo alike.
+
+## Jobs and what starts them
+
+| Job | Starts on | Default | Expect | Key |
+|---|---|---|---|---|
+| check | each push; a pull request's only from a fork | on | at once | |
+| plan and the plan note | a pull request from the same repo; on GitLab, a merge request pipeline | on | at once | |
+| apply, wave by wave | a push to the default branch, or to a branch [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) names | on | at once | `apply.when` |
+| `/terragucci plan` and `/terragucci apply` comments, GitHub and Forgejo (`comment/plan`) | the comment, as an `issue_comment` event | on | at once | `atlantis_comments` adds the `atlantis` forms |
+| `/terragucci` notes, GitLab (`comment/poll`) | the comments schedule: each run reads the merge requests updated in the last 24 hours and answers each note it has not answered, keeping its place by a marker on its own reply, so it holds no state | off | one interval | `comments: <cron>` |
+| a re-plan by dispatch (`comment/dispatch`) | `workflow_dispatch` with a `pr` input, and optionally `root`, on GitHub and Forgejo | on | at once | |
+| the waiting wave, after `terragucci approve` (`approval/resume`) | the command itself: it re-runs the waiting run on GitHub, retries the waiting job on GitLab, and comments `/terragucci apply` on the merged pull request on Forgejo | on, with a forge token where you approve | at once | `--no-resume` turns it off |
+| the waiting wave, after any other approval: a chat click, a ledger line, a pull request review, a decision point's answer (`approval/resume-schedule`) | the resume job, on a schedule and by `workflow_dispatch` on GitHub and Forgejo, and on a pipeline schedule with `TERRAGUCCI_SCHEDULE=resume` on GitLab | off | one interval | `apply.resume: <minutes>`, 5 to 60 |
+| a rollout's next wave | the rollout job, on a schedule and by `workflow_dispatch` on GitHub and Forgejo, and on a pipeline schedule with `TERRAGUCCI_SCHEDULE=rollouts` on GitLab; it opens the next wave once the last one merged and applied | off | one interval after the last wave applies | `rollouts: <cron>` |
+| drift checks (`drift/tofu`) | the drift schedule, and a `workflow_dispatch` with no `pr` input on GitHub and Forgejo; on GitLab, a pipeline schedule with no `TERRAGUCCI_SCHEDULE` | off | the schedule | `drift: <cron>` |
+| an ephemeral environment | a pull request opened, pushed to, reopened or closed; on GitLab, the merge request pipeline | off | at once | `ephemeral.roots` |
+| the ephemeral sweep (`ephemeral/ttl`) | a schedule on GitHub and Forgejo, and a pipeline schedule with `TERRAGUCCI_SCHEDULE=ephemeral` on GitLab, where it is also what destroys a closed merge request's copy | 30 minutes, with `ephemeral` | one interval | `ephemeral.sweep`, 5 to 60 |
+| the estate page (`estate/job`) | a scheduled job you add to the [control repo](/terragucci/concepts/control-repo/), from [See every project](/terragucci/guides/see-every-project/) | none | your schedule | |
+
+`init` writes each scheduled job when its key is set, and on GitHub and Forgejo removes the workflow it wrote once the key goes. On GitLab the jobs are in the pipeline, and each runs only in a pipeline schedule you create under CI/CD, Schedules, with the variable the table names; `init` prints the steps for each schedule the config turns on.
+
+## The schedules' reasons
+
+| Job | Why |
+|---|---|
+| the resume job | an approval is a commit on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and a push there starts no workflow, since the forges run a push's workflows from the pushed branch. A job that reads the ledger is the one path that works however the approval landed. It is safe to run often: it reads the ledger, starts what has an approval no apply used, and stops before any credential is used when nothing waits. A missed or repeated run can neither strand a wave nor apply one twice, since the wave's gate decides again on the plans it makes |
+| the chat relay | it holds an approve-only token: it refuses to start with one that administers the repo, may push to the default branch or, on GitLab, has the `api` scope. The relay records the approval and starts no job, so the resume job applies what it records ([Relay checks](/terragucci/guides/approve-from-chat/#relay-checks)) |
+| GitLab comments | GitLab starts no pipeline for a merge request note. Reading the notes on a schedule needs no webhook, no public endpoint and no secret beyond the project token the pipeline already has |
+| rollouts, drift and the sweep | each acts on time passing or on several runs' results, not on one event |
+
+## Faster paths
+
+| To | Do |
+|---|---|
+| apply a wave the moment you approve it | run `terragucci approve` with a forge token: `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`, `GITLAB_TOKEN`, or `FORGEJO_TOKEN`. It says what it started; without a token it says so, and the approval still stands for the resume job or a re-run |
+| apply soon after a chat approval | `apply.resume: 5` |
+| run the resume, rollout or drift job now | its `workflow_dispatch` on GitHub and Forgejo, or run its pipeline schedule on GitLab |
+| answer GitLab notes sooner | a shorter `comments` cron |
+
+## Outbound messages
+
+Outbound, an apply job posts a wave that waits, is refused or fails to Slack and Teams (`notify/chat`) and as a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event to `notify.webhook` (`notify/webhook`). The drift job posts drift to Slack and Teams, with a Re-plan button, and `terragucci notify unrecorded`, run in the estate job after `terragucci audit`, posts each state version written outside every wave and migration to Slack and Teams ([State versions written outside a wave](/terragucci/guides/notify-a-chat-channel/#state-versions-written-outside-a-wave)). None of these starts a job by itself: the chat buttons reach your [relay](/terragucci/guides/approve-from-chat/), and the Re-plan button a dispatch.
+
+## Next
+
+- [Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval) for the resume job in full.
+- [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) for the comment forms and the GitLab schedule.
+- [Architecture](/terragucci/concepts/how-it-works/) for the path of one change.

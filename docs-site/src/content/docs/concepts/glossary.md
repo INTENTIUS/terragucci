@@ -21,6 +21,10 @@ The service that hosts your repository and runs its pipelines: GitHub, GitLab or
 
 A repo whose `terragucci.yml` lists your projects under `projects` and their shared settings under `defaults`. `reconcile` opens a pull request in each project that changes, and each project's own pipeline applies. [Control repo](/terragucci/concepts/control-repo/).
 
+### estate
+
+The word means two things on this site. A choudoufu estate is a root with a `live` block: it keeps no state file, and each of its resources carries the estate's name and its address as tags ([Estates](/terragucci/guides/move-resources-between-roots/#estates)). The estate page is one page over every project's latest runs, written by `terragucci estate` ([See every project](/terragucci/guides/see-every-project/)); the other estate views read the same files ([Estate views](/terragucci/guides/estate-views/)).
+
 ### unit
 
 A Terragrunt directory with a `terragrunt.hcl`. `terragrunt find` lists units and each is treated as a root. A directory of units is an implicit stack, shown as a report label.

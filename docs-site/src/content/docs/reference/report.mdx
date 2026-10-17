@@ -3,6 +3,7 @@ title: The plan report
 description: One JSON document per run, rendered as the pull-request note, a self-contained HTML report and an index of every past report.
 prompt: |
   Read https://intentius.io/terragucci/reference/report/.
+  For this branch, list the roots terragucci will plan and why, from the section Roots a change plans.
   Run `npx terragucci stage tf-plan` in this repo, open terragucci-report/report.html and tell me which roots destroy or replace something, and which sensitive values were redacted.
   Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -42,19 +43,6 @@ npx terragucci stage tf-plan
 | with [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#planned-stacks) | the command runs on the base too: roots whose synthesized files or local modules differ, new and removed ones, and the roots that read their state; the note counts the unchanged ones |
 | with `synth`, when the base cannot be synthesized | every root, and the note says why |
 
-### Changes outside every root
-
-A pull request also plans the roots a change outside their directories reaches. The job log names each one and why, such as `affected: envs/prod/app reads envs/prod/shared.tfvars, which changed`.
-
-| The change | Plans | Claim |
-|---|---|---|
-| a var file a `-var-file` in `TF_CLI_ARGS` or `TF_CLI_ARGS_plan` names, set in [`env`](/terragucci/reference/config/#keys) or the job's environment; the path is relative to each root | the roots that read it | `affected/outside-roots` |
-| a file or directory a symlink under a root points at, such as a shared `.terraform.lock.hcl`, provider file or `.auto.tfvars` | the roots that link it | `affected/outside-roots` |
-| `version`, `generate`, `pass`, `env`, `oidc` or `secrets` in `terragucci.yml`, resolved per root, its globs included | the roots whose settings differ from the base's | `affected/outside-roots` |
-| `synth` in `terragucci.yml` | every synthesized root, and the note says the command changed | `affected/outside-roots` |
-| a file the `synth` command reads | the roots whose synthesized files differ from the base's | `affected/cdktn` |
-| `policy`, `approval` or `steps` in `terragucci.yml`, or the policy directory | no root: the run reads these from the base, so the change takes effect once it merges | `affected/outside-roots` |
-
 It writes to `terragucci-report/`.
 
 | File | What it is |
@@ -71,6 +59,83 @@ It writes to `terragucci-report/`.
 | `issue.json` | `tf-drift` only: what the run did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address |
 
 The stage still writes the report when a root refuses to plan, and exits 1. [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags.
+
+## Roots a change plans
+
+A pull request plans only the roots its change reaches, found from the code itself: the files in each root, the local modules it calls, the var files it reads and the state reads between roots. There are no include or exclude patterns to write and keep in step with the code. `/terragucci plan` and a `workflow_dispatch` re-plan (`comment/dispatch`) plan the same selection again on the pull request's head, and a re-plan that names a root the change does not reach plans nothing and says so (`comment/not-affected`). The job log names each root and why it planned.
+
+<Tabs>
+<TabItem label="Plain roots">
+
+| The change | Plans | Claim |
+|---|---|---|
+| any file in a root's directory, a README included | that root | `affected/tofu` |
+| a file in a local module (`source = "./..."` or `"../..."`), followed through modules that call modules | every root that calls it | `affected/tofu` |
+| a root whose state another root reads through `terraform_remote_state`, or a root `waves.after` puts another after | that root, then each reader or later root, followed through | `affected/tofu`, `waves/after` |
+| a var file, a symlink's target, or a setting in `terragucci.yml` | [below](#changes-outside-every-root) | `affected/outside-roots` |
+| any other file outside every root, such as a top-level README | nothing, and the note says so | `affected/tofu` |
+
+A registry or git module is not followed: a new version reaches a root when its pin moves ([rollouts](/terragucci/reference/stages/#rolling-out-a-module-version)). A file a root reads with `file()` counts when it sits in the root's directory or a local module's.
+
+</TabItem>
+<TabItem label="Terragrunt">
+
+| The change | Plans | Claim |
+|---|---|---|
+| a unit's files, the files it includes, or a file its local module reads that Terragrunt does not report, such as a `file()` read | that unit | `affected/terragrunt` |
+| a value in a `terragrunt.stack.hcl` | the unit that value feeds | `affected/terragrunt-stack` |
+| a unit removed | its destroy, planned from the base | `affected/terragrunt` |
+| a unit others name in a `dependency` or `dependencies` block | that unit; its dependents are previewed outside every digest under `terragrunt.dependents: plan`, the default | `affected/terragrunt-dependents` |
+
+`terragrunt.exclude` leaves a unit out of every plan (`affected/terragrunt-dependents`). [Use Terragrunt](/terragucci/guides/use-terragrunt/) has the rest.
+
+</TabItem>
+<TabItem label="Atmos">
+
+| The change | Plans | Claim |
+|---|---|---|
+| a component, a stack manifest or an import | each instance whose written component, var file or backend differs from the base's | `affected/atmos` |
+| an instance others depend on through `dependencies.components`, `settings.depends_on` or `!terraform.state` | that instance and its dependents | `affected/atmos` |
+
+[Use Atmos](/terragucci/guides/use-atmos/) has the rest.
+
+</TabItem>
+<TabItem label="Terramate">
+
+| The change | Plans | Claim |
+|---|---|---|
+| a stack's files, its generated code included | that stack | `affected/terramate` |
+| a stack others are ordered after by `after`, `before`, nesting or an `input` | that stack and the stacks after it | `affected/terramate` |
+
+A change to globals reaches a stack through the code `terramate generate` writes into it. [Use Terramate](/terragucci/guides/use-terramate/) has the rest.
+
+</TabItem>
+<TabItem label="CDK Terrain">
+
+| The change | Plans | Claim |
+|---|---|---|
+| any file the `synth` command reads | the stacks whose synthesized files or local modules differ from the base's, new and removed stacks, and the stacks that read their state; the note counts the unchanged ones | `affected/cdktn` |
+| the `synth` command in `terragucci.yml` | every stack | `affected/outside-roots` |
+
+[Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) has the rest.
+
+</TabItem>
+</Tabs>
+
+A root the pipeline does not list yet, such as one a pull request adds, plans once `terragucci init` runs again and lists it.
+
+### Changes outside every root
+
+A pull request also plans the roots a change outside their directories reaches. The job log names each one and why, such as `affected: envs/prod/app reads envs/prod/shared.tfvars, which changed`.
+
+| The change | Plans | Claim |
+|---|---|---|
+| a var file a `-var-file` in `TF_CLI_ARGS` or `TF_CLI_ARGS_plan` names, set in [`env`](/terragucci/reference/config/#keys) or the job's environment; the path is relative to each root | the roots that read it | `affected/outside-roots` |
+| a file or directory a symlink under a root points at, such as a shared `.terraform.lock.hcl`, provider file or `.auto.tfvars` | the roots that link it | `affected/outside-roots` |
+| `version`, `generate`, `pass`, `env`, `oidc` or `secrets` in `terragucci.yml`, resolved per root, its globs included | the roots whose settings differ from the base's | `affected/outside-roots` |
+| `synth` in `terragucci.yml` | every synthesized root, and the note says the command changed | `affected/outside-roots` |
+| a file the `synth` command reads | the roots whose synthesized files differ from the base's | `affected/cdktn` |
+| `policy`, `approval` or `steps` in `terragucci.yml`, or the policy directory | no root: the run reads these from the base, so the change takes effect once it merges | `affected/outside-roots` |
 
 ## Reviewer view
 

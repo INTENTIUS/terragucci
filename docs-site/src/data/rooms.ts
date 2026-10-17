@@ -374,7 +374,7 @@ export const ROOMS: Room[] = [
 			{ label: 'Write a policy', href: '/guides/write-a-policy/' },
 			{ label: 'Read the audit trail', href: '/guides/read-the-audit-trail/' },
 			{ label: 'Lock roots', href: '/guides/lock-roots/' },
-			{ label: 'Secrets out of notes', href: '/guides/keep-secrets-out-of-notes/' },
+			{ label: 'Handle secrets', href: '/guides/keep-secrets-out-of-notes/' },
 			{ label: 'Scope state access', href: '/guides/scope-state-access/' },
 			{ label: 'Approvals runbook', href: '/guides/approvals-runbook/' },
 		],

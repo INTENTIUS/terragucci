@@ -1,0 +1,71 @@
+---
+title: Read the run view
+description: The one page per applied commit that shows each wave's state, the roots it reads, the blast radius and a timeline, where its link appears, and how to read a waiting or refused wave from it.
+claims: [report/wave, estate/tofu, estate/graph, estate/mcp]
+prompt: |
+  Read https://intentius.io/terragucci/guides/read-the-run-view/.
+  For the newest applied commit of this repo, read its run view's `run.json` from the reports bucket, or with the `run_view` tool of `terragucci mcp`, and tell me each wave's state; for a waiting wave give its digest and the approval command it prints, and for a refused or failed wave the roots and the reason its report gives.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import ApplyProgress from '../../../components/ApplyProgress.astro';
+
+## Result
+
+One page for each applied commit, `<prefix>/<project>/runs/<commit>/run.html`, that each wave's job rewrites as it starts and ends, so it shows where the whole apply stands.
+
+## Links to it
+
+| Where | Link |
+|---|---|
+| the [estate page](/terragucci/guides/see-every-project/) | each project's latest apply, each wave applying now, and each project on the dependency graph (`estate/graph`) |
+| the wave's job log | `wave 2: run view at <key>`, the page's key in the bucket |
+| `terragucci mcp` | the `run_view` tool returns `run.json` for a commit (`estate/mcp`) |
+
+It needs [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/): without one, no job writes it. The plan note links the pull request's report, not the run view.
+
+## Contents
+
+With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply also writes one page for its commit, `<prefix>/<project>/runs/<commit>/run.html`, and its data, `run.json`. It shows the waves left to right with their roots and the roots each reads, and where each wave stands:
+
+| State | The wave |
+|---|---|
+| not started | no job of it has run on this commit yet |
+| waiting | waits for an approval; the page gives its digest and the approval command |
+| applying | is applying, or its [share jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) are |
+| applied | applied, or had nothing to apply |
+| refused | applied nothing: its plans changed after an approval, or the policy denied a root |
+| failed | a root failed to plan or apply |
+
+Each wave's job rewrites its own column when it starts applying and when it ends, and links its report. A wave's `report.json` says the same in `waves[].state`, and a pull request's report marks the waves that plan again in `waves[].replans_after`.
+
+Below the waves the page has two more parts:
+
+| Part | Shows |
+|---|---|
+| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state` or that `waves.after` puts after them (in a Terragrunt repo, every unit whose `dependency` or `dependencies` block names it), followed through, and the dependency graph of the commit's roots with both marked |
+| Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
+
+A wave that waited shows the plan that asked for the approval and the later plan that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something), `totals` and `totals_roots` (its changes by action and how many roots they count, once it planned) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
+
+### Progress
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave's column also follows each resource its plans change while it applies:
+
+<ApplyProgress />
+
+The wave reads its estate's records every 5 seconds (`TG_PROGRESS_SECONDS`), not the apply's output. A resource is done once its record is written or removed, which choudoufu does as each resource's apply returns. It is in flight once the resources it depends on are done, and waiting before that. A resource with no record of its own is done when its root's apply returns. While a wave applies, the page reloads every 15 seconds, the job writes the same list to `terragucci-report/progress.json`, `run.json` carries it in `waves[].progress`, and the [estate page](/terragucci/guides/see-every-project/) shows the counts.
+
+## A waiting or refused wave
+
+| The wave's column says | Do |
+|---|---|
+| waiting | read its report from the column's link, then run the approval command the column gives, for the digest it names ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) |
+| refused | open its report: it names the roots whose plans changed after the approval, or the policy rule that denied a root ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)) |
+| failed | open its report and its job log for the root that failed to plan or apply |
+| not started, after an earlier wave waits | nothing yet: it runs once the waves before it applied |
+
+## Next
+
+- [Estate views](/terragucci/guides/estate-views/) for the other views and what each answers.
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/) for how the waves are cut.

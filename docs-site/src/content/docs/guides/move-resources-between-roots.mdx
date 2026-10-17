@@ -178,3 +178,8 @@ A migration that applied never runs again. Its file can stay in the repo; changi
 | under the lock, a state is not the one planned | 4 | run wave 1 again: it plans from the states as they are |
 | a state is locked | 1 | wait for the run that holds it, then run wave 1 again |
 | after the write, a root plans changes | 1 | the states were written; the record names each version before, which [Find the state version an apply left](/terragucci/guides/find-a-state-version/#go-back-to-a-version) restores |
+
+## Next
+
+- [Splitting a root](/terragucci/concepts/splitting-a-root/) for when to split a root and where.
+- [Migration files](/terragucci/reference/migration-files/) for every key.

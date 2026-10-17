@@ -86,6 +86,8 @@ If ordering and drift pull requests are what you need, Terragrunt and Pipelines 
 
 ## Differences
 
+[Roots a change plans](/terragucci/reference/report/#roots-a-change-plans) lists what a change to each kind of file plans, for units and the other repo shapes.
+
 | What | How |
 |---|---|
 | Which units a change reaches | Terragrunt's own change detection, plus files a module reads with `file()`, modules called from inside modules, and stack templates |
@@ -233,5 +235,6 @@ A role built with a function is listed as not mapped. A filter path that matches
 
 ## Next
 
+- [Setting levels](/terragucci/concepts/setting-levels/): how terragucci's settings combine with the inheritance this tool already has.
 - [The same shop on Terragrunt](/terragucci/tutorial/terragrunt/) runs this on an example.
 - [The generated pipeline](/terragucci/reference/pipeline/#terragrunt) shows how roles follow unit paths.

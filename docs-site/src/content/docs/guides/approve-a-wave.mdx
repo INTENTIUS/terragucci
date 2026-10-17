@@ -29,20 +29,14 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 ## Approval modes
 
-Each mode counts different approvals; `approval` in `terragucci.yml` picks one. Every mode binds the wave's set digest: an approval of other plans is refused as changed.
-
-| Mode | Counts | Setup | What it proves |
-|---|---|---|---|
-| `ledger` (default) | any approval of the digest on `chant/lifecycle`, signed or not | none | someone with push access to `chant/lifecycle` approved these exact plans. Anyone who can push there can write an approval in anyone's name, so it records the plans and does not prove who approved. |
-| `pr-review` | the merged pull request's approval of its head, by a reviewer with write access who had [no hand in the change](#eligible-approvers), when the wave plans what the review saw; and any `terragucci approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer who had no hand in the change approved the head whose plans these are. A `terragucci approve` still proves only the plans. |
-| `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
+`approval` in `terragucci.yml` picks one of three modes, `ledger` (the default), `pr-review` and `sealed`; [Approval modes](/terragucci/standards/access-and-identity/#approval-modes) has what each counts, its setup and what it proves. Every mode binds the wave's set digest: an approval of other plans is refused as changed.
 
 A wave reads the mode at base, like the signers file ([Rule commit](#rule-commit)). `terragucci config check` prints the mode in force and its source.
 
 | `terragucci.yml` | Mode in force |
 |---|---|
 | sets `approval` | that mode |
-| sets none, and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` | `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates |
+| sets none, and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates |
 | sets none, and no gates are listed | `ledger` |
 
 ## Eligible approvers
@@ -350,6 +344,42 @@ Protection keeps history from being rewritten.
 | GitHub | a ruleset or protection rule blocking force pushes and deletion, with pull requests and status checks off. |
 | GitLab | a protected branch with push and merge allowed to a role your approvers and `GITLAB_TOKEN` both hold, force push off. |
 | Forgejo | a protected branch rule with push for everyone with write access and force push off. |
+
+## A gate that asks a decision point
+
+With `apply.point` set, every wave gate asks a chant [decision point](https://intentius.io/chant/guide/ops/#a-gate-that-asks-a-decision-point) in your workspace instead of waiting for an approval. The point's deciders and quorum decide, whoever answers: from a checkout with `chant workspace points answer`, or with Approve in [chat](/terragucci/guides/approve-from-chat/#a-gate-that-asks-a-decision-point).
+
+```yaml
+approval: ledger
+apply:
+  point: prod-apply
+```
+
+The point is declared in the workspace's points file, and must declare `gate.planDigest`, so each wave's plans are their own question:
+
+```json
+{
+  "points": {
+    "prod-apply": {
+      "title": "Apply this wave's plans",
+      "question": { "type": "noul", "instructions": "Should these plans be applied?", "criteria": { "true": "Apply them.", "false": "Do not apply them." } },
+      "inputs": { "gate.component": "the op", "gate.name": "the wave's gate", "gate.planDigest": "the plans the gate binds" },
+      "deciders": [{ "kind": "quorum", "count": 2, "roles": ["maintainer"] }]
+    }
+  }
+}
+```
+
+| Step | What happens |
+|---|---|
+| The wave reaches its gate | it asks the point with `gate.component` `tf-apply`, `gate.name` `wave-<k>` and `gate.planDigest`, keeps the question on `chant/lifecycle`, and waits (exit 3), printing `chant workspace points answer <id> --answer true --by <name>` |
+| Someone clicks Approve | the relay answers the question yes as the clicker's principal, with `--relayed-by` the relay, from the default branch's tip. The relay never counts toward the quorum |
+| The clicker holds the `agent` role in `.chant/trust.json` at base | not counted; with too few people the relay replies `quorum-not-met` and nothing is answered |
+| An agent answers over MCP or ACP | counted for nobody, and refused for a wave gate, whose pending fact is marked never over MCP |
+| The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) runs | it reads the question's answer, and starts the wave again when the answer passes the gate, as it does for an approval |
+| The wave runs again | the answer passes the gate: the wave records a resolution that cites the answer record, then applies. Any other answer applies nothing (exit 4) |
+
+`chant workspace points` and `chant workspace records` list the question and its answer, with who answered and who relayed it. `terragucci approve` does not pass a gate that asks a point. Without `apply.resume`, run the wave's job again after the answer, or comment `/terragucci apply`.
 
 ## Refused wave
 
