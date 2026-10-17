@@ -15,13 +15,7 @@ An approval is a record on your repository's `chant/lifecycle` branch. [`terragu
 
 ## Valid approvals
 
-A pushed line counts and binds the plans under the default `approval: ledger`. Any writer can name any person.
-
-| `approval` | A wave's approval counts when | Read from |
-|---|---|---|
-| `ledger` | a line names the wave's digest | `terragucci.yml` at base |
-| `pr-review` | a line names the digest, or the merged pull request's head was approved by a writer other than its author (on GitLab, after its latest push) and the wave plans what the review saw | `terragucci.yml` at base |
-| `sealed` | a line names the digest and its seal, made by `terragucci approve --sign`, verifies against `.chant/allowed_signers` (or the file `.chant/trust.json` names) | `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) and the signers file at base |
+A pushed line counts and binds the plans under the default `approval: ledger`, where any writer can name any person; `pr-review` also counts a review, and `sealed` only a sealed line ([Approval modes](/terragucci/standards/access-and-identity/#approval-modes)). The mode is read from `terragucci.yml` at base, and under `sealed` the signers file and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) too.
 
 These files come from the applied commit's first parent, so a change cannot judge itself. Only a multi-commit rebase merge breaks that rule; merge or squash those. [`agent-push`](/terragucci/reference/pipeline/#paths-an-agent-cannot-change) refuses edits to these files. Block force pushes and deletion on `chant/lifecycle` ([per forge](/terragucci/guides/approve-a-wave/#push-access-to-chantlifecycle)).
 

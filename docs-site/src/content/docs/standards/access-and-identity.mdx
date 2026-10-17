@@ -4,7 +4,8 @@ description: terragucci has no accounts and no login. SSO is your forge's sign-i
 prompt: |
   Read https://intentius.io/terragucci/standards/access-and-identity/.
   For this repo, list who can take each action in the page's table: read the forge's collaborators and their roles, the branch protection of the default branch and of the approvals branch, the `approval` key in terragucci.yml on the default branch, the principals in the signers file, and the trust policy of each role `oidc` names, through the forge's API or CLI and the cloud's CLI.
-  Report each action with the people or roles who can take it, and flag any action that the `approval` mode leaves unprovable.
+  Also read `approval_rules`, `policy.override` and `environments` there, and the roles in `.chant/trust.json`.
+  Report each action with the people or roles who can take it, then list who can approve, override and apply each root in this repo, and flag any action that the `approval` mode leaves unprovable.
   Change nothing.
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -21,36 +22,72 @@ The signers file and `policy.override` are the only lists of people terragucci r
 
 ## Actions
 
-| Action | Decided by |
-|---|---|
-| Open a pull request and get a plan | write access to the repo. The plan job's role is read-only and its trust names your repo; a fork's pull request gets no plan |
-| Re-plan or apply from a comment | write access to the repo (on GitLab, Developer or above); anyone else gets no plan ([comment checks](/terragucci/reference/pipeline/#apply-from-a-comment)) |
-| Merge | branch protection: required reviews and the required `terragucci/plan` status ([settings per forge](/terragucci/reference/threat-model/#branch-protection)) |
-| Approve a waiting wave, `approval: ledger` | anyone who can push to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a forge branch rule |
-| Approve a waiting wave, `approval: pr-review` | as under `ledger`, or a forge review of the pull request's head by a writer other than its author |
-| Approve a waiting wave, `approval: sealed` | an ssh key in the [signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) on the default branch, which only a reviewed merge changes |
-| Approve from Slack or Teams | the chat platform's sign-in, the user's line in the signers file, and a relay token that can only approve; under `sealed` the relay records nothing ([relay checks](/terragucci/reference/threat-model/#the-chat-relay)) |
-| Override a policy denial | the people `policy.override` lists on the default branch ([overrides](/terragucci/reference/policy/#overriding-a-denial)) |
-| Apply | the apply role, whose trust names the default branch alone; with `oidc.roles`, a role per environment ([scope state access](/terragucci/guides/scope-state-access/)) |
-| Read or write a state | cloud IAM on each role's state keys; `config check` warns when one role reaches two environments |
-| Export a state version | an approval by someone other than the requester, recorded in the audit trail ([export](/terragucci/guides/export-a-state-version/)) |
-| Agents and MCP | write access to start an agent from a comment; no forge token and no cloud role in the agent's step, and its change comes back as a commit that plans like any other. `terragucci mcp` reads with its own environment's credentials and refuses approve ([agents](/terragucci/guides/agent-read-over-mcp/)) |
+Each row names who may take the action, what enforces it, and the key that changes it. A key marked "at base" is read from the applied commit's first parent, so a pull request that edits it is decided by the default branch's value.
 
-## Audit-grade approvals
+| Action | Who may | Enforced by | Set by |
+|---|---|---|---|
+| Open a pull request and get a plan | anyone with write access; a fork's pull request gets no plan | the forge; the plan job's role is read-only and its trust names your repo | `oidc.plan_role` |
+| Re-plan from a comment or a dispatch | write access (on GitLab, Developer or above); anyone else gets no plan ([comment checks](/terragucci/reference/pipeline/#apply-from-a-comment)) | the forge's permissions, read by the comment job | `comments` on GitLab |
+| Lock or unlock a pull request's roots, `/terragucci lock` and `unlock` (`lock/comment`) | write access | the comment job | `apply.when: pull-request` or `locks: plan`; without either, the comment is refused |
+| Merge | branch protection: required reviews and the required `terragucci/plan` status ([settings per forge](/terragucci/reference/threat-model/#branch-protection)) | the forge | the forge's rules |
+| Apply an open pull request, `/terragucci apply` (`pr-apply/requires`) | write access, once each of `apply.requires` holds: by default an approval of the head by a reviewer other than its author, passing checks, mergeable, and up to date with the default branch. Always: `terragucci/plan` passed, the head did not move, the pipeline file is unchanged, and no other pull request holds a lock on a root it reaches. Gated waves still wait | the comment job, then the gate | `apply.when`, `apply.requires` |
+| Approve a waiting wave | an approval the [approval mode](#approval-modes) counts, from someone who had [no hand in the change](/terragucci/guides/approve-a-wave/#eligible-approvers) | the wave's job, against the ledger | `approval`, at base |
+| Approve a wave `approval_rules` covers | as many distinct approvers as `count` asks, holding a `roles` role in `.chant/trust.json`, one of them proven not the author when `not_author` is set; `roles` and `not_author` count only approvals that prove who made them, under `sealed` or `pr-review` ([More than one approver](/terragucci/guides/approve-a-wave/#more-than-one-approver)) | the wave's job | `approval_rules` and `.chant/trust.json`, at base |
+| Approve a wave held by cost (`cost/gate`), a failed step (`steps/gate`) or a policy `hold` rule | as for any waiting wave | the wave's job | `cost.approve_above`, `steps`, `policy.outcomes`, at base |
+| Answer a decision point, with `apply.point` | the point's deciders, to its quorum; a relayed click counts as the clicker, and an agent counts for nobody | chant's points | `apply.point` and the workspace's points file, at base |
+| Approve from Slack or Teams (`chat/slack`, `chat/teams`) | the chat platform's sign-in, the user's line in the signers file, and a relay token that can only approve; under `sealed` the relay records nothing ([relay checks](/terragucci/reference/threat-model/#the-chat-relay)) | the relay, in your cloud | `notify.relay` |
+| Approve a state migration (`approval/sealed-migrate`) | `terragucci approve <name>` from a checkout, signed under `sealed`; a pull request review and a chat click never count | wave 1's job | `approval`, at base |
+| Approve a pull request's ephemeral environment | `terragucci approve ephemeral <n>`, signed under `sealed` | the ephemeral job | `ephemeral` and `approval`, at base |
+| Override a policy denial | the people `policy.override` lists, or an entry for the root and the rules that denied it; a role in an entry counts only under `sealed` ([scoped overriders](/terragucci/reference/policy/#scoped-overriders)) | the wave's job | `policy.override`, at base |
+| Change what the policy holds, releases or denies | whoever merges the change: a pull request's own policy edits take effect once it merges | branch protection | `policy` and the policy directory, at base |
+| Apply | the apply role, whose trust names the default branch alone; with `environments` or `oidc.roles`, a role per environment ([Scoping by environment](#scoping-by-environment)) | the cloud's trust | `oidc` |
+| Read or write a state | cloud IAM on each role's state keys; `config check` warns when one role reaches two environments (`oidc/state-roles`) | the cloud | the roles' policies |
+| Release a state lock a killed job left (`state/unlock`) | anyone whose own cloud identity can reach the lock, once an approval the mode counts names its ID | `unlock-state`, which first checks that no run older than the lock is alive | `approval` |
+| Export a state version (`state/export`) | anyone whose own cloud identity can read the state, once someone other than the requester approved the request ([export](/terragucci/guides/export-a-state-version/)) | `state export` | `approval` |
+| Agents and MCP (`estate/mcp`) | write access to start an agent from a comment; no forge token and no cloud role in the agent's step, and its change comes back as a commit that plans like any other. `terragucci mcp` reads with its own environment's credentials and refuses approve ([agents](/terragucci/guides/agent-read-over-mcp/)) | the forge and the agent's push job | `agent` |
+
+## Approval modes
+
+This is the full table of the three modes; the other pages link here. Every mode binds the wave's set digest, so an approval of other plans is refused as changed, and in every mode an approval counts only from someone who had [no hand in the change](/terragucci/guides/approve-a-wave/#eligible-approvers).
 
 :::caution
 Under `approval: ledger`, the default, an approval line names whoever git says wrote it. Anyone who can push to `chant/lifecycle` can write a line in any name, so `ledger` does not prove who approved.
 :::
 
-Pick the mode that matches what you need to show:
+| Mode | Counts | Setup | Proves |
+|---|---|---|---|
+| `ledger` (default) (`approval/ledger`) | any approval of the digest on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), signed or not | none | that the approved plan is the plan that applied |
+| `pr-review` (`approval/pr-review`) | as under `ledger`, or the merged pull request's approval of its head by a writer who had no hand in the change (on GitLab, a Developer or above, after the merge request's latest push), when the wave plans what the review saw | none; optionally require `terragucci/approval` in branch protection on GitHub and Forgejo (`approval/pr-review-status`), or an approval rule on GitLab | as `ledger`, plus a forge review by someone other than the author, under their forge identity and so under your SSO |
+| `sealed` (`approval/sealed`) | only an approval sealed with `terragucci approve --sign` by a key the [signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) at base lists for its approver (`approval/signer-trust`) | a signers file; `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | as `ledger`, plus an ssh signature by a key the signers file lists for that approver |
 
-| Mode | Proves |
+The mode is read at base (`approval/at-base`), as are the signers file and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). `approval: { mode: ledger, require_signed: true }` refuses every unsigned approval on the ledger. [Approve a waiting wave](/terragucci/guides/approve-a-wave/#approval-modes) says which mode is in force when the key is unset, the [approvals runbook](/terragucci/guides/approvals-runbook/) covers day-to-day use, and the [threat model](/terragucci/reference/threat-model/#approval-modes) what each mode stops.
+
+## Secrets and who holds them
+
+| Secret | Held by | Never held by |
+|---|---|---|
+| the forge token `token_env` names | the rollout job and `respond --mode apply` on GitHub and Forgejo, whose other jobs use the run's own token; on GitLab, every generated job, as `TG_TOKEN` | the steps that run a pull request's code ([forge tokens](/terragucci/reference/environment/#forge-tokens)) |
+| the merge token, `apply.merge_token_env` | the `pr-merge` job; on GitLab also the comments job, in the `terragucci-merge` environment | every job that runs a pull request's code |
+| `agent.token_env` | the agent's push jobs | the agent's own step |
+| the relay token | the relay, in your cloud, which refuses one that administers the repo, may push to the default branch or, on GitLab, has the `api` scope | every generated job |
+| an approver's signing key | the approver's own machine | every job and the relay |
+| `COSIGN_PRIVATE_KEY` | the `publish` job | every other job |
+
+[Handle secrets](/terragucci/guides/keep-secrets-out-of-notes/) follows the secrets your roots read, from the forge's store to the state.
+
+## Scoping by environment
+
+[`environments`](/terragucci/reference/config/#environments), or `oidc.roles` by root glob, give each environment's roots their own plan and apply identities (`oidc/state-roles`, `oidc/cloud-roles`), and each wave applies in [one job per group of identities](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity) (`apply/groups`), which carries only its own group's identities. Whether one environment's apply job can still assume another environment's role depends on whether the cloud's trust can tell their tokens apart:
+
+| Setup | One environment's apply job and another's role |
 |---|---|
-| `ledger` | that the approved plan is the plan that applied |
-| `pr-review` | as `ledger`, plus a forge review by someone other than the author, under their forge identity and so under your SSO |
-| `sealed` | as `ledger`, plus an ssh signature by a key the signers file lists for that approver |
+| `environments` on GitHub, each apply role trusting its environment's subject | kept apart: the job's token names its forge environment, whose deployment branch rule keeps other branches out |
+| `environments` on GitLab | kept apart on AWS by each environment's `oidc.audience`, and on GCP and Azure by the token's environment claims |
+| `environments` on Forgejo | not kept apart: every job of one ref carries the same subject; use a repo or a protected branch per environment |
+| `oidc.roles` without `environments`, on any forge | not kept apart: the groups' jobs run in no forge environment and carry the default branch's subject. A role per environment keeps a root from using another environment's identity by accident; it does not stop code in one group's job from assuming another group's role. `config check` names the groups ([`terragucci-shared-subject`](/terragucci/reference/tips/#terragucci-shared-subject)) |
+| a Terragrunt repo | one job per wave, holding every unit's roles |
 
-[Approve a waiting wave](/terragucci/guides/approve-a-wave/#approval-modes) sets each mode up, and the [approvals runbook](/terragucci/guides/approvals-runbook/) covers day-to-day use.
+The wave's deciding job holds every environment's plan identities and no apply identity. [Separate environments](/terragucci/guides/separate-environments/) has the forge and cloud settings for each row, and `terragucci forge check` reads them back.
 
 ## Next
 
