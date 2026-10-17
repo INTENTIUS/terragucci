@@ -75,7 +75,7 @@
 # keeps the same action and at keeps its from, so a reader can draw how far the
 # wait has gone. An older driver leaves it out, so readers take it as
 # optional. While an estate migration of the cycle writes its resources,
-# next.action names it with its count, "carve: 36 of 79 moved" ("stamped" for
+# next.action names it with its count, "split: 2 of 4 moved" ("stamped" for
 # an adoption), read from the last line of the migration's progress.jsonl in
 # the reports bucket (migration_follow), and goes back to the action before
 # once every resource has its line.
@@ -229,14 +229,14 @@ CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.1}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold but terralith's, which counts down
-# DEMO_HOLD_TERRALITH (8 s): its cycle tells five beats with ten holds, and the
+# DEMO_HOLD_TERRALITH (6 s): its cycle tells five beats with ten holds, and the
 # kiosk's progress bar shows each countdown, so a short one still reads. The
 # loop sets HOLD from scenario_hold before each cycle.
 HOLD_DEFAULT="${DEMO_HOLD:-20}"
 HOLD="$HOLD_DEFAULT"
 scenario_hold() { # scenario -> the seconds the driver holds each of its steps
   case "$1" in
-    terralith) echo "${DEMO_HOLD_TERRALITH:-8}" ;;
+    terralith) echo "${DEMO_HOLD_TERRALITH:-6}" ;;
     *) echo "$HOLD_DEFAULT" ;;
   esac
 }
@@ -579,7 +579,7 @@ scenario_migrations() { # scenario
   done | sort -u
 }
 
-# While a migration of the cycle writes, its count: "carve: 36 of 79 moved".
+# While a migration of the cycle writes, its count: "split: 2 of 4 moved".
 # Wave 1 copies <prefix>/<project>/migrations/<name>/progress.jsonl to the
 # bucket every few seconds while the writes land, each line carrying the counts
 # so far; this reads the last line of each. Empty when no migration has a line
@@ -598,12 +598,16 @@ migration_next() {
   return 0
 }
 
-# Each poll of a wait: put the migration's count in next while it writes, at
-# most every 5 s, and the step's own action back once it is done.
+# Each poll of a wait puts the migration's count in next while it writes, at
+# most every MIGRATION_EVERY seconds. Once the writes are done it puts the
+# step's own action back. Wave 1 copies the progress file every
+# TG_PROGRESS_SECONDS (2 in example-demo-terralith/terragucci.yml), so a carve
+# of a few writes still shows a count between its first and its last.
 MIGRATION_AT=0 MIGRATION_SHOWN=""
+MIGRATION_EVERY="${DEMO_MIGRATION_EVERY:-2}"
 migration_follow() {
   [ -n "${MIGRATIONS:-}" ] && [ -n "${DEMO_STEP:-}" ] || return 0
-  [ $(( $(now) - MIGRATION_AT )) -ge 5 ] || return 0
+  [ $(( $(now) - MIGRATION_AT )) -ge "$MIGRATION_EVERY" ] || return 0
   MIGRATION_AT="$(now)"
   local text
   text="$(migration_next)"
@@ -1046,7 +1050,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
-    terralith)  echo "One terralith adopted, split into team estates, then changed" ;;
+    terralith)  echo "One terralith adopted, team B carved out, then changed" ;;
     *) return 1 ;;
   esac
 }
@@ -1119,25 +1123,25 @@ say() { # step
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
-    terralith-stock:applying) echo "Cycle $CYCLE starts from a stock terralith under prefix $TL_PREFIX. Wave 1 of the push's run applies its 82 resources into one state file." ;;
-    terralith-stock:applied) echo "The terralith is applied: 82 resources in one state file on s3. A change to any team would plan all of them and wait on the one lock." ;;
+    terralith-stock:applying) echo "Cycle $CYCLE starts from a stock terralith under prefix $TL_PREFIX. Wave 1 of the push's run applies its $TL_RESOURCES resources into one state file." ;;
+    terralith-stock:applied) echo "The terralith is applied, with $TL_RESOURCES resources in one state file on s3. A change to any team would plan all of them and wait on the one lock." ;;
     terralith-adopt:pull-request) echo "Pull request $PULL swaps the terralith's backend block for a live block, and adds migrations/adopt.yml, which adopts its state." ;;
     terralith-adopt:planned) echo "The plan is on the pull request. Under the live block the terralith would create each resource again, and the migration proves each one exists." ;;
     terralith-adopt:applying) echo "Wave 1 runs the adopt migration before it plans the terralith." ;;
     terralith-adopt:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. No resource is tagged yet, and the state file is as it was." ;;
     terralith-adopt:applied) echo "Adopted. live-import tagged each resource it verified, and the terralith plans no change. Its state file is still in the bucket." ;;
-    terralith-split:pull-request) echo "Pull request $PULL adds the roots team-a, team-b and team-c with their resources, and migrations/split.yml, which moves them." ;;
-    terralith-split:planned) echo "The plan is on the pull request. The terralith would destroy each team resource and its team would create it; the migration accounts for each." ;;
-    terralith-split:applying) echo "Wave 1 runs the split migration before it plans the four roots." ;;
-    terralith-split:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. Every team resource still carries the terralith's owner tag." ;;
-    terralith-split:applied) echo "Split. live-mv moved each team resource to its team's estate with one tag write, and all four roots plan no change. Nothing was recreated." ;;
-    terralith-team:pull-request) echo "Pull request $PULL, in team B's own repository, adds dynamodb:Query to one of team B's inline policies." ;;
+    terralith-split:pull-request) echo "Pull request $PULL adds the root team-b and migrations/split.yml, which moves team B's $TL_CARVED resources out of the terralith." ;;
+    terralith-split:planned) echo "The plan is on the pull request. The terralith would destroy each of team B's resources and team-b would create it; the migration accounts for each." ;;
+    terralith-split:applying) echo "Wave 1 runs the split migration before it plans the terralith and team-b." ;;
+    terralith-split:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. Team B's resources still carry the terralith's owner tag." ;;
+    terralith-split:applied) echo "Carved. Team B's $TL_CARVED resources are in its own estate and the terralith keeps $TL_KEPT. Both roots plan no change, and nothing was recreated." ;;
+    terralith-team:pull-request) echo "Pull request $PULL, in team B's own repository, adds dynamodb:Query to team B's inline policy." ;;
     terralith-team:planned) echo "The plan is on the pull request: one update in team B's estate, planned as a cone. No other estate is planned." ;;
     terralith-team:applying) echo "Wave 1 applies team B's estate, and nothing else." ;;
     terralith-team:applied) echo "Team B's policy is updated, and the terralith and the other teams were never planned. The driver copies team B's root back to demo-terralith." ;;
-    terralith-cross:pull-request) echo "Pull request $PULL adds the terralith's output log_retention_days, 14, and each team's log group reads it." ;;
-    terralith-cross:planned) echo "The plan is on the pull request. Each team's log group goes from 7 to 14 days, planned on the terralith's planned output." ;;
-    terralith-cross:applying) echo "Wave 1 applies the terralith and records its output. Wave 2 plans the three teams on the recorded value." ;;
+    terralith-cross:pull-request) echo "Pull request $PULL adds the terralith's output log_retention_days, 14. The terralith's log groups and team B's read it." ;;
+    terralith-cross:planned) echo "The plan is on the pull request. Each team's log group goes from 7 to 14 days. Team B's is planned on the terralith's planned output." ;;
+    terralith-cross:applying) echo "Wave 1 applies the terralith and records its output. Wave 2 plans team B on the recorded value." ;;
     terralith-cross:applied) echo "Done. Each team's log group keeps the 14 days the terralith publishes. The next cycle starts from a new stock terralith." ;;
     terralith-adopt:approved|terralith-split:approved) echo "The driver approves migration $MIGRATION's digest with the reviewer's key, as a person outside the change would." ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
@@ -1276,7 +1280,7 @@ waiting_label() {
     b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
     failure:2)    echo "Wave 2 waits for a person to approve the migration's second run. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
-    terralith:*)  echo "Wave $WAVE waits for a person to approve the teams' plans, made on the output the terralith recorded." ;;
+    terralith:*)  echo "Team B's plan reads the output the terralith recorded, and wave $WAVE waits for a person to approve it." ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
 }
@@ -1577,11 +1581,14 @@ scenario_stale_plan() {
   follow
 }
 
-# terralith: one root that holds everything, carved into team estates on
+# terralith: one root that holds everything, with one team carved out of it on
 # choudoufu, the OpenTofu fork for AWS and Kubernetes that keeps ownership as
 # two tags on each resource (tofu-estate and tofu-address). The tree is
-# example-demo-terralith/: choudoufu's terralith-gen at scale 1, plus a log
-# group per team, 82 resources as one stock root on s3 state (generate.sh).
+# example-demo-terralith/terralith/, a thin terralith kept by hand
+# (generate.sh): a shared network and three teams, each with a role, an inline
+# policy and a log group, plus team-b's count-expanded workers, as one stock
+# root on s3 state. The driver counts its resources from the tree
+# (TL_RESOURCES), and team-b's from the split beat's pull request (TL_CARVED).
 # One cycle is five beats, each written to demo.json as beat, with its card
 # from scenarios/terralith-<beat>/about.json as about:
 #
@@ -1596,9 +1603,11 @@ scenario_stale_plan() {
 #   adopt  a pull request swaps the backend block for a live block and adds a
 #          backends migration; on the merge, wave 1's tf-migrate gate waits,
 #          the reviewer approves the digest, and live-import stamps the tags
-#   split  a pull request adds the team roots (team-a, team-b, team-c) and a
-#          moves migration; the gate waits the same way, and live-mv retags
-#          each team resource. The driver then pushes each team's root to a
+#   split  a pull request carves team B out: it adds the root team-b and a
+#          moves migration, split.yml, and leaves teams A and C in the
+#          terralith, as an estate is carved one team at a time. The gate
+#          waits the same way, and live-mv retags each of team B's resources.
+#          The driver then pushes each carved team's root (TL_TEAMS) to a
 #          repository of its own, demo-terralith-<team>, with the root at the
 #          repository's top ([skip ci]), since choudoufu's cone reads no base
 #          for a root in a subdirectory (choudoufu#2062)
@@ -1607,15 +1616,29 @@ scenario_stale_plan() {
 #          copies the root back to demo-terralith's team-b/ ([skip ci]), so
 #          the next pull request there starts from what is live
 #   cross  a pull request in demo-terralith publishes log_retention_days from
-#          the terralith and has each team's log group read it: wave 1 applies
-#          the terralith, wave 2 the teams; a wave that waits is approved
+#          the terralith. Its own log groups read it as a local, and team B's
+#          reads the estate's output. Wave 1 applies the terralith and wave 2
+#          team B; a wave that waits is approved
 #
 # The reset destroys the cycle's resources in the background (tl_destroy_bg),
 # from the stock tree, whose state the adoption leaves in the bucket as it was.
-TL_TEAMS=(team-a team-b team-c)
+# The teams the split carves out, each with a repository of its own. A host
+# that ran an older loop also has demo-terralith-team-a and -team-c; the loop
+# leaves them as they are.
+TL_TEAMS=(team-b)
 TL_TEAM="team-b"
 TL_RECORDS=demo-terralith-records
 TL_PREFIX=""
+TL_RESOURCES="" TL_CARVED="" TL_KEPT=""
+
+# How many resource instances a set of .tf files declares, counting a block
+# with a literal count as that many.
+tl_count() { # files...
+  awk '/^resource "/ { n++; inb = 1; next }
+    inb && /^  count[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]*$/ { split($0, a, "="); n += a[2] - 1 }
+    /^}/ { inb = 0 }
+    END { print n + 0 }' "$@"
+}
 
 tl_team_repo() { # team -> its repository's name under the admin
   echo "demo-terralith-$1"
@@ -1696,9 +1719,9 @@ tl_beat() { # beat
   ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/terralith-$1/about.json" 2>/dev/null || echo null)"
   case "$1" in
     adopt) PULL_TITLE="Adopt the terralith into a choudoufu estate" ;;
-    split) PULL_TITLE="Split the terralith into three team estates" ;;
+    split) PULL_TITLE="Carve team-b out of the terralith" ;;
     team)  PULL_TITLE="team-b: one more action in an inline policy" ;;
-    cross) PULL_TITLE="Publish log_retention_days, and each team reads it" ;;
+    cross) PULL_TITLE="Publish log_retention_days, and team-b reads it" ;;
     *)     PULL_TITLE="" ;;
   esac
 }
@@ -1770,8 +1793,8 @@ approve_migration() {
     || { echo "$out" >&2; fail "chant approve tf-migrate $MIGRATION failed"; }
 }
 
-# After the split: each team's root, as the merge left it, becomes the main of
-# its own repository, at the top, with the pipeline init writes for it.
+# After the split: each carved team's root, as the merge left it, becomes the
+# main of its own repository, at the top, with the pipeline init writes for it.
 tl_teams_push() {
   local main="$WORK/c$CYCLE/teams-main" team dir
   git clone -q "$REMOTE" "$main" 2>/dev/null || fail "could not clone $REPO"
@@ -1786,7 +1809,7 @@ tl_teams_push() {
     tl_repo "$(tl_team_repo "$team")"
     lifecycle_back
     quiet
-    push_tree "$dir" "$REPO" main "$team's estate, split from the terralith in cycle $CYCLE [skip ci]" >/dev/null
+    push_tree "$dir" "$REPO" main "$team's estate, carved from the terralith in cycle $CYCLE [skip ci]" >/dev/null
   done
   tl_repo "$(tool_repo terralith)"
 }
@@ -1807,6 +1830,9 @@ tl_sync_team() {
 scenario_terralith() {
   on_migrate() { tl_migrate_waiting; }
   TL_PREFIX="tl$CYCLE"
+  TL_RESOURCES="$(tl_count "$TREE"/terralith/*.tf)"
+  TL_CARVED="$(for t in "${TL_TEAMS[@]}"; do cat "$TREE/scenarios/terralith-split/pull/$t/"*.tf; done | tl_count)"
+  TL_KEPT=$((TL_RESOURCES - TL_CARVED))
   local r t
   for r in $(for t in "${TL_TEAMS[@]}"; do tl_team_repo "$t"; done); do tl_repo "$r"; lifecycle_back; done
   tl_repo "$(tool_repo terralith)"
@@ -1815,7 +1841,7 @@ scenario_terralith() {
   tl_beat adopt
   tl_pull_beat "open the split pull request"
   tl_beat split
-  tl_pull_beat "push each team's root to its own repository"
+  tl_pull_beat "push team B's root to its own repository"
   tl_teams_push
   tl_beat team
   tl_repo "$(tl_team_repo "$TL_TEAM")"
@@ -2217,7 +2243,7 @@ repo_description() {
   case "$TOOL" in
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
-    terralith) echo "The terragucci demo's terralith on choudoufu: adopted, split into team estates, then changed" ;;
+    terralith) echo "The terragucci demo's terralith on choudoufu: adopted, team B carved out, then changed" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }

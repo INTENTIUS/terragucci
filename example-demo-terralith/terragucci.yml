@@ -1,7 +1,7 @@
-# The terralith demo (stack/demo.sh, scenario terralith): terralith-gen's
-# estate as one stock root on s3 state, adopted into a choudoufu estate and
-# split into three team estates by pull requests that carry terragucci
-# migrations. Every root runs on choudoufu, the OpenTofu fork for AWS and
+# The terralith demo (stack/demo.sh, scenario terralith): a thin terralith as
+# one stock root on s3 state, adopted into a choudoufu estate, then with
+# team-b carved out into an estate of its own, by pull requests that carry
+# terragucci migrations. Every root runs on choudoufu, the OpenTofu fork for AWS and
 # Kubernetes that keeps ownership as tags on each resource.
 forge: forgejo
 binary: choudoufu
@@ -16,6 +16,10 @@ reports:
 env:
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   TERRAGUCCI_METRICS_PER_RUN: "true"
+  # The thin terralith's migrations write a few resources each, so their
+  # progress goes to the reports bucket every 2 s rather than 5, and the
+  # driver's count (stack/demo.sh, migration_follow) has lines to show.
+  TG_PROGRESS_SECONDS: "2"
   # choudoufu's record store addresses its bucket virtual-hosted
   # (<bucket>.<host>). demo-records forwards those requests to floci
   # path-style (stack/docker-compose.yml, profile demo).
