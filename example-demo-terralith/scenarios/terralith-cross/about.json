@@ -1,0 +1,5 @@
+{
+  "changes": "The terralith publishes log_retention_days, and each team's log group reads it.",
+  "watch": "Wave 1 applies the terralith. Wave 2 then plans the three teams on the value it recorded, and applies them.",
+  "shows": "A change across estates applies in order, each estate in its own wave."
+}

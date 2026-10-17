@@ -1,0 +1,5 @@
+{
+  "changes": "A pull request moves each team's resources to a root of its own and adds a moves migration.",
+  "watch": "Once a person approves the migration, choudoufu rewrites the owner tag of each team resource with one write each. Then every root plans no change.",
+  "shows": "The terralith splits into four estates, and nothing is recreated."
+}

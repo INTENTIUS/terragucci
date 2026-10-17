@@ -1,0 +1,5 @@
+{
+  "changes": "A pull request swaps the terralith's backend for a live block, and adds a migration that adopts its state.",
+  "watch": "The migration waits for a person to approve its digest. Then choudoufu reads the state once and tags each resource it verifies.",
+  "shows": "Adoption creates and replaces nothing, and the state file stays in the bucket as it was."
+}
