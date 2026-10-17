@@ -8,7 +8,9 @@
  *   PERSISTENT_RUNNER_TIP    an environment's apply runner and the plan jobs'
  *                            runner, or another environment's apply runner,
  *                            are such that a runner taking one's jobs takes
- *                            the other's (one label set holds the other)
+ *                            the other's (one label set holds the other);
+ *                            and without environments, `runner.apply` (or
+ *                            the one runner) and `runner.plan` the same way
  *   ENVIRONMENT_ROLE_TIP     two groups' apply jobs take the project's own
  *                            apply identity, at least one of them an
  *                            environment, so no trust condition separates them
@@ -45,13 +47,15 @@ interface Placed {
 /**
  * Where a runner spec places a job, for comparing two: its group and labels.
  * Undefined for a runner that starts clean for each job or that the config
- * does not name: no spec, or on GitHub labels without `self-hosted` and no
- * group (GitHub's hosted runners).
+ * does not name: no spec, on GitHub labels without `self-hosted` and no
+ * group (GitHub's hosted runners), and on GitLab tags that are all `saas-`
+ * (GitLab.com's hosted runners).
  */
 function placed(spec: RunnerSpec | undefined, forge: ForgeName | undefined): Placed | undefined {
   if (spec === undefined) return undefined;
   const p: Placed = typeof spec === "string" ? { labels: [spec] } : Array.isArray(spec) ? { labels: [...spec] } : { group: spec.group, labels: [...(spec.labels ?? [])] };
   if ((forge === "github" || forge === undefined) && p.group === undefined && !p.labels.includes("self-hosted")) return undefined;
+  if (forge === "gitlab" && p.labels.length > 0 && p.labels.every((l) => l.startsWith("saas-"))) return undefined;
   return p;
 }
 
@@ -63,6 +67,16 @@ function overlaps(a: Placed, b: Placed): boolean {
 }
 
 const described = (p: Placed): string => [...(p.group !== undefined ? [`group ${p.group}`] : []), ...(p.labels.length ? [`labels ${p.labels.join(", ")}`] : [])].join(" and ");
+
+/**
+ * What keeps other jobs off the apply runners, by forge: labels keep
+ * terragucci's own jobs apart, but `runs-on` and `tags` are in the pipeline
+ * file, so a job on any branch can name the apply runners' labels.
+ */
+const otherJobs = (forge: ForgeName | undefined): string =>
+  forge === "gitlab" ? "; labels keep terragucci's own jobs apart, but any branch's job can name the same tags, and only protected runners, which take jobs of protected refs alone, keep those off"
+    : forge === "forgejo" ? "; labels keep terragucci's own jobs apart, but any branch's job can name the same labels, and Forgejo has no per-workflow limit on a runner"
+      : "; labels keep terragucci's own jobs apart, but any branch's job can name the same labels, and only a runner group limited to selected workflows keeps those off";
 
 /** The persistent-runner tips: each environment whose apply runner overlaps the plan jobs' runner or another environment's apply runner. */
 export function sharedRunnerTips(groups: readonly ApplyGroup[] | undefined, runner: ProjectSettings["runner"], forge: ForgeName | undefined): EnvironmentTip[] {
@@ -76,7 +90,7 @@ export function sharedRunnerTips(groups: readonly ApplyGroup[] | undefined, runn
     if (plan && overlaps(e.at, plan)) {
       out.push({
         rule: PERSISTENT_RUNNER_TIP,
-        message: `the apply jobs of environment ${e.name} (${described(e.at)}) and the plan jobs (${described(plan)}) can run on the same runner, so a pull request's code planned there can leave files or processes for ${e.name}'s apply; give ${e.name}'s apply runners a label no plan job uses, and use runners that start clean for each job`,
+        message: `the apply jobs of environment ${e.name} (${described(e.at)}) and the plan jobs (${described(plan)}) can run on the same runner, so a pull request's code planned there can leave files or processes for ${e.name}'s apply; give ${e.name}'s apply runners a label no plan job uses, and use runners that start clean for each job${otherJobs(forge)}`,
       });
     }
     for (const other of apply.slice(i + 1)) {
@@ -88,6 +102,25 @@ export function sharedRunnerTips(groups: readonly ApplyGroup[] | undefined, runn
     }
   }
   return out;
+}
+
+/**
+ * The persistent-runner tip for the project's own apply jobs: `runner.apply`
+ * (or the default, or the one runner) and `runner.plan` such that one runner
+ * takes both stages' jobs. Silent with an environment that names no runner
+ * of its own, whose apply jobs take `runner.apply` and whose tip
+ * (sharedRunnerTips) names the same runner already.
+ */
+export function planApplyRunnerTip(settings: Pick<ProjectSettings, "runner" | "environments">, forge: ForgeName | undefined): EnvironmentTip | undefined {
+  if (Object.values(settings.environments ?? {}).some((e) => e.runner === undefined)) return undefined;
+  const plan = placed(runnerOf(settings.runner, "plan"), forge);
+  const apply = placed(runnerOf(settings.runner, "apply"), forge);
+  if (!plan || !apply || !overlaps(plan, apply)) return undefined;
+  const at = described(plan) === described(apply) ? `both on ${described(plan)}` : `plan on ${described(plan)}, apply on ${described(apply)}`;
+  return {
+    rule: PERSISTENT_RUNNER_TIP,
+    message: `the plan jobs and the apply jobs can run on the same runner (${at}), so a pull request's code planned there can leave files, caches or processes for an apply; give runner.apply labels no plan job uses, and use runners that start clean for each job${otherJobs(forge)}`,
+  };
 }
 
 /** The project's own apply identity of each cloud, as a group's job takes it: `apply_role`, the GCP `apply_service_account`, the Azure `apply_client_id`. */

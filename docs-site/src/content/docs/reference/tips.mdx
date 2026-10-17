@@ -60,13 +60,21 @@ The repo applies each wave in [one job per identity](/terragucci/concepts/waves-
 
 On GitHub and GitLab it also fires for environments that set the same `forge_environment`, whose tokens then name the same environment.
 
-The tips below read `environments` and stay silent without it.
-
 ### terragucci-persistent-runner
 
-A runner that takes an environment's apply jobs could also take the plan jobs, or another environment's apply jobs. That holds when every label of one runner spec is among the other's, in the same GitHub runner group or in none. A runner kept between jobs can then carry a pull request's files or processes into an apply. The tip names both stages and the labels. Give each environment's apply runners a label of their own, and use runners that start clean for each job.
+A runner that takes apply jobs could also take the plan jobs, or another environment's apply jobs. That holds when every label of one runner spec is among the other's, in the same GitHub runner group or in none. A runner kept between jobs can then carry a pull request's files, caches or processes into an apply. The tip names both stages and the labels. Give the apply runners a label of their own, and use runners that start clean for each job.
 
-An environment with no `runner` counts with the top-level `runner.apply`. Runners the config does not name are left out, and so are GitHub's hosted runners (labels without `self-hosted`, and no group).
+| Case | When it fires |
+|---|---|
+| Plan and apply | `runner.apply` (or `default`, or one `runner` for every job) and `runner.plan` place jobs on the same runner. With `environments`, only when every environment names its own `runner`; otherwise the environment cases below cover it |
+| An environment and plan | an environment's apply runner and `runner.plan` overlap. An environment with no `runner` counts with the top-level `runner.apply` |
+| Two environments | two environments' apply runners overlap |
+
+Runners the config does not name are left out, and so are GitHub's hosted runners (labels without `self-hosted`, and no group) and GitLab.com's hosted runners (tags that all start with `saas-`).
+
+Labels keep terragucci's own jobs apart, and nothing more: `runs-on` and `tags` are in the pipeline file, so a job on any branch can ask for the apply runners' labels. The tip says what keeps those jobs off on each forge: on GitHub a runner group limited to selected workflows, and on GitLab protected runners, which take jobs of protected refs alone. Forgejo has no per-workflow limit on a runner. [Separate environments](/terragucci/guides/separate-environments/) has the forge settings.
+
+The tips below read `environments` and stay silent without it.
 
 ### terragucci-environment-role
 
