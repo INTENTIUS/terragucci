@@ -855,6 +855,9 @@ export function movedRoots(roots: string[]): string {
  * design, and `terragucci comment-apply`, run again once it holds the lock,
  * decides whether a later apply superseded it.
  */
+/** Releases the apply lock forgejoLock took when the step ends. */
+const LOCK_RELEASE = "trap 'git push -q --force-with-lease=\"$lock_ref:$mine\" origin \":$lock_ref\" || true' EXIT";
+
 export function forgejoLock(standDown = true): string {
   const id = '${GITHUB_RUN_ID:-$$}';
   return [
@@ -875,7 +878,7 @@ export function forgejoLock(standDown = true): string {
     '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi',
     '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
     "done",
-    "trap 'git push -q --force-with-lease=\"$lock_ref:$mine\" origin \":$lock_ref\" || true' EXIT",
+    LOCK_RELEASE,
     ...(standDown ? [STAND_DOWN] : []),
   ].join("\n");
 }
@@ -1430,22 +1433,23 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   const decideWith = (again: string) => `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""}${requires}${tgLocks}${again} --out terragucci-comment.json || exit 1`;
   const decide = decideWith("");
   const decisionJs = prMode ? PR_DECISION_JS : APPLY_DECISION_JS;
+  const locks = applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag);
+  // Tokens fetched first (stageTokens) are fetched once the decision and the lock are made, so none waits out the lock.
+  // The step then starts again past them: the decision's values and the lock's names go on in its environment.
+  const first = stageTokens(forge, oidc, "apply");
+  const once = first.length > 0;
   return [
-    ...stageTokens(forge, oidc, "apply"),
     READS_EXIT,
     forgeApi(forge),
+    ...(once ? [`if [ -z "\${${OIDC_RESTART}:-}" ]; then`] : []),
     // Before any credential: the comment, the commenter, the pull request and the merge commit (or, open, the head and its locks).
     decide,
     prMode ? "read -r TG_PR TG_SHA TG_WAVE TG_OPEN TG_BASE <<EOF" : "read -r TG_PR TG_SHA TG_WAVE <<EOF",
     `$(node -e '${decisionJs}' terragucci-comment.json)`,
     "EOF",
     '[ -n "$TG_PR" ] || exit 0',
-    'export TG_PR TG_SHA',
-    `last=${count}`,
-    '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
-    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
     // shape: only a repo-wide scope holds the lock tag here; otherwise the waves refuse what another run is applying.
-    ...(applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag)
+    ...(locks
       ? [
           forgejoLock(false),
           // A push may have applied while this run waited for the lock: decide again, now that nothing else applies.
@@ -1456,6 +1460,11 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
           '[ -n "$again" ] || exit 0',
         ]
       : []),
+    ...(once ? [`export TG_PR TG_SHA TG_WAVE${prMode ? " TG_OPEN TG_BASE" : ""}${locks ? " lock_ref mine" : ""}`, "fi", ...first, ...(locks ? [LOCK_RELEASE] : [])] : []),
+    'export TG_PR TG_SHA',
+    `last=${count}`,
+    '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
+    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
     ...(prMode
       ? [
           'what="the merge commit"; tf_base=""',
@@ -1727,9 +1736,10 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
   ];
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
   return [
+    // Off first: every later line reads an exit code itself.
+    READS_EXIT,
     // A re-plan's plan step that reads traded credentials asks for no token.
     ...(options.traded ? [] : stageTokens(forge, oidc, "plan")),
-    READS_EXIT,
     ...(options.tokenCheck ? [options.tokenCheck] : []),
     // A re-plan that holds no token: what the change's code leaves running dies with the step.
     ...(options.replan && options.sweep !== false ? [LEFTOVER_SWEEP] : []),
