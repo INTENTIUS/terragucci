@@ -56,7 +56,7 @@ For these backends, the job reads the state through the root with the old backen
 
 ### Unversioned backends
 
-The `pg`, `kubernetes`, `consul` and `http` backends (an `http` backend other than GitLab-managed state) keep no versions. A state moves from or to any of them, and a move between roots works on them.
+The `pg`, `kubernetes`, `consul` and `http` backends (an `http` backend other than GitLab-managed state) keep no versions. A state can move out of any of them or into one, and a move between roots works on them.
 
 ```yaml
 backends:
@@ -79,7 +79,7 @@ Credentials stay out of the file: `password`, `token`, `client_key` and `access_
 
 ### Workspaces
 
-`remote` and `cloud` read a workspace's current state version over the TFE API, the protocol the `remote` backend and the `cloud` block use. HCP Terraform, Terraform Enterprise, Scalr, OTF and env zero's backend serve it.
+Both `remote` and `cloud` read a workspace's current state version over the TFE API that the `remote` backend and the `cloud` block speak. HCP Terraform, Terraform Enterprise, Scalr, OTF and env zero's backend serve it.
 
 ```yaml
 backends:
@@ -101,11 +101,11 @@ backends:
 
 The token is the one Terraform and OpenTofu read for the host: `TF_TOKEN_<host>`, dots as `_` and dashes as `__` (`TF_TOKEN_app_terraform_io`), else `~/.terraform.d/credentials.tfrc.json`. A `token` key in the file is refused. Give the plan and apply jobs the variable as a CI secret.
 
-The digest covers the state version id (`sv-...`) and the state's digest. While it writes, the job holds the workspace's lock, checks that the current version is still the one approved, and unlocks it after. A workspace locked by someone else stops the move. The workspace keeps its versions.
+The digest covers the state version id (`sv-...`) and the state's digest. The job holds the workspace's lock while it writes and checks that the current version is still the one approved; it unlocks the workspace after. A workspace locked by someone else stops the move. Every version it had is kept.
 
 ### State files
 
-`file` reads a state file the job can see, for state exported from a platform with no TFE API:
+For state exported from a platform with no TFE API, `file` reads a state file the job can see:
 
 ```yaml
 backends:
@@ -116,7 +116,7 @@ backends:
         path: exported/platform.tfstate
 ```
 
-`path` is relative to the repo, or absolute. The file must be a state of format version 4 with a lineage, a serial and resources. The digest covers its contents, so a file changed after the approval is refused. State holds secrets: put the file in place in the job, not in git.
+`path` is relative to the repo, or absolute. The job reads a state of format version 4 that has resources and both a lineage and a serial. The digest covers its contents, so a file changed after the approval is refused. Put the file in place in the job rather than in git, since a state holds secrets.
 
 ## Revert
 
@@ -154,6 +154,22 @@ With [choudoufu](/terragucci/concepts/glossary/#choudoufu) as the binary, when e
 
 A file whose roots mix estates and roots with a state is refused, as is any other binary. An address with `count` or `for_each` moves each instance the source plan destroys.
 
+### Progress
+
+The job adds `-progress-json` to each `live-mv` and `live-import -approve` it runs when the binary's `live-mv -help` lists that flag. choudoufu then prints a JSON line on stderr for each resource once its tags are written. Each line is appended to `terragucci-report/migrations/<name>/progress.jsonl` the moment it arrives. With a [reports bucket](/terragucci/reference/reports-bucket/), the file and the record are copied to `<prefix>/<project>/migrations/` every `TG_PROGRESS_SECONDS` seconds (5 by default) while lines arrive, and once more when the writes end. A binary whose help does not list the flag writes no progress file and runs as before.
+
+```json
+{"at":"2026-10-17T04:39:52.1Z","estate_from":"mono","estate_to":"team","address":"aws_sqs_queue.jobs","live_id":"https://sqs.us-east-1.amazonaws.com/000000000000/jobs","outcome":"moved","migration":"carve","counts":{"moved":36,"stamped":0,"refused":0,"skipped":0,"left":43}}
+```
+
+| Field | Holds |
+|---|---|
+| `at`, `estate_from`, `estate_to`, `address`, `live_id`, `outcome`, `reason`, `follows` | the line as choudoufu wrote it: `outcome` is `moved`, `stamped`, `refused` or `skipped`, `estate_from` is empty for an adoption, and `follows` names the resource a follower moved with |
+| `migration` | its name |
+| `counts` | how many resources hold each outcome once this line arrived, and how many are `left` with no line yet |
+
+In the [trace](/terragucci/guides/send-traces-and-metrics/), each line is also an event on the span `migration <name>`, which hangs under wave 1's `migrate` span.
+
 ## The new states
 
 A changed state keeps its lineage and gets the next serial. A root with no state gets a new one at serial 1. Its lineage is derived from the migration and the root, so the same migration planned twice gives the same digest.
@@ -179,3 +195,4 @@ The proof plan runs the root's own binary against its new state, through a `terr
 | `roots[].restore` | a revert: the `version_id` put back, `null` for an empty state |
 | `roots[].proof`, `roots[].verify` | the resource changes and the binary's summary line, against the new state and, after the write, against the backend |
 | `approved_by`, `moved`, `error`, `finished`, `commit` | who approved it, the roots whose state moved, why it stopped, when and at which commit |
+| `progress` | an estate migration whose binary printed [progress lines](#progress): `moved`, `stamped`, `refused`, `skipped` and `left`, as the last line's `counts` |

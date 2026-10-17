@@ -196,6 +196,18 @@ export class StageObserver {
     return span;
   }
 
+  /** A span under the phase open now, such as one migration's writes in wave 1's `migrate` phase. Undefined when not tracing. End it with `endPhase`. */
+  child(name: string, attributes: Attrs = {}): Span | undefined {
+    if (!this.trace) return undefined;
+    return this.trace.start(name, this.current ?? this.stageSpan, attributes);
+  }
+
+  /** An event inside `span`, at `at` (an RFC 3339 time) or now. */
+  event(span: Span | undefined, name: string, attributes: Attrs = {}, at?: string): void {
+    if (!span || !this.trace) return;
+    this.trace.event(span, name, attributes, at);
+  }
+
   endPhase(span: Span | undefined, attributes: Attrs = {}, error?: string): void {
     if (!span || !this.trace) return;
     this.trace.end(span, attributes, error);

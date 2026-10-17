@@ -19,6 +19,7 @@ prompt: |
 | `<prefix>/<project>/inventory.json` | a `tf-apply` wave's upload | the resources each root holds, from its newest applied wave |
 | `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first |
 | `<prefix>/<project>/migrations/<name>.json` | wave 1 of `tf-apply`, when it runs a [state migration](/terragucci/reference/migration-files/) | the migration's record: each root's state version and digest before and after, never a state's contents |
+| `<prefix>/<project>/migrations/<name>/progress.jsonl` | wave 1 of `tf-apply`, every few seconds while an [estate migration](/terragucci/reference/migration-files/#progress) writes, and once when it ends | one line per resource as its write lands, with the migration's counts so far |
 | `<prefix>/<project>/states.json` | a `tf-apply` wave's upload | the state version id each root's applies left, newest first; never a state's contents |
 | `<prefix>/<project>/edges.json` | an upload whose roots read another root's state, or a `tf-apply` wave that changed a root | each root's reads, its newest plan and its newest apply that changed it; never a state's contents |
 | `<prefix>/<project>/ephemeral.json` | the [ephemeral](/terragucci/guides/ephemeral-environments/) job and the sweep, each time a pull request's copy applies or is destroyed | the live copies: each pull request's roots and state keys, its commit, when it applied and when it expires (`terragucci.ephemeral/v1`, the rows of the estate's `projects[].ephemeral`) |

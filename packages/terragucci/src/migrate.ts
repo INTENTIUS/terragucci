@@ -75,6 +75,7 @@ import { sealRefusal } from "./seal";
 import { rootRoleEnv } from "./roles";
 import { liveRoots } from "./detect";
 import { applyEstateMigration, planEstateMigration, type EstatePlan, type Retag, type Stamp } from "./migrate-estate";
+import type { MigrationCounts, ProgressSinks } from "./migrate-progress";
 import { EXTERNAL_BACKENDS, externalProblems, externalSource, type ExternalSource } from "./state-source";
 import { literal, stateAddress } from "./state-address";
 
@@ -492,6 +493,8 @@ export interface MigrationRecord {
   error?: string;
   finished?: string;
   commit?: string;
+  /** An estate migration whose binary wrote `-progress-json` lines: how many resources each outcome holds, and how many have no line yet (./migrate-progress.ts). */
+  progress?: MigrationCounts;
 }
 
 /** The digest an approval binds. Proof summaries are left out: a binary's wording is not the migration. */
@@ -534,21 +537,57 @@ export interface Ran {
   out: string;
 }
 
-/** How the binary runs: in `dir`, with `env`. Injectable for tests. */
-export type BinaryExec = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => Promise<Ran>;
+/** What a run of the binary hands back while it runs: `stderr` sees each line of stderr as it arrives, and a line it takes (true) is left out of `out`. */
+export interface BinaryIo {
+  stderr?: (line: string) => boolean;
+}
 
-export const runBinary: BinaryExec = (binary, args, dir, env) =>
+/** How the binary runs: in `dir`, with `env`. Injectable for tests. */
+export type BinaryExec = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv, io?: BinaryIo) => Promise<Ran>;
+
+export const runBinary: BinaryExec = (binary, args, dir, env, io) =>
   new Promise((done) => {
     const child = spawn(binary, [`-chdir=${dir}`, ...args], { env: binaryEnv(env), stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let out = "";
+    let partial = "";
+    const stderrLine = (line: string): void => {
+      let taken = false;
+      try {
+        taken = io!.stderr!(line);
+      } catch {
+        taken = false;
+      }
+      if (!taken) out += `${line}\n`;
+    };
     child.stdout.on("data", (d) => {
       stdout += d;
       out += d;
     });
-    child.stderr.on("data", (d) => (out += d));
-    child.on("error", (e) => done({ code: 127, stdout, out: `${out}${e.message}` }));
-    child.on("close", (code) => done({ code: code ?? 1, stdout, out }));
+    // A line split across two chunks, a character too, is put back together before it is read.
+    if (io?.stderr) child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (d) => {
+      if (!io?.stderr) {
+        out += d;
+        return;
+      }
+      partial += d;
+      const lines = partial.split("\n");
+      partial = lines.pop()!;
+      for (const l of lines) stderrLine(l);
+    });
+    const rest = (): void => {
+      if (io?.stderr && partial) stderrLine(partial);
+      partial = "";
+    };
+    child.on("error", (e) => {
+      rest();
+      done({ code: 127, stdout, out: `${out}${e.message}` });
+    });
+    child.on("close", (code) => {
+      rest();
+      done({ code: code ?? 1, stdout, out });
+    });
   });
 
 /** The resource changes of a plan's JSON, as `<address>: <actions>`; no-ops and reads are not changes. */
@@ -591,6 +630,8 @@ export interface MigrateOptions {
   /** Where new states and proof plans are kept; removed by the caller. */
   work: string;
   log?: (line: string) => void;
+  /** Where an estate migration's per-resource progress goes beyond `terragucci-report/` (./migrate-progress.ts). */
+  progress?: ProgressSinks;
 }
 
 /** Why a root cannot take part in a migration, or undefined. */
@@ -1069,7 +1110,7 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
   const env = options.env ?? process.env;
   const log = options.log ?? (() => {});
   const record = plan.record;
-  if (plan.estate) return applyEstateMigration(plan, options);
+  if (plan.estate) return applyEstateMigration(repo, plan, options);
   const locks = await takeLocks(plan.files, options.now, options.fetch);
   try {
     const moved = await movedSince(repo, plan, options);
@@ -1285,6 +1326,8 @@ export interface RunMigrationsOptions {
   /** Under `chant run wave`: chant settles the migration's gate (MigrationHold). */
   hold?: MigrationHold;
   log?: (line: string) => void;
+  /** Where an estate migration's per-resource progress goes beyond `terragucci-report/`, given the migration's name (./migrate-progress.ts). */
+  progress?: (name: string) => ProgressSinks;
 }
 
 /**
@@ -1499,12 +1542,15 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   const applied: AppliedRecord = { version: 1, kind: "applied", op: MIGRATE_OP, gate: m.name, planDigest: record.digest, approvedAt: decision.at, approvedBy: decision.by, timestamp: now, ...(runId ? { runId } : {}), ...(commit ? { commit } : {}) };
   appendLifecycle(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
   let result: MigrationRecord;
+  const sinks = plan.estate ? options.progress?.(m.name) : undefined;
   try {
-    result = await applyMigration(repo, plan, { binary: options.binary, env, work, log, now, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
+    result = await applyMigration(repo, plan, { binary: options.binary, env, work, log, now, ...(sinks ? { progress: sinks } : {}), ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
   } catch (e) {
     log(`${label}: ${(e as Error).message}`);
+    sinks?.end?.("failed", undefined, (e as Error).message);
     return { code: EXIT.failed, record: { ...record, status: "failed", error: (e as Error).message } };
   }
+  sinks?.end?.(result.status, result.progress, result.error);
   result = { ...result, approved_by: decision.by, finished: new Date().toISOString(), ...(commit ? { commit } : {}) };
   if (result.status === "refused") {
     log(`${label}: under the lock, the state of ${result.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
