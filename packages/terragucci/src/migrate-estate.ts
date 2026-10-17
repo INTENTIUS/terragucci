@@ -14,12 +14,20 @@
  *
  * The proof is read-only.
  *
- *   moves     each root's plan as the code stands, and `live-mv -dry-run
- *             -json` for each resource that moves. Every change a root
- *             plans must be one the retag removes: a destroy in the estate
- *             a resource leaves and a create in the one it joins. The
- *             digest covers each root's planned changes and the live id of
- *             each resource.
+ *   moves     `live-mv -dry-run -json`, choudoufu's own preview of each
+ *             retag, run in the root the resource joins: each one must
+ *             find the live resource in the estate it leaves, and a
+ *             refusal stops the migration. A root that resources join is
+ *             not planned first: until the retag its resources carry the
+ *             markers of another estate, and choudoufu refuses to plan a
+ *             root while a live object at a resource's identity carries no
+ *             marker of its own estate. A root they only leave is planned,
+ *             which names the instances that leave (its destroys), and
+ *             every change it plans must be one of those destroys. A root
+ *             that both gives and takes is not planned, and its leaving
+ *             addresses are retagged as the file names them. The digest
+ *             covers the planned changes of each planned root and the live
+ *             id of each resource.
  *   backends  `live-import` without `-approve`: its ratification of every
  *             resource instance the old state holds. The root is not
  *             planned first. Before the stamp each resource is a live
@@ -214,8 +222,11 @@ export async function planEstateMigration(repo: string, m: Migration, options: M
   for (const root of roots) await initEstate(exec, options.binary, root, places.get(root)!);
   // An adopted root is not planned before its stamp: choudoufu refuses a plan while an unmarked live object sits at a resource's identity.
   if (m.kind === "backends") return planAdopt(m, estates, places, exec, options);
+  // A root resources join is not planned before the retag either: their live objects carry another estate's markers until then.
+  const joining = new Set(m.moves.map((x) => x.to));
   const plans = new Map<string, { changes: string[]; summary: string }>();
   for (const [i, root] of roots.entries()) {
+    if (joining.has(root)) continue;
     const p = places.get(root)!;
     plans.set(root, await planChanges(exec, options.binary, p.dir, p.env, options.work, `estate-${i}`, true));
   }
@@ -238,14 +249,25 @@ async function planRetag(m: Migration, roots: string[], estates: Map<string, str
         problems.push(`${address} is a module call; a retag names each resource in it`);
         continue;
       }
-      const instances = instancesOf(address, plans.get(mv.from)!.changes, "delete");
+      // A root that is not planned (it takes resources too) names no instances: the address moves as the file names it.
+      const source = plans.get(mv.from);
+      const instances = source ? instancesOf(address, source.changes, "delete") : [address];
       if (instances.length === 0) {
         problems.push(`${address}: the plan of ${mv.from} does not destroy it, so estate ${fromEstate} holds no live resource it leaves`);
         continue;
       }
       for (const inst of instances) {
-        const doc = await liveMv(exec, options.binary, places.get(mv.to)!, fromEstate, inst, true);
-        if (!doc.resource?.live_id) throw new ConfigError(`live-mv -dry-run names no live resource for ${inst}`);
+        let doc: MoveDoc;
+        try {
+          doc = await liveMv(exec, options.binary, places.get(mv.to)!, fromEstate, inst, true);
+        } catch (e) {
+          problems.push((e as Error).message);
+          continue;
+        }
+        if (!doc.resource?.live_id) {
+          problems.push(`live-mv -dry-run names no live resource for ${inst}`);
+          continue;
+        }
         const followers = (doc.followers ?? []).map((f) => f.address).filter((a): a is string => typeof a === "string").sort();
         retags.push({ address: inst, from: mv.from, to: mv.to, from_estate: fromEstate, to_estate: toEstate, live_id: doc.resource.live_id, followers });
         log(`${inst}: ${doc.resource.live_id} moves from estate ${fromEstate} to estate ${toEstate}${followers.length ? `, with ${followers.join(", ")}` : ""}`);
@@ -257,18 +279,19 @@ async function planRetag(m: Migration, roots: string[], estates: Map<string, str
   for (const root of roots) {
     const leaving = retags.filter((t) => t.from === root);
     const joining = retags.filter((t) => t.to === root);
-    const accounted = new Set([...leaving.flatMap((t) => [t.address, ...t.followers].map((a) => `${a}: delete`)), ...joining.flatMap((t) => [t.address, ...t.followers].map((a) => `${a}: create`))]);
-    const plan = plans.get(root)!;
+    const accounted = new Set(leaving.flatMap((t) => [t.address, ...t.followers].map((a) => `${a}: delete`)));
+    const plan = plans.get(root);
     const ids = (ts: Retag[]) => ts.map((t) => ({ address: t.address, live_id: t.live_id, followers: t.followers }));
     out.push({
       root,
       backend: "estate",
       location: `estate ${estates.get(root)}`,
-      before: { digest: sha(JSON.stringify({ estate: estates.get(root), changes: [...plan.changes].sort(), leaving: ids(leaving), joining: ids(joining) })) },
+      before: { digest: sha(JSON.stringify({ estate: estates.get(root), ...(plan ? { changes: [...plan.changes].sort() } : {}), leaving: ids(leaving), joining: ids(joining) })) },
       after: { digest: sha(JSON.stringify({ estate: estates.get(root), changes: [] })) },
-      proof: { changes: plan.changes.filter((c) => !accounted.has(c)), summary: plan.summary },
+      // A joining root has no plan before the retag: its dry runs are its proof, and each one that refused stopped the migration above.
+      proof: plan ? { changes: plan.changes.filter((c) => !accounted.has(c)), summary: plan.summary } : { changes: [], summary: `live-mv -dry-run: ${joining.length === 1 ? "1 resource found in the estate it leaves" : `${joining.length} resources found in the estates they leave`}` },
     });
-    log(`${root}: ${proofLine(plan.changes, accounted, "the retag")}`);
+    log(`${root}: ${plan ? proofLine(plan.changes, accounted, "the retag") : `not planned before the retag; live-mv -dry-run found ${joining.length === 1 ? "the resource that joins" : `each of the ${joining.length} resources that join`} it`}`);
   }
   const record = estateRecord(m, "retag", out, { retags });
   return { record, places, files: new Map(), estate: { kind: "retag", retags } };
