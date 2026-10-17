@@ -120,7 +120,7 @@ export function rosterOf(root: string, estate: string | undefined, plan: unknown
 }
 
 /** A stock root's estate name: its path, or `root` for the repo's top. */
-export const stockEstate = (root: string): string => root.replace(/^\.\/+/, "").replace(/\/+$/, "") || "root";
+export const stockEstate = (root: string): string => root.replace(/^\.(\/+|$)/, "").replace(/\/+$/, "") || "root";
 
 /**
  * The rosters of a `tf-apply` wave's report: one per root that applied (or
