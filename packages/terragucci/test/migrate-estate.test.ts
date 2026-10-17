@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendLifecycle } from "../src/apply";
-import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
+import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingAdoptions, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
 import { isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
-import { tmp, write } from "./helpers";
+import { runStage } from "../src/report/stage";
+import { renderNote } from "../src/report/views";
+import { tmp, validate, write } from "./helpers";
+import { plan as planJson, rc } from "./report-fixtures";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
@@ -17,7 +20,9 @@ const git = (cwd: string, ...args: string[]): string => execFileSync("git", args
 // and its estate does not own, and destroys what it owns and does not
 // declare. live-mv rewrites the markers of the resource the source estate
 // holds under the address; live-import verifies each resource of a state by
-// its id and, with -approve, stamps it.
+// its id and, with -approve, stamps it. With `refuseUnmarked`, plan refuses
+// while a live object carries no marker, as choudoufu does when one sits at
+// a resource's identity.
 
 interface Live {
   id: string;
@@ -29,7 +34,7 @@ type Calls = string[];
 const liveOf = (repo: string): Live[] => JSON.parse(readFileSync(join(repo, "live.json"), "utf-8")) as Live[];
 const setLive = (repo: string, l: Live[]) => writeFileSync(join(repo, "live.json"), JSON.stringify(l));
 
-function choudoufu(repo: string, calls: Calls = []): BinaryExec {
+function choudoufu(repo: string, calls: Calls = [], opts: { refuseUnmarked?: boolean } = {}): BinaryExec {
   return async (_binary, args, dir) => {
     calls.push(`${dir.slice(repo.length + 1)}: ${args.join(" ")}`);
     const ok = (stdout = "", out = stdout) => ({ code: 0, stdout, out });
@@ -37,6 +42,8 @@ function choudoufu(repo: string, calls: Calls = []): BinaryExec {
     const want = (): string[] => JSON.parse(readFileSync(join(dir, "want.json"), "utf-8")) as string[];
     if (args[0] === "init") return args.includes("-reconfigure") ? { code: 1, stdout: "", out: "Backend migration is not available under live resource markers" } : ok();
     if (args[0] === "plan") {
+      const unmarked = liveOf(repo).find((l) => l.estate === undefined);
+      if (opts.refuseUnmarked && unmarked) return { code: 1, stdout: "", out: `Error: a live aws_sqs_queue exists at ${unmarked.id} and does not carry estate "${estate}"'s ownership marker` };
       const owned = liveOf(repo).filter((l) => l.estate === estate).map((l) => l.address!);
       const changes = [...want().filter((a) => !owned.includes(a)).map((a) => ({ address: a, change: { actions: ["create"] } })), ...owned.filter((a) => !want().includes(a)).map((a) => ({ address: a, change: { actions: ["delete"] } })), ...owned.filter((a) => want().includes(a)).map((a) => ({ address: a, change: { actions: ["no-op"] } }))];
       writeFileSync(args.find((a) => a.startsWith("-out="))!.slice(5), JSON.stringify({ resource_changes: changes }));
@@ -207,7 +214,51 @@ describe("adopting a state into an estate", () => {
     const { work } = adoptRepo(["q-a", "q-gone"]);
     const run = await runMigrations(work, { binary: "choudoufu", exec: choudoufu(work), env: {}, now: T(1), log: () => {} });
     expect(run.code).toBe(1);
-    expect(run.records[0]!.roots[0]!.proof.changes).toEqual(["aws_sqs_queue.b: missing", "aws_sqs_queue.b: create"]);
+    expect(run.records[0]!.roots[0]!.proof.changes).toEqual(["aws_sqs_queue.b: missing"]);
+  });
+
+  it("is proved by the ratification alone when choudoufu refuses to plan the root before the stamp, and plans it once stamped", async () => {
+    const { work } = adoptRepo();
+    const calls: Calls = [];
+    const exec = choudoufu(work, calls, { refuseUnmarked: true });
+    const lines: string[] = [];
+    expect([...pendingAdoptions(work)]).toEqual([["app", { name: "adopt-app", file_digest: expect.stringMatching(/^sha256:/) }]]);
+    const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: (l) => void lines.push(l) });
+    expect(first.code).toBe(3);
+    const rec = first.records[0]!;
+    expect(rec).toMatchObject({ change: "adopt", status: "waiting" });
+    expect(rec.roots[0]!.proof).toEqual({ changes: [], summary: "live-import: 2 of 2 resource instances verified" });
+    // No plan before the write: the only calls are init and live-import's preview.
+    expect(calls.filter((c) => c.startsWith("app: plan"))).toEqual([]);
+    expect(calls.filter((c) => c.startsWith("app: live-import")).map((c) => c.includes("-approve"))).toEqual([false]);
+    expect(lines.join("\n")).toContain("app: 2 of 2 resource instances in old.tfstate verify against the live system, so the stamp adopts each one");
+
+    approve(work, "adopt-app", rec.digest, T(2));
+    calls.length = 0;
+    const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
+    expect(second.code).toBe(0);
+    expect(second.records[0]).toMatchObject({ status: "applied" });
+    expect(second.records[0]!.roots[0]!.verify?.changes).toEqual([]);
+    // The stamp comes first, then the root's first plan.
+    const stamp = calls.findIndex((c) => c.startsWith("app: live-import") && c.includes("-approve"));
+    const plan = calls.findIndex((c) => c.startsWith("app: plan"));
+    expect(stamp).toBeGreaterThanOrEqual(0);
+    expect(plan).toBeGreaterThan(stamp);
+    // Applied, the root is no longer one a pending migration adopts.
+    expect(pendingAdoptions(work).size).toBe(0);
+  });
+
+  it("still fails its proof on an instance that does not verify when choudoufu refuses to plan the root, and stamps nothing", async () => {
+    const { work } = adoptRepo(["q-a", "q-gone"]);
+    const calls: Calls = [];
+    const lines: string[] = [];
+    const run = await runMigrations(work, { binary: "choudoufu", exec: choudoufu(work, calls, { refuseUnmarked: true }), env: {}, now: T(1), log: (l) => void lines.push(l) });
+    expect(run.code).toBe(1);
+    expect(run.records[0]).toMatchObject({ status: "proof-failed" });
+    expect(run.records[0]!.roots[0]!.proof.changes).toEqual(["aws_sqs_queue.b: missing"]);
+    expect(lines.join("\n")).toContain("in app some do not; nothing was written");
+    expect(calls.some((c) => c.includes("-approve"))).toBe(false);
+    expect(liveOf(work).every((l) => l.estate === undefined)).toBe(true);
   });
 
   it("is refused when the old state moved after the approval, and stamps nothing", async () => {
@@ -232,6 +283,78 @@ describe("adopting a state into an estate", () => {
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} });
     expect(again.code).toBe(1);
     expect(again.records[0]!.error).toMatch(/printed no stamp report/);
+  });
+});
+
+/**
+ * A stand-in choudoufu for a pull request's plan: init passes, and plan
+ * fails in a root holding an `unmarked` file, as choudoufu refuses while a
+ * live object without the estate's marker sits at a resource's identity;
+ * otherwise it copies the root's plan.json to the plan file.
+ */
+function planStandIn(dir: string): string {
+  const path = join(dir, "choudoufu");
+  writeFileSync(path, `#!/bin/sh
+chdir="\${1#-chdir=}"; shift
+case "$1" in
+  init) exit 0 ;;
+  state) echo '{"version":4,"resources":[],"outputs":{"a":{"value":1}}}'; exit 0 ;;
+  plan)
+    if [ -f "$chdir/unmarked" ]; then echo "Error: a live aws_sqs_queue exists and does not carry the estate's ownership marker" >&2; exit 1; fi
+    for a in "$@"; do case "$a" in -out=*) cp "$chdir/plan.json" "\${a#-out=}" ;; esac; done
+    echo "Plan: 1 to add, 0 to change, 0 to destroy."; exit 0 ;;
+  show) if [ "$2" = "-json" ]; then cat "$3"; else echo "plan text for $chdir"; fi ;;
+esac
+`);
+  chmodSync(path, 0o755);
+  return path;
+}
+
+describe("a pull request's plan of a root a backends migration adopts", () => {
+  const REPORT_SCHEMA = JSON.parse(readFileSync(join(import.meta.dirname, "../src/report/report.schema.json"), "utf-8"));
+  const live = (e: string): string => `terraform {\n  live {\n    estate = "${e}"\n  }\n}\n`;
+  const webPlan = planJson([rc("aws_sqs_queue.w", ["create"], null, { name: "w" })]);
+  const adopting = (unmarked = true) =>
+    write(tmp(), {
+      "terragucci.yml": "binary: choudoufu\n",
+      "app/main.tf": live("app") + 'resource "aws_sqs_queue" "a" {}\n',
+      ...(unmarked ? { "app/unmarked": "" } : {}),
+      "app/plan.json": JSON.stringify(planJson([])),
+      "web/main.tf": live("web") + 'resource "aws_sqs_queue" "w" {}\n',
+      "web/plan.json": JSON.stringify(webPlan),
+      "migrations/adopt-app.yml": "backends:\n  - root: app\n    from:\n      backend: local\n      config:\n        path: old.tfstate\n",
+    });
+  const layers = [["app", "web"]];
+
+  it("does not plan it on its own: the root is planned by the migration, not failed, and the other roots plan", async () => {
+    const repo = adopting();
+    const logs: string[] = [];
+    const { report } = await runStage("tf-plan", repo, { binary: planStandIn(tmp()), layers, out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));
+    expect(logs).toContain("app: planned by migration adopt-app");
+    expect(logs.some((l) => l.startsWith("app: plan failed"))).toBe(false);
+    expect(report.roots.map((r) => [r.path, r.status])).toEqual([["web", "planned"]]);
+    expect(report.deferred).toEqual([{ unit: "app", after: [], why: expect.stringContaining("planned by migration adopt-app"), previewed: false }]);
+    expect(validate(REPORT_SCHEMA, report)).toEqual([]);
+    expect(renderNote(report)).toContain("- `app`: planned by migration adopt-app");
+  });
+
+  it("plans it as any other root once chant/lifecycle records the migration applied", async () => {
+    // Stamped: the live objects carry the estate's markers, so choudoufu plans the root.
+    const repo = adopting(false);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "base");
+    const lifecycle = write(tmp(), { [MIGRATE_DONE]: JSON.stringify({ version: 1, kind: "migration", op: "tf-migrate", gate: "adopt-app", timestamp: T(1), result: "applied" }) + "\n" });
+    git(lifecycle, "init", "-q", "-b", "chant/lifecycle");
+    git(lifecycle, "add", "-A");
+    git(lifecycle, "commit", "-q", "-m", "done");
+    git(repo, "fetch", "-q", lifecycle, "chant/lifecycle:refs/remotes/origin/chant/lifecycle");
+    expect(pendingAdoptions(repo).size).toBe(0);
+    const logs: string[] = [];
+    const { report } = await runStage("tf-plan", repo, { binary: planStandIn(tmp()), layers, out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));
+    expect(logs.some((l) => l.includes("planned by migration"))).toBe(false);
+    expect(report.roots.map((r) => r.path)).toEqual(["app", "web"]);
+    expect(report.deferred).toBeUndefined();
   });
 });
 
