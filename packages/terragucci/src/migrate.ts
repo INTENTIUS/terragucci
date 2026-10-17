@@ -1310,6 +1310,41 @@ export function doneLine(record: MigrationRecord, approvedBy: string, now: strin
   };
 }
 
+/** A root a pending `backends` migration adopts into an estate: the migration's name and its file's digest. */
+export interface PendingAdoption {
+  name: string;
+  file_digest: string;
+}
+
+/**
+ * The roots a `backends` migration adopts into a choudoufu estate while it
+ * has not applied, by root: not recorded applied in
+ * `_gates/tf-migrate/done.jsonl` on chant/lifecycle, nor in `applied` (the
+ * migrations this job applied). Such a root is not planned on its own:
+ * choudoufu refuses a plan while its resources are live objects with no
+ * marker of the estate, and the migration's proof (live-import's
+ * ratification) is its plan. Once the migration applies, the root plans as
+ * any other. A repo whose migrations cannot be read adopts nothing here;
+ * the migration step reports why.
+ */
+export function pendingAdoptions(repo: string, applied: ReadonlySet<string> = new Set()): Map<string, PendingAdoption> {
+  const out = new Map<string, PendingAdoption>();
+  let migrations: Migration[];
+  try {
+    migrations = listMigrations(repo).filter((m) => m.kind === "backends" && !applied.has(m.name));
+  } catch {
+    return out;
+  }
+  if (migrations.length === 0) return out;
+  const show = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${MIGRATE_DONE}`]);
+  const done = doneMigrations(show.status === 0 ? show.stdout : "");
+  for (const m of migrations) {
+    if (done.get(m.name)?.status === "applied") continue;
+    for (const root of liveRoots(repo, m.backends.map((b) => b.root))) if (!out.has(root)) out.set(root, { name: m.name, file_digest: m.digest });
+  }
+  return out;
+}
+
 export interface RunMigrationsOptions {
   binary: string;
   env?: NodeJS.ProcessEnv;
@@ -1462,10 +1497,10 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   }
   const record = plan.record;
   for (const r of record.roots) log(`${r.root}: state ${r.location ?? r.backend}${r.before.version_id ? ` version ${r.before.version_id}` : ""}, ${r.before.digest ? `digest ${r.before.digest}` : "no state yet"}`);
-  const proved = record.change === "retag" ? "every change each root plans is one the retag removes" : record.change === "adopt" ? "every resource of the state verifies against the live system, and every change the root plans is one the stamp removes" : "every root plans with no change against its new state";
+  const proved = record.change === "retag" ? "every change each root plans is one the retag removes" : record.change === "adopt" ? "every resource instance of the state verifies against the live system, so the stamp adopts each one, and the root plans once it is stamped" : "every root plans with no change against its new state";
   if (record.status === "proof-failed") {
     const failing = record.roots.filter((r) => r.proof.changes.length > 0).map((r) => r.root).join(", ");
-    log(`${label}: ${record.change === "retag" || record.change === "adopt" ? `${proved}, and ${failing} would still change` : `every root must plan with no change against its new state, and ${failing} would change`}; nothing was written`);
+    log(`${label}: ${record.change === "adopt" ? `every resource instance of the state must verify against the live system, and in ${failing} some do not` : record.change === "retag" ? `${proved}, and ${failing} would still change` : `every root must plan with no change against its new state, and ${failing} would change`}; nothing was written`);
     return { code: EXIT.failed, record };
   }
   log(`${label}: ${proved}; digest ${record.digest}`);

@@ -37,6 +37,7 @@ import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environmen
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
+import { pendingAdoptions, type PendingAdoption } from "../migrate";
 import { coneArgs, coneLogLine, coneRoot, readPlanCone } from "../cone";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
@@ -1171,6 +1172,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
     return outputsRead.get(up)!;
   };
   let redacted = 0;
+  // A root a pending backends migration adopts into an estate is planned by that migration (../migrate.ts pendingAdoptions).
+  const adopting = drift ? new Map<string, PendingAdoption>() : pendingAdoptions(repo);
 
   /** How a root reads each upstream: the links a plan on their planned outputs takes, and the reads the report names. */
   const linksFor = (root: string): { links: Link[]; reads: ReportRead[] } => {
@@ -1202,6 +1205,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
   /** One root planned, its outcome kept apart so the report and the log take roots in order, not in the order they finish. */
   const planRoot = async (root: string, index: number): Promise<RootOutcome> => {
     const lines: string[] = [];
+    // choudoufu refuses to plan it while its resources carry no marker of the estate; the migration's proof stands for its plan.
+    const adoption = adopting.get(root);
+    if (adoption) {
+      lines.push(`${root}: planned by migration ${adoption.name}`);
+      return { root, lines, deferred: { unit: root, after: [], why: `planned by migration ${adoption.name}, which adopts its state into the estate: live-import's check of every resource is the proof, and the root plans on its own once the migration applies`, previewed: false } };
+    }
     const dir = join(checkoutOf(root), root);
     const { links, reads } = linksFor(root);
     const estate = estateLinks(root, estateReadsOf.get(root) ?? [], estateOwner, (r) => roots.includes(r), (r) => (upstreamPlanFiles.has(r) ? { plan: upstreamPlans.get(r), file: upstreamPlanFiles.get(r)! } : undefined));

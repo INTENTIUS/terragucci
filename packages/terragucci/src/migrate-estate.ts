@@ -12,14 +12,28 @@
  *             the markers on every resource it verifies; the old state is
  *             left where it was
  *
- * The proof is read-only: each root's plan as the code stands, and the
- * binary's own preview of the write (`live-mv -dry-run -json`, or
- * `live-import` without `-approve`). Every change a root plans must be one
- * the write removes: a destroy in the estate a resource leaves and a create
- * in the one it joins, or a create of a resource the old state holds and
- * the live system verifies. The digest covers each root's planned changes,
- * the live id of each resource, and the old state's version and digest.
- * After the write every root plans again and must show no change.
+ * The proof is read-only.
+ *
+ *   moves     each root's plan as the code stands, and `live-mv -dry-run
+ *             -json` for each resource that moves. Every change a root
+ *             plans must be one the retag removes: a destroy in the estate
+ *             a resource leaves and a create in the one it joins. The
+ *             digest covers each root's planned changes and the live id of
+ *             each resource.
+ *   backends  `live-import` without `-approve`: its ratification of every
+ *             resource instance the old state holds. The root is not
+ *             planned first. Before the stamp each resource is a live
+ *             object that carries no marker of the estate, and choudoufu
+ *             refuses to plan a root with one at a resource's identity, so
+ *             no plan exists until the markers do. Every instance must
+ *             verify (or be outside the taggable subset and follow a
+ *             verified parent); each one that does not is a change of the
+ *             proof, and the migration does not apply. The digest covers
+ *             the ratification's entries and the old state's version and
+ *             digest.
+ *
+ * After the write every root plans and must show no change, which for an
+ * adoption is the first plan its root makes.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -198,12 +212,14 @@ export async function planEstateMigration(repo: string, m: Migration, options: M
   const places = await placesOf(repo, roots, options, env, detectShape(repo, resolveRepo({})));
   const estates = new Map(roots.map((r) => [r, estateName(repo, r)]));
   for (const root of roots) await initEstate(exec, options.binary, root, places.get(root)!);
+  // An adopted root is not planned before its stamp: choudoufu refuses a plan while an unmarked live object sits at a resource's identity.
+  if (m.kind === "backends") return planAdopt(m, estates, places, exec, options);
   const plans = new Map<string, { changes: string[]; summary: string }>();
   for (const [i, root] of roots.entries()) {
     const p = places.get(root)!;
     plans.set(root, await planChanges(exec, options.binary, p.dir, p.env, options.work, `estate-${i}`, true));
   }
-  return m.kind === "moves" ? planRetag(m, roots, estates, plans, places, exec, options) : planAdopt(repo, m, roots, estates, plans, places, exec, options);
+  return planRetag(m, roots, estates, plans, places, exec, options);
 }
 
 async function planRetag(m: Migration, roots: string[], estates: Map<string, string>, plans: Map<string, { changes: string[]; summary: string }>, places: Map<string, Place>, exec: BinaryExec, options: MigrateOptions): Promise<PlannedMigration> {
@@ -258,7 +274,12 @@ async function planRetag(m: Migration, roots: string[], estates: Map<string, str
   return { record, places, files: new Map(), estate: { kind: "retag", retags } };
 }
 
-async function planAdopt(repo: string, m: Migration, roots: string[], estates: Map<string, string>, plans: Map<string, { changes: string[]; summary: string }>, places: Map<string, Place>, exec: BinaryExec, options: MigrateOptions): Promise<PlannedMigration> {
+/**
+ * An adoption's proof: `live-import`'s ratification of the old state, with
+ * no plan of the root. Each entry that does not verify is a change of the
+ * proof; the plan with no change comes after the stamp (writeEstate).
+ */
+async function planAdopt(m: Migration, estates: Map<string, string>, places: Map<string, Place>, exec: BinaryExec, options: MigrateOptions): Promise<PlannedMigration> {
   const log = options.log ?? (() => {});
   const out: MigrationRoot[] = [];
   const stamps: Stamp[] = [];
@@ -277,8 +298,6 @@ async function planAdopt(repo: string, m: Migration, roots: string[], estates: M
     const report = await liveImport(exec, options.binary, place, path, estate, false);
     const entries = parseRatification(report);
     if (entries.length === 0 && read.state.resources.some((r) => r.mode === "managed")) throw new ConfigError(`migration ${m.name}: live-import printed no ratification for ${b.root}: ${firstLine(report)}`);
-    const plan = plans.get(b.root)!;
-    const accounted = new Set(entries.filter((e) => ADOPTED.includes(e.status)).map((e) => `${e.address}: create`));
     const unverified = entries.filter((e) => !ADOPTED.includes(e.status)).map((e) => `${e.address}: ${e.status.toLowerCase().replace("_", " ")}`);
     for (const e of entries) stamps.push({ root: b.root, estate, ...e });
     const digest = stateDigest(read.state);
@@ -286,18 +305,25 @@ async function planAdopt(repo: string, m: Migration, roots: string[], estates: M
       root: b.root,
       backend: "estate",
       location: `estate ${estate}`,
-      before: { digest: sha(JSON.stringify({ estate, changes: [...plan.changes].sort(), entries })) },
+      before: { digest: sha(JSON.stringify({ estate, entries })) },
       after: { digest: sha(JSON.stringify({ estate, changes: [] })) },
       source: { backend: source.backend, ...(locationOf(source) ? { location: locationOf(source) } : {}), ...(read.version ? { version_id: read.version } : {}), digest },
-      proof: { changes: [...unverified, ...plan.changes.filter((c) => !accounted.has(c))], summary: plan.summary },
+      proof: { changes: unverified, summary: ratificationSummary(entries) },
     });
     adopts.push({ root: b.root, estate, state: path, source, ...(read.version ? { version: read.version } : {}), digest });
     files.set(b.root, { path, object: { backend: "estate", unsupported: "an estate keeps no state file" }, state: read.state, beforeCount: 0, source: { object: source, block: "", data: "" } });
-    log(`${b.root}: ${entries.filter((e) => ADOPTED.includes(e.status)).length} of ${entries.length} resource instances in ${locationOf(source)} verify against the live system; ${proofLine(plan.changes, accounted, "the stamp")}`);
+    const verified = entries.length - unverified.length;
+    log(`${b.root}: ${verified} of ${entries.length} resource instances in ${locationOf(source)} verify against the live system${unverified.length ? `; ${unverified.length} do${unverified.length === 1 ? "es" : ""} not: ${unverified.join(", ")}` : ", so the stamp adopts each one"}`);
   }
   const record = estateRecord(m, "adopt", out, { stamps, backends: m.backends.map((b) => ({ root: b.root, from: locationOf(adopts.find((a) => a.root === b.root)!.source) ?? b.from.backend })) });
   return { record, places, files, estate: { kind: "adopt", adopts } };
 }
+
+/** What an adoption's proof says in place of a plan's summary: how many instances the ratification verified. */
+const ratificationSummary = (entries: { status: string }[]): string => {
+  const verified = entries.filter((e) => ADOPTED.includes(e.status)).length;
+  return `live-import: ${verified} of ${entries.length} resource instance${entries.length === 1 ? "" : "s"} verified`;
+};
 
 /** Where an adoption's state is now: its text, parsed, and its version id when the bucket keeps versions. */
 async function readSource(o: StateObject, dir: string, options: MigrateOptions): Promise<{ text: string; state: StateFile; version?: string } | undefined> {

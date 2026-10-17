@@ -150,7 +150,9 @@ With [choudoufu](/terragucci/concepts/glossary/#choudoufu) as the binary, when e
 | File | Change | Refused when |
 |---|---|---|
 | `moves` | `retag`: each resource's tags are rewritten by `choudoufu live-mv -from-estate`, run in `to` | the roots are one estate, an address is a module call, or `from`'s plan does not destroy the address |
-| `backends` | `adopt`: the state in `from` is read once and `choudoufu live-import` stamps each resource it verifies | the state is missing, or the `s3` backend takes no lock file |
+| `backends` | `adopt`: the state in `from` is read once and `choudoufu live-import` stamps each resource it verifies | the state is missing, the `s3` backend takes no lock file, or an instance of the state does not verify |
+
+A `retag` is proved by each root's plan and `live-mv -dry-run`: every change a root plans is a destroy in the estate a resource leaves or a create in the one it joins. An `adopt` is proved by `live-import` without `-approve` alone. Its root is not planned before the stamp, since choudoufu refuses to plan a root while an untagged live object is at a resource's identity. Every instance must come back `VERIFIED`, or `UNTAGGABLE` and composed from a verified parent; the others are the proof's changes. Its digest binds those entries along with the old state's version id and digest. While the migration has not applied, `stage tf-plan` and wave 1 list the root as planned by the migration in place of planning it. After the stamp every root plans and must show no change.
 
 A file whose roots mix estates and roots with a state is refused, as is any other binary. An address with `count` or `for_each` moves each instance the source plan destroys.
 

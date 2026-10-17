@@ -364,7 +364,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   }
   if (report.deferred?.length) {
     let t = `**Planned once what they wait for applies (${report.deferred.length}):**\n\n`;
-    for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
+    for (const d of report.deferred) t += `- ${code(d.unit)}${d.after.length ? ` after ${d.after.map(code).join(", ")}` : ""}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   // With environments, each wave's row names the environments its roots are in; without them the table is as it was.
