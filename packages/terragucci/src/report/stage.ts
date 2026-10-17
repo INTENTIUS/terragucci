@@ -28,6 +28,7 @@ import { describeTerragruntAffectedReason, findTerragruntAffected } from "@inten
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
+import { eachLimited } from "../each-limited";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { ruleProgress, rulesFor, trustRolesAt } from "../approval-rules";
@@ -443,27 +444,8 @@ export function oneAtATime(): Turn {
   };
 }
 
-/**
- * Run `fn` over `items`, at most `limit` at once, taking them in order. A
- * throw stops new items from starting, waits for the running ones, and is
- * rethrown, so nothing is left running when the caller cleans up.
- */
-export async function eachLimited<T>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {
-  let next = 0;
-  let failure: { e: unknown } | undefined;
-  const worker = async (): Promise<void> => {
-    while (!failure && next < items.length) {
-      const i = next++;
-      try {
-        await fn(items[i], i);
-      } catch (e) {
-        failure ??= { e };
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  if (failure) throw failure.e;
-}
+// Root plans at most `limit` at once (../each-limited.ts), re-exported for the callers that take it from here.
+export { eachLimited };
 
 /** One root's plan, or why it was held back, before it joins the report. */
 interface RootOutcome {

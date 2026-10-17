@@ -228,7 +228,18 @@ DEMO_IMAGE=terragucci-demo-tofu:local
 CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.1}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
-HOLD="${DEMO_HOLD:-20}"
+# DEMO_HOLD is every scenario's hold but terralith's, which counts down
+# DEMO_HOLD_TERRALITH (8 s): its cycle tells five beats with ten holds, and the
+# kiosk's progress bar shows each countdown, so a short one still reads. The
+# loop sets HOLD from scenario_hold before each cycle.
+HOLD_DEFAULT="${DEMO_HOLD:-20}"
+HOLD="$HOLD_DEFAULT"
+scenario_hold() { # scenario -> the seconds the driver holds each of its steps
+  case "$1" in
+    terralith) echo "${DEMO_HOLD_TERRALITH:-8}" ;;
+    *) echo "$HOLD_DEFAULT" ;;
+  esac
+}
 LIMIT_PLAN="${DEMO_LIMIT_PLAN:-600}"    # a pull request's plan run and its note
 LIMIT_RUN="${DEMO_LIMIT_RUN:-900}"      # one apply run, from the push or comment that starts it
 LIMIT_START="${DEMO_LIMIT_START:-180}"  # for Forgejo to start a run after a push, merge or comment
@@ -919,7 +930,25 @@ run_started() { # before id, event, [sha]
   done
 }
 
-# Wait for run RUN_ID to end. Sets RUN_STATUS and RUN_URL.
+# Whether run RUN_ID is done but for its tips job: it has a tips job that has
+# not ended, and every other job succeeded or was skipped. The tips job runs
+# after the last wave and only opens pull requests of advice (terragucci
+# respond tips). It writes no wave report, roster, migration record or
+# progress, and demo.json is the driver's own, so nothing behold reads waits
+# on it. A wave that failed or waits is a job that failed, which this never
+# passes, and the tips job behind it is skipped anyway.
+only_tips_left() { # jobs JSON (Forgejo's /actions/runs/<id>/jobs)
+  jq -e '
+    def ended: .status == "success" or .status == "failure" or .status == "cancelled" or .status == "skipped";
+    (if type == "array" then . else [] end) as $jobs
+    | ($jobs | map(select(.name != "tips"))) as $rest
+    | ($rest | length) > 0
+      and ($rest | all(.status == "success" or .status == "skipped"))
+      and ($jobs | any(.name == "tips" and (ended | not)))' <<<"$1" >/dev/null 2>&1
+}
+
+# Wait for run RUN_ID to end, or for its waves to have ended with only its tips
+# job left (only_tips_left), which counts as success. Sets RUN_STATUS and RUN_URL.
 run_ended() { # limit
   local deadline=$(( $(now) + $1 )) run status=""
   while :; do
@@ -929,6 +958,11 @@ run_ended() { # limit
     run="$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID" 2>/dev/null || true)"
     status="$(jq -r '.status // empty' <<<"$run" 2>/dev/null || true)"
     case "$status" in success|failure|cancelled|skipped) break ;; esac
+    if [ -n "$status" ] && only_tips_left "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)"; then
+      log "run $RUN_ID: its waves ended; the driver goes on while its tips job runs"
+      status=success
+      break
+    fi
     [ "$(now)" -lt "$deadline" ] || fail "run $RUN_ID did not end within ${1}s (last status: ${status:-none})"
     sleep "$POLL"
   done
@@ -2338,6 +2372,7 @@ OUT
         : > "$DEMO_STATE/reason"
         use_repo "$(scenario_tool "$s")"
         SCENARIO="$s" TITLE="$(scenario_title "$s")" ABOUT="$(scenario_about "$s")" STARTED="$(now)" PULL="" COMMIT="" OUTCOME=""
+        HOLD="$(scenario_hold "$s")"
         timeline_start
         # A step that fails or passes its limit ends the cycle's subshell; the
         # loop writes stalled and resets.
