@@ -1,4 +1,4 @@
-# team-b's log group, its retention read from the terralith's estate.
+# team-b's log group, its retention read from the shared root's estate.
 
 resource "aws_cloudwatch_log_group" "team_b" {
   name              = "tl-team-b-logs"
@@ -6,6 +6,6 @@ resource "aws_cloudwatch_log_group" "team_b" {
 }
 
 data "terraform_estate_outputs" "platform" {
-  estate = "tl-terralith"
+  estate = "tl-shared"
   names  = ["log_retention_days"]
 }

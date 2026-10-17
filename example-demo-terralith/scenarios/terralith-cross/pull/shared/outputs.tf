@@ -1,4 +1,4 @@
-# A setting every team reads: the log groups the terralith keeps take it
+# A setting every team reads: the log groups the shared root keeps take it
 # from the local, and each carved team's root from the output, through
 # data.terraform_estate_outputs.
 locals {

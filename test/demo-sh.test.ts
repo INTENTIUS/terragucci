@@ -2,7 +2,7 @@
 // exits early (head -1, grep -q) kills its writer with SIGPIPE and the driver
 // with 141. v0.4.17's tree_bucket did that on every `up` (behold#571).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -446,7 +446,7 @@ describe("the terralith scenario", () => {
       "demo_where", "scenario_name", "say", "waiting_label", "demo_write", "demo_hold", "open_pull", "merge_pull", "follow", "default_waiting",
       "tool_repo", "tl_team_repo", "tl_repo", "tl_count", "tl_beat", "tl_stock_beat", "tl_pull_beat", "tl_migrate_waiting", "scenario_terralith", "reset_written",
     ].map(fn).join("\n");
-    const body = `${stubs}\n${fns}\nTL_TEAMS=(team-b) TL_TEAM=team-b\nscenario_terralith\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
+    const body = `${stubs}\n${fns}\nTL_TEAMS=(team-b) TL_TEAM=team-b TL_ROOT=shared\nscenario_terralith\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
     const lines = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8").trim().split("\n") : []);
     return {
@@ -479,10 +479,10 @@ describe("the terralith scenario", () => {
     expect(writes.at(-1)).toMatchObject({ beat: null, about: null, next: "start the next cycle" });
   });
 
-  it("pushes the stock terralith to main with no [skip ci], and waits for that push's run", () => {
+  it("pushes the stock shared root to main with no [skip ci], and waits for that push's run", () => {
     const r = run([...migrate, "applied"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.pushes[0]).toBe("The terralith, stock, for cycle 12");
+    expect(r.pushes[0]).toBe("The shared root, stock, for cycle 12");
     // The first run the cycle waits for is the stock commit's push run.
     expect(r.started[0]).toBe("0 push base");
     expect(r.writes().slice(0, 2).map((w) => `${w.beat} ${w.step} ${w.next}`)).toEqual(["stock applying follow the stock apply", "stock applied open the adopt pull request"]);
@@ -491,7 +491,7 @@ describe("the terralith scenario", () => {
   it("stalls the stock beat when its run ends in anything but applied, before the adopt beat", () => {
     const r = run(["failed"]);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("FAIL: the stock terralith of cycle 12 ended failed (u)");
+    expect(r.stderr).toContain("FAIL: the stock shared root of cycle 12 ended failed (u)");
     expect(r.writes().map((w) => `${w.beat} ${w.step}`)).toEqual(["stock applying"]);
   });
 
@@ -554,29 +554,73 @@ describe("tl_fill", () => {
   it("writes the cycle's prefix over the generator's, once", () => {
     const tmp = mkdtempSync(join(tmpdir(), "demo-terralith-fill-"));
     try {
-      const copy = spawnSync("bash", ["-c", `cp -R example-demo-terralith/terralith example-demo-terralith/scenarios ${tmp}/`], { cwd: root, encoding: "utf8" });
+      const copy = spawnSync("bash", ["-c", `cp -R example-demo-terralith/shared example-demo-terralith/scenarios ${tmp}/`], { cwd: root, encoding: "utf8" });
       expect(copy.status, copy.stderr).toBe(0);
       const body = `CYCLE=7\n${fn("tl_fill")}\ntl_fill ${tmp}\ntl_fill ${tmp}`;
       const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
       expect(r.status, r.stderr).toBe(0);
       const read = (...p: string[]) => readFileSync(join(tmp, ...p), "utf8");
-      expect(read("terralith", "iam.tf")).toContain('name = "tl7-team-a-role"');
-      expect(read("terralith", "iam.tf")).toContain('name  = "tl7-team-b-worker-${count.index}-role"');
-      expect(read("terralith", "iam.tf")).not.toMatch(/"tl-/);
-      expect(read("terralith", "network.tf")).toContain('Name = "tl7-vpc"');
-      expect(read("terralith", "state.tf")).toContain('key            = "tl7-terralith.tfstate"');
-      expect(read("terralith", "state.tf")).toContain('bucket         = "demo-terralith-state"');
+      expect(read("shared", "iam.tf")).toContain('name = "tl7-team-a-role"');
+      expect(read("shared", "iam.tf")).toContain('name  = "tl7-team-b-worker-${count.index}-role"');
+      expect(read("shared", "iam.tf")).not.toMatch(/"tl-/);
+      expect(read("shared", "network.tf")).toContain('Name = "tl7-vpc"');
+      expect(read("shared", "state.tf")).toContain('key            = "tl7-shared.tfstate"');
+      expect(read("shared", "state.tf")).toContain('bucket         = "demo-terralith-state"');
       expect(read("scenarios", "terralith-split", "pull", "team-b", "state.tf")).toContain('estate = "tl7-team-b"');
       expect(read("scenarios", "terralith-split", "pull", "migrations", "split.yml")).toContain("- aws_iam_role.team_b_worker");
-      expect(read("scenarios", "terralith-adopt", "pull", "migrations", "adopt.yml")).toContain("key: tl7-terralith.tfstate");
-      expect(read("scenarios", "terralith-cross", "pull", "team-b", "logs.tf")).toContain('estate = "tl7-terralith"');
+      expect(read("scenarios", "terralith-adopt", "pull", "migrations", "adopt.yml")).toContain("key: tl7-shared.tfstate");
+      expect(read("scenarios", "terralith-cross", "pull", "team-b", "logs.tf")).toContain('estate = "tl7-shared"');
+      expect(read("scenarios", "terralith-adopt", "pull", "shared", "state.tf")).toContain('estate = "tl7-shared"');
+      expect(read("scenarios", "terralith-adopt", "pull", "migrations", "adopt.yml")).toContain("- root: shared");
+      expect(read("scenarios", "terralith-split", "pull", "migrations", "split.yml")).toContain("- from: shared");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 });
 
-// The thin terralith's resource counts in the labels come from the tree: one
+// The reset destroys the last cycle from the tree it kept: shared/ for a cycle
+// applied now, terralith/ for one applied before the root was renamed, each
+// with the state key its own backend block names.
+describe("tl_destroy_bg", () => {
+  const destroy = (dir: string) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-terralith-destroy-"));
+    try {
+      mkdirSync(join(tmp, "rstate", "applied", dir), { recursive: true });
+      writeFileSync(join(tmp, "rstate", "applied.cycle"), "9\n");
+      const body = [
+        `HERE=${join(root, "stack")} RSTATE=${tmp}/rstate STATE_BUCKET=demo-terralith-state TL_RECORDS=demo-terralith-records TL_ROOT=shared`,
+        "TG_NETWORK=n DEMO_IMAGE=i",
+        'log() { echo "$*"; }',
+        `docker() { if [ "$1" = create ]; then printf '%s\\n' "$@" > ${tmp}/create; echo c1; fi; }`,
+        fn("tl_destroy_bg"),
+        "tl_destroy_bg",
+      ].join("\n");
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      const args = readFileSync(join(tmp, "create"), "utf8").split("\n");
+      expect(readFileSync(join(tmp, "rstate", "applied", "destroy.sh"), "utf8")).toBe(readFileSync(join(root, "stack", "demo-terralith-destroy.sh"), "utf8"));
+      expect(existsSync(join(tmp, "rstate", "destroyed.cycle"))).toBe(true);
+      return args;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  };
+
+  it("destroys a cycle of the shared root from shared/, with its state key", () => {
+    const args = destroy("shared");
+    expect(args).toContain("TL_ROOT=shared");
+    expect(args).toContain("TL_STATE=demo-terralith-state/tl9-shared.tfstate");
+  });
+
+  it("destroys a cycle from before the rename from terralith/, with its old state key", () => {
+    const args = destroy("terralith");
+    expect(args).toContain("TL_ROOT=terralith");
+    expect(args).toContain("TL_STATE=demo-terralith-state/tl9-terralith.tfstate");
+  });
+});
+
+// The shared root's resource counts in the labels come from the tree: one
 // per resource block, or its literal count.
 describe("tl_count", () => {
   const count = (text: string) => {

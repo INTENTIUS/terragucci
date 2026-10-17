@@ -1,4 +1,4 @@
-# The terralith's team log groups, their retention from its own local.
+# The shared root's team log groups, their retention from its own local.
 
 resource "aws_cloudwatch_log_group" "team_a" {
   name              = "tl-team-a-logs"

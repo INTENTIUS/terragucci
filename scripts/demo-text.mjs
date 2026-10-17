@@ -34,8 +34,8 @@ export const SAMPLES = {
   // chant's plan digest as the chant scenario shows it: its first 20 characters.
   $PLAN_DIGEST: "jcs1-sha256:3e43a1b2",
   "$(state_input app health_check)": "http://app:9080/healthz",
-  // The terralith's cycle prefix, the migration a gate waits for (adopt or split), and the resource counts the
-  // driver reads from the tree: the stock terralith's, the carved team's and what the terralith keeps.
+  // Scenario terralith's cycle prefix, the migration a gate waits for (adopt or split), and the resource counts the
+  // driver reads from the tree: the stock shared root's, the carved team's and what the shared root keeps.
   $TL_PREFIX: "tl503",
   $MIGRATION: "adopt",
   $TL_RESOURCES: "14",

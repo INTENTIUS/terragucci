@@ -1,5 +1,5 @@
 # One log group per team. The carve moves team-b's to team-b's root, and the
-# cross-estate change sets each one's retention from the terralith's
+# cross-estate change sets each one's retention from the shared root's
 # log_retention_days.
 
 resource "aws_cloudwatch_log_group" "team_a" {

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Write the terralith scenario's pull requests from the terralith's tree.
+"""Write the pull requests of scenario terralith from the shared root's tree.
 
     python3 scripts/phases.py        (from example-demo-terralith/)
 
-Reads terralith/iam.tf, versions.tf and logs.tf and writes each beat's
+Reads shared/iam.tf, versions.tf and logs.tf and writes each beat's
 files under scenarios/terralith-<beat>/pull:
 
-  adopt   terralith/state.tf as a live block, and migrations/adopt.yml
-  split   the carve of team-b: team-b's root, terralith/ without team-b's
+  adopt   shared/state.tf as a live block, and migrations/adopt.yml
+  split   the carve of team-b: team-b's root, shared/ without team-b's
           resources, and migrations/split.yml
   team    team-b's iam.tf with one more action in its inline policy, for
           team-b's own repository, where the root is the repository's top
-  cross   terralith/outputs.tf, the log groups team-a and team-c keep in the
-          terralith reading it as a local, and team-b's log group reading it
+  cross   shared/outputs.tf, the log groups team-a and team-c keep in the
+          shared root reading it as a local, and team-b's log group reading it
           through data.terraform_estate_outputs
 
 A team owns the blocks whose names start with its name (team_b_role,
 team_b_worker, and so on) and its log group from logs.tf. CARVED lists the
-teams the split beat carves out; the others stay in the terralith. Names keep
+teams the split beat carves out; the others stay in the shared root. Names keep
 the tree's prefix, "tl"; stack/demo.sh writes the cycle's prefix over it.
 """
 import os
@@ -99,34 +99,34 @@ def join(bs):
 
 
 def main():
-    iam_head, iam = blocks(read("terralith", "iam.tf"))
-    logs_head, logs = blocks(read("terralith", "logs.tf"))
-    versions = read("terralith", "versions.tf").replace(
+    iam_head, iam = blocks(read("shared", "iam.tf"))
+    logs_head, logs = blocks(read("shared", "logs.tf"))
+    versions = read("shared", "versions.tf").replace(
         "# versions.tf - provider wiring only. The backend is in state.tf.",
-        "# versions.tf - provider wiring only, copied from the terralith's. The\n# estate's live block is in state.tf.",
+        "# versions.tf - provider wiring only, copied from the shared root's.\n# The estate's live block is in state.tf.",
     )
     carved = lambda b: team_of(b[0], b[1]) in CARVED
 
     # adopt: the backend block becomes a live block.
-    write("terralith-adopt/pull/terralith/state.tf", "# The terralith as a choudoufu estate: its resources carry the ownership tags\n# live-import stamps, and it keeps no state file.\n" + live("tl-terralith"))
+    write("terralith-adopt/pull/shared/state.tf", "# The shared root as a choudoufu estate: its resources carry the ownership\n# tags live-import stamps, and it keeps no state file.\n" + live("tl-shared"))
     write(
         "terralith-adopt/pull/migrations/adopt.yml",
-        "# Adopt the terralith: choudoufu live-import reads its s3 state once and\n"
+        "# Adopt the shared root: choudoufu live-import reads its s3 state once and\n"
         "# stamps tofu-estate and tofu-address on every resource it verifies. The\n"
         "# state file is left in the bucket as it was.\n"
-        "backends:\n  - root: terralith\n    from:\n      backend: s3\n      config:\n"
-        "        bucket: demo-terralith-state\n        key: tl-terralith.tfstate\n        region: us-east-1\n"
+        "backends:\n  - root: shared\n    from:\n      backend: s3\n      config:\n"
+        "        bucket: demo-terralith-state\n        key: tl-shared.tfstate\n        region: us-east-1\n"
         "        use_lockfile: true\n        use_path_style: true\n",
     )
 
-    # split: the carved teams' roots, the terralith without their resources, and the moves.
+    # split: the carved teams' roots, the shared root without their resources, and the moves.
     kept_logs = [b for b in logs if not carved(b)]
     write(
-        "terralith-split/pull/terralith/iam.tf",
-        f"# The identity layer the terralith keeps. {', '.join(CARVED)}'s moved to its own root.\n\n" + join([b for b in iam if not carved(b)]),
+        "terralith-split/pull/shared/iam.tf",
+        f"# The identity layer the shared root keeps. {', '.join(CARVED)}'s moved to its own root.\n\n" + join([b for b in iam if not carved(b)]),
     )
-    write("terralith-split/pull/terralith/logs.tf", f"# The terralith's team log groups. {', '.join(CARVED)}'s moved to its own root.\n\n" + join(kept_logs))
-    moves = ["# Carve " + " and ".join(CARVED) + " out of the terralith: each of its resources moves to",
+    write("terralith-split/pull/shared/logs.tf", f"# The shared root's team log groups. {', '.join(CARVED)}'s moved to its own root.\n\n" + join(kept_logs))
+    moves = ["# Carve " + " and ".join(CARVED) + " out of the shared root: each of its resources moves to",
              "# its own estate. choudoufu live-mv -from-estate rewrites each resource's",
              "# tags, run in the root it moves to; a count block's instances move one by",
              "# one. The untaggable ones (inline policies) follow their role with no write",
@@ -135,11 +135,11 @@ def main():
     for team in CARVED:
         mine = [b for b in iam if team_of(b[0], b[1]) == team]
         log = [b for b in logs if team_of(b[0], b[1]) == team]
-        write(f"terralith-split/pull/{team}/state.tf", f"# {team}'s estate, carved from the terralith.\n" + live(f"tl-{team}"))
+        write(f"terralith-split/pull/{team}/state.tf", f"# {team}'s estate, carved from the shared root.\n" + live(f"tl-{team}"))
         write(f"terralith-split/pull/{team}/versions.tf", versions)
-        write(f"terralith-split/pull/{team}/iam.tf", f"# {team}'s identity resources, moved from the terralith's iam.tf.\n\n" + join(mine))
-        write(f"terralith-split/pull/{team}/logs.tf", f"# {team}'s log group, moved from the terralith's logs.tf.\n\n" + join(log))
-        moves += ["  - from: terralith", f"    to: {team}", "    addresses:"]
+        write(f"terralith-split/pull/{team}/iam.tf", f"# {team}'s identity resources, moved from the shared root's iam.tf.\n\n" + join(mine))
+        write(f"terralith-split/pull/{team}/logs.tf", f"# {team}'s log group, moved from the shared root's logs.tf.\n\n" + join(log))
+        moves += ["  - from: shared", f"    to: {team}", "    addresses:"]
         moves += [f"      - {t}.{n}" for t, n, _ in mine + log if t in TAGGABLE]
     write("terralith-split/pull/migrations/split.yml", "\n".join(moves) + "\n")
 
@@ -152,29 +152,29 @@ def main():
             assert new != text, f"{key}_inline's actions are not where phases.py expects them"
             text = new
         changed.append((t, n, text))
-    write("terralith-team/pull/iam.tf", f"# {CHANGED}'s identity resources, moved from the terralith's iam.tf.\n\n" + join(changed))
+    write("terralith-team/pull/iam.tf", f"# {CHANGED}'s identity resources, moved from the shared root's iam.tf.\n\n" + join(changed))
 
-    # cross: the terralith publishes log_retention_days. The log groups it keeps
+    # cross: the shared root publishes log_retention_days. The log groups it keeps
     # read the local, and each carved team's log group reads the estate's output.
     write(
-        "terralith-cross/pull/terralith/outputs.tf",
-        "# A setting every team reads: the log groups the terralith keeps take it\n"
+        "terralith-cross/pull/shared/outputs.tf",
+        "# A setting every team reads: the log groups the shared root keeps take it\n"
         "# from the local, and each carved team's root from the output, through\n"
         "# data.terraform_estate_outputs.\n"
         "locals {\n  log_retention_days = 14\n}\n\n"
         "output \"log_retention_days\" {\n  value = local.log_retention_days\n}\n",
     )
     text = re.sub(r"retention_in_days = 7\b", "retention_in_days = local.log_retention_days", join(kept_logs))
-    write("terralith-cross/pull/terralith/logs.tf", "# The terralith's team log groups, their retention from its own local.\n\n" + text)
+    write("terralith-cross/pull/shared/logs.tf", "# The shared root's team log groups, their retention from its own local.\n\n" + text)
     for team in CARVED:
         name = team.replace("-", "_")
         write(
             f"terralith-cross/pull/{team}/logs.tf",
-            f"# {team}'s log group, its retention read from the terralith's estate.\n\n"
+            f"# {team}'s log group, its retention read from the shared root's estate.\n\n"
             f'resource "aws_cloudwatch_log_group" "{name}" {{\n'
             f'  name              = "tl-{team}-logs"\n'
             f"  retention_in_days = data.terraform_estate_outputs.platform.values.log_retention_days\n}}\n\n"
-            f'data "terraform_estate_outputs" "platform" {{\n  estate = "tl-terralith"\n  names  = ["log_retention_days"]\n}}\n',
+            f'data "terraform_estate_outputs" "platform" {{\n  estate = "tl-shared"\n  names  = ["log_retention_days"]\n}}\n',
         )
 
 

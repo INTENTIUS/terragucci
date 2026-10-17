@@ -1,4 +1,4 @@
-# The identity layer the terralith keeps. team-b's moved to its own root.
+# The identity layer the shared root keeps. team-b's moved to its own root.
 
 resource "aws_iam_role" "team_a_role" {
   name = "tl-team-a-role"

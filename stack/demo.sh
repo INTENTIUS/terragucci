@@ -222,7 +222,7 @@ REPORT_PREFIX=demo
 # of the terraform repo runs in DEMO_IMAGE, the tofu CI image with SQL Yodeler
 # (stack/demo-yodel/Dockerfile), which example-demo/terragucci.yml names.
 DEMO_IMAGE=terragucci-demo-tofu:local
-# The choudoufu release DEMO_IMAGE carries, for the terralith's roots. Its
+# The choudoufu release DEMO_IMAGE carries, for scenario terralith's roots. Its
 # sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
 CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.1}"
@@ -392,7 +392,7 @@ tree_bucket() { # dir
 # which a reset deletes) and ROOTS. INIT_PULL is set when a scenario's pull
 # request runs terragucci init after its files, as an author adding units does.
 # BASE_RUN is empty for a repo whose base commit starts no run (the chant
-# repo's says [skip ci]), so a reset does not wait for one. The terralith's
+# repo's says [skip ci]), so a reset does not wait for one. Scenario terralith's
 # reset pushes no base (tl_reset_work); its stock commit starts a run.
 use_repo() { # tool
   local d keys=""
@@ -439,7 +439,7 @@ loop_repos() {
   local t team
   for t in ${LOOP_TOOLS[@]+"${LOOP_TOOLS[@]}"}; do
     echo "$USER/$(tool_repo "$t") $t"
-    # The terralith's team estates each have a repository of their own (tl_teams_push).
+    # Scenario terralith's team estates each have a repository of their own (tl_teams_push).
     if [ "$t" = terralith ]; then for team in "${TL_TEAMS[@]}"; do echo "$USER/$(tl_team_repo "$team") $t"; done; fi
   done
 }
@@ -1050,7 +1050,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
-    terralith)  echo "One terralith adopted, team B carved out, then changed" ;;
+    terralith)  echo "One shared root adopted, team B carved out, then changed" ;;
     *) return 1 ;;
   esac
 }
@@ -1067,7 +1067,7 @@ scenario_name() {
     b-composed) echo "one composed run" ;;
     tg-planned-outputs) echo "two new units" ;;
     chant-pr-loop) echo "a reviewed plan" ;;
-    terralith)  echo "the terralith carve" ;;
+    terralith)  echo "the shared root carve" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1123,26 +1123,26 @@ say() { # step
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
-    terralith-stock:applying) echo "Cycle $CYCLE starts from a stock terralith under prefix $TL_PREFIX. Wave 1 of the push's run applies its $TL_RESOURCES resources into one state file." ;;
-    terralith-stock:applied) echo "The terralith is applied, with $TL_RESOURCES resources in one state file on s3. A change to any team would plan all of them and wait on the one lock." ;;
-    terralith-adopt:pull-request) echo "Pull request $PULL swaps the terralith's backend block for a live block, and adds migrations/adopt.yml, which adopts its state." ;;
-    terralith-adopt:planned) echo "The plan is on the pull request. Under the live block the terralith would create each resource again, and the migration proves each one exists." ;;
-    terralith-adopt:applying) echo "Wave 1 runs the adopt migration before it plans the terralith." ;;
+    terralith-stock:applying) echo "Cycle $CYCLE starts from one shared root under prefix $TL_PREFIX. Wave 1 of the push's run applies its $TL_RESOURCES resources into one state file." ;;
+    terralith-stock:applied) echo "The shared root is applied, with $TL_RESOURCES resources in one state file on s3. A change to any team would plan all of them and wait on the one lock." ;;
+    terralith-adopt:pull-request) echo "Pull request $PULL swaps the shared root's backend block for a live block, and adds migrations/adopt.yml, which adopts its state." ;;
+    terralith-adopt:planned) echo "The plan is on the pull request. Under the live block the shared root would create each resource again, and the migration proves each one exists." ;;
+    terralith-adopt:applying) echo "Wave 1 runs the adopt migration before it plans the shared root." ;;
     terralith-adopt:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. No resource is tagged yet, and the state file is as it was." ;;
-    terralith-adopt:applied) echo "Adopted. live-import tagged each resource it verified, and the terralith plans no change. Its state file is still in the bucket." ;;
-    terralith-split:pull-request) echo "Pull request $PULL adds the root team-b and migrations/split.yml, which moves team B's $TL_CARVED resources out of the terralith." ;;
-    terralith-split:planned) echo "The plan is on the pull request. The terralith would destroy each of team B's resources and team-b would create it; the migration accounts for each." ;;
-    terralith-split:applying) echo "Wave 1 runs the split migration before it plans the terralith and team-b." ;;
-    terralith-split:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. Team B's resources still carry the terralith's owner tag." ;;
-    terralith-split:applied) echo "Carved. Team B's $TL_CARVED resources are in its own estate and the terralith keeps $TL_KEPT. Both roots plan no change, and nothing was recreated." ;;
+    terralith-adopt:applied) echo "Adopted. live-import tagged each resource it verified, and the shared root plans no change. Its state file is still in the bucket." ;;
+    terralith-split:pull-request) echo "Pull request $PULL adds the root team-b and migrations/split.yml, which moves team B's $TL_CARVED resources out of the shared root." ;;
+    terralith-split:planned) echo "The plan is on the pull request. The shared root would destroy each of team B's resources and team-b would create it; the migration accounts for each." ;;
+    terralith-split:applying) echo "Wave 1 runs the split migration before it plans the shared root and team-b." ;;
+    terralith-split:waiting) echo "Migration $MIGRATION waits for a person to approve its digest. Team B's resources still carry the shared root's owner tag." ;;
+    terralith-split:applied) echo "Carved. Team B's $TL_CARVED resources are in its own estate and the shared root keeps $TL_KEPT. Both roots plan no change, and nothing was recreated." ;;
     terralith-team:pull-request) echo "Pull request $PULL, in team B's own repository, adds dynamodb:Query to team B's inline policy." ;;
     terralith-team:planned) echo "The plan is on the pull request: one update in team B's estate, planned as a cone. No other estate is planned." ;;
     terralith-team:applying) echo "Wave 1 applies team B's estate, and nothing else." ;;
-    terralith-team:applied) echo "Team B's policy is updated, and the terralith and the other teams were never planned. The driver copies team B's root back to demo-terralith." ;;
-    terralith-cross:pull-request) echo "Pull request $PULL adds the terralith's output log_retention_days, 14. The terralith's log groups and team B's read it." ;;
-    terralith-cross:planned) echo "The plan is on the pull request. Each team's log group goes from 7 to 14 days. Team B's is planned on the terralith's planned output." ;;
-    terralith-cross:applying) echo "Wave 1 applies the terralith and records its output. Wave 2 plans team B on the recorded value." ;;
-    terralith-cross:applied) echo "Done. Each team's log group keeps the 14 days the terralith publishes. The next cycle starts from a new stock terralith." ;;
+    terralith-team:applied) echo "Team B's policy is updated, and the shared root and the other teams were never planned. The driver copies team B's root back to demo-terralith." ;;
+    terralith-cross:pull-request) echo "Pull request $PULL has the shared root publish log_retention_days, 14. Team B reads it, and so do the shared root's own log groups." ;;
+    terralith-cross:planned) echo "The plan is on the pull request. Each team's log group goes from 7 to 14 days. Team B's is planned on the shared root's planned output." ;;
+    terralith-cross:applying) echo "Wave 1 applies the shared root and records its output. Wave 2 plans team B on the recorded value." ;;
+    terralith-cross:applied) echo "Done. Each team's log group keeps the 14 days the shared root publishes. The next cycle starts from a new shared root." ;;
     terralith-adopt:approved|terralith-split:approved) echo "The driver approves migration $MIGRATION's digest with the reviewer's key, as a person outside the change would." ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -1164,7 +1164,7 @@ open_pull() {
   local tree="$WORK/c$CYCLE/pull${PULL_BRANCH:+-$PULL_BRANCH}" sha before branch="${PULL_BRANCH:-demo-$SCENARIO}"
   clone_main "$tree"
   overlay "${PULL_FILES:-$TREE/scenarios/$SCENARIO/pull}" "$tree"
-  # The terralith's names carry the cycle's prefix.
+  # The shared root's names carry the cycle's prefix.
   [ "$TOOL" != terralith ] || tl_fill "$tree"
   # A pull request that adds units writes their pipeline as an author would: terragucci init.
   if [ -n "$INIT_PULL" ]; then
@@ -1280,7 +1280,7 @@ waiting_label() {
     b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
     failure:2)    echo "Wave 2 waits for a person to approve the migration's second run. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
-    terralith:*)  echo "Team B's plan reads the output the terralith recorded, and wave $WAVE waits for a person to approve it." ;;
+    terralith:*)  echo "Team B's plan reads the output the shared root recorded, and wave $WAVE waits for a person to approve it." ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
 }
@@ -1581,21 +1581,21 @@ scenario_stale_plan() {
   follow
 }
 
-# terralith: one root that holds everything, with one team carved out of it on
-# choudoufu, the OpenTofu fork for AWS and Kubernetes that keeps ownership as
-# two tags on each resource (tofu-estate and tofu-address). The tree is
-# example-demo-terralith/terralith/, a thin terralith kept by hand
-# (generate.sh): a shared network and three teams, each with a role, an inline
+# terralith: one shared root that holds everything, with one team carved out
+# of it on choudoufu, the OpenTofu fork for AWS and Kubernetes that keeps
+# ownership as two tags on each resource (tofu-estate and tofu-address). The
+# tree is example-demo-terralith/shared/ (TL_ROOT), kept by hand
+# (generate.sh): a network and three teams, each with a role, an inline
 # policy and a log group, plus team-b's count-expanded workers, as one stock
 # root on s3 state. The driver counts its resources from the tree
 # (TL_RESOURCES), and team-b's from the split beat's pull request (TL_CARVED).
 # One cycle is five beats, each written to demo.json as beat, with its card
 # from scenarios/terralith-<beat>/about.json as about:
 #
-#   stock  the driver pushes the cycle's stock terralith to demo-terralith's
+#   stock  the driver pushes the cycle's stock shared root to demo-terralith's
 #          main, and the push's run applies it as wave 1's tf-apply, as it
-#          applies any base. That wave writes the terralith's roster to
-#          <prefix>/estates/terralith/roster.json with every resource
+#          applies any base. That wave writes the shared root's roster to
+#          <prefix>/estates/shared/roster.json with every resource
 #          unmarked, beside its report, so the carve view opens on one estate
 #          drawn from a real run. The driver waits for the run as it waits for a
 #          merge's. Every name and the state key carry the cycle's prefix,
@@ -1605,7 +1605,7 @@ scenario_stale_plan() {
 #          the reviewer approves the digest, and live-import stamps the tags
 #   split  a pull request carves team B out: it adds the root team-b and a
 #          moves migration, split.yml, and leaves teams A and C in the
-#          terralith, as an estate is carved one team at a time. The gate
+#          shared root, as an estate is carved one team at a time. The gate
 #          waits the same way, and live-mv retags each of team B's resources.
 #          The driver then pushes each carved team's root (TL_TEAMS) to a
 #          repository of its own, demo-terralith-<team>, with the root at the
@@ -1616,8 +1616,8 @@ scenario_stale_plan() {
 #          copies the root back to demo-terralith's team-b/ ([skip ci]), so
 #          the next pull request there starts from what is live
 #   cross  a pull request in demo-terralith publishes log_retention_days from
-#          the terralith. Its own log groups read it as a local, and team B's
-#          reads the estate's output. Wave 1 applies the terralith and wave 2
+#          the shared root. Its own log groups read it as a local, and team B's
+#          reads the estate's output. Wave 1 applies the shared root and wave 2
 #          team B; a wave that waits is approved
 #
 # The reset destroys the cycle's resources in the background (tl_destroy_bg),
@@ -1627,6 +1627,10 @@ scenario_stale_plan() {
 # leaves them as they are.
 TL_TEAMS=(team-b)
 TL_TEAM="team-b"
+# The shared root's directory, which names its estate (tl<cycle>-shared) and
+# state key (tl<cycle>-shared.tfstate). A cycle from before the rename keeps
+# terralith/ and tl<cycle>-terralith.tfstate, which tl_destroy_bg still finds.
+TL_ROOT=shared
 TL_RECORDS=demo-terralith-records
 TL_PREFIX=""
 TL_RESOURCES="" TL_CARVED="" TL_KEPT=""
@@ -1644,7 +1648,7 @@ tl_team_repo() { # team -> its repository's name under the admin
   echo "demo-terralith-$1"
 }
 
-# Point the driver's forge calls at one of the terralith's repositories.
+# Point the driver's forge calls at one of the scenario's repositories.
 tl_repo() { # repo name
   REPO="$USER/$1"
   REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
@@ -1652,9 +1656,9 @@ tl_repo() { # repo name
 }
 
 # Write the cycle's prefix over the generator's "tl" in a tree's .tf files and
-# migrations: tl-team-0000-role becomes tl<cycle>-team-0000-role, the zone
-# tl.terralith.test tl<cycle>.terralith.test, and the estates and state key
-# follow. A name that already carries a prefix is left as it is.
+# migrations: tl-team-a-role becomes tl<cycle>-team-a-role, and the estates
+# (tl-shared becomes tl<cycle>-shared) and state key follow. A name that
+# already carries a prefix is left as it is.
 tl_fill() { # dir
   local p="tl$CYCLE"
   find "$1" -type f \( -name '*.tf' -o -path '*/migrations/*.yml' \) -not -path '*/.git/*' -print0 \
@@ -1690,12 +1694,12 @@ tl_up() {
     --data-binary "<PublicAccessBlockConfiguration $ns><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls><BlockPublicPolicy>true</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>" \
     || fail "could not block public access to $TL_RECORDS"
   mkdir -p "$RSTATE"
-  RUN_URL="(each cycle applies its own stock terralith)"
+  RUN_URL="(each cycle applies its own shared root)"
   COMMIT=""
   demo_write reset "$(base_label)" "start the first cycle"
 }
 
-# A loop's terralith is ready: its repositories and the record store front are up.
+# A loop's shared root is ready: its repositories and the record store front are up.
 tl_ready() {
   local r t
   [ "$(docker inspect -f '{{.State.Running}}' "${TG_PROJECT:-terragucci}-demo-records" 2>/dev/null || true)" = true ] \
@@ -1718,15 +1722,15 @@ tl_beat() { # beat
   done
   ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/terralith-$1/about.json" 2>/dev/null || echo null)"
   case "$1" in
-    adopt) PULL_TITLE="Adopt the terralith into a choudoufu estate" ;;
-    split) PULL_TITLE="Carve team-b out of the terralith" ;;
+    adopt) PULL_TITLE="Adopt the shared root into a choudoufu estate" ;;
+    split) PULL_TITLE="Carve team-b out of the shared root" ;;
     team)  PULL_TITLE="team-b: one more action in an inline policy" ;;
     cross) PULL_TITLE="Publish log_retention_days, and team-b reads it" ;;
     *)     PULL_TITLE="" ;;
   esac
 }
 
-# The first beat pushes the cycle's stock terralith to main, where the push's
+# The first beat pushes the cycle's stock shared root to main, where the push's
 # run applies it (wave 1, tf-apply). Its tree is kept in <state>/applied with the
 # cycle in applied.cycle before the run starts and until the reset destroys
 # it, so a cycle that stalls part way, in that run too, is destroyed.
@@ -1736,12 +1740,12 @@ tl_stock_beat() {
   mkdir -p "$bt"
   (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./scripts --exclude ./generate.sh .) | (cd "$bt" && tar xf -)
   tl_fill "$bt"
-  (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on the cycle's terralith"
+  (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on the cycle's shared root"
   mkdir -p "$bt/.chant"
   echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"
   quiet
   before="$(last_run_id)"
-  sha="$(push_tree "$bt" "$REPO" main "The terralith, stock, for cycle $CYCLE")"
+  sha="$(push_tree "$bt" "$REPO" main "The shared root, stock, for cycle $CYCLE")"
   echo "$sha" > "$RSTATE/base.sha"
   COMMIT="$sha"
   rm -rf "$RSTATE/applied"
@@ -1754,7 +1758,7 @@ tl_stock_beat() {
   runs_mark base
   run_ended "$LIMIT_RUN"
   run_outcome
-  [ "$OUTCOME" = applied ] || fail "the stock terralith of cycle $CYCLE ended $OUTCOME ($RUN_URL)"
+  [ "$OUTCOME" = applied ] || fail "the stock shared root of cycle $CYCLE ended $OUTCOME ($RUN_URL)"
   demo_hold applied "$(say applied)" "open the adopt pull request"
 }
 
@@ -1809,7 +1813,7 @@ tl_teams_push() {
     tl_repo "$(tl_team_repo "$team")"
     lifecycle_back
     quiet
-    push_tree "$dir" "$REPO" main "$team's estate, carved from the terralith in cycle $CYCLE [skip ci]" >/dev/null
+    push_tree "$dir" "$REPO" main "$team's estate, carved from the shared root in cycle $CYCLE [skip ci]" >/dev/null
   done
   tl_repo "$(tool_repo terralith)"
 }
@@ -1830,7 +1834,7 @@ tl_sync_team() {
 scenario_terralith() {
   on_migrate() { tl_migrate_waiting; }
   TL_PREFIX="tl$CYCLE"
-  TL_RESOURCES="$(tl_count "$TREE"/terralith/*.tf)"
+  TL_RESOURCES="$(tl_count "$TREE/$TL_ROOT"/*.tf)"
   TL_CARVED="$(for t in "${TL_TEAMS[@]}"; do cat "$TREE/scenarios/terralith-split/pull/$t/"*.tf; done | tl_count)"
   TL_KEPT=$((TL_RESOURCES - TL_CARVED))
   local r t
@@ -1853,7 +1857,7 @@ scenario_terralith() {
 }
 
 # The reset: no run in progress and no pull request open in any of the
-# terralith's repositories, and the cycle's resources destroyed in the background.
+# scenario's repositories, and the cycle's resources destroyed in the background.
 tl_reset_work() {
   local r n t
   HELD=""
@@ -1871,29 +1875,36 @@ tl_reset_work() {
   reports_prune
 }
 
-# Destroy the stock terralith kept in <state>/applied, in a container of the
+# Destroy the stock shared root kept in <state>/applied, in a container of the
 # demo's job image that runs on after the driver goes on
 # (stack/demo-terralith-destroy.sh): its state, which the adoption left as it
 # was, lists every resource the cycle has, since no beat after the stock adds
 # one. The container then deletes the state and the cycle's records. One that
-# cannot start is logged, and the loop goes on.
+# cannot start is logged, and the loop goes on. A cycle applied before the
+# root was renamed kept it as terralith/, with the state key
+# tl<cycle>-terralith.tfstate, so the root is whichever of the two the kept
+# tree has, and the state key follows it.
 tl_destroy_bg() {
-  local n cid
+  local n cid root="" d
   n="$(cat "$RSTATE/applied.cycle" 2>/dev/null || true)"
-  [ -n "$n" ] && [ -d "$RSTATE/applied/terralith" ] || return 0
+  for d in "$TL_ROOT" terralith; do
+    if [ -d "$RSTATE/applied/$d" ]; then root="$d"; break; fi
+  done
+  [ -n "$n" ] && [ -n "$root" ] || return 0
+  cp "$HERE/demo-terralith-destroy.sh" "$RSTATE/applied/destroy.sh"
   mv "$RSTATE/applied.cycle" "$RSTATE/destroyed.cycle"
   if ! cid="$(docker create --rm --name "${TG_PROJECT:-terragucci}-demo-terralith-destroy-$n" --network "$TG_NETWORK" \
       -v "${JOB_CACHE_VOLUME:-terragucci-job-cache}:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      -e TF_IN_AUTOMATION=1 -e "TL_STATE=$STATE_BUCKET/tl$n-terralith.tfstate" -e "TL_RECORDS=$TL_RECORDS/tofu-records/tl$n-" \
+      -e TF_IN_AUTOMATION=1 -e "TL_ROOT=$root" -e "TL_STATE=$STATE_BUCKET/tl$n-$root.tfstate" -e "TL_RECORDS=$TL_RECORDS/tofu-records/tl$n-" \
       "$DEMO_IMAGE" sh /w/destroy.sh 2>&1)"; then
-    log "terralith: could not start the destroy of cycle $n: $cid"
+    log "shared root: could not start the destroy of cycle $n: $cid"
     return 0
   fi
   if docker cp "$RSTATE/applied/." "$cid:/w" >/dev/null 2>&1 && docker start "$cid" >/dev/null 2>&1; then
-    log "terralith: destroying cycle $n's resources in the background ($cid)"
+    log "shared root: destroying cycle $n's resources in the background ($cid)"
   else
-    log "terralith: could not start the destroy of cycle $n"
+    log "shared root: could not start the destroy of cycle $n"
     docker rm -f "$cid" >/dev/null 2>&1 || true
   fi
 }
@@ -2074,7 +2085,7 @@ reset_base() {
 
 reset_work() {
   local base n before
-  # The terralith keeps no base to go back to: each cycle pushes its own.
+  # The shared root keeps no base to go back to: each cycle pushes its own.
   if [ "$TOOL" = terralith ]; then tl_reset_work; return 0; fi
   base="$(cat "$RSTATE/base.sha")"
   HELD=""
@@ -2114,7 +2125,7 @@ reset_written() {
   if [ "$TOOL" = terralith ]; then
     PULL="" COMMIT="$(cat "$RSTATE/base.sha" 2>/dev/null || true)" BEAT="" ABOUT=null
     tl_repo "$(tool_repo terralith)"
-    demo_write reset "Outside the pipeline, the driver destroys this cycle's resources in the background. The next cycle pushes and applies a new stock terralith." "start the next cycle"
+    demo_write reset "Outside the pipeline, the driver destroys this cycle's resources in the background. The next cycle pushes and applies a new shared root." "start the next cycle"
     cycle_publish
     return 0
   fi
@@ -2143,7 +2154,7 @@ attempt() {
 # before the one it applies, and the base is never in the range after it.
 up_repo() {
   local sha root
-  # The terralith's repos get their bases from each cycle (tl_stock_beat, tl_teams_push).
+  # The scenario's repos get their bases from each cycle (tl_stock_beat, tl_teams_push).
   if [ "$TOOL" = terralith ]; then tl_up; return 0; fi
   if ! api -o /dev/null "$URL/api/v1/repos/$REPO" 2>/dev/null; then
     api -o /dev/null -H 'content-type: application/json' -X POST \
@@ -2243,7 +2254,7 @@ repo_description() {
   case "$TOOL" in
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
-    terralith) echo "The terragucci demo's terralith on choudoufu: adopted, team B carved out, then changed" ;;
+    terralith) echo "The terragucci demo on choudoufu: one shared root adopted, team B carved out, then changed" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -2259,7 +2270,7 @@ base_label() {
   case "$TOOL" in
     terraform) echo "The base is applied: $(applied_values), and other" ;;
     chant) echo "The base is applied. Network, app and edge are chant components, each with its own state." ;;
-    terralith) echo "The terralith's repositories are ready. Each cycle pushes and applies a stock terralith of its own." ;;
+    terralith) echo "The repositories are ready. Each cycle pushes and applies a shared root of its own." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
@@ -2303,7 +2314,7 @@ case "$CMD" in
         docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \
           || fail "demo-postgres did not start"
       fi
-      # The terralith's record store front, in the image just built: recreated, so it runs the new one.
+      # Scenario terralith's record store front, in the image just built: recreated, so it runs the new one.
       if tool_present terralith; then
         log "starting demo-records…"
         docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait --force-recreate demo-records >/dev/null \

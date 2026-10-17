@@ -1,5 +1,5 @@
 {
   "changes": "Team B adds one action to an inline policy in its own estate's repository.",
-  "watch": "The plan covers team B's cone: the policy and what reads it. The terralith and the other teams are not planned.",
+  "watch": "The plan covers team B's cone: the policy and what reads it. The shared root and the other teams are not planned.",
   "shows": "Now a team's change plans and applies only its own estate."
 }
