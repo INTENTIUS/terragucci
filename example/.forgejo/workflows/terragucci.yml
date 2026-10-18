@@ -602,7 +602,7 @@ jobs:
           tg status terragucci/apply pending "applying"
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -624,7 +624,7 @@ jobs:
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.4.35-tofu1.13.1@sha256:751240fd66c39842f73777c4cf6a8dca0c5d00b25f197f7625563588a0d834f3
     needs: apply-wave-1
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: '!cancelled() && (needs.apply-wave-1.result == ''success'' || needs.apply-wave-1.result == ''failure'') && (github.event_name == ''push'' && github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch))'
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -632,6 +632,10 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Fetch the earlier waves' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: terragucci-earlier
       - name: Apply wave 2 of 4
         shell: bash
         run: |
@@ -667,7 +671,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -689,7 +693,7 @@ jobs:
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.4.35-tofu1.13.1@sha256:751240fd66c39842f73777c4cf6a8dca0c5d00b25f197f7625563588a0d834f3
     needs: apply-wave-2
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: '!cancelled() && (needs.apply-wave-2.result == ''success'' || needs.apply-wave-2.result == ''failure'') && (github.event_name == ''push'' && github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch))'
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -697,6 +701,10 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Fetch the earlier waves' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: terragucci-earlier
       - name: Apply wave 3 of 4
         shell: bash
         run: |
@@ -732,7 +740,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -754,7 +762,7 @@ jobs:
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.4.35-tofu1.13.1@sha256:751240fd66c39842f73777c4cf6a8dca0c5d00b25f197f7625563588a0d834f3
     needs: apply-wave-3
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: '!cancelled() && (needs.apply-wave-3.result == ''success'' || needs.apply-wave-3.result == ''failure'') && (github.event_name == ''push'' && github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch))'
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
@@ -762,6 +770,10 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Fetch the earlier waves' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: terragucci-earlier
       - name: Apply wave 4 of 4
         shell: bash
         run: |
@@ -797,7 +809,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destructive --stand-down --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;

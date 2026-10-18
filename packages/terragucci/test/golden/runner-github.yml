@@ -547,7 +547,7 @@ jobs:
           tg status terragucci/apply pending "applying"
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -571,7 +571,7 @@ jobs:
     container:
       image: img:1
     needs: apply-wave-1
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: '!cancelled() && (needs.apply-wave-1.result == ''success'' || needs.apply-wave-1.result == ''failure'') && (github.event_name == ''push'' && github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch))'
     permissions:
       contents: write
       statuses: write
@@ -585,6 +585,12 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch the earlier waves' outcomes
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: terragucci-report-apply-wave-*
+          path: terragucci-earlier
       - name: Apply wave 2 of 2
         shell: bash
         run: |
@@ -620,7 +626,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;

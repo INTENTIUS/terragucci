@@ -755,7 +755,7 @@ jobs:
           tg status terragucci/apply pending "applying"
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -906,7 +906,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group prod 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group prod --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -1049,7 +1049,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group dev 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group dev --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -1190,7 +1190,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group default 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group default --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -1215,7 +1215,7 @@ jobs:
       - apply-wave-1-prod
       - apply-wave-1-dev
       - apply-wave-1-default
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: '!cancelled() && (needs.apply-wave-1-prod.result == ''success'' || needs.apply-wave-1-prod.result == ''failure'') && (needs.apply-wave-1-dev.result == ''success'' || needs.apply-wave-1-dev.result == ''failure'') && (needs.apply-wave-1-default.result == ''success'' || needs.apply-wave-1-default.result == ''failure'') && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch))'
     permissions:
       id-token: write
     enable-openid-connect: true
@@ -1226,6 +1226,10 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Fetch the earlier waves' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: terragucci-earlier
       - name: Plan wave 2 of 2 and decide its gate
         shell: bash
         run: |
@@ -1330,7 +1334,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -1376,6 +1380,10 @@ jobs:
         with:
           name: terragucci-wave-2
           path: terragucci-wave
+      - name: Fetch the earlier waves' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: terragucci-earlier
       - name: Apply group prod of wave 2
         shell: bash
         run: |
@@ -1481,7 +1489,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group prod 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group prod --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;
@@ -1519,6 +1527,10 @@ jobs:
         with:
           name: terragucci-wave-2
           path: terragucci-wave
+      - name: Fetch the earlier waves' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: terragucci-earlier
       - name: Apply group dev of wave 2
         shell: bash
         run: |
@@ -1624,7 +1636,7 @@ jobs:
           fi
           outcome="$(mktemp)"
           log="$(mktemp)"
-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group dev 2>&1 | tee "$log"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --binary tofu --gate on-destructive --stand-down --groups 'prod=envs/prod/**;dev=envs/dev/**' --group dev --after terragucci-earlier 2>&1 | tee "$log"
           rc=${PIPESTATUS[0]}
           case "$rc" in
             0) ;;

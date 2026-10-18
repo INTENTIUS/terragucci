@@ -66,7 +66,7 @@
           "number": { "type": "integer" },
           "roots": { "type": "array", "items": { "type": "string" } },
           "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read." },
-          "state": { "enum": ["not-started", "planned", "waiting", "applying", "applied", "refused", "failed"] },
+          "state": { "enum": ["not-started", "planned", "waiting", "applying", "applied", "refused", "failed", "blocked"] },
           "gate": { "type": "string", "description": "Its gate on the ledger, wave-<n>." },
           "policy": { "type": "string", "description": "The gate policy it ran under: always, on-destructive or never." },
           "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },

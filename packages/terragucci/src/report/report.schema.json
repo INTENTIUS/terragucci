@@ -406,7 +406,32 @@
               "over": { "type": "boolean" }
             }
           },
-          "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed." },
+          "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed", "blocked"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed, or blocked when none of its roots ran because an upstream of each did not apply (minor 41)." },
+          "outcomes": {
+            "type": "array",
+            "description": "A tf-apply wave's outcome of each root once it ended (minor 41): applied, unchanged, failed (with the first line of its plan's or apply's error), waiting, refused, decided (its share or group job applies it), not-applied (another root of the wave failed to plan) or blocked (with blocked_by).",
+            "items": {
+              "type": "object",
+              "required": ["root", "outcome"],
+              "additionalProperties": false,
+              "properties": {
+                "root": { "type": "string" },
+                "outcome": { "enum": ["applied", "unchanged", "failed", "waiting", "refused", "decided", "not-applied", "blocked"] },
+                "error": { "type": "string" },
+                "blocked_by": { "type": "string" }
+              }
+            }
+          },
+          "blocked": {
+            "type": "array",
+            "description": "A tf-apply wave's roots that did not run because an upstream did not apply in this run; blocked_by names the root whose failure held it, past any root blocked in between (minor 41).",
+            "items": {
+              "type": "object",
+              "required": ["root", "blocked_by"],
+              "additionalProperties": false,
+              "properties": { "root": { "type": "string" }, "blocked_by": { "type": "string" } }
+            }
+          },
           "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
           "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply, and when that plan changes something its gate holds it for an approval of that plan under gate always or on-destructive, but not under gate never; its review digest is null (minor 21)." },
           "preview": {

@@ -404,6 +404,32 @@ describe("run_outcome on a waiting migration", () => {
 
 // The driver goes on once a run's waves have ended and only its tips job is
 // left: that job opens advice pull requests and writes nothing behold reads.
+// terragucci#1161: Forgejo marks a run failed once one wave failed, while a later wave, which starts after a failure, still runs.
+describe("jobs_ended", () => {
+  const ended = (jobs: unknown) => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("jobs_ended")}\nif jobs_ended "$1"; then echo yes; else echo no; fi`, "x", typeof jobs === "string" ? jobs : JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+  const job = (name: string, status: string) => ({ id: 1, name, status });
+
+  it("waits for a later wave of a run Forgejo already marked failed", () => {
+    expect(ended([job("apply-wave-1", "success"), job("apply-wave-2", "failure"), job("apply-wave-3", "running")])).toBe("no");
+    expect(ended([job("apply-wave-2", "failure"), job("apply-wave-3", "waiting")])).toBe("no");
+    expect(ended([job("apply-wave-2", "failure"), job("apply-wave-3", "failure"), job("tips", "skipped")])).toBe("yes");
+  });
+
+  it("takes a reply that is no job list as ended, as before the check", () => {
+    expect(ended("")).toBe("yes");
+    expect(ended({ message: "not found" })).toBe("yes");
+  });
+
+  it("is checked by run_ended before it takes a run as over, and by quiet for the newest failed runs", () => {
+    expect(fn("run_ended")).toMatch(/success\|failure\|cancelled\|skipped\)\n\s+jobs_ended "\$\(api [^\n]*\/jobs[^\n]*\)" && break/);
+    expect(fn("quiet")).toContain('jobs_ended "$(api "$URL/api/v1/repos/$REPO/actions/runs/$id/jobs"');
+  });
+});
+
 describe("only_tips_left", () => {
   const left = (jobs: unknown) => {
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("only_tips_left")}\nif only_tips_left "$1"; then echo yes; else echo no; fi`, "x", JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });
