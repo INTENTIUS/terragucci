@@ -1172,6 +1172,16 @@
       "type": "boolean",
       "description": "Read atlantis plan and atlantis apply comments as terragucci's."
     },
+    "install": {
+      "type": "object",
+      "properties": {
+        "verify": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "How the jobs install the binary: verify checks a choudoufu release's signature, provenance and SBOM attestation."
+    },
     "respond": {
       "type": "object",
       "properties": {
@@ -2996,6 +3006,16 @@
         "atlantis_comments": {
           "type": "boolean",
           "description": "Read atlantis plan and atlantis apply comments as terragucci's."
+        },
+        "install": {
+          "type": "object",
+          "properties": {
+            "verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "description": "How the jobs install the binary: verify checks a choudoufu release's signature, provenance and SBOM attestation."
         },
         "respond": {
           "type": "object",

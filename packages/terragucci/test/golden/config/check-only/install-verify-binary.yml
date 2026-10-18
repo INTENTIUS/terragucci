@@ -1,0 +1,4 @@
+# install.verify checks choudoufu releases, so another binary is refused.
+binary: tofu
+install:
+  verify: true
