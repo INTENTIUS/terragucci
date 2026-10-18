@@ -25,6 +25,14 @@
 # components pr-plan` on each pull request and its apply job `pr-apply
 # --require-review` on each push to main. See the chant scenario below.
 #
+# The fan-out repo, <admin>/demo-fanout from example-demo-fanout/, is fifteen
+# plain roots of SQS queues and DynamoDB tables in floci: network, cluster-a
+# and cluster-b on it, and six apps on each cluster, each with its own state.
+# terragucci's pipeline applies it like the terraform repo, in its own image's
+# hashicorp/aws mirror (stack/demo-yodel/Dockerfile). Its scenario, fan-out-tofu,
+# fails cluster-a at apply and shows a failure blocking only its dependents
+# (terragucci#1161). See the fan-out scenario below.
+#
 #   stack/demo.sh up                  boot the forgejo profile, and for each
 #                                     tool whose tree is in the checkout push
 #                                     the tree to its repo, apply its roots, and
@@ -60,6 +68,7 @@
 #     "started_at": "2026-10-20T10:00:00Z",
 #     "next": { "action": "approve wave-2", "from": "2026-10-20T10:04:00Z", "at": "2026-10-20T10:04:20Z" },
 #     "pull": 41, "commit": "<sha>", "beat": null,
+#     "chapter": null,
 #     "about": { "changes": "...", "watch": "...", "shows": "..." },
 #     "delivery": "Counted from this demo loop's own runs, ..." }
 #
@@ -76,6 +85,13 @@
 # once every resource has its line.
 # beat is null: no scenario is told in beats now, and the field stays for
 # readers that look for it.
+# chapter is where the step stands in a scenario told in numbered chapters,
+# { "n": 2, "of": 4, "headline": "cluster-a breaks. ...", "short": "cluster-a breaks" },
+# a headline per chapter that a viewer reads over the title, which stays the
+# same through the cycle, and a short name for each chapter's place on a track.
+# Only fan-out-tofu has chapters (demo_chapter); every other scenario's steps,
+# the base's and a reset outside its fourth chapter write null. A stalled step
+# keeps the chapter of the step before it.
 # pull and commit are null until the cycle has them. about is the scenario's
 # card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
@@ -163,22 +179,23 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out-tofu)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
-# chant-pr-loop stays out of the default list until a cycle of it has run to
-# its reset on the demo host. DEMO_SCENARIOS or a name runs it.
+# chant-pr-loop and fan-out-tofu stay out of the default list until a cycle of
+# each has run to its reset on the demo host. DEMO_SCENARIOS or a name runs them.
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant)
+TOOLS=(terraform terragrunt chant tofu-fanout)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
     tg-planned-outputs) echo terragrunt ;;
     chant-pr-loop) echo chant ;;
+    fan-out-tofu) echo tofu-fanout ;;
     *) return 1 ;;
   esac
 }
@@ -187,6 +204,7 @@ tool_repo() { # tool -> the repo's name under the admin
     terraform) echo demo ;;
     terragrunt) echo demo-terragrunt ;;
     chant) echo demo-chant ;;
+    tofu-fanout) echo demo-fanout ;;
     *) return 1 ;;
   esac
 }
@@ -195,6 +213,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     terraform) echo example-demo ;;
     terragrunt) echo example-demo-terragrunt ;;
     chant) echo example-demo-chant ;;
+    tofu-fanout) echo example-demo-fanout ;;
     *) return 1 ;;
   esac
 }
@@ -336,7 +355,7 @@ REVIEWER_KEY="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_KEY)"
 tree_keys() { # dir, tool, [root.hcl]
   local dir="$1" f root key template
   case "$2" in
-    terraform|chant)
+    terraform|chant|tofu-fanout)
       for f in "$dir"/*/*.tf; do
         [ -f "$f" ] || continue
         key="$(awk '/backend "s3"/ { b = 1 } b && /^[[:space:]]*key[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f")"
@@ -518,7 +537,9 @@ view_follow() {
 # waiting for them: next.from stays put while a write repeats both.
 NEXT_KEY="" NEXT_FROM=""
 demo_write() { # step, label, [next action], [next at, epoch seconds]
-  local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null
+  local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null chapter
+  chapter="$(demo_chapter "$step" 2>/dev/null || echo null)"
+  [ -n "$chapter" ] || chapter=null
   view_follow
   [ -z "$at" ] || at_iso="$(iso "$at")"
   if [ -z "$action" ]; then
@@ -531,10 +552,10 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   fi
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
-    --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
+    --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" --argjson chapter "$chapter" \
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
       pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end),
-      about: $about}' \
+      chapter: $chapter, about: $about}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: $step: $label${MIGRATION_WRITE:+ ($action)}"
@@ -618,6 +639,39 @@ scenario_about() { # scenario
   [ -f "$f" ] && jq -ce '{changes, watch, shows}' "$f" 2>/dev/null || echo null
 }
 
+# The fan-out scenario's chapter of a step, {n, of, headline, short}, or null:
+# the first pull request until its apply, the failure, the fix until its
+# apply, and the fix applied and the reset after it.
+demo_chapter() { # step
+  local n=""
+  case "$SCENARIO${FIX:+-fix}:$1" in
+    fan-out-tofu:pull-request|fan-out-tofu:planned|fan-out-tofu:merged|fan-out-tofu:applying) n=1 ;;
+    fan-out-tofu:failed) n=2 ;;
+    fan-out-tofu-fix:pull-request|fan-out-tofu-fix:planned|fan-out-tofu-fix:merged|fan-out-tofu-fix:applying) n=3 ;;
+    fan-out-tofu-fix:applied|fan-out-tofu-fix:reset) n=4 ;;
+  esac
+  if [ -z "$n" ]; then echo null; return 0; fi
+  jq -cn --argjson n "$n" --arg h "$(chapter_headline "$n")" --arg s "$(chapter_short "$n")" '{n: $n, of: 4, headline: $h, short: $s}'
+}
+
+chapter_headline() { # chapter number
+  case "$1" in
+    1) echo "A change to the shared network goes out to all 15 stacks" ;;
+    2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway" ;;
+    3) echo "The fix re-runs only the 7 that were blocked" ;;
+    4) echo "All 15 are in, and nothing was applied twice" ;;
+  esac
+}
+
+chapter_short() { # chapter number
+  case "$1" in
+    1) echo "The change goes out" ;;
+    2) echo "cluster-a breaks" ;;
+    3) echo "The fix" ;;
+    4) echo "Done" ;;
+  esac
+}
+
 # Write a step whose next action is the driver's own, HOLD seconds on, and wait them out.
 demo_hold() { # step, label, next action
   local at=$(( $(now) + HOLD ))
@@ -637,7 +691,7 @@ demo_stalled() {
     --arg started "$(iso "${STARTED:-$(now)}")" --arg text "Stalled after $was: $reason. The driver resets and goes on with the next cycle." \
     --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
-      pull: ($last.pull // null), commit: ($last.commit // null), about: $about}' > "$DEMO_STATE/demo.json.new"
+      pull: ($last.pull // null), commit: ($last.commit // null), chapter: ($last.chapter // null), about: $about}' > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   NEXT_KEY="" NEXT_FROM=""
   log "cycle $CYCLE $SCENARIO: stalled: $reason"
@@ -1050,6 +1104,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
+    fan-out-tofu) echo "A broken stack shouldn't stall the whole rollout" ;;
     *) return 1 ;;
   esac
 }
@@ -1066,6 +1121,7 @@ scenario_name() {
     b-composed) echo "one composed run" ;;
     tg-planned-outputs) echo "two new units" ;;
     chant-pr-loop) echo "a reviewed plan" ;;
+    fan-out-tofu) echo "fifteen stacks" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1075,10 +1131,11 @@ scenario_name() {
 COST_STUB="Its cost line uses made-up prices"
 
 # The label of a step for this cycle's scenario; the generic one when the
-# scenario has none of its own.
+# scenario has none of its own. The fan-out scenario's fix sets FIX, so its
+# second pull request's steps read fan-out-tofu-fix:<step>.
 say() { # step
   local values
-  case "$SCENARIO:$1" in
+  case "$SCENARIO${FIX:+-fix}:$1" in
     a-known:pull-request)   echo "Pull request $PULL: network's http_proxy_port goes 8080 -> 9090, and its output reads .input" ;;
     a-known:planned)        echo "The plan note shows network going 8080 -> 9090. App's listener 9080 and edge's upstream http://app:9080 follow it. Other has no change. $COST_STUB." ;;
     a-known:applying)       echo "Wave 1 applies network, then wave 2 app and wave 3 edge, each in its own state; nothing is destroyed, so no wave waits" ;;
@@ -1118,6 +1175,13 @@ say() { # step
     chant-pr-loop:approved) echo "The driver approves the pull request and its digest as the reviewer, who had no hand in the change." ;;
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
+    fan-out-tofu:pull-request) echo "Pull request $PULL is open. Network gets release r$CYCLE, which all fifteen roots tag themselves with. Cluster-a also gains a queue." ;;
+    fan-out-tofu:planned)   echo "The plan note shows three waves of roots that each change: network, then cluster-a and cluster-b, then twelve apps." ;;
+    fan-out-tofu:applying)  echo "Network applies in wave 1. Cluster-a and cluster-b apply side by side in wave 2, and each one's six apps follow in wave 3." ;;
+    fan-out-tofu-fix:pull-request) echo "The fix is pull request $PULL: cluster-a's queue gets a name of its own. It reaches cluster-a and its six apps, and nothing else." ;;
+    fan-out-tofu-fix:planned) echo "The fix's plan note shows seven roots: cluster-a, then app-01 to app-06. The other eight plan no changes." ;;
+    fan-out-tofu-fix:applying) echo "The waves run again. Cluster-a applies, then its six apps. Network, cluster-b and its apps plan no changes." ;;
+    fan-out-tofu-fix:applied) echo "All fifteen roots are in. The first run applied eight. The fix applied the seven that cluster-a's failure blocked." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -1545,6 +1609,58 @@ scenario_chant_pr_loop() {
   OUTCOME=applied
 }
 
+# fan-out-tofu: one change across fifteen roots, one branch fails, and only
+# its dependents stop (terragucci#1161). example-demo-fanout's network sets the
+# release every root tags itself with, cluster-a and cluster-b read it, and
+# each cluster's six apps read it through their cluster. The pull request sets
+# release r<cycle> on network, and the linked roots plan on its planned output,
+# so the plan note shows each of the fifteen with its own change. It also adds
+# a queue to cluster-a under the name network's queue has, with another
+# visibility timeout: the plan creates it, and at apply SQS refuses a second
+# queue of that name with other attributes (QueueAlreadyExists). On merge,
+# wave 1 applies network; in wave 2 cluster-a fails while cluster-b applies;
+# in wave 3 cluster-b's six apps apply and cluster-a's six are blocked, and
+# the run ends "8 applied, 1 failed, 6 blocked". The fix is a second pull
+# request that gives cluster-a's queue its own name. Its waves plan every root
+# again: network, cluster-b and its apps plan no changes, and cluster-a and its
+# six apps apply. Nothing is destroyed and every read is known at plan time, so
+# gate: on-destructive holds no wave. The reset writes each state back to its
+# base snapshot, as the terraform repo's does; floci keeps what applied, which
+# the next plan reads, and the fix's queue is created again on the next cycle
+# with the same attributes, which SQS answers with the queue it has.
+FANOUT_HOLD="${DEMO_FANOUT_HOLD:-12}"
+FANOUT_FIX_PLANNED="${DEMO_FANOUT_FIX_PLANNED:-8}"
+FANOUT_END_HOLD="${DEMO_FANOUT_END_HOLD:-18}"
+
+# The merge's run ended as the scenario says: cluster-a failed at apply, and
+# the last wave counted 8 applied, 1 failed and 6 blocked. Then the fix.
+fan_out_tofu_failed() {
+  local logs
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  grep -q 'FAILED cluster-a' <<<"$logs" || fail "the merge's run did not fail cluster-a ($RUN_URL)"
+  grep -qF 'the run: 8 applied, 1 failed, 6 blocked' <<<"$logs" || fail "the merge's run did not end 8 applied, 1 failed, 6 blocked ($RUN_URL)"
+  # The failed waves' reports stay in the bucket only until the fix's waves write over them: the trail records them now.
+  audit_trail
+  demo_hold failed "cluster-a failed because its new queue reuses network's queue name, and AWS refuses a second queue with that name. Its six apps are blocked; cluster-b's six went ahead." "open the fix"
+  FIX=1
+  PULL_FILES="$TREE/scenarios/fan-out-tofu/fix" PULL_BRANCH="demo-fan-out-tofu-fix" PULL_TITLE="cluster-a: its events queue gets a name of its own"
+  # The fix's own card, so "What changes" says what the fix does; behold reads demo.json's about at every step.
+  ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/fan-out-tofu-fix/about.json" 2>/dev/null || echo "$ABOUT")"
+  open_pull
+  HOLD="$FANOUT_FIX_PLANNED" demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  demo_write applying "$(say applying)" "follow the waves"
+}
+
+scenario_fan_out_tofu() {
+  on_failed() { [ -z "$FIX" ] || default_failed; fan_out_tofu_failed; }
+  open_pull
+  HOLD="$FANOUT_HOLD" demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  follow
+  END_HOLD="$FANOUT_END_HOLD"
+}
+
 scenario_stale_plan() {
   on_waiting() { stale_waiting; }
   open_pull
@@ -1583,7 +1699,7 @@ run_cycle() {
   ABOUT="$(scenario_about "$1")"
   MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
-  PULL_FILES="" PULL_BRANCH="" PULL_TITLE=""
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" END_HOLD=""
   on_waiting() { default_waiting; }
   on_migrate() { default_migrate; }
   on_failed() { default_failed; }
@@ -1598,6 +1714,7 @@ run_cycle() {
     stale-plan) scenario_stale_plan ;;
     tg-planned-outputs) scenario_tg_planned_outputs ;;
     chant-pr-loop) scenario_chant_pr_loop ;;
+    fan-out-tofu) scenario_fan_out_tofu ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
   if [ "$OUTCOME" = applied ]; then
@@ -1612,8 +1729,9 @@ run_cycle() {
   fi
 }
 
-# The cycle's last step, held HOLD seconds while the audit and the reset's work
-# go on behind it, then reset once both are done. The label is read from the
+# The cycle's last step, held HOLD seconds (END_HOLD when the scenario sets
+# it) while the audit and the reset's work go on behind it, then reset once
+# both are done. The label is read from the
 # states before the reset writes them back, and what behold's kiosk shows does
 # not move until reset is written: it narrates demo.json, and draws the reports
 # pinned to this cycle's commit (runPin in behold's web/kiosk.js), never the
@@ -1621,7 +1739,7 @@ run_cycle() {
 # the run started after the hold. reset is written after the push back's run
 # has ended, so the next cycle's first push finds no run in progress.
 cycle_end() {
-  local at=$(( $(now) + HOLD )) left
+  local at=$(( $(now) + ${END_HOLD:-$HOLD} )) left
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
   audit_trail
   estate_page
@@ -1910,6 +2028,7 @@ repo_description() {
   case "$TOOL" in
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
+    tofu-fanout) echo "The terragucci demo's fan-out: fifteen roots of SQS queues and DynamoDB tables in three waves, where a failure blocks only what depends on it" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -1925,6 +2044,7 @@ base_label() {
   case "$TOOL" in
     terraform) echo "The base is applied: $(applied_values), and other" ;;
     chant) echo "The base is applied. Network, app and edge are chant components, each with its own state." ;;
+    tofu-fanout) echo "The base is applied. Fifteen roots each have their own state. Cluster-a and cluster-b sit on network, and six apps sit on each cluster." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
@@ -1952,11 +2072,12 @@ case "$CMD" in
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
     for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
-    # DEMO_IMAGE is the terraform tree's image, and any tree's whose roots run
-    # on choudoufu, since it carries the choudoufu binary.
+    # DEMO_IMAGE is the terraform tree's image, the fan-out tree's, which installs
+    # hashicorp/aws from its mirror, and any tree's whose roots run on
+    # choudoufu, since it carries the choudoufu binary.
     image_tools=()
     for t in "${LOOP_TOOLS[@]}"; do
-      if [ "$t" = terraform ] || tool_choudoufu "$t"; then
+      if [ "$t" = terraform ] || [ "$t" = tofu-fanout ] || tool_choudoufu "$t"; then
         grep -qx "image: $DEMO_IMAGE" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
           || fail "$(tool_tree "$t")/terragucci.yml does not name $DEMO_IMAGE as its image"
         image_tools+=("$t")

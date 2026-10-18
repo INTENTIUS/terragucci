@@ -17,6 +17,12 @@
 # choudoufu comes from its GitHub release, checked against the sha256 that
 # choudoufu.sha256 records for the version and arch, and goes to
 # /usr/local/bin/choudoufu.
+#
+# hashicorp/aws (AWS_PROVIDER_VERSION) comes from its release zip, checked
+# against aws-provider.sha256 and the release's SHA256SUMS, and goes into a
+# filesystem mirror under /opt/terragucci-demo/providers. Only a tree whose
+# TF_CLI_CONFIG_FILE names /etc/terragucci-demo/tofu-mirror.tfrc installs from
+# it (example-demo-fanout); every other tree's init is as it was.
 ARG BASE
 FROM ghcr.io/intentius/sql-yodeler:0.9.0@sha256:15f7406fd59f2f74f4299de0fb6121c9905278276aac86dde993e2223eb97946 AS yodel
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS choudoufu
@@ -31,9 +37,25 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   curl -fsSLo "/tmp/$f" "https://github.com/INTENTIUS/choudoufu/releases/download/v${v}/$f"; \
   echo "$sum  /tmp/$f" | sha256sum -c -; \
   mkdir -p /out && tar -xzf "/tmp/$f" -C /out choudoufu
+FROM choudoufu AS awsprovider
+ARG TARGETARCH
+ARG AWS_PROVIDER_VERSION=6.67.0
+COPY aws-provider.sha256 /tmp/aws-provider.sha256
+RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
+  v="$AWS_PROVIDER_VERSION"; f="terraform-provider-aws_${v}_linux_${a}.zip"; \
+  base="https://github.com/opentofu/terraform-provider-aws/releases/download/v${v}"; \
+  sum="$(awk -v v="$v" -v a="$a" '$1 == v && $2 == a { print $3 }' /tmp/aws-provider.sha256)"; \
+  [ -n "$sum" ] || { echo "aws-provider.sha256 records no sha256 for hashicorp/aws $v on $a" >&2; exit 1; }; \
+  curl -fsSLo "/tmp/$f" "$base/$f"; \
+  curl -fsSLo /tmp/SHA256SUMS "$base/terraform-provider-aws_${v}_SHA256SUMS"; \
+  echo "$sum  /tmp/$f" | sha256sum -c -; \
+  (cd /tmp && grep "  $f\$" SHA256SUMS | sha256sum -c -); \
+  mkdir -p /providers/registry.opentofu.org/hashicorp/aws && mv "/tmp/$f" /providers/registry.opentofu.org/hashicorp/aws/
 FROM ${BASE}
 COPY --from=yodel /opt/yodel /opt/yodel
 COPY --from=choudoufu /out/choudoufu /usr/local/bin/choudoufu
+COPY --from=awsprovider /providers /opt/terragucci-demo/providers
+COPY tofu-mirror.tfrc /etc/terragucci-demo/tofu-mirror.tfrc
 ARG CHOUDOUFU_VERSION
 LABEL org.opencontainers.image.title="terragucci-demo-tofu"
-LABEL org.opencontainers.image.description="terragucci's tofu CI image with SQL Yodeler 0.9.0 and choudoufu ${CHOUDOUFU_VERSION}, for the demo's jobs"
+LABEL org.opencontainers.image.description="terragucci's tofu CI image with SQL Yodeler 0.9.0, choudoufu ${CHOUDOUFU_VERSION} and a hashicorp/aws mirror, for the demo's jobs"

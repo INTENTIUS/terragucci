@@ -1,12 +1,12 @@
 // The text stack/demo.sh puts in the kiosk's top pane (behold's web/kiosk.js), held to length budgets so the
-// header stays a few lines on a TV: the intro and its delivery line, each scenario's card, its title and short name, every step line
+// header stays a few lines on a TV: the intro and its delivery line, each scenario's card, its title, chapter headlines and short name, every step line
 // and every next action. A step line is measured with its placeholders filled by sample values as long as the
 // real ones (a terraform_data id is 36 characters, a short sha 8). Used by scripts/lint-docs.mjs and
 // test/demo-text.test.ts.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-export const BUDGETS = { problem: 220, delivery: 120, changes: 120, watch: 220, shows: 120, title: 60, name: 24, step: 200, action: 60 };
+export const BUDGETS = { problem: 220, delivery: 120, changes: 120, watch: 220, shows: 120, title: 60, headline: 80, name: 24, step: 200, action: 60 };
 
 const ID = "4b6e2c1a-9f3d-4e8b-a1c7-2d5f8e0b3c69";
 
@@ -66,7 +66,7 @@ function body(src, name) {
 }
 
 /**
- * Every string demo.sh writes to the top pane: { kind, where, raw }, kind one of title, name, step, action.
+ * Every string demo.sh writes to the top pane: { kind, where, raw }, kind one of title, headline, name, step, action.
  * Labels made by a function (say, waiting_label, base_label) are read from the function; a call that passes one
  * of those, or a variable, is not read again.
  */
@@ -86,6 +86,8 @@ export function demoStrings(src) {
   };
   echoes("scenario_title", "title");
   echoes("scenario_name", "name");
+  echoes("chapter_headline", "headline");
+  echoes("chapter_short", "name");
   echoes("say", "step");
   echoes("waiting_label", "step");
   echoes("base_label", "step");
@@ -134,7 +136,7 @@ export function cardProblems(root = ".") {
   const intro = read("example-demo/scenarios/intro.json");
   check("example-demo/scenarios/intro.json", "problem", intro?.problem);
   check("example-demo/scenarios/intro.json", "delivery", intro?.delivery);
-  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios"]) {
+  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios", "example-demo-fanout/scenarios"]) {
     for (const d of readdirSync(join(root, dir), { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
       const file = `${dir}/${d.name}/about.json`;
       const about = read(file);

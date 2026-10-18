@@ -1,0 +1,8 @@
+# The hashicorp/aws releases the demo's job image carries as a filesystem
+# mirror, for example-demo-fanout's roots: version, arch and the sha256 of
+# terraform-provider-aws_<version>_linux_<arch>.zip, copied from the
+# release's SHA256SUMS (github.com/opentofu/terraform-provider-aws, the
+# download the OpenTofu registry names). The build checks the zip against
+# this line and against the release's SHA256SUMS.
+6.67.0 amd64 c7955fa64b43262ab05faccecc09c015a388044d8238358371c381ceaab98282
+6.67.0 arm64 1e076bede71cb07f39f17c9993da23c2ef0a037399ee79c55ed53e657c85b9e7

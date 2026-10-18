@@ -1,0 +1,5 @@
+{
+  "changes": "The fix gives cluster-a's queue a name of its own. It touches cluster-a and its six apps, nothing else.",
+  "watch": "terragucci plans every root again. The merge applies cluster-a first and its six apps after it. The other eight plan no changes.",
+  "shows": "A failure blocks only the roots that depend on it, and the fix applies only what was left."
+}
