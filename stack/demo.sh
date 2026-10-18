@@ -1150,7 +1150,7 @@ say() { # step
     fan-out-fix:planned)    echo "The fix's plan note lists seven stacks: cluster-a, then app-01 to app-06. Network, cluster-b and its apps stay as they applied." ;;
     fan-out-fix:waiting)    echo "The fix's plan waits for a reviewer's approval." ;;
     fan-out-fix:approved)   echo "The driver approves the fix and its digest as the reviewer." ;;
-    fan-out-fix:applying)   echo "The apply plans the seven again and gets the approved digest. Cluster-a applies, then its six apps." ;;
+    fan-out-fix:applying)   echo "The merge applies the plan the reviewer approved: cluster-a first, then its six apps." ;;
     fan-out-fix:applied)    echo "All fifteen stacks are in. The first run applied eight. The fix applied the seven that cluster-a's failure held back." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
