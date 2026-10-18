@@ -1,5 +1,0 @@
-{
-  "changes": "The shared root publishes log_retention_days, and team B reads it. The shared root's own log groups read it too.",
-  "watch": "Wave 1 applies the shared root. Wave 2 then plans team B on the value it recorded, and applies it.",
-  "shows": "A change across estates applies in order, each estate in its own wave."
-}

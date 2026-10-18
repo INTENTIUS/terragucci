@@ -1,5 +1,0 @@
-{
-  "changes": "A pull request moves team B's resources to a root of its own and adds a moves migration. Teams A and C stay put.",
-  "watch": "Once a person approves the migration, choudoufu rewrites the owner tag of each team B resource with one write each. Then both roots plan no change.",
-  "shows": "Teams leave the shared root one at a time, and nothing is recreated."
-}
