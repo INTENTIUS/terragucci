@@ -1874,8 +1874,11 @@ describe("apply.branches", () => {
 
   it.each(["github", "forgejo"] as const)("%s: the waves run on the default branch and on release, each passing the map and the branch it runs on", (forge) => {
     const doc = body(pipeline(forge));
+    const refs = "(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.ref == 'refs/heads/release')";
+    // Wave 2 runs once wave 1 applied or failed, so a failure blocks only the roots that depend on it (#1161).
+    expect(doc.jobs["apply-wave-1"].if).toBe(refs);
+    expect(doc.jobs["apply-wave-2"].if).toBe(`!cancelled() && (needs.apply-wave-1.result == 'success' || needs.apply-wave-1.result == 'failure') && (${refs})`);
     for (const j of ["apply-wave-1", "apply-wave-2"]) {
-      expect(doc.jobs[j].if).toBe("(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.ref == 'refs/heads/release')");
       const run = doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
       expect(run).toContain(`--branches 'release=prod/*' --branch "$GITHUB_REF_NAME"`);
     }

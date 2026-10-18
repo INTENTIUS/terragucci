@@ -127,6 +127,8 @@ export interface WaveInput {
   cost?: ReportWaveCost;
   /** Where the wave stands. */
   state?: WaveState;
+  /** A `tf-apply` wave's blocked roots, each with the root whose failure holds it (../blocked.ts). */
+  blocked?: ReadonlyMap<string, string>;
   /** The waves whose roots its roots read. */
   reads?: number[];
   /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
@@ -462,6 +464,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
       ...(w.cost ? { cost: w.cost } : {}),
       ...(w.state ? { state: w.state } : {}),
+      ...(w.blocked?.size ? { blocked: [...w.blocked].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, by]) => ({ root, blocked_by: by })) } : {}),
       ...(w.reads?.length ? { reads: w.reads } : {}),
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
       ...(w.preview ? { preview: w.preview } : {}),

@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 40;
+export const REPORT_MINOR = 41;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -388,7 +388,8 @@ export interface ReportUnknownRead {
  * share jobs do), then `applied`, or `refused` (its plans changed after an
  * approval, or the policy denied a root) or `failed`.
  */
-export type WaveState = "planned" | "waiting" | "applying" | "applied" | "refused" | "failed";
+/** blocked (minor 41): a `tf-apply` wave none of whose roots ran, since an upstream of each did not apply in the run. */
+export type WaveState = "planned" | "waiting" | "applying" | "applied" | "refused" | "failed" | "blocked";
 
 /** When a step runs: before or after a root's init, plan, apply or drift (minor 17). */
 export type ReportStepWhen = `${"before" | "after"}-${"init" | "plan" | "apply" | "drift"}`;
@@ -614,6 +615,14 @@ export interface ReportWave {
   cost?: ReportWaveCost;
   /** Where the wave stands (minor 21). */
   state?: WaveState;
+  /**
+   * A `tf-apply` wave's roots that did not run (minor 41): an upstream of
+   * each, a root whose state it reads or one `waves.after` puts before it, did
+   * not apply in this run. `blocked_by` names the root whose failure held it,
+   * past any root blocked in between. The wave's other roots plan and apply,
+   * and they are not in `roots`. Absent when none is blocked.
+   */
+  blocked?: { root: string; blocked_by: string }[];
   /** The waves whose roots' state its roots read (minor 21). Absent when it reads none. */
   reads?: number[];
   /**

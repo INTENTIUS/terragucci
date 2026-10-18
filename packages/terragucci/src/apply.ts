@@ -103,6 +103,7 @@ import {
 import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
 import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
+import { blockedRoots, blockedWords, earlierOutcomes, earlierRun, onlyWaiting, runSummary, WAVE_REPORT_DIR, writeOutcomeFile, type RootOutcome, type RootStatus } from "./blocked";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
@@ -964,6 +965,13 @@ export interface ApplyWaveOptions {
   chant?: string;
   /** Set by the wave's job with `waves.compose` on: what it comes to for this change (./compose.ts). */
   composition?: Composition;
+  /**
+   * Plain roots only (terragucci#1161): the directory the pipeline downloads
+   * the earlier waves' report artifacts into. With it, the job writes its
+   * wave's outcome beside its report, and a root whose upstream did not apply
+   * in this run is blocked while the rest of the wave applies (./blocked.ts).
+   */
+  after?: string;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it, on `chant run wave`. Returns the exit code; what happened is printed. */
@@ -1109,6 +1117,27 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
           return (code = EXIT.applied);
         }
       }
+      // terragucci#1161: a root whose upstream did not apply in this run is blocked, and the rest of the wave goes on.
+      // A composed run plans its roots as one, so after a change that composes, a root that did not apply holds every later wave, as before.
+      if (options.after !== undefined && options.wave > 1) {
+        const blocked = composition ? composedBlocked(repo, options, waves[options.wave - 1]!) : await waveBlocked(repo, options, waves);
+        if (blocked.size > 0) {
+          const j = jobOf(options.wave);
+          j.w.blocked = blocked;
+          const left = waves[options.wave - 1]!.filter((r) => !blocked.has(r));
+          console.log(`wave ${options.wave}: ${blockedWords(blocked)}, so ${blocked.size === 1 ? "it is" : "they are"} not planned${left.length ? `; ${left.join(", ")} ${left.length === 1 ? "goes" : "go"} on` : ""}`);
+          waves = waves.map((l, i) => (i === options.wave - 1 ? left : l));
+          if (left.length === 0) {
+            // Every root of the wave is blocked: the report says so, and the wave applies nothing.
+            const read = await waveSettings(repo, options, options.config ?? findConfig(repo));
+            if (!("error" in read)) Object.assign(j.w, { settings: read.settings, planned: [], roots: [], started: new Date().toISOString() });
+            writeOutcome(env, `wave ${options.wave}: every root is blocked: ${blockedWords(blocked)}`, j.w);
+            const run = earlierOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], options.wave);
+            for (const [root, by] of blocked) run.set(root, { status: "blocked", by, wave: options.wave, at: "" });
+            return (code = onlyWaiting(run) ? EXIT.waiting : EXIT.failed);
+          }
+        }
+      }
       // chant's spec numbers waves by place: an emptied wave keeps its place, holding the run's target (./compose.ts).
       specWaves = composition ? specWavesWithRun(applyWaves(options.layers, options.canary), composition) : waves;
       if (options.groups) {
@@ -1216,6 +1245,27 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       if (ran.result.decision?.status === "approved") j.w.refused = { reason: "approval", approved: ran.result.decision.digest, roots: moved };
       writeOutcome(options.env, `wave ${last} ${pieceName} changed since the wave decided: ${moved.join(", ")}`, j.w);
     }
+    if (options.after !== undefined && !options.terragrunt && code === EXIT.applied && !((grouped || options.shares !== undefined) && !piece)) {
+      // terragucci#1161: the wave applied what it could. It ends as failed when it blocked a root, and the last wave when
+      // the run did not apply every root; as waiting when every root that did not apply waits for an approval, or is
+      // blocked behind one, so the commit's status stays pending and the approval's re-run applies them.
+      const run = new Map<string, RootOutcome>(earlierOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], last));
+      for (const [root, o] of Object.entries(rootOutcomes(code, j.w))) run.set(root, o);
+      const held = onlyWaiting(run) ? EXIT.waiting : EXIT.failed;
+      if (j.w.blocked?.size) {
+        j.w.appliedRest = true;
+        code = held;
+        writeOutcome(options.env, `wave ${last} applied its other roots; blocked: ${blockedWords(j.w.blocked)}`, j.w);
+      } else if (last === applyWaves(options.layers, options.canary).length) {
+        const summary = runSummary(run.values());
+        if (summary) {
+          j.w.appliedRest = true;
+          code = held;
+          console.log(`${j.label}: applied; the run did not apply every root: ${summary}`);
+          writeOutcome(options.env, `the run: ${summary}`, j.w);
+        }
+      }
+    }
     if ((grouped || options.shares !== undefined) && !piece && code === EXIT.applied) {
       // The share or group jobs apply: chant's decision goes to the decision file the pipeline hands them.
       const file = options.decided ?? join(repo, decidedPath(options.wave));
@@ -1240,9 +1290,96 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       w.ended = new Date().toISOString();
       // The report is written once the wave's roots planned, whatever came of the gate and the apply.
       if (w.planned) await writeWaveReport(repo, options, w as Required<WaveRun>, env).catch((e) => console.log(`wave ${k}: the report was not written: ${(e as Error).message}`));
+      // terragucci#1161: each root's outcome, for the waves after this one to read.
+      if (options.after !== undefined && !options.terragrunt) {
+        try {
+          const dir = join(repo, WAVE_REPORT_DIR);
+          mkdirSync(dir, { recursive: true });
+          // A job with nothing to apply (its roots applied in an earlier composed run, or another share has them) names no root.
+          const piece = options.group !== undefined || options.share !== undefined;
+          const layer = piece || jobs.get(k)!.facts.nothing ? [] : (applyWaves(options.layers, options.canary)[k - 1] ?? []);
+          // A state migration runs in wave 1 before its roots: a wave 1 that did not apply holds every later root.
+          const holdsAll = k === 1 && c !== EXIT.applied && existsSync(join(repo, MIGRATIONS_DIR));
+          writeOutcomeFile(dir, k, { ...(options.group !== undefined ? { group: options.group } : {}), ...(options.share !== undefined ? { share: options.share } : {}) }, rootOutcomes(c, w, layer), undefined, holdsAll);
+        } catch (e) {
+          console.log(`wave ${k}: its outcome was not written, so the waves after it take its roots as not applied: ${(e as Error).message}`);
+        }
+      }
     }
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/**
+ * terragucci#1161: the roots of this job's wave that an upstream which did
+ * not apply in this run holds, each with the root whose failure holds it.
+ * The upstreams are the roots whose state a root reads and those
+ * `waves.after` puts before it (rootOrder), in the waves before this one; the
+ * outcomes are the earlier waves' jobs', from the downloaded artifacts and
+ * this checkout's own report directory (a comment's apply runs every wave in
+ * one job).
+ */
+async function waveBlocked(repo: string, options: ApplyWaveOptions, waves: readonly string[][]): Promise<Map<string, string>> {
+  const roots = waves[options.wave - 1] ?? [];
+  const earlier = new Set(waves.slice(0, options.wave - 1).flat());
+  if (roots.length === 0 || earlier.size === 0) return new Map();
+  const read = await waveSettings(repo, options, options.config ?? findConfig(repo));
+  if ("error" in read) throw new ConfigError(read.error);
+  const after = detectShape(repo, read.settings).after;
+  const all = options.layers.flat();
+  const order = rootOrder(repo, all, after);
+  // waves.canary: the canary roots go first so that a failed canary holds the rest, whether or not a root reads one.
+  const canary = new Set(all.filter((r) => (options.canary ?? []).some((g) => globMatch(g, r))));
+  if (canary.size > 0) for (const r of all) if (!canary.has(r)) order.set(r, new Set([...(order.get(r) ?? []), ...canary]));
+  const run = earlierRun([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
+  return blockedRoots(roots, order, earlier, run.roots, run.holdsAll);
+}
+
+/**
+ * With `waves.compose` on: every root of this wave, blocked by the first root
+ * of an earlier wave that did not apply in the run (or by the gate of a wave
+ * that holds every later root), or none.
+ */
+function composedBlocked(repo: string, options: ApplyWaveOptions, roots: readonly string[]): Map<string, string> {
+  const run = earlierRun([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
+  if (run.holdsAll !== undefined) return new Map(roots.map((r) => [r, `wave-${run.holdsAll}`]));
+  const stop = [...run.roots].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).find(([, o]) => o.status !== "applied" && o.status !== "unchanged");
+  if (!stop) return new Map();
+  const by = stop[1].status === "blocked" && stop[1].by ? stop[1].by : stop[0];
+  return new Map(roots.map((r) => [r, by]));
+}
+
+/**
+ * Each root this job handled, as the waves after it read it (./blocked.ts).
+ * A wave's own job that planned nothing (it waited on a migration, or its
+ * roots applied in an earlier composed run) names the wave's roots, `layer`,
+ * by how it ended; a share or group job names only the roots it planned.
+ */
+function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): Record<string, RootOutcome> {
+  const out: Record<string, RootOutcome> = {};
+  const changed = new Set(w.changedRoots ?? []);
+  const failed = new Set(w.failed ?? []);
+  const planned = new Map((w.planned ?? []).map((p) => [p.root, p] as const));
+  if (w.roots === undefined) {
+    for (const root of layer) out[root] = { status: code === EXIT.applied ? "unchanged" : code === EXIT.waiting ? "waiting" : "not-applied" };
+    return out;
+  }
+  for (const root of w.roots) {
+    const p = planned.get(root);
+    const denied = p?.policy !== undefined && p.policy.result !== "passed";
+    let status: RootStatus;
+    if (failed.has(root) || (p?.error && !denied)) status = "failed";
+    else if (denied) status = "refused";
+    else if (!changed.has(root)) status = "unchanged";
+    else if (w.applied?.has(root)) status = "applied";
+    else if (w.decided) status = "decided";
+    else if (code === EXIT.waiting) status = "waiting";
+    else if (code === EXIT.refused || code === EXIT.held || code === EXIT.superseded) status = "refused";
+    else status = "not-applied";
+    out[root] = { status };
+  }
+  for (const [root, by] of w.blocked ?? []) out[root] = { status: "blocked", by };
+  return out;
 }
 
 /**
@@ -1455,6 +1592,10 @@ export interface WaveRun {
   appliedUnder?: AppliedRecord;
   /** The composed run this wave carries (./compose.ts), for its row in the report and the run view. */
   composed?: WaveComposedInput;
+  /** terragucci#1161: the roots of the wave an upstream that did not apply in this run holds, each with the root whose failure holds it. */
+  blocked?: Map<string, string>;
+  /** terragucci#1161: the wave applied every root it planned, and its job fails for roots it or an earlier wave did not apply. */
+  appliedRest?: boolean;
 }
 
 /**
@@ -1471,8 +1612,11 @@ export function waveSpans(w: Pick<WaveRun, "started" | "plannedAt" | "gateSince"
 }
 
 /** Where a wave stands, from how it ended. */
-export function waveState(code: number, w: Pick<WaveRun, "decided" | "refused">): WaveState {
+export function waveState(code: number, w: Pick<WaveRun, "decided" | "refused" | "blocked" | "appliedRest" | "roots">): WaveState {
   if (code === EXIT.applied) return w.decided ? "applying" : "applied";
+  // terragucci#1161: a wave that applied what it planned and blocked the rest stands applied; one that planned nothing, blocked.
+  if (w.appliedRest) return "applied";
+  if ((code === EXIT.failed || code === EXIT.waiting) && w.blocked?.size && !w.roots?.length) return "blocked";
   if (code === EXIT.waiting) return "waiting";
   if (code === EXIT.refused || code === EXIT.held || code === EXIT.superseded || w.refused?.reason === "policy") return "refused";
   return "failed";
@@ -1601,7 +1745,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.blocked?.size ? { blocked: w.blocked } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
