@@ -1,0 +1,23 @@
+# The demo's choudoufu repo (stack/demo.sh, scenario cone-plan): three
+# estates, network, service-a and service-b, each a root under a live block.
+# Every estate keeps its ownership in choudoufu's one live backend: tags on
+# each resource and records in one record store bucket, under the estate's
+# own prefix. There is no state file. choudoufu is the OpenTofu fork for AWS
+# and Kubernetes.
+forge: forgejo
+binary: choudoufu
+# The demo's job image: the tofu CI image with SQL Yodeler and choudoufu
+# (stack/demo-yodel/Dockerfile).
+image: terragucci-demo-tofu:local
+gate: on-destructive
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
+env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  TERRAGUCCI_METRICS_PER_RUN: "true"
+  # choudoufu's record store addresses its bucket virtual-hosted
+  # (<bucket>.<host>). demo-records forwards those requests to floci
+  # path-style (stack/docker-compose.yml, profile demo).
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566

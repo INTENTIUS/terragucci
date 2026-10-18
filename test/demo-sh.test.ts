@@ -2,7 +2,7 @@
 // exits early (head -1, grep -q) kills its writer with SIGPIPE and the driver
 // with 141. v0.4.17's tree_bucket did that on every `up` (behold#571).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -399,6 +399,179 @@ describe("run_outcome on a waiting migration", () => {
   it("reads past a migration this cycle approved at that digest, to the wave that waits after it", () => {
     const logs = "migration split waits for an approval of digest sha256:77. Read the proof above\nterragucci approve wave-2 --plan x";
     expect(outcome(logs, " split@sha256:77")).toBe("waiting   2");
+  });
+});
+
+// cone-plan: three choudoufu estates in one repository and one live backend.
+// Each cycle's pull request flips one action in service-b's policy, and the
+// planned label states the cone the plan's report.json gives.
+describe("the cone-plan scenario", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const tree = join(root, "example-demo-choudoufu");
+  const base = readFileSync(join(tree, "service-b", "iam.tf"), "utf8");
+  const pulled = readFileSync(join(tree, "scenarios", "cone-plan", "pull", "service-b", "iam.tf"), "utf8");
+  const files = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)]));
+  const listed = (name: string) => (new RegExp(`^${name}=\\(([^)]*)\\)`, "m").exec(demo)?.[1] ?? "").split(/\s+/).filter(Boolean);
+
+  it("is in ALL_SCENARIOS on the choudoufu tool, and not in the default list", () => {
+    expect(listed("ALL_SCENARIOS")).toContain("cone-plan");
+    expect(listed("SCENARIOS")).not.toContain("cone-plan");
+    expect(listed("TOOLS")).toContain("choudoufu");
+    const r = spawnSync("bash", ["-c", `${fn("scenario_tool")}\n${fn("tool_repo")}\n${fn("tool_tree")}\nt="$(scenario_tool cone-plan)"; echo "$t $(tool_repo "$t") $(tool_tree "$t")"`], { cwd: root, encoding: "utf8" });
+    expect(r.stdout.trim()).toBe("choudoufu demo-choudoufu example-demo-choudoufu");
+  });
+
+  it("reads each estate from its live block, and the record store as the tree's bucket", () => {
+    const r = run(`tree_bucket example-demo-choudoufu; tree_keys example-demo-choudoufu choudoufu; tree_keys example-demo-choudoufu/scenarios/cone-plan/pull choudoufu`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["demo-live-records", "network demo-network", "service-a demo-service-a", "service-b demo-service-b"]);
+    expect(/^RECORDS_BUCKET=(\S+)$/m.exec(demo)?.[1]).toBe("demo-live-records");
+    expect(readFileSync(join(tree, "terragucci.yml"), "utf8")).toMatch(/^binary: choudoufu$/m);
+  });
+
+  it("keeps no state file: no backend block, no remote state and no tfstate in the tree", () => {
+    for (const f of files(tree)) {
+      expect(f).not.toMatch(/\.tfstate/);
+      expect(readFileSync(f, "utf8"), f).not.toMatch(/backend\s+"|terraform_remote_state/);
+    }
+  });
+
+  // choudoufu's cone (internal/live/cone): the changed blocks, their readers,
+  // and every block of a type paired with one of them (a role and its
+  // policies); the guard plans in full over 30% of the estate's resource, data
+  // and module blocks, or on a terraform, live or provider block change.
+  it("changes one policy action, whose cone of a role and a policy stays under choudoufu's 30% guard", () => {
+    const changed = base.split("\n").filter((l, i) => l !== pulled.split("\n")[i]);
+    expect(base.split("\n").length).toBe(pulled.split("\n").length);
+    expect(changed).toEqual(['      Action   = ["s3:GetObject", "s3:ListBucket"]']);
+    expect(files(join(tree, "scenarios", "cone-plan", "pull"))).toEqual([join(tree, "scenarios", "cone-plan", "pull", "service-b", "iam.tf")]);
+    const text = files(join(tree, "service-b")).filter((f) => f.endsWith(".tf")).map((f) => readFileSync(f, "utf8")).join("\n");
+    const blocks = [...text.matchAll(/^(resource|data|module) "([^"]+)"/gm)];
+    const roles = blocks.filter((m) => m[1] === "resource" && /^aws_iam_role(_policy|_policy_attachment|_policies_exclusive)?$/.test(m[2]!));
+    expect(roles.map((m) => m[2])).toEqual(["aws_iam_role", "aws_iam_role_policy"]);
+    expect(roles.length / blocks.length).toBeLessThanOrEqual(0.3);
+    expect(blocks.length).toBe(8);
+  });
+
+  it("links the services to network through terraform_estate_outputs", () => {
+    for (const svc of ["service-a", "service-b"]) {
+      expect(readFileSync(join(tree, svc, "network.tf"), "utf8")).toMatch(/data "terraform_estate_outputs" "network" \{\n\s+estate = "demo-network"/);
+    }
+    expect(readFileSync(join(tree, "network", "outputs.tf"), "utf8")).toMatch(/output "log_retention_days"/);
+  });
+
+  const report = (roots: unknown[]) => JSON.stringify({ roots });
+  const cone = { path: "service-b", status: "planned", cone: { base: "origin/main", blocks: 2, of: 8, targets: 2 } };
+
+  /** One cycle with the forge, floci and the runs stubbed: main's service-b/iam.tf is `main`, and the plan's report is `rep`. */
+  function cycle(main: string, rep: string) {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-cone-"));
+    made.push(tmp);
+    writeFileSync(join(tmp, "main.tf"), main);
+    writeFileSync(join(tmp, "report.json"), rep);
+    const git = "git -c user.name=t -c user.email=t@t -c init.defaultBranch=main -c commit.gpgsign=false";
+    const sh = spawnSync("bash", ["-c", `${git} init -q origin && cd origin && echo a > f && ${git} add f && ${git} commit -qm merge && git rev-parse HEAD && cd .. && ${git} init -q rstate/base-tree`], { cwd: tmp, encoding: "utf8" });
+    expect(sh.status, sh.stderr).toBe(0);
+    const merge = sh.stdout.trim();
+    const index = JSON.stringify({ schema: "terragucci.report-index/v1", reports: [{ stage: "tf-plan", pull_request: "40", commit: "head", path: "2026/10/head/tf-plan" }] });
+    const stubs = [
+      'log() { echo "$*" >&2; }',
+      'fail() { echo "FAIL: $*" >&2; exit 1; }',
+      "now() { date +%s; }",
+      demo.split("\n").find((l) => l.startsWith("iso()"))!,
+      `TREE=${tree} WORK=${tmp}/work RSTATE=${tmp}/rstate DEMO_STATE=${tmp}/state REMOTE=${tmp}/origin`,
+      `mkdir -p ${tmp}/work ${tmp}/state`,
+      "URL=http://forge:3000 FLOCI=http://floci REPORT_BUCKET=demo-reports REPORT_PREFIX=demo POLL=0 LIMIT_PLAN=1 LIMIT_RUN=1 RESUMES_MAX=3",
+      'CYCLE=12 SCENARIO=cone-plan TITLE=t STARTED="" PULL="" COMMIT="" ABOUT=null HOLD=0 TOOL=choudoufu REPO=admin/demo-choudoufu',
+      'INTRO="" DELIVERY="" INDEX=1 COUNT=1 INIT_PULL="" LIVE=1 HELD="" OUTCOME="" RUN_STATUS="" RUN_URL=u TERRAGUCCI=true',
+      'NEXT_KEY="" NEXT_FROM="" BEAT="" MIGRATIONS_APPROVED="" PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" RESET_MOVED=""',
+      "ROOTS=(network service-a service-b)",
+      ...["CONE_ROOT", "CONE_FILE", "CONE_ACTION"].map((v) => demo.split("\n").find((l) => l.startsWith(`${v}=`))!),
+      'CONE_CHANGE="" CONE_RESULT="" CONE_BLOCKS="" CONE_OF="" CONE_UNPLANNED=""',
+      "view_follow() { :; }",
+      `demo_put() { jq -c '{step, label, next: (.next.action // null)}' "$DEMO_STATE/demo.json" >> ${tmp}/writes; }`,
+      'clone_main() { mkdir -p "$1"; }',
+      "last_run_id() { echo 0; }",
+      `push_as_author() { echo "$4" >> ${tmp}/pushes; echo head; }`,
+      `pr_open() { echo "$2" >> ${tmp}/titles; echo 40; }`,
+      "run_started() { :; }",
+      "runs_mark() { :; }",
+      "run_ended() { RUN_STATUS=success; }",
+      "quiet() { :; }",
+      "as_author() { :; }",
+      "cycle_publish() { :; }",
+      `api() { case "$*" in *raw/service-b/iam.tf*) cat ${tmp}/main.tf ;; *comments*) echo '[{"body":"terragucci tf-plan"}]' ;; *) echo '{"merge_commit_sha":"${merge}"}' ;; esac; }`,
+      `curl() { case "$*" in *forgejo:3000/admin/demo-choudoufu/index.json*) echo '${index}' ;; *forgejo:3000/admin/demo-choudoufu/2026/10/head/tf-plan/report.json*) cat ${tmp}/report.json ;; *) return 22 ;; esac; }`,
+    ].join("\n");
+    const fns = [
+      "demo_where", "scenario_name", "say", "demo_write", "demo_hold", "open_pull", "overlay", "merge_pull", "follow", "run_outcome",
+      "cone_flip", "cone_planned", "cone_read", "cone_applied", "scenario_cone_plan", "reset_written",
+    ].map(fn).join("\n");
+    const body = `${stubs}\n${fns}\nscenario_cone_plan\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    const lines = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8").trim().split("\n") : []);
+    const pr = join(tmp, "work", "c12", "pull", "service-b", "iam.tf");
+    return {
+      status: r.status,
+      stderr: r.stderr,
+      merge,
+      titles: lines("titles"),
+      pull: existsSync(pr) ? readFileSync(pr, "utf8") : "",
+      baseSha: existsSync(join(tmp, "rstate", "base.sha")) ? readFileSync(join(tmp, "rstate", "base.sha"), "utf8").trim() : "",
+      writes: lines("writes").map((l) => JSON.parse(l) as { step: string; label: string; next: string | null }),
+    };
+  }
+
+  it("adds the action when main lacks it, and states the report's cone at planned", () => {
+    const c = cycle(base, report([cone]));
+    expect(c.status, c.stderr).toBe(0);
+    expect(c.writes.map((w) => w.step)).toEqual(["pull-request", "planned", "merged", "applying", "applied", "reset"]);
+    expect(c.pull).toBe(pulled);
+    expect(c.titles).toEqual(["service-b: add s3:PutObject to its inline policy"]);
+    const at = (step: string) => c.writes.find((w) => w.step === step)!;
+    expect(at("pull-request").label).toContain("It adds s3:PutObject to service-b's inline policy");
+    expect(at("planned").label).toBe("The plan covers 2 of service-b's 8 blocks as a cone: its role and the policy the change touches. Network and service-a are not planned.");
+    expect(at("planned").next).toBe("merge pull request 40");
+    expect(at("applied").label).toContain("now allows s3:PutObject");
+    // The merge that applied is the base now, and the reset leaves main there.
+    expect(c.baseSha).toBe(c.merge);
+    expect(at("reset").label).toContain(`Main stays at ${c.merge.slice(0, 8)} as applied`);
+  });
+
+  it("removes the action when main has it, and takes the counts from the report, not the tree", () => {
+    const c = cycle(pulled, report([{ ...cone, cone: { base: "origin/main", blocks: 3, of: 11, targets: 3 } }]));
+    expect(c.status, c.stderr).toBe(0);
+    expect(c.pull).toBe(base);
+    expect(c.titles).toEqual(["service-b: remove s3:PutObject from its inline policy"]);
+    const planned = c.writes.find((w) => w.step === "planned")!.label;
+    expect(planned).toBe("The plan covers 3 of service-b's 11 blocks as a cone. Network and service-a are not planned.");
+    expect(c.writes.find((w) => w.step === "applied")!.label).toContain("no longer allows s3:PutObject");
+  });
+
+  it("stalls at the plan when choudoufu's guard planned the whole estate, naming the guard", () => {
+    const c = cycle(base, report([{ path: "service-b", status: "planned", cone: { base: "origin/main", fallback: { kind: "terraform-block-changed", reason: "the terraform block changed" } } }]));
+    expect(c.status).toBe(1);
+    expect(c.stderr).toContain("FAIL: service-b planned its whole estate: the terraform block changed (guard terraform-block-changed)");
+    expect(c.writes.map((w) => w.step)).toEqual(["pull-request"]);
+  });
+
+  it("stalls at the plan when the change reached another estate, or none was planned as a cone", () => {
+    const more = cycle(base, report([cone, { path: "network", status: "planned" }]));
+    expect(more.status).toBe(1);
+    expect(more.stderr).toContain("FAIL: pull request 40 planned network, service-b, not service-b alone");
+    const full = cycle(base, report([{ path: "service-b", status: "planned" }]));
+    expect(full.status).toBe(1);
+    expect(full.stderr).toContain("FAIL: service-b was not planned with -cone");
+  });
+
+  it("says no word a viewer should not see", () => {
+    const about = readFileSync(join(tree, "scenarios", "cone-plan", "about.json"), "utf8");
+    const labels = demo.split("\n").filter((l) => /cone-plan|CONE_|choudoufu\)/.test(l)).join("\n");
+    for (const t of [about, labels, ...files(tree).map((f) => readFileSync(f, "utf8"))]) expect(t.toLowerCase()).not.toContain("terralith");
   });
 });
 
