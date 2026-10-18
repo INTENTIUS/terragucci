@@ -22,12 +22,15 @@ env:
   AWS_SECRET_ACCESS_KEY: test
   AWS_REGION: us-east-1
   # Each stage's events, report and change set land at
-  # <CHANT_EVENTS_URL>/<pull request>/<commit>/ (chant#4007's layout).
+  # <CHANT_EVENTS_URL>/<pull request>/<commit>/ (chant#4083's layout).
   CHANT_EVENTS_URL: 's3://demo-reports/demo/chant/${{ github.repository }}'
-  # TODO(chant 0.124.29): replace $CHANT_REPORT_FLAGS on both stage lines with
-  # --report-url "${CHANT_EVENTS_URL}", written out on the line, where behold
-  # finds it (behold#740); then drop this and ci/with-events.mjs. 0.124.28
-  # refuses --report-url as an unknown flag, so it stays off until the bump.
+  # TODO(chant 0.124.29): regenerate with the PR-loop options events: true and
+  # reportUrl (chant build --components --generate forgejo --pr-loop
+  # --events-json --report-url "${CHANT_EVENTS_URL}"), which put --events-json
+  # and --report-url on both stage lines, where behold finds it (behold#740), and
+  # CHANT_RUN_EVENTS_DIR=.chant/pr/run-events in both jobs; keep the three steps
+  # above, and drop this and ci/with-events.mjs. 0.124.28 refuses --report-url
+  # as an unknown flag, so it stays off until the bump.
   CHANT_REPORT_FLAGS: ''
 
 jobs:

@@ -2,11 +2,12 @@
 // a viewer outside CI reads them: every few seconds while it runs, and once
 // more when it ends, the stream goes to
 //
-//   <CHANT_EVENTS_URL>/<pull request>/<commit>/events.jsonl
+//   <CHANT_EVENTS_URL>/<pull request>/<commit>/pr-<stage>.events.jsonl
 //
 // with the stage's pr-<stage>.json and change-set.json beside it at the end.
-// That is the layout chant#4007's --report-url writes; once the pin is chant
-// 0.124.29, the pipeline passes --report-url instead and this goes.
+// That is the layout chant's --report-url writes (chant#4083, 0.124.29), down
+// to the file names and `unknown` for a commit no pull request merged; once
+// the pin is 0.124.29, the pipeline passes --report-url instead and this goes.
 //
 //   node ci/with-events.mjs <plan|apply> -- chant components pr-<stage> ... --events-json
 //
@@ -14,7 +15,7 @@
 // (the stack's floci) path-style, unsigned, as stack/demo.sh writes demo.json.
 // The plan names its pull request (PR_NUMBER) and commit (HEAD_SHA); the
 // apply's commit is GITHUB_SHA, and its pull request is the one Forgejo says
-// merged it. A copy that fails is logged and never fails the stage: the
+// merged it, or `unknown` when Forgejo names none. A copy that fails is logged and never fails the stage: the
 // stage's exit code is the command's.
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -41,40 +42,42 @@ async function pullRequest() {
   try {
     const r = await fetch(url, { headers: { authorization: `token ${process.env.GITHUB_TOKEN}` } });
     if (!r.ok) throw new Error(`answered ${r.status}`);
-    return String((await r.json()).number);
+    const n = (await r.json())?.number;
+    return n === undefined || n === null ? "unknown" : String(n);
   } catch (e) {
-    console.error(`events: no pull request found for ${process.env.GITHUB_SHA} (${e.message}); the events stay in the report artifact`);
-    return undefined;
+    console.error(`events: no pull request found for ${process.env.GITHUB_SHA} (${e.message}); the events go under unknown/`);
+    return "unknown";
   }
 }
 
 const commit = stage === "plan" ? process.env.HEAD_SHA : process.env.GITHUB_SHA;
-const pr = base ? await pullRequest() : undefined;
+const pr = base ? ((await pullRequest()) || "unknown") : undefined;
+const EVENTS = `pr-${stage}.events.jsonl`;
 const at = base && pr && commit ? `${base}/${pr}/${commit}` : undefined;
 if (!base) console.error("events: CHANT_EVENTS_URL or AWS_ENDPOINT_URL is not set; the events stay in the report artifact");
-else if (at) console.error(`events: copied to ${at}/events.jsonl as the stage runs`);
+else if (at) console.error(`events: copied to ${at}/${EVENTS} as the stage runs`);
 
 let sent = -1;
 async function put(name, type) {
   const file = `${OUT}/${name}`;
   if (!at || !existsSync(file)) return;
   const body = readFileSync(file);
-  if (name === "events.jsonl" && body.length === sent) return;
+  if (name === EVENTS && body.length === sent) return;
   try {
     const r = await fetch(`${at}/${name}`, { method: "PUT", headers: { "content-type": type }, body });
     if (!r.ok) throw new Error(`answered ${r.status}`);
-    if (name === "events.jsonl") sent = body.length;
+    if (name === EVENTS) sent = body.length;
   } catch (e) {
     console.error(`events: could not copy ${name} (${e.message})`);
   }
 }
 
-const events = createWriteStream(`${OUT}/events.jsonl`);
+const events = createWriteStream(`${OUT}/${EVENTS}`);
 const child = spawn(command[0], command.slice(1), { stdio: ["ignore", "pipe", "inherit"] });
 child.stdout.pipe(events);
 let copying = Promise.resolve();
 const timer = setInterval(() => {
-  copying = copying.then(() => put("events.jsonl", "application/x-ndjson"));
+  copying = copying.then(() => put(EVENTS, "application/x-ndjson"));
 }, EVERY_MS);
 
 const code = await new Promise((done) => {
@@ -87,7 +90,7 @@ const code = await new Promise((done) => {
 clearInterval(timer);
 await new Promise((done) => events.end(done));
 await copying;
-await put("events.jsonl", "application/x-ndjson");
+await put(EVENTS, "application/x-ndjson");
 await put(`pr-${stage}.json`, "application/json");
 await put("change-set.json", "application/json");
 process.exit(code);
