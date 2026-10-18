@@ -84,7 +84,7 @@ describe("a failed root blocks only its dependents (#1161)", () => {
     expect(w.roots).toEqual(["app-b"]);
     expect(w.state).toBe("applied");
     expect(out.mock.calls.flat().join("\n")).toContain("app-a (blocked by cluster-a)");
-    expect(out.mock.calls.flat().join("\n")).toContain("wave 3: the run: 3 applied, 1 failed, 1 blocked");
+    expect(out.mock.calls.flat().join("\n")).toContain("wave 3 of 3: the run: 3 applied, 1 failed, 1 blocked");
   });
 
   it("names the original failure through a root blocked in between, and reports a wave none of whose roots ran as blocked", async () => {
