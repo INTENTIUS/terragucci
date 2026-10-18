@@ -135,6 +135,39 @@ describe("stack/demo.sh under pipefail", () => {
     expect(r.stdout.trim().split("\n")).toEqual(["network=applied", "cluster-a=failed", "app-01=blocked", "cluster-b="]);
   });
 
+  it("reads the fan-out tree's state bucket and its fifteen roots' keys", () => {
+    const r = run(`tree_bucket example-demo-fanout; tree_keys example-demo-fanout tofu-fanout`);
+    expect(r.status, r.stderr).toBe(0);
+    const [bucket, ...keys] = r.stdout.trim().split("\n");
+    expect(bucket).toBe("demo-fanout-state");
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(keys).toEqual([...apps, "cluster-a", "cluster-b", "network"].map((root) => `${root} ${root}.tfstate`));
+  });
+
+  it("installs the fan-out tree's hashicorp/aws from the demo image's mirror, checked against the release's sums", () => {
+    const config = readFileSync(join(root, "example-demo-fanout", "terragucci.yml"), "utf8");
+    expect(config).toContain("image: terragucci-demo-tofu:local\n");
+    expect(config).toContain("TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc");
+    const tfrc = readFileSync(join(root, "stack", "demo-yodel", "tofu-mirror.tfrc"), "utf8");
+    expect(tfrc).toContain('path    = "/opt/terragucci-demo/providers"');
+    expect(tfrc.match(/registry\.opentofu\.org\/hashicorp\/aws/g)).toHaveLength(2);
+    const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("COPY tofu-mirror.tfrc /etc/terragucci-demo/tofu-mirror.tfrc");
+    expect(dockerfile).toContain("COPY --from=awsprovider /providers /opt/terragucci-demo/providers");
+    expect(dockerfile).toMatch(/sha256sum -c -; \\\n.*SHA256SUMS \| sha256sum -c -/);
+    const sums = readFileSync(join(root, "stack", "demo-yodel", "aws-provider.sha256"), "utf8").split("\n").filter((l) => /^\d/.test(l));
+    expect(sums.map((l) => l.split(" ").slice(0, 2).join(" "))).toEqual(["6.67.0 amd64", "6.67.0 arm64"]);
+    // Every root pins the version the image mirrors.
+    for (const r of ["network", "cluster-a", "app-12"]) expect(readFileSync(join(root, "example-demo-fanout", r, "main.tf"), "utf8")).toContain('version = "6.67.0"');
+  });
+
+  it("has a pull request and a fix that differ only in cluster-a's queue name", () => {
+    const at = (d: string) => readFileSync(join(root, "example-demo-fanout", "scenarios", "fan-out-tofu", d, "cluster-a", "main.tf"), "utf8");
+    expect(at("pull").replace('name                       = "fan-out-network-events"', 'name                       = "fan-out-cluster-a-events"')).toBe(at("fix"));
+    // The name network's queue has, with another visibility timeout: SQS refuses it at apply.
+    expect(readFileSync(join(root, "example-demo-fanout", "network", "main.tf"), "utf8")).toContain('name                       = "fan-out-network-events"');
+  });
+
   it("numbers the fan-out steps in four chapters, and gives every other scenario's steps none", () => {
     const cases = [
       ["fan-out", "", "pull-request"],
@@ -145,6 +178,14 @@ describe("stack/demo.sh under pipefail", () => {
       ["fan-out", "1", "applied"],
       ["fan-out", "1", "reset"],
       ["fan-out", "", "reset"],
+      ["fan-out-tofu", "", "pull-request"],
+      ["fan-out-tofu", "", "applying"],
+      ["fan-out-tofu", "", "failed"],
+      ["fan-out-tofu", "1", "pull-request"],
+      ["fan-out-tofu", "1", "merged"],
+      ["fan-out-tofu", "1", "applied"],
+      ["fan-out-tofu", "1", "reset"],
+      ["fan-out-tofu", "", "reset"],
       ["b-waves", "", "applying"],
       ["base", "", "reset"],
     ];
@@ -152,10 +193,12 @@ describe("stack/demo.sh under pipefail", () => {
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
-    expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, null, null]);
+    expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, 1, 1, 2, 3, 3, 4, 4, null, null, null]);
     for (const c of got.filter(Boolean)) expect(c.of).toBe(4);
     expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
-    expect(got.filter(Boolean).map((c) => c.short)).toEqual(["The change goes out", "The change goes out", "cluster-a breaks", "The fix", "The fix", "Done", "Done"]);
+    const shorts = ["The change goes out", "The change goes out", "cluster-a breaks", "The fix", "The fix", "Done", "Done"];
+    expect(got.filter(Boolean).map((c) => c.short)).toEqual([...shorts, ...shorts]);
+    expect(got[10].headline).toBe(got[2].headline);
   });
 
   it("has a pull request and a fix that differ only in the queue's name", () => {
@@ -491,6 +534,32 @@ describe("run_outcome on a waiting migration", () => {
 
 // The driver goes on once a run's waves have ended and only its tips job is
 // left: that job opens advice pull requests and writes nothing behold reads.
+// terragucci#1161: Forgejo marks a run failed once one wave failed, while a later wave, which starts after a failure, still runs.
+describe("jobs_ended", () => {
+  const ended = (jobs: unknown) => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("jobs_ended")}\nif jobs_ended "$1"; then echo yes; else echo no; fi`, "x", typeof jobs === "string" ? jobs : JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+  const job = (name: string, status: string) => ({ id: 1, name, status });
+
+  it("waits for a later wave of a run Forgejo already marked failed", () => {
+    expect(ended([job("apply-wave-1", "success"), job("apply-wave-2", "failure"), job("apply-wave-3", "running")])).toBe("no");
+    expect(ended([job("apply-wave-2", "failure"), job("apply-wave-3", "waiting")])).toBe("no");
+    expect(ended([job("apply-wave-2", "failure"), job("apply-wave-3", "failure"), job("tips", "skipped")])).toBe("yes");
+  });
+
+  it("takes a reply that is no job list as ended, as before the check", () => {
+    expect(ended("")).toBe("yes");
+    expect(ended({ message: "not found" })).toBe("yes");
+  });
+
+  it("is checked by run_ended before it takes a run as over, and by quiet for the newest failed runs", () => {
+    expect(fn("run_ended")).toMatch(/success\|failure\|cancelled\|skipped\)\n\s+jobs_ended "\$\(api [^\n]*\/jobs[^\n]*\)" && break/);
+    expect(fn("quiet")).toContain('jobs_ended "$(api "$URL/api/v1/repos/$REPO/actions/runs/$id/jobs"');
+  });
+});
+
 describe("only_tips_left", () => {
   const left = (jobs: unknown) => {
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("only_tips_left")}\nif only_tips_left "$1"; then echo yes; else echo no; fi`, "x", JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });

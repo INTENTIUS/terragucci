@@ -228,7 +228,7 @@ terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
     [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
-    [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
+    [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down] [--after <dir>]
 ```
 
 | Flag | Environment | Meaning |
@@ -266,6 +266,7 @@ Both `stage tf-plan` and `stage tf-drift` write the report even when a root refu
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
 | `--on-held` | `TG_LOCK_POLL` | with `binary: choudoufu`, when another run's apply holds a resource the wave changes: `wait` (the default) polls every `TG_LOCK_POLL` seconds (10) for up to an hour, then plans again; `refuse` exits 5 naming that run, as the apply a comment starts does |
 | `--stand-down` | | a push's wave: once it may apply, it applies nothing and exits 6 if a newer push is on its branch, which applies the whole tree |
+| `--after` | | plain roots: the directory holding the earlier waves' report artifacts (`terragucci-earlier` in a pipeline). The stage writes each root's outcome beside its report, plans none of the roots [an upstream that did not apply holds](/terragucci/concepts/waves-and-approvals/#a-failed-root), applies the rest, and exits 1, or 3 when every root held waits for an approval |
 
 ## publish
 

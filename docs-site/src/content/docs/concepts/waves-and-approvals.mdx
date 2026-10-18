@@ -40,6 +40,28 @@ Terragrunt units split the same way, the canary units' layers first. Each wave i
 | `init` | `terragrunt find`; without Terragrunt on the path, the plain paths in each unit's `dependency` and `dependencies` blocks |
 | each apply job | `terragrunt find` in the job, which splits a wave whose units read each other; the last job also runs any wave past the jobs `init` wrote |
 
+## A failed root
+
+A root that fails holds only the roots that depend on it. In a push's waves of plain roots on GitHub and Forgejo, each wave's job starts once the wave before it ended, applied or failed. It plans and applies only the roots whose upstreams all applied in the run or had nothing to apply. The upstreams are the roots whose state a root reads and the ones `waves.after` puts before it.
+
+```text
+wave 1  network            applied
+wave 2  cluster-a          failed
+        cluster-b          applied
+wave 3  app-01 … app-06    blocked by cluster-a
+        app-07 … app-12    applied
+```
+
+| What | Where |
+|---|---|
+| Each root's outcome | the wave report's [`outcomes`](/terragucci/reference/report-schema/#waves): applied, unchanged, failed with its error, or blocked |
+| Each held root | the wave report's [`blocked`](/terragucci/reference/report-schema/#waves), with `blocked_by` naming the root whose failure held it, past any root blocked in between |
+| A wave none of whose roots ran | its `state` is `blocked` |
+| The run | it still fails. The last wave's job ends with its count, such as `the run: 8 applied, 1 failed, 6 blocked` |
+| A wave that waits for an approval | holds only its own roots and those behind them; a later wave whose every held root waits behind it ends as waiting, so the commit's status stays pending |
+
+Each wave's job writes its roots' outcomes beside its report, and the next wave's job reads them from the earlier jobs' report artifacts (`stage tf-apply --after`). Rerunning the failed jobs plans again what is left. A Terragrunt repo's waves, GitLab's, a [composed run](#a-composed-run) and the apply a comment starts still stop at the first wave that does not apply.
+
 ## Approval binding
 
 The wave's set digest is what an approval binds, so it covers exactly those plans. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. `approval: sealed` also requires its ssh seal to verify against the signers file.

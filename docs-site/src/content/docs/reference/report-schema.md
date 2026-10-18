@@ -83,7 +83,9 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `excluded_approvers` | a `tf-apply` wave whose approval left someone out (minor 39) | each person whose approval of the wave's digest did not count because they had a hand in the change: their `login`, and the `reason`, such as `bob asked for abc1234` |
 | `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |
 | `waits` | a plan's wave | whether the gate or `cost.approve_above` will hold it |
-| `state` | every wave | `planned` on a plan; on a `tf-apply` wave `waiting`, `applying` (its share jobs apply), `applied`, `refused` or `failed` |
+| `state` | every wave | `planned` on a plan; on a `tf-apply` wave `waiting`, `applying` (its share jobs apply), `applied`, `refused` or `failed`, or `blocked` (minor 41) when none of its roots ran because an upstream of each did not apply |
+| `outcomes` | a `tf-apply` wave of plain roots on GitHub or Forgejo (minor 41) | each root's `root` and `outcome` once the wave ended: `applied`, `unchanged`, `failed` with the first line of its plan's or apply's `error`, `waiting`, `refused`, `decided` (its share or group job applies it), `not-applied` (another root of the wave failed to plan) or `blocked` with `blocked_by` |
+| `blocked` | a `tf-apply` wave with roots an upstream that did not apply holds (minor 41) | each such `root` and `blocked_by`, the root whose failure held it, past any root blocked in between. These roots are not in `roots` |
 | `reads` | a wave whose roots read other roots' state | the waves those roots are in |
 | `replans_after` | a plan's wave that read outputs known only once these waves apply | it plans again after they apply and waits for an approval of that plan; its `review_digest` is null |
 | `preview` | a `tf-apply` wave of Terragrunt units the merged pull request previewed (minor 25) | the `pull_request`, and per previewed unit (`units[]`) its `differences` from the preview, absent when it plans as previewed |
