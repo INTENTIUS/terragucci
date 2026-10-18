@@ -1,0 +1,5 @@
+{
+  "changes": "A pull request adds or removes one action in service-b's inline policy. Three estates share one backend.",
+  "watch": "The plan reads service-b's role and the policy it changes, and leaves the other estates unplanned. Every resource carries its estate's tags in one backend, and there is no state file.",
+  "shows": "A change plans only what it touches, however many estates share the backend."
+}
