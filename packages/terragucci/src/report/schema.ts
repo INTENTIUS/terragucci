@@ -388,6 +388,9 @@ export interface ReportUnknownRead {
  * share jobs do), then `applied`, or `refused` (its plans changed after an
  * approval, or the policy denied a root) or `failed`.
  */
+/** A root's outcome in a `tf-apply` wave (minor 41, ../blocked.ts). */
+export type ReportRootOutcome = "applied" | "unchanged" | "failed" | "waiting" | "refused" | "decided" | "not-applied" | "blocked";
+
 /** blocked (minor 41): a `tf-apply` wave none of whose roots ran, since an upstream of each did not apply in the run. */
 export type WaveState = "planned" | "waiting" | "applying" | "applied" | "refused" | "failed" | "blocked";
 
@@ -623,6 +626,15 @@ export interface ReportWave {
    * and they are not in `roots`. Absent when none is blocked.
    */
   blocked?: { root: string; blocked_by: string }[];
+  /**
+   * A `tf-apply` wave's outcome of each root once it ended (minor 41): applied,
+   * unchanged (it planned no change), failed (its plan or its apply failed,
+   * with the first line of the error), waiting, refused, decided (its share
+   * or group job applies it), not-applied (another root of the wave failed to
+   * plan) or blocked (with `blocked_by`, as in `blocked`). Absent from a wave
+   * whose pipeline hands no outcomes between waves (GitLab, Terragrunt).
+   */
+  outcomes?: { root: string; outcome: ReportRootOutcome; error?: string; blocked_by?: string }[];
   /** The waves whose roots' state its roots read (minor 21). Absent when it reads none. */
   reads?: number[];
   /**
