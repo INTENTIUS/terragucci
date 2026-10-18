@@ -911,10 +911,13 @@ last_run_id() { runs | jq -r '[.[].id] | max // 0'; }
 # down (--stand-down), and one waiting would plan again on another commit. Every
 # push waits here for no run of the repo to be in progress, and refuses while
 # this cycle has a wave waiting (HELD), unless the caller says the push is the
-# point (scenario 5's push to main, DEMO_PUSH_WHILE_HELD=1).
+# point (scenario 5's push to main, DEMO_PUSH_WHILE_HELD=1). A run Forgejo
+# marks failed once one wave failed may still have later waves running, since
+# they start after a failure (terragucci#1161): the newest runs' jobs count too,
+# so a reset waits for them rather than making them stand down.
 HELD=""
 quiet() {
-  local deadline=$(( $(now) + LIMIT_QUIET )) busy
+  local deadline=$(( $(now) + LIMIT_QUIET )) busy id
   if [ -n "$HELD" ] && [ -z "${DEMO_PUSH_WHILE_HELD:-}" ]; then
     fail "a push was asked for while $HELD waits"
   fi
@@ -922,6 +925,11 @@ quiet() {
     runner_watch
     runs_export
     busy="$(runs | jq -r '[.[] | select(.status == "running" or .status == "waiting" or .status == "blocked" or .status == "unknown")] | length' || true)"
+    if [ "$busy" = 0 ]; then
+      for id in $(runs | jq -r '[.[] | select(.status == "failure")] | sort_by(-.id) | .[:3] | .[].id' 2>/dev/null || true); do
+        jobs_ended "$(api "$URL/api/v1/repos/$REPO/actions/runs/$id/jobs" 2>/dev/null || true)" || { busy="run $id"; break; }
+      done
+    fi
     [ "$busy" = 0 ] && return 0
     [ "$(now)" -lt "$deadline" ] || fail "a run was still in progress after ${LIMIT_QUIET}s, so nothing was pushed"
     sleep "$POLL"
@@ -979,8 +987,21 @@ only_tips_left() { # jobs JSON (Forgejo's /actions/runs/<id>/jobs)
       and ($jobs | any(.name == "tips" and (ended | not)))' <<<"$1" >/dev/null 2>&1
 }
 
-# Wait for run RUN_ID to end, or for its waves to have ended with only its tips
-# job left (only_tips_left), which counts as success. Sets RUN_STATUS and RUN_URL.
+# Whether every job of a run has ended (Forgejo's /actions/runs/<id>/jobs): a
+# run Forgejo marks failed as soon as one wave fails can still have later waves
+# running or waiting, which start after a failure and block only the roots it
+# holds (terragucci#1161). A reply that is no job list counts as ended, as
+# before this check.
+jobs_ended() { # jobs JSON
+  [ -n "$1" ] || return 0
+  jq -e '
+    def ended: .status == "success" or .status == "failure" or .status == "cancelled" or .status == "skipped";
+    if type == "array" then all(.[]; ended) else true end' <<<"$1" >/dev/null 2>&1
+}
+
+# Wait for run RUN_ID to end, every job of it (jobs_ended), or for its waves to
+# have ended with only its tips job left (only_tips_left), which counts as
+# success. Sets RUN_STATUS and RUN_URL.
 run_ended() { # limit
   local deadline=$(( $(now) + $1 )) run status=""
   while :; do
@@ -989,7 +1010,12 @@ run_ended() { # limit
     migration_follow
     run="$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID" 2>/dev/null || true)"
     status="$(jq -r '.status // empty' <<<"$run" 2>/dev/null || true)"
-    case "$status" in success|failure|cancelled|skipped) break ;; esac
+    case "$status" in
+      success|failure|cancelled|skipped)
+        jobs_ended "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)" && break
+        # Forgejo marked the run as ended while a later wave still runs: its log is not complete yet.
+        ;;
+    esac
     if [ -n "$status" ] && only_tips_left "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)"; then
       log "run $RUN_ID: its waves ended; the driver goes on while its tips job runs"
       status=success
