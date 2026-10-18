@@ -149,12 +149,13 @@ describe("stack/demo.sh under pipefail", () => {
       ["base", "", "reset"],
     ];
     const lines = cases.map(([s, f, step]) => `SCENARIO=${s} FIX="${f}"; echo "$(demo_chapter ${step})"`).join("\n");
-    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${lines}`], { cwd: root, encoding: "utf8" });
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
     expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, null, null]);
     for (const c of got.filter(Boolean)) expect(c.of).toBe(4);
     expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
+    expect(got.filter(Boolean).map((c) => c.short)).toEqual(["The change goes out", "The change goes out", "cluster-a breaks", "The fix", "The fix", "Done", "Done"]);
   });
 
   it("has a pull request and a fix that differ only in the queue's name", () => {

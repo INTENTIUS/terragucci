@@ -87,6 +87,7 @@ export function demoStrings(src) {
   echoes("scenario_title", "title");
   echoes("scenario_name", "name");
   echoes("chapter_headline", "headline");
+  echoes("chapter_short", "name");
   echoes("say", "step");
   echoes("waiting_label", "step");
   echoes("base_label", "step");

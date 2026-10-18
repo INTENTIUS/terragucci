@@ -88,9 +88,9 @@
 # beat is null: no scenario is told in beats now, and the field stays for
 # readers that look for it.
 # chapter is where the step stands in a scenario told in numbered chapters,
-# { "n": 2, "of": 4, "headline": "cluster-a breaks. ..." }, a headline per
-# chapter that a viewer reads over the title, which stays the same through the
-# cycle. Only fan-out has chapters (demo_chapter); every other scenario's
+# { "n": 2, "of": 4, "headline": "cluster-a breaks. ...", "short": "cluster-a breaks" },
+# a headline per chapter that a viewer reads over the title, which stays the
+# same through the cycle, and a short name for each chapter's place on a track. Only fan-out has chapters (demo_chapter); every other scenario's
 # steps, the base's and a reset outside fan-out's fourth chapter write null. A
 # stalled step keeps the chapter of the step before it.
 # pull and commit are null until the cycle has them. about is the scenario's
@@ -673,7 +673,7 @@ scenario_about() { # scenario
   [ -f "$f" ] && jq -ce '{changes, watch, shows}' "$f" 2>/dev/null || echo null
 }
 
-# The fan-out scenario's chapter of a step, {n, of, headline}, or null: the
+# The fan-out scenario's chapter of a step, {n, of, headline, short}, or null: the
 # first pull request until its apply, the failure, the fix until its apply,
 # and the fix applied and the reset after it.
 demo_chapter() { # step
@@ -685,7 +685,7 @@ demo_chapter() { # step
     fan-out-fix:applied|fan-out-fix:reset) n=4 ;;
   esac
   if [ -z "$n" ]; then echo null; return 0; fi
-  jq -cn --argjson n "$n" --arg h "$(chapter_headline "$n")" '{n: $n, of: 4, headline: $h}'
+  jq -cn --argjson n "$n" --arg h "$(chapter_headline "$n")" --arg s "$(chapter_short "$n")" '{n: $n, of: 4, headline: $h, short: $s}'
 }
 
 chapter_headline() { # chapter number
@@ -694,6 +694,15 @@ chapter_headline() { # chapter number
     2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway" ;;
     3) echo "The fix re-runs only the 7 that were blocked" ;;
     4) echo "All 15 are in, and nothing was applied twice" ;;
+  esac
+}
+
+chapter_short() { # chapter number
+  case "$1" in
+    1) echo "The change goes out" ;;
+    2) echo "cluster-a breaks" ;;
+    3) echo "The fix" ;;
+    4) echo "Done" ;;
   esac
 }
 
