@@ -468,7 +468,7 @@ describe("the cone-plan scenario", () => {
   const cone = { path: "service-b", status: "planned", cone: { base: "origin/main", blocks: 2, of: 8, targets: 2 } };
 
   /** One cycle with the forge, floci and the runs stubbed: main's service-b/iam.tf is `main`, and the plan's report is `rep`. */
-  function cycle(main: string, rep: string) {
+  function cycle(main: string, rep: string, waves = true) {
     const tmp = mkdtempSync(join(tmpdir(), "demo-cone-"));
     made.push(tmp);
     writeFileSync(join(tmp, "main.tf"), main);
@@ -477,7 +477,16 @@ describe("the cone-plan scenario", () => {
     const sh = spawnSync("bash", ["-c", `${git} init -q origin && cd origin && echo a > f && ${git} add f && ${git} commit -qm merge && git rev-parse HEAD && cd .. && ${git} init -q rstate/base-tree`], { cwd: tmp, encoding: "utf8" });
     expect(sh.status, sh.stderr).toBe(0);
     const merge = sh.stdout.trim();
-    const index = JSON.stringify({ schema: "terragucci.report-index/v1", reports: [{ stage: "tf-plan", pull_request: "40", commit: "head", path: "2026/10/head/tf-plan" }] });
+    // The merge's run: wave 1 planned network in full and found nothing, wave 2 the services, with service-b's one update.
+    const applies = waves
+      ? [
+          { stage: "tf-apply", wave: 2, commit: merge, finished: "2026-10-17T10:02:00Z", path: `2026/10/${merge}/tf-apply-wave-2` },
+          { stage: "tf-apply", wave: 1, commit: merge, finished: "2026-10-17T10:01:00Z", path: `2026/10/${merge}/tf-apply-wave-1` },
+        ]
+      : [];
+    const index = JSON.stringify({ schema: "terragucci.report-index/v1", reports: [...applies, { stage: "tf-plan", pull_request: "40", commit: "head", path: "2026/10/head/tf-plan" }] });
+    writeFileSync(join(tmp, "wave-1.json"), JSON.stringify({ roots: [{ path: "network", changes: [] }] }));
+    writeFileSync(join(tmp, "wave-2.json"), JSON.stringify({ roots: [{ path: "service-a", changes: [] }, { path: "service-b", changes: [{ address: "aws_iam_role_policy.service" }] }] }));
     const stubs = [
       'log() { echo "$*" >&2; }',
       'fail() { echo "FAIL: $*" >&2; exit 1; }',
@@ -491,7 +500,7 @@ describe("the cone-plan scenario", () => {
       'NEXT_KEY="" NEXT_FROM="" BEAT="" MIGRATIONS_APPROVED="" PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" RESET_MOVED=""',
       "ROOTS=(network service-a service-b)",
       ...["CONE_ROOT", "CONE_FILE", "CONE_ACTION"].map((v) => demo.split("\n").find((l) => l.startsWith(`${v}=`))!),
-      'CONE_CHANGE="" CONE_RESULT="" CONE_BLOCKS="" CONE_OF="" CONE_UNPLANNED=""',
+      'CONE_CHANGE="" CONE_RESULT="" CONE_BLOCKS="" CONE_OF="" CONE_UNPLANNED="" CONE_WAVES="" CONE_APPLIED="" CONE_IDLE=""',
       "view_follow() { :; }",
       `demo_put() { jq -c '{step, label, next: (.next.action // null)}' "$DEMO_STATE/demo.json" >> ${tmp}/writes; }`,
       'clone_main() { mkdir -p "$1"; }',
@@ -505,11 +514,11 @@ describe("the cone-plan scenario", () => {
       "as_author() { :; }",
       "cycle_publish() { :; }",
       `api() { case "$*" in *raw/service-b/iam.tf*) cat ${tmp}/main.tf ;; *comments*) echo '[{"body":"terragucci tf-plan"}]' ;; *) echo '{"merge_commit_sha":"${merge}"}' ;; esac; }`,
-      `curl() { case "$*" in *forgejo:3000/admin/demo-choudoufu/index.json*) echo '${index}' ;; *forgejo:3000/admin/demo-choudoufu/2026/10/head/tf-plan/report.json*) cat ${tmp}/report.json ;; *) return 22 ;; esac; }`,
+      `curl() { case "$*" in *forgejo:3000/admin/demo-choudoufu/index.json*) echo '${index}' ;; *forgejo:3000/admin/demo-choudoufu/2026/10/head/tf-plan/report.json*) cat ${tmp}/report.json ;; *tf-apply-wave-1/report.json*) cat ${tmp}/wave-1.json ;; *tf-apply-wave-2/report.json*) cat ${tmp}/wave-2.json ;; *) return 22 ;; esac; }`,
     ].join("\n");
     const fns = [
       "demo_where", "scenario_name", "say", "demo_write", "demo_hold", "open_pull", "overlay", "merge_pull", "follow", "run_outcome",
-      "cone_flip", "cone_planned", "cone_read", "cone_applied", "scenario_cone_plan", "reset_written",
+      "cone_flip", "cone_planned", "cone_read", "cone_waves", "cone_applied", "scenario_cone_plan", "reset_written",
     ].map(fn).join("\n");
     const body = `${stubs}\n${fns}\nscenario_cone_plan\ndemo_write applied "$(say applied)" reset "$(now)"\nreset_written`;
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
@@ -536,7 +545,9 @@ describe("the cone-plan scenario", () => {
     expect(at("pull-request").label).toContain("It adds s3:PutObject to service-b's inline policy");
     expect(at("planned").label).toBe("The plan covers 2 of service-b's 8 blocks as a cone: its role and the policy the change touches. Network and service-a are not planned.");
     expect(at("planned").next).toBe("merge pull request 40");
-    expect(at("applied").label).toContain("now allows s3:PutObject");
+    expect(at("applying").label).toBe("The merge's run plans each estate in full, in waves: network first, then the two services that read it.");
+    // The merge's real waves, from their reports.
+    expect(at("applied").label).toBe("Done in 2 waves. Service-b's policy now allows s3:PutObject, 1 change in its estate. Full plans of network and service-a found nothing to apply.");
     // The merge that applied is the base now, and the reset leaves main there.
     expect(c.baseSha).toBe(c.merge);
     expect(at("reset").label).toContain(`Main stays at ${c.merge.slice(0, 8)} as applied`);
@@ -550,6 +561,12 @@ describe("the cone-plan scenario", () => {
     const planned = c.writes.find((w) => w.step === "planned")!.label;
     expect(planned).toBe("The plan covers 3 of service-b's 11 blocks as a cone. Network and service-a are not planned.");
     expect(c.writes.find((w) => w.step === "applied")!.label).toContain("no longer allows s3:PutObject");
+  });
+
+  it("says less at applied when the merge's wave reports cannot be read, and goes on", () => {
+    const c = cycle(base, report([cone]), false);
+    expect(c.status, c.stderr).toBe(0);
+    expect(c.writes.find((w) => w.step === "applied")!.label).toBe("Done. Service-b's policy now allows s3:PutObject, and no state file was written.");
   });
 
   it("stalls at the plan when choudoufu's guard planned the whole estate, naming the guard", () => {

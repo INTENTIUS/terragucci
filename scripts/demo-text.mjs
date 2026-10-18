@@ -40,6 +40,10 @@ export const SAMPLES = {
   $CONE_BLOCKS: "2",
   $CONE_OF: "8",
   $CONE_UNPLANNED: "Network and service-a are not planned",
+  // The merge's waves, read from their reports.
+  $CONE_WAVES: "2 waves",
+  $CONE_APPLIED: "12 changes in its estate",
+  $CONE_IDLE: "network and service-a",
   $was: "applying",
   $reason: "the plan run of pull request 1113 ended failure (http://localhost:3000/admin/demo/actions/runs/2509)",
 };

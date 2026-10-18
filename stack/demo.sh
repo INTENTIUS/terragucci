@@ -1121,8 +1121,13 @@ say() { # step
       else
         echo "The plan covers $CONE_BLOCKS of service-b's $CONE_OF blocks as a cone. $CONE_UNPLANNED."
       fi ;;
-    cone-plan:applying)     echo "Wave 1 applies service-b alone. A merge plans the whole of service-b's estate, and the other estates stay as they are." ;;
-    cone-plan:applied)      echo "Done. Service-b's policy $CONE_RESULT. The apply changed service-b's estate alone and wrote no state file." ;;
+    cone-plan:applying)     echo "The merge's run plans each estate in full, in waves: network first, then the two services that read it." ;;
+    cone-plan:applied)
+      if [ -n "$CONE_WAVES" ]; then
+        echo "Done in $CONE_WAVES. Service-b's policy $CONE_RESULT, $CONE_APPLIED. Full plans of $CONE_IDLE found nothing to apply."
+      else
+        echo "Done. Service-b's policy $CONE_RESULT, and no state file was written."
+      fi ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -1599,8 +1604,12 @@ records_up() {
 # label states that cone from the plan's report.json in the reports bucket
 # (roots[].cone), and a plan that reached another root, or that the guard
 # planned in full, stalls the cycle rather than show a cone it did not make.
-# The merge's wave 1 applies service-b, planning its whole estate, as a merge
-# commit's wave does.
+# The merge's run is not narrowed the same way: a merge commit's waves plan
+# every root, each estate in full, network in wave 1 and the services after it
+# (terragucci narrows a merge's roots only under waves.compose, which runs the
+# stock binary). The applied label reads those waves from their reports
+# (cone_waves): how many ran, what service-b's apply changed, and which
+# estates had nothing to apply.
 #
 # Its roots sit in subdirectories, which choudoufu reads a base for from the
 # release that fixes choudoufu#2062; an older one plans every estate in full,
@@ -1614,6 +1623,7 @@ CONE_ROOT=service-b
 CONE_FILE=service-b/iam.tf
 CONE_ACTION=s3:PutObject
 CONE_CHANGE="" CONE_RESULT="" CONE_BLOCKS="" CONE_OF="" CONE_UNPLANNED=""
+CONE_WAVES="" CONE_APPLIED="" CONE_IDLE=""
 
 # This cycle's flip, from service-b's policy as main holds it now: its pull
 # request's file (PULL_FILES), title, and the words its labels use.
@@ -1671,6 +1681,31 @@ cone_read() { # report.json
   CONE_UNPLANNED="$(tr '[:lower:]' '[:upper:]' <<<"${CONE_UNPLANNED:0:1}")${CONE_UNPLANNED:1}"
 }
 
+# The merge's waves, from their reports: the project's tf-apply rows of the
+# merge commit, and each wave's report.json. CONE_WAVES ("2 waves"), what the
+# changed estates applied (CONE_APPLIED, "1 change in its estate"), and the
+# estates that had nothing to apply (CONE_IDLE). A report that cannot be read,
+# or another estate that changed too, leaves CONE_WAVES empty, and the applied
+# label says less.
+cone_waves() {
+  local index="$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/forgejo:3000/$REPO" rows path all="[]" report n
+  CONE_WAVES="" CONE_APPLIED="" CONE_IDLE=""
+  rows="$(curl -fsS "$index/index.json" 2>/dev/null | jq -r --arg c "$COMMIT" \
+    '[.reports[]? | select(.stage == "tf-apply" and .commit == $c)] | group_by(.wave) | map(max_by(.finished) | .path) | .[]' 2>/dev/null)" || return 0
+  [ -n "$rows" ] || return 0
+  while read -r path; do
+    report="$(curl -fsS "$index/$path/report.json" 2>/dev/null)" || return 0
+    all="$(jq -c --argjson all "$all" '$all + [.roots[]? | {path, changes: ((.changes // []) | length)}]' <<<"$report" 2>/dev/null)" || return 0
+  done <<<"$rows"
+  n="$(wc -l <<<"$rows" | tr -d ' ')"
+  if [ "$n" = 1 ]; then CONE_WAVES="1 wave"; else CONE_WAVES="$n waves"; fi
+  n="$(jq -r --arg r "$CONE_ROOT" '[.[] | select(.path == $r) | .changes] | add // 0' <<<"$all")"
+  if [ "$n" = 1 ]; then CONE_APPLIED="1 change in its estate"; else CONE_APPLIED="$n changes in its estate"; fi
+  CONE_IDLE="$(jq -r --arg r "$CONE_ROOT" '[.[] | select(.path != $r and .changes == 0) | .path] | unique | if length == 0 then "" elif length == 1 then .[0] else (.[:-1] | join(", ")) + " and " + .[-1] end' <<<"$all")"
+  # Another estate that changed is not this story's: the label says less rather than leave it out.
+  [ -n "$CONE_IDLE" ] || { CONE_WAVES=""; return 0; }
+}
+
 # The merge applied: it is the repo's base now, kept in base-tree so a reset
 # can force main back to it.
 cone_applied() {
@@ -1686,7 +1721,7 @@ scenario_cone_plan() {
   demo_hold planned "$(say planned)" "merge pull request $PULL"
   merge_pull
   follow
-  [ "$OUTCOME" != applied ] || cone_applied
+  [ "$OUTCOME" != applied ] || { cone_applied; cone_waves; }
 }
 
 run_cycle() {
