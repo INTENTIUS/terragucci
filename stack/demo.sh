@@ -70,6 +70,7 @@
 #     "started_at": "2026-10-20T10:00:00Z",
 #     "next": { "action": "approve wave-2", "from": "2026-10-20T10:04:00Z", "at": "2026-10-20T10:04:20Z" },
 #     "pull": 41, "commit": "<sha>", "beat": null,
+#     "chapter": null,
 #     "about": { "changes": "...", "watch": "...", "shows": "..." },
 #     "delivery": "Counted from this demo loop's own runs, ..." }
 #
@@ -86,6 +87,12 @@
 # once every resource has its line.
 # beat is null: no scenario is told in beats now, and the field stays for
 # readers that look for it.
+# chapter is where the step stands in a scenario told in numbered chapters,
+# { "n": 2, "of": 4, "headline": "cluster-a breaks. ..." }, a headline per
+# chapter that a viewer reads over the title, which stays the same through the
+# cycle. Only fan-out has chapters (demo_chapter); every other scenario's
+# steps, the base's and a reset outside fan-out's fourth chapter write null. A
+# stalled step keeps the chapter of the step before it.
 # pull and commit are null until the cycle has them. about is the scenario's
 # card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
@@ -564,7 +571,9 @@ view_follow() {
 # waiting for them: next.from stays put while a write repeats both.
 NEXT_KEY="" NEXT_FROM=""
 demo_write() { # step, label, [next action], [next at, epoch seconds]
-  local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null
+  local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null chapter
+  chapter="$(demo_chapter "$step" 2>/dev/null || echo null)"
+  [ -n "$chapter" ] || chapter=null
   view_follow
   [ -z "$at" ] || at_iso="$(iso "$at")"
   if [ -z "$action" ]; then
@@ -577,10 +586,10 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   fi
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
-    --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
+    --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" --argjson chapter "$chapter" \
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
       pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end),
-      about: $about}' \
+      chapter: $chapter, about: $about}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: $step: $label${MIGRATION_WRITE:+ ($action)}"
@@ -664,6 +673,30 @@ scenario_about() { # scenario
   [ -f "$f" ] && jq -ce '{changes, watch, shows}' "$f" 2>/dev/null || echo null
 }
 
+# The fan-out scenario's chapter of a step, {n, of, headline}, or null: the
+# first pull request until its apply, the failure, the fix until its apply,
+# and the fix applied and the reset after it.
+demo_chapter() { # step
+  local n=""
+  case "$SCENARIO${FIX:+-fix}:$1" in
+    fan-out:pull-request|fan-out:planned|fan-out:waiting|fan-out:approved|fan-out:merged|fan-out:applying) n=1 ;;
+    fan-out:failed) n=2 ;;
+    fan-out-fix:pull-request|fan-out-fix:planned|fan-out-fix:waiting|fan-out-fix:approved|fan-out-fix:merged|fan-out-fix:applying) n=3 ;;
+    fan-out-fix:applied|fan-out-fix:reset) n=4 ;;
+  esac
+  if [ -z "$n" ]; then echo null; return 0; fi
+  jq -cn --argjson n "$n" --arg h "$(chapter_headline "$n")" '{n: $n, of: 4, headline: $h}'
+}
+
+chapter_headline() { # chapter number
+  case "$1" in
+    1) echo "A change to the shared network goes out to all 15 stacks" ;;
+    2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway" ;;
+    3) echo "The fix re-runs only the 7 that were blocked" ;;
+    4) echo "All 15 are in, and nothing was applied twice" ;;
+  esac
+}
+
 # Write a step whose next action is the driver's own, HOLD seconds on, and wait them out.
 demo_hold() { # step, label, next action
   local at=$(( $(now) + HOLD ))
@@ -683,7 +716,7 @@ demo_stalled() {
     --arg started "$(iso "${STARTED:-$(now)}")" --arg text "Stalled after $was: $reason. The driver resets and goes on with the next cycle." \
     --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" \
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: "stalled", label: $text, started_at: $started, next: null,
-      pull: ($last.pull // null), commit: ($last.commit // null), about: $about}' > "$DEMO_STATE/demo.json.new"
+      pull: ($last.pull // null), commit: ($last.commit // null), chapter: ($last.chapter // null), about: $about}' > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   NEXT_KEY="" NEXT_FROM=""
   log "cycle $CYCLE $SCENARIO: stalled: $reason"
@@ -1070,7 +1103,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
-    fan-out)    echo "One failed stack blocks only what depends on it" ;;
+    fan-out)    echo "A broken stack shouldn't stall the whole rollout" ;;
     *) return 1 ;;
   esac
 }

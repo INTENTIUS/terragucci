@@ -135,6 +135,28 @@ describe("stack/demo.sh under pipefail", () => {
     expect(r.stdout.trim().split("\n")).toEqual(["network=applied", "cluster-a=failed", "app-01=blocked", "cluster-b="]);
   });
 
+  it("numbers the fan-out steps in four chapters, and gives every other scenario's steps none", () => {
+    const cases = [
+      ["fan-out", "", "pull-request"],
+      ["fan-out", "", "applying"],
+      ["fan-out", "", "failed"],
+      ["fan-out", "1", "pull-request"],
+      ["fan-out", "1", "merged"],
+      ["fan-out", "1", "applied"],
+      ["fan-out", "1", "reset"],
+      ["fan-out", "", "reset"],
+      ["b-waves", "", "applying"],
+      ["base", "", "reset"],
+    ];
+    const lines = cases.map(([s, f, step]) => `SCENARIO=${s} FIX="${f}"; echo "$(demo_chapter ${step})"`).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${lines}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, null, null]);
+    for (const c of got.filter(Boolean)) expect(c.of).toBe(4);
+    expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
+  });
+
   it("has a pull request and a fix that differ only in the queue's name", () => {
     const at = (d: string) => readFileSync(join(root, "example-demo-chant-fanout", "scenarios", "fan-out", d, "src", "cluster-a", "resources.ts"), "utf8");
     expect(at("pull").replace('QueueName: "fan-out-estate-cluster-a-events"', 'QueueName: "fan-out-estate-cluster-a-events.fifo"')).toBe(at("fix"));
