@@ -1,0 +1,6 @@
+node_modules
+dist
+.chant/pr
+.chant/pr-resume
+.chant/seed-outputs.json
+.chant/fan-out.json

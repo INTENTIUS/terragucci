@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { AWS_CLI } from "../packages/terragucci/src/render";
 
 const root = join(__dirname, "..");
 const demo = readFileSync(join(root, "stack", "demo.sh"), "utf8");
@@ -75,6 +76,69 @@ describe("stack/demo.sh under pipefail", () => {
     const dockerfile = readFileSync(join(root, "stack", "demo-chant.Dockerfile"), "utf8");
     expect(dockerfile).toMatch(/npm ci --omit=dev/);
     expect(demo).toContain(`-f "$HERE/demo-chant.Dockerfile" "$HERE/../$(tool_tree chant)"`);
+  });
+
+  it("reads the fan-out tree's fifteen stacks from its chant.config.ts, in order", () => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_stacks")}\ntree_stacks example-demo-chant-fanout`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(r.stdout.trim().split("\n")).toEqual(["network", "cluster-a", "cluster-b", ...apps]);
+  });
+
+  it("runs the fan-out repo's jobs in the image up builds, each building, seeding and streaming its events", () => {
+    const image = /^FANOUT_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1];
+    expect(image).toBe("terragucci-demo-chant-fanout:local");
+    const pipeline = readFileSync(join(root, "example-demo-chant-fanout", ".forgejo", "workflows", "chant-pr.yml"), "utf8");
+    expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
+    expect(pipeline.match(/^ *fetch-depth: 0$/gm)).toHaveLength(2);
+    const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
+    // Per job: the templates built and linted, the stacks' outputs read, then chant's stage under the events copy.
+    expect(runs).toHaveLength(6);
+    expect(runs.filter((r) => r.includes("npm run build && npm run lint"))).toHaveLength(2);
+    expect(runs.filter((r) => r === "node ci/stack-outputs.mjs .chant/seed-outputs.json")).toHaveLength(2);
+    const stages = runs.filter((r) => r.startsWith("node ci/with-events.mjs "));
+    expect(stages.map((r) => r.split(" -- ")[1].split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
+    for (const r of stages) {
+      expect(r).toContain("--seed-outputs .chant/seed-outputs.json --events-json $CHANT_REPORT_FLAGS");
+      expect(r).toContain("--forge forgejo");
+    }
+    expect(stages[1]).toContain("--require-review --resume .chant/pr-resume/pr-apply.json");
+    expect(pipeline).not.toMatch(/(upload|download)-artifact@v[4-9]/);
+    expect(pipeline).not.toMatch(/opentofu|npm (ci|install)|curl /);
+    // The image's node_modules is the one each job links into its checkout.
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant-fanout.Dockerfile"), "utf8");
+    expect(dockerfile).toContain("COPY package.json package-lock.json /opt/demo-chant-fanout/");
+    expect(pipeline).toContain("ln -s /opt/demo-chant-fanout/node_modules node_modules");
+    expect(demo).toContain(`-f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)"`);
+  });
+
+  it("installs the AWS CLI release terragucci's drift job pins, checked against the same sha256", () => {
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant-fanout.Dockerfile"), "utf8");
+    expect(dockerfile).toContain(`ARG AWS_CLI_VERSION=${AWS_CLI.version}\n`);
+    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
+    expect(dockerfile).toContain(`*) a=x86_64; sum=${AWS_CLI.sha256.x86_64} ;;`);
+    expect(dockerfile).toContain('sha256sum -c -');
+  });
+
+  it("reads each member's status from the table at the end of pr-apply's log", () => {
+    const log = [
+      "2026-10-18T10:00:01Z fan-out: 15 selected",
+      "2026-10-18T10:00:01Z   wave 2: cluster-a, cluster-b",
+      "2026-10-18T10:00:09Z pr-apply: failed",
+      "2026-10-18T10:00:09Z   network              applied      create 0 update 0 replace 0 delete 0",
+      "2026-10-18T10:00:09Z   cluster-a            failed       create 0 update 0 replace 0 delete 0  Resource handler returned message: The name of a FIFO queue can only end with '.fifo'",
+      "2026-10-18T10:00:09Z   app-01               blocked      create 0 update 0 replace 0 delete 0",
+    ].join("\n");
+    const script = `set -euo pipefail\n${fn("fanout_status")}\nlog="$(cat)"\nfor m in network cluster-a app-01 cluster-b; do echo "$m=$(fanout_status "$log" "$m")"; done`;
+    const r = spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8", input: log });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["network=applied", "cluster-a=failed", "app-01=blocked", "cluster-b="]);
+  });
+
+  it("has a pull request and a fix that differ only in the queue's name", () => {
+    const at = (d: string) => readFileSync(join(root, "example-demo-chant-fanout", "scenarios", "fan-out", d, "src", "cluster-a", "resources.ts"), "utf8");
+    expect(at("pull").replace('QueueName: "fan-out-estate-cluster-a-events"', 'QueueName: "fan-out-estate-cluster-a-events.fifo"')).toBe(at("fix"));
+    expect(at("pull")).toContain("FifoQueue: true");
   });
 
   it("has no pipeline whose reader exits before its writer is done", () => {

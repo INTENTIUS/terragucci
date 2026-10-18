@@ -25,6 +25,16 @@
 # components pr-plan` on each pull request and its apply job `pr-apply
 # --require-review` on each push to main. See the chant scenario below.
 #
+# The fan-out repo, <admin>/demo-chant-fanout from example-demo-chant-fanout/
+# (chant's examples/fan-out-estate), runs the same loop over fifteen
+# CloudFormation stacks in floci: network, cluster-a and cluster-b on it, and
+# six apps on each cluster. Its pipeline is committed in the tree too, in the
+# generator's shape with three more steps (see its header). Its jobs run in
+# terragucci-demo-chant-fanout:local (stack/demo-chant-fanout.Dockerfile), the
+# tofu image with chant, its aws lexicon and AWS CLI v2. Its stacks have no
+# Terraform state: up applies the base with `chant run --components all`, and
+# each reset applies the base's templates again, the same way (stacks_back).
+#
 #   stack/demo.sh up                  boot the forgejo profile, and for each
 #                                     tool whose tree is in the checkout push
 #                                     the tree to its repo, apply its roots, and
@@ -163,22 +173,23 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
-# chant-pr-loop stays out of the default list until a cycle of it has run to
-# its reset on the demo host. DEMO_SCENARIOS or a name runs it.
+# chant-pr-loop and fan-out stay out of the default list until a cycle of each
+# has run to its reset on the demo host. DEMO_SCENARIOS or a name runs them.
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant)
+TOOLS=(terraform terragrunt chant chant-fanout)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
     tg-planned-outputs) echo terragrunt ;;
     chant-pr-loop) echo chant ;;
+    fan-out) echo chant-fanout ;;
     *) return 1 ;;
   esac
 }
@@ -187,6 +198,7 @@ tool_repo() { # tool -> the repo's name under the admin
     terraform) echo demo ;;
     terragrunt) echo demo-terragrunt ;;
     chant) echo demo-chant ;;
+    chant-fanout) echo demo-chant-fanout ;;
     *) return 1 ;;
   esac
 }
@@ -195,6 +207,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     terraform) echo example-demo ;;
     terragrunt) echo example-demo-terragrunt ;;
     chant) echo example-demo-chant ;;
+    chant-fanout) echo example-demo-chant-fanout ;;
     *) return 1 ;;
   esac
 }
@@ -203,6 +216,25 @@ tool_present() { [ -d "$HERE/../$(tool_tree "$1")" ]; }
 # The image the chant repo's jobs run in, built by up (stack/demo-chant.Dockerfile)
 # and named by example-demo-chant/.forgejo/workflows/chant-pr.yml.
 CHANT_JOB_IMAGE=terragucci-demo-chant:local
+# The fan-out repo's, built by up (stack/demo-chant-fanout.Dockerfile) and named
+# by example-demo-chant-fanout/.forgejo/workflows/chant-pr.yml.
+FANOUT_JOB_IMAGE=terragucci-demo-chant-fanout:local
+# The image a chant tool's jobs run in, which its base is applied in too.
+tool_image() { # tool
+  case "$1" in
+    chant) echo "$CHANT_JOB_IMAGE" ;;
+    chant-fanout) echo "$FANOUT_JOB_IMAGE" ;;
+    *) return 1 ;;
+  esac
+}
+# A tool whose repo runs chant's own pull-request pipeline, not terragucci's.
+tool_chant() { case "$1" in chant|chant-fanout) return 0 ;; *) return 1 ;; esac; }
+
+# The stacks a CloudFormation tree's chant.config.ts lists, one a line, in its
+# order: the fan-out tree's roots. They have no Terraform state.
+tree_stacks() { # dir
+  sed -n 's/^[[:space:]]*{ name: "\([^"]*\)", src: "[^"]*" },$/\1/p' "$1/chant.config.ts"
+}
 
 REPORT_BUCKET=demo-reports
 REPORT_PREFIX=demo
@@ -288,6 +320,13 @@ if [ "$CMD" = up ]; then
       -f "$HERE/demo-chant.Dockerfile" "$HERE/../$(tool_tree chant)" >/dev/null \
       || fail "the chant job image did not build: docker build -f stack/demo-chant.Dockerfile example-demo-chant"
   fi
+  # The fan-out repo's the same way, with the aws lexicon and AWS CLI v2 for cfn-deploy.
+  if tool_present chant-fanout; then
+    log "building $FANOUT_JOB_IMAGE…"
+    docker build -q -t "$FANOUT_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
+      -f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)" >/dev/null \
+      || fail "the fan-out job image did not build: docker build -f stack/demo-chant-fanout.Dockerfile example-demo-chant-fanout"
+  fi
   log "starting Forgejo, its runner and floci (a minute or two the first time)…"
   mkdir -p "$HERE/.state"
   UP_BOOT_LOG="$HERE/.state/demo-up-bootstrap.log"
@@ -370,7 +409,8 @@ tree_bucket() { # dir
 # which a reset deletes) and ROOTS. INIT_PULL is set when a scenario's pull
 # request runs terragucci init after its files, as an author adding units does.
 # BASE_RUN is empty for a repo whose base commit starts no run (the chant
-# repo's says [skip ci]), so a reset does not wait for one.
+# repos' say [skip ci]), so a reset does not wait for one. The fan-out repo's
+# roots are its CloudFormation stacks, which have no state bucket or keys.
 use_repo() { # tool
   local d keys=""
   TOOL="$1"
@@ -379,6 +419,13 @@ use_repo() { # tool
   REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
   REVIEWER_REMOTE="${URL/#http:\/\//http://${REVIEWER}:${REVIEWER_TOKEN}@}/$REPO.git"
   if [ "$1" = terraform ]; then RSTATE="$DEMO_STATE"; else RSTATE="$DEMO_STATE/repos/${REPO#*/}"; fi
+  INIT_PULL="" BASE_RUN=""
+  if [ "$1" = chant-fanout ]; then
+    STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS=""
+    read -r -a ROOTS <<<"$(tree_stacks "$TREE" | tr '\n' ' ')"
+    [ "${#ROOTS[@]}" -gt 0 ] || fail "no stack is listed in $TREE/chant.config.ts"
+    return 0
+  fi
   STATE_BUCKET="$(tree_bucket "$TREE")"
   [ -n "$STATE_BUCKET" ] || fail "no state bucket is named in $TREE"
   BASE_KEYS="$(tree_keys "$TREE" "$1")"
@@ -388,7 +435,6 @@ use_repo() { # tool
   done
   EXTRA_KEYS="$(grep -v '^$' <<<"$keys" | sort -u | grep -vxF -f <(printf '%s\n' "$BASE_KEYS") || true)"
   read -r -a ROOTS <<<"$(awk '{ print $1 }' <<<"$BASE_KEYS" | tr '\n' ' ')"
-  INIT_PULL=""
   [ "$1" != terragrunt ] || INIT_PULL=1
   BASE_RUN=1
   # The chant repo's base commit says [skip ci]: the driver applies it itself.
@@ -1024,6 +1070,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
+    fan-out)    echo "One failed stack holds only what depends on it" ;;
     *) return 1 ;;
   esac
 }
@@ -1040,6 +1087,7 @@ scenario_name() {
     b-composed) echo "one composed run" ;;
     tg-planned-outputs) echo "two new units" ;;
     chant-pr-loop) echo "a reviewed plan" ;;
+    fan-out)    echo "fifteen stacks" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1049,10 +1097,11 @@ scenario_name() {
 COST_STUB="Its cost line uses made-up prices"
 
 # The label of a step for this cycle's scenario; the generic one when the
-# scenario has none of its own.
+# scenario has none of its own. The fan-out scenario's fix sets FIX, so its
+# second pull request's steps read fan-out-fix:<step>.
 say() { # step
   local values
-  case "$SCENARIO:$1" in
+  case "$SCENARIO${FIX:+-fix}:$1" in
     a-known:pull-request)   echo "Pull request $PULL: network's http_proxy_port goes 8080 -> 9090, and its output reads .input" ;;
     a-known:planned)        echo "The plan note shows network going 8080 -> 9090. App's listener 9080 and edge's upstream http://app:9080 follow it. Other has no change. $COST_STUB." ;;
     a-known:applying)       echo "Wave 1 applies network, then wave 2 app and wave 3 edge, each in its own state; nothing is destroyed, so no wave waits" ;;
@@ -1092,6 +1141,17 @@ say() { # step
     chant-pr-loop:approved) echo "The driver approves the pull request and its digest as the reviewer, who had no hand in the change." ;;
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
+    fan-out:pull-request)   echo "Pull request $PULL is open. Network's topic gets a new display name, and cluster-a gains a FIFO queue whose name lacks .fifo." ;;
+    fan-out:planned)        echo "The templates build and lint. The plan note lists fifteen stacks in three waves: network, then cluster-a and cluster-b, then twelve apps." ;;
+    fan-out:waiting)        echo "The plan waits for a reviewer to approve its digest, $PLAN_DIGEST." ;;
+    fan-out:approved)       echo "The driver approves the pull request and its digest as the reviewer, who had no hand in the change." ;;
+    fan-out:applying)       echo "Network applies in wave 1. Cluster-a and cluster-b apply side by side in wave 2, and each one's six apps follow in wave 3." ;;
+    fan-out-fix:pull-request) echo "The fix is pull request $PULL: the queue's name now ends in .fifo. It reaches cluster-a and its six apps, and nothing else." ;;
+    fan-out-fix:planned)    echo "The fix's plan note lists seven stacks: cluster-a, then app-01 to app-06. Network, cluster-b and its apps stay as they applied." ;;
+    fan-out-fix:waiting)    echo "The fix's plan waits for a reviewer to approve its digest, $PLAN_DIGEST." ;;
+    fan-out-fix:approved)   echo "The driver approves the fix and its digest as the reviewer." ;;
+    fan-out-fix:applying)   echo "The apply plans the seven again and gets the approved digest. Cluster-a applies, then its six apps." ;;
+    fan-out-fix:applied)    echo "Done. All fifteen stacks applied: eight on the first run, and on the fix the seven the failure held." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -1127,7 +1187,7 @@ open_pull() {
   run_ended "$LIMIT_PLAN"
   [ "$RUN_STATUS" = success ] || fail "the plan run of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
   # chant's plan job posts a note of its own.
-  if [ "$TOOL" = chant ]; then chant_note; return 0; fi
+  case "$TOOL" in chant|chant-fanout) chant_note; return 0 ;; esac
   # The plan job's note is a comment on the pull request.
   local deadline=$(( $(now) + 60 ))
   until api "$URL/api/v1/repos/$REPO/issues/$PULL/comments?limit=50" | jq -e '[.[] | select(.body | contains("terragucci tf-plan"))] | length > 0' >/dev/null; do
@@ -1458,6 +1518,9 @@ scenario_tg_planned_outputs() {
 # reviewer's key under that principal too, in .chant/allowed_signers.
 CHANT_FORGE_HOST=forgejo:3000
 CHANT_DIGEST="" PLAN_DIGEST="" CHANT_APPROVER=""
+# The members the plan note must list: chant-pr-loop's three by default; the
+# fan-out scenario names its own for each of its two pull requests.
+CHANT_MEMBERS="network app edge"
 
 # The plan job's note on the pull request (marker <!-- chant-pr:demo -->):
 # the digest it binds, and the approver it names, with the reviewer's login.
@@ -1476,8 +1539,8 @@ chant_note() {
   CHANT_APPROVER="${prefix%<your-login>}$REVIEWER"
   [ "$CHANT_APPROVER" = "forgejo@$CHANT_FORGE_HOST:$REVIEWER" ] \
     || fail "the plan note names approvers as ${prefix:-nothing}, not forgejo@$CHANT_FORGE_HOST:<login>, which .chant/allowed_signers lists"
-  for c in network app edge; do
-    grep -qw "$c" <<<"$note" || fail "the plan note on pull request $PULL does not list $c"
+  for c in $CHANT_MEMBERS; do
+    grep -qw -- "$c" <<<"$note" || fail "the plan note on pull request $PULL does not list $c"
   done
 }
 
@@ -1519,6 +1582,87 @@ scenario_chant_pr_loop() {
   OUTCOME=applied
 }
 
+# fan-out: chant's pull-request loop on example-demo-chant-fanout/ (chant's
+# examples/fan-out-estate), fifteen CloudFormation stacks: network, cluster-a
+# and cluster-b on it, and six apps on each cluster. The pull request changes
+# network's topic display name, with the cycle in it so every cycle changes it,
+# and adds a FIFO queue to cluster-a whose name lacks .fifo, which builds and
+# lints and which SQS refuses at apply. pr-plan selects all fifteen, in three
+# waves, and the reviewer approves the digest as in chant-pr-loop. On merge,
+# pr-apply applies network, fails cluster-a while cluster-b applies, and
+# applies cluster-b's six apps; cluster-a's six are blocked. That is chant's
+# fan-out runner, which pr-apply applies with: a failed component blocks its
+# dependents and nothing else (applyPrSet, runFanOut).
+#
+# The fix is a second pull request, approved the same way. It cannot go
+# straight to main: pr-apply refuses a push no pull request merged
+# (no-pull-request), and the first approval is of pull request <n>'s gate
+# (pr-<n>), which no later commit's apply reads. The fix reaches cluster-a and
+# its six apps alone, so its plan and its apply hold those seven: network,
+# cluster-b and its apps are not in it, and no resume record is involved. Each
+# job seeds every stack's outputs (ci/stack-outputs.mjs), so cluster-a reads
+# network's outputs with network not in the run.
+FANOUT_HELD="app-01 app-02 app-03 app-04 app-05 app-06"
+FANOUT_WENT="network cluster-b app-07 app-08 app-09 app-10 app-11 app-12"
+
+# A member's status in pr-apply's table at the end of its log, a line per
+# member ("  app-01   blocked   create 0 update 0 ..."); empty when it has none.
+fanout_status() { # logs, member
+  awk -v m="$2" '{ for (i = 1; i < NF; i++) if ($i == m && $(i + 1) ~ /^(applied|failed|blocked|planned|nothing)$/) s = $(i + 1) } END { print s }' <<<"$1"
+}
+
+# The merge's apply ended as the scenario says: cluster-a failed, its six apps
+# blocked, and the rest applied.
+fanout_failed() {
+  local logs m
+  [ "$RUN_STATUS" = failure ] || fail "the apply of pull request $PULL ended $RUN_STATUS, where cluster-a should fail ($RUN_URL)"
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  [ "$(fanout_status "$logs" cluster-a)" = failed ] || fail "cluster-a is not the stack that failed: $(chant_refusal)"
+  for m in $FANOUT_HELD; do
+    [ "$(fanout_status "$logs" "$m")" = blocked ] || fail "$m was not held by cluster-a's failure ($RUN_URL)"
+  done
+  for m in $FANOUT_WENT; do
+    [ "$(fanout_status "$logs" "$m")" = applied ] || fail "$m did not apply beside cluster-a's failure ($RUN_URL)"
+  done
+}
+
+# The fix's apply applied cluster-a and the six it held.
+fanout_fixed() {
+  local logs m
+  [ "$RUN_STATUS" = success ] || fail "$(chant_refusal)"
+  logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
+  for m in cluster-a $FANOUT_HELD; do
+    [ "$(fanout_status "$logs" "$m")" = applied ] || fail "the fix's apply did not apply $m ($RUN_URL)"
+  done
+}
+
+# One pull request through chant's loop: opened, planned, approved by the
+# reviewer, merged, and its apply followed to its end.
+fanout_round() {
+  open_pull
+  demo_hold planned "$(say planned)" "ask for a review"
+  HELD="pr-apply"
+  demo_hold waiting "$(say waiting)" "approve the plan's digest"
+  chant_approve
+  HELD=""
+  demo_write approved "$(say approved)" "merge pull request $PULL"
+  merge_pull
+  demo_write applying "$(say applying)" "follow the apply"
+  run_ended "$LIMIT_RUN"
+}
+
+scenario_fan_out() {
+  CHANT_MEMBERS="network cluster-a cluster-b app-01 app-06 app-07 app-12"
+  fanout_round
+  fanout_failed
+  demo_hold failed "cluster-a failed: SQS refuses a FIFO queue whose name lacks .fifo. Its six apps are held, and cluster-b's six went ahead." "open the fix"
+  FIX=1 CHANT_MEMBERS="cluster-a app-01 app-06"
+  PULL_FILES="$TREE/scenarios/fan-out/fix" PULL_BRANCH="demo-fan-out-fix" PULL_TITLE="cluster-a: the events queue's name ends in .fifo"
+  fanout_round
+  fanout_fixed
+  OUTCOME=applied
+}
+
 scenario_stale_plan() {
   on_waiting() { stale_waiting; }
   open_pull
@@ -1557,7 +1701,7 @@ run_cycle() {
   ABOUT="$(scenario_about "$1")"
   MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
-  PULL_FILES="" PULL_BRANCH="" PULL_TITLE=""
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" CHANT_MEMBERS="network app edge"
   on_waiting() { default_waiting; }
   on_migrate() { default_migrate; }
   on_failed() { default_failed; }
@@ -1572,6 +1716,7 @@ run_cycle() {
     stale-plan) scenario_stale_plan ;;
     tg-planned-outputs) scenario_tg_planned_outputs ;;
     chant-pr-loop) scenario_chant_pr_loop ;;
+    fan-out) scenario_fan_out ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
   if [ "$OUTCOME" = applied ]; then
@@ -1622,8 +1767,8 @@ cycle_reset() {
 # in its cycle (failure_failed), so each audit clones into a directory of its own.
 audit_trail() {
   local clone out
-  # The chant repo's pipeline writes no terragucci reports for the trail to read.
-  [ "$TOOL" != chant ] || return 0
+  # The chant repos' pipelines write no terragucci reports for the trail to read.
+  case "$TOOL" in chant|chant-fanout) return 0 ;; esac
   mkdir -p "$WORK/c$CYCLE" && clone="$(mktemp -d "$WORK/c$CYCLE/audit.XXXXXX")" || { log "audit: could not make a directory to clone $REPO into"; return 0; }
   git clone -q "$REMOTE" "$clone" 2>/dev/null || { log "audit: could not clone $REPO"; return 0; }
   if out="$(cd "$clone" && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
@@ -1652,8 +1797,8 @@ ESTATE_PID=""
 estate_page() {
   local dir="$WORK/c$CYCLE/estate"
   ESTATE_PID=""
-  # The chant repo's pipeline writes no terragucci reports, so its cycle adds nothing to count.
-  [ "$TOOL" != chant ] || return 0
+  # The chant repos' pipelines write no terragucci reports, so their cycles add nothing to count.
+  case "$TOOL" in chant|chant-fanout) return 0 ;; esac
   mkdir -p "$dir" || { log "estate: could not make $dir; the delivery numbers stay as they were"; return 0; }
   (cd "$dir" && exec env AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
     OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:${TERRAGUCCI_OTLP_PORT:-4328}" OTEL_TRACES_EXPORTER=none \
@@ -1691,6 +1836,7 @@ estate_wait() {
 # belongs to a live run. With "missing-ok", a root with no snapshot is skipped.
 states_back() { # [missing-ok]
   local root key
+  if [ "$TOOL" = chant-fanout ]; then stacks_back "${1:-}"; return 0; fi
   for root in "${ROOTS[@]}"; do
     key="$(root_key "$root")"
     if [ -f "$(snapshot "$root")" ]; then
@@ -1709,6 +1855,19 @@ states_back() { # [missing-ok]
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.tflock" || true
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.terragucci-unwritten" || true
   done <<<"$BASE_KEYS"$'\n'"$EXTRA_KEYS"
+}
+
+# The fan-out repo's stacks back to the base: the base tree's templates built
+# and applied again, as up applied them (chant_base_apply). CloudFormation
+# brings each stack to its base template: network's display name goes back, and
+# cluster-a's events queue is deleted, so the next cycle's pull request fails
+# the same way. With "missing-ok", a repo with no base tree yet is skipped.
+stacks_back() { # [missing-ok]
+  if [ ! -d "$RSTATE/base-tree" ]; then
+    [ -n "${1:-}" ] || fail "$REPO has no base tree in $RSTATE; run 'just demo up' again"
+    return 0
+  fi
+  chant_base_apply "$RSTATE/base-tree"
 }
 
 # ── reset, out of band ───────────────────────────────────────────────────────
@@ -1801,14 +1960,14 @@ up_repo() {
   rm -rf "$bt"
   mkdir -p "$bt"
   (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./node_modules .) | (cd "$bt" && tar xf -)
-  # The chant tree carries chant's generated pipeline; the others get terragucci's from init.
-  if [ "$TOOL" != chant ]; then
+  # The chant trees carry chant's pipeline; the others get terragucci's from init.
+  if ! tool_chant "$TOOL"; then
     (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $(tool_tree "$TOOL")"
   fi
   mkdir -p "$bt/.chant"
   echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"
   # chant's pull-request gate names the reviewer as the forge does (chant_note).
-  [ "$TOOL" != chant ] || echo "forgejo@$CHANT_FORGE_HOST:$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" >> "$bt/.chant/allowed_signers"
+  ! tool_chant "$TOOL" || echo "forgejo@$CHANT_FORGE_HOST:$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" >> "$bt/.chant/allowed_signers"
   # The snapshots an older release kept in <state>/base, copied once (snapshot).
   if [ ! -d "$RSTATE/snapshots" ] && [ -d "$RSTATE/base" ]; then
     mkdir -p "$RSTATE/snapshots"
@@ -1833,7 +1992,7 @@ up_repo() {
       && git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "The demo's base, before its pipeline") \
       || fail "could not commit the base's parent"
   fi
-  if [ "$TOOL" = chant ]; then
+  if tool_chant "$TOOL"; then
     chant_base_apply "$bt"
     # [skip ci]: Forgejo starts no run for this push, nor for each reset's push back to it.
     sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
@@ -1848,10 +2007,13 @@ up_repo() {
       fail "the base's pipeline on $REPO ended '$RUN_STATUS'"
     fi
   fi
-  mkdir -p "$RSTATE/snapshots"
-  for root in "${ROOTS[@]}"; do
-    curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
-  done
+  # The fan-out repo's stacks have no Terraform state: each reset applies the base again (stacks_back).
+  if [ "$TOOL" != chant-fanout ]; then
+    mkdir -p "$RSTATE/snapshots"
+    for root in "${ROOTS[@]}"; do
+      curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
+    done
+  fi
   ! has_db || db_snapshot || fail "could not keep database demo as demo_base"
   rm -rf "$RSTATE/base-tree"
   mv "$bt" "$RSTATE/base-tree"
@@ -1861,20 +2023,24 @@ up_repo() {
   demo_write reset "$(base_label)" "start the first cycle"
 }
 
-# The chant repo's base, applied by the admin outside its pipeline: `chant run
-# --components all` in the chant job image, the one its jobs run in, on the
+# A chant repo's base, applied by the admin outside its pipeline: `chant run
+# --components all` in the tool's job image, the one its jobs run in, on the
 # stack's network against floci. Its pull-request loop cannot
 # apply a first base: app and edge read outputs that network and app do not
 # have yet, and a pull request's plan reads only outputs that exist
-# (chant#3999); and its apply job refuses a push no pull request merged.
+# (chant#3999); and its apply job refuses a push no pull request merged. The
+# fan-out tree's templates are built first, as its jobs build them, since
+# cfn-deploy applies dist/; each reset applies its base again this way.
 chant_base_apply() { # the base tree
-  local out
-  grep -qF "container: $CHANT_JOB_IMAGE" "$1/.forgejo/workflows/chant-pr.yml" \
-    || fail "$(tool_tree chant)/.forgejo/workflows/chant-pr.yml does not run in $CHANT_JOB_IMAGE, the image up builds"
-  log "applying the base of $REPO with chant run in $CHANT_JOB_IMAGE (a minute or two)…"
+  local out image build=""
+  image="$(tool_image "$TOOL")"
+  grep -qF "container: $image" "$1/.forgejo/workflows/chant-pr.yml" \
+    || fail "$(tool_tree "$TOOL")/.forgejo/workflows/chant-pr.yml does not run in $image, the image up builds"
+  [ "$TOOL" != chant-fanout ] || build='ln -s /opt/demo-chant-fanout/node_modules node_modules; npm run build >/dev/null;'
+  log "applying the base of $REPO with chant run in $image (a minute or two)…"
   if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      "$CHANT_JOB_IMAGE" sh -c 'set -e; mkdir /w; cd /w; tar xf -; chant run --components all --env demo --no-release-record' 2>&1)"; then
+      "$image" sh -c "set -e; mkdir /w; cd /w; tar xf -; $build chant run --components all --env demo --no-release-record" 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail "chant run --components all did not apply the base of $REPO"
   fi
@@ -1884,6 +2050,7 @@ repo_description() {
   case "$TOOL" in
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
+    chant-fanout) echo "The terragucci demo on chant: fifteen CloudFormation stacks in three waves, where a failure holds only what depends on it" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -1899,6 +2066,7 @@ base_label() {
   case "$TOOL" in
     terraform) echo "The base is applied: $(applied_values), and other" ;;
     chant) echo "The base is applied. Network, app and edge are chant components, each with its own state." ;;
+    chant-fanout) echo "The base is applied: fifteen CloudFormation stacks. Network, then cluster-a and cluster-b on it, and six apps on each cluster." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
@@ -1981,7 +2149,7 @@ case "$CMD" in
     : > "$WORK/ready"
     for t in "${LOOP_TOOLS[@]}"; do
       use_repo "$t"
-      curl -fsS -o /dev/null -X PUT "$FLOCI/$STATE_BUCKET" || true
+      [ -z "$STATE_BUCKET" ] || curl -fsS -o /dev/null -X PUT "$FLOCI/$STATE_BUCKET" || true
       up_repo
       printf '  %-12s %s/%s\n  %-12s %s\n' "$TOOL" "$URL" "$REPO" "" "$RUN_URL" >> "$WORK/ready"
     done
