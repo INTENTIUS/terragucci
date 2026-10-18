@@ -110,6 +110,45 @@ describe("stack/demo.sh under pipefail", () => {
     expect(readFileSync(join(root, "example-demo-fanout", "network", "main.tf"), "utf8")).toContain('name                       = "fan-out-network-events"');
   });
 
+  it("reads the choudoufu fan-out tree's fifteen roots, which name estates and no state file", () => {
+    const tree = join(root, "example-demo-choudoufu-fanout");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_roots")}\ntree_roots example-demo-choudoufu-fanout`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(r.stdout.trim().split("\n")).toEqual([...apps, "cluster-a", "cluster-b", "network"]);
+    for (const root of ["network", "cluster-a", "app-07"]) {
+      const tf = readFileSync(join(tree, root, "main.tf"), "utf8");
+      expect(tf).toContain(`estate = "fo-${root}"`);
+      expect(tf).toContain('bucket = "demo-live-records"');
+      expect(tf).not.toMatch(/backend "/);
+    }
+    expect(readFileSync(join(tree, "terragucci.yml"), "utf8")).toMatch(/^binary: choudoufu$/m);
+  });
+
+  it("keeps an undeclared resource in app-01's estate alone, so the operator's queue and the pipeline's apply both land", () => {
+    const tree = join(root, "example-demo-choudoufu-fanout");
+    expect(readFileSync(join(tree, "app-01", "main.tf"), "utf8")).toContain('undeclared_tagged = "keep"');
+    for (const root of ["app-02", "cluster-a", "network"]) expect(readFileSync(join(tree, root, "main.tf"), "utf8")).not.toContain("undeclared_tagged");
+    // The operator adds one queue, applied with -target on it alone, and the reset destroys that one.
+    const operator = readFileSync(join(tree, "scenarios", "fan-out-choudoufu", "operator", "app-01", "operator.tf"), "utf8");
+    expect(operator.match(/^resource "/gm)).toHaveLength(1);
+    expect(operator).toContain('resource "aws_sqs_queue" "alarms"');
+    expect(demo).toContain('OPERATOR_TARGET="aws_sqs_queue.alarms"');
+    expect(fn("operator_beat")).toContain("-target=$OPERATOR_TARGET");
+    expect(fn("operator_back")).toContain("choudoufu destroy -auto-approve -input=false -no-color -target=$OPERATOR_TARGET");
+    // The operator starts only once wave 3 has planned, so the pipeline's plan of app-01 never sees its queue.
+    expect(fn("operator_beat")).toContain("wave 3 of 3: set digest");
+  });
+
+  it("writes the operator's apply as demo.json's outside", () => {
+    const script = [fn("outside_json"), demo.split("\n").find((l) => l.startsWith("iso()"))!, 'OPERATOR_TARGET="aws_sqs_queue.alarms"', 'outside_json applied 1792000000 1792000009 "$(printf "a\\nb\\n\\nApply complete!")"'].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const o = JSON.parse(r.stdout);
+    expect(o).toMatchObject({ who: "an operator", estate: "fo-app-01", state: "applied", resources: ["aws_sqs_queue.alarms"], log: ["a", "b", "Apply complete!"] });
+    expect(o.ended_at).not.toBeNull();
+  });
+
   it("numbers the fan-out steps in four chapters, and gives every other scenario's steps none", () => {
     const cases = [
       ["fan-out-tofu", "", "pull-request"],
@@ -130,6 +169,17 @@ describe("stack/demo.sh under pipefail", () => {
     expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, null, null]);
     expect(got.filter(Boolean).map((c) => c.short)).toEqual(["The change goes out", "The change goes out", "cluster-a breaks", "The fix", "The fix", "Done", "Done"]);
     expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
+  });
+
+  it("gives the choudoufu fan-out its own chapter 3, two applies on one estate", () => {
+    const steps = [["", "pull-request"], ["", "failed"], ["1", "applying"], ["1", "reset"]];
+    const lines = steps.map(([f, step]) => `SCENARIO=fan-out-choudoufu FIX="${f}"; echo "$(demo_chapter ${step})"`).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    expect(got.map((c) => [c.n, c.short])).toEqual([[1, "The change goes out"], [2, "cluster-a breaks"], [3, "Two applies, one estate"], [4, "Done"]]);
+    expect(got[2].headline).toBe("Same estate, two applies, both land");
+    expect(got[3].headline).toBe("All 15 are in, and no state file was locked or restored");
   });
 
   it("has no pipeline whose reader exits before its writer is done", () => {
