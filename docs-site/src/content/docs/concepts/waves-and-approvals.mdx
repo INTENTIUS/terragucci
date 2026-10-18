@@ -54,6 +54,7 @@ wave 3  app-01 … app-06    blocked by cluster-a
 
 | What | Where |
 |---|---|
+| Each root's outcome | the wave report's [`outcomes`](/terragucci/reference/report-schema/#waves): applied, unchanged, failed with its error, or blocked |
 | Each held root | the wave report's [`blocked`](/terragucci/reference/report-schema/#waves), with `blocked_by` naming the root whose failure held it, past any root blocked in between |
 | A wave none of whose roots ran | its `state` is `blocked` |
 | The run | it still fails. The last wave's job ends with its count, such as `the run: 8 applied, 1 failed, 6 blocked` |

@@ -76,11 +76,17 @@ describe("a failed root blocks only its dependents (#1161)", () => {
     expect(await run(1)).toBe(0);
     expect(await run(2, "cluster-a")).toBe(1);
     expect(outcome(work, 2).roots).toEqual({ "cluster-a": { status: "failed" }, "cluster-b": { status: "applied" } });
+    // The report the bucket gets says the same, with the failed root's error.
+    expect(waveReport(work).outcomes).toEqual([
+      { root: "cluster-a", outcome: "failed", error: "Error: The name of a FIFO queue can only end with '.fifo'" },
+      { root: "cluster-b", outcome: "applied" },
+    ]);
     expect(await run(3)).toBe(1);
     expect(applied(log)).toEqual(["app-b", "cluster-b", "network"]);
     expect(outcome(work, 3).roots).toEqual({ "app-a": { status: "blocked", by: "cluster-a" }, "app-b": { status: "applied" } });
     const w = waveReport(work);
     expect(w.blocked).toEqual([{ root: "app-a", blocked_by: "cluster-a" }]);
+    expect(w.outcomes).toEqual([{ root: "app-a", outcome: "blocked", blocked_by: "cluster-a" }, { root: "app-b", outcome: "applied" }]);
     expect(w.roots).toEqual(["app-b"]);
     expect(w.state).toBe("applied");
     expect(out.mock.calls.flat().join("\n")).toContain("app-a (blocked by cluster-a)");

@@ -617,6 +617,8 @@ interface PlannedRoot {
   destroys: number;
   summary: string;
   error?: string;
+  /** terragucci#1161: why its apply failed in the binary, the first error line it printed, for the wave report's outcomes. */
+  applyError?: string;
   /** The policy's verdict on its plan, when `policy` is on. */
   policy?: ReportRootPolicy;
   /** What it planned with, which its apply runs too: the job's binary or the version it pins. */
@@ -816,7 +818,15 @@ async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, 
   }
   console.log(`FAILED ${p.root}`);
   console.log(indent(r.out));
+  p.applyError = firstError(r.out);
   return false;
+}
+
+/** The first `Error:` line a binary printed, past its box drawing, or else its last line; at most 300 characters. */
+export function firstError(out: string): string {
+  const lines = out.split("\n").map((l) => l.replace(/^[\s│╷╵]+/, "").trim()).filter(Boolean);
+  const line = lines.find((l) => l.startsWith("Error:")) ?? lines[lines.length - 1] ?? "the apply failed";
+  return line.slice(0, 300);
 }
 
 /** The tip of the branch a push's wave applies, when a newer push moved it past the commit the wave runs. */
@@ -1284,6 +1294,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       writeOutcomeJson(env, k, c, w);
       w.state = waveState(c, w);
       w.ended = new Date().toISOString();
+      if (options.after !== undefined && !options.terragrunt) w.outcomes = reportOutcomes(rootOutcomes(c, w), w);
       // The report is written once the wave's roots planned, whatever came of the gate and the apply.
       if (w.planned) await writeWaveReport(repo, options, w as Required<WaveRun>, env).catch((e) => console.log(`wave ${k}: the report was not written: ${(e as Error).message}`));
       // terragucci#1161: each root's outcome, for the waves after this one to read.
@@ -1329,6 +1340,18 @@ async function waveBlocked(repo: string, options: ApplyWaveOptions, waves: reado
   if (canary.size > 0) for (const r of all) if (!canary.has(r)) order.set(r, new Set([...(order.get(r) ?? []), ...canary]));
   const run = earlierRun([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
   return blockedRoots(roots, order, earlier, run.roots, run.holdsAll);
+}
+
+/** The wave report's outcomes: each root's, sorted, a failed root's with the first line of its plan's or its apply's error. */
+function reportOutcomes(roots: Record<string, RootOutcome>, w: WaveRun): NonNullable<WaveRun["outcomes"]> {
+  const planned = new Map((w.planned ?? []).map((p) => [p.root, p] as const));
+  return Object.entries(roots)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([root, o]) => {
+      const p = planned.get(root);
+      const error = o.status === "failed" ? (p?.applyError ?? (p?.error ? firstError(p.error) : undefined)) : undefined;
+      return { root, outcome: o.status, ...(error ? { error } : {}), ...(o.by ? { blockedBy: o.by } : {}) };
+    });
 }
 
 /**
@@ -1592,6 +1615,8 @@ export interface WaveRun {
   blocked?: Map<string, string>;
   /** terragucci#1161: the wave applied every root it planned, and its job fails for roots it or an earlier wave did not apply. */
   appliedRest?: boolean;
+  /** terragucci#1161: each root's outcome once the wave ended, with a failed root's error, for its report (`waves[].outcomes`). */
+  outcomes?: { root: string; outcome: RootStatus; error?: string; blockedBy?: string }[];
 }
 
 /**
@@ -1741,7 +1766,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.blocked?.size ? { blocked: w.blocked } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.blocked?.size ? { blocked: w.blocked } : {}), ...(w.outcomes?.length ? { outcomes: w.outcomes } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -2600,7 +2625,7 @@ function migrationProgress(w: WaveRun, bucket: Awaited<ReturnType<typeof migrati
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "applyError" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
 
 /**
  * Price a wave's plans, with `cost` set (at the checkout or at base): the

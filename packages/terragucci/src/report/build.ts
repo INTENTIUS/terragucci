@@ -31,6 +31,7 @@ import {
   type ReportRead,
   type ReportUnknownRead,
   type ReportComposedMember,
+  type ReportRootOutcome,
   type WaveState,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost, type ReportApprovalRule,
 } from "./schema";
@@ -129,6 +130,8 @@ export interface WaveInput {
   state?: WaveState;
   /** A `tf-apply` wave's blocked roots, each with the root whose failure holds it (../blocked.ts). */
   blocked?: ReadonlyMap<string, string>;
+  /** A `tf-apply` wave's outcome of each root, once it ended (../blocked.ts). */
+  outcomes?: readonly { root: string; outcome: ReportRootOutcome; error?: string; blockedBy?: string }[];
   /** The waves whose roots its roots read. */
   reads?: number[];
   /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
@@ -465,6 +468,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.cost ? { cost: w.cost } : {}),
       ...(w.state ? { state: w.state } : {}),
       ...(w.blocked?.size ? { blocked: [...w.blocked].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, by]) => ({ root, blocked_by: by })) } : {}),
+      ...(w.outcomes?.length ? { outcomes: w.outcomes.map((o) => ({ root: o.root, outcome: o.outcome, ...(o.error ? { error: o.error } : {}), ...(o.blockedBy ? { blocked_by: o.blockedBy } : {}) })) } : {}),
       ...(w.reads?.length ? { reads: w.reads } : {}),
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
       ...(w.preview ? { preview: w.preview } : {}),
