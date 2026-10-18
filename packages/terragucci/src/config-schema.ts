@@ -39,6 +39,7 @@ import {
   EPHEMERAL_KEYS,
   FORGES,
   GATE_NAMES,
+  INSTALL_KEYS,
   TOKEN_PROTECTION_KEYS,
   JOB_LABEL,
   JOB_STAGE_KEYS,
@@ -468,6 +469,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     policy: { ...policy, description: "Policy checks over each plan." },
     sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init." },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
+    install: { ...map(INSTALL_KEYS, { verify: bool }), description: "How the jobs install the binary: verify checks a choudoufu release's signature, provenance and SBOM attestation." },
     respond: {
       ...map(Object.keys(RESPONSES), each(Object.keys(RESPONSES), (event) => enumOf(RESPONSES[event as keyof typeof RESPONSES]))),
       description: "The response to each pipeline event.",

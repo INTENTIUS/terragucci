@@ -3,7 +3,10 @@
  * the release's SHA256SUMS, unpack it, and print the directory it is in. It
  * needs only Node, so it runs in terragucci's images, which carry no curl or
  * unzip. A pipeline uses it when a repo pins a version its image does not carry.
- * It fetches Linux builds only (see assertLinux).
+ * It fetches Linux builds only (see assertLinux). With `--verify`, a choudoufu
+ * release must also carry a signature, SLSA provenance and an SBOM
+ * attestation that verify against choudoufu's pinned release key
+ * (verifyChoudoufu).
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -12,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { ConfigError } from "./config";
+import { CHOUDOUFU_RELEASE_KEY } from "./images";
+import { AttestationError, PROVENANCE_TYPE, publicKey, SPDX_TYPE, verifyAttestation, verifySignature } from "./publish/verify";
 
 export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign" | "atmos" | "terramate";
 
@@ -24,6 +29,13 @@ export const INFRACOST_VERSION = "0.10.45";
  * images, since attest is opt-in and cosign is a 137 MB binary.
  */
 export const COSIGN_VERSION = "2.6.5";
+
+/** A tool a job installs; `verify` (choudoufu, under `install.verify`) adds `--verify`. */
+export interface ToolInstall {
+  tool: Tool;
+  version: string;
+  verify?: boolean;
+}
 
 export interface Release {
   url: string;
@@ -146,15 +158,95 @@ export function installDir(tool: Tool, version: string, env = process.env): stri
   return join(root, `${tool}-${version}`);
 }
 
-/** Install `tool` at `version` and return the directory holding it. An existing install is reused. */
-export async function install(tool: Tool, version: string, dir = installDir(tool, version)): Promise<string> {
+/** The bundles a signed choudoufu release publishes beside each archive, by what they hold. */
+export const CHOUDOUFU_BUNDLES = { signature: "sig.bundle", provenance: "provenance.bundle", sbom: "sbom.bundle" } as const;
+
+/** The workflow, at the release's own tag, that the provenance of choudoufu `v<version>` must name as its builder. */
+export function choudoufuBuilder(version: string): string {
+  return `https://github.com/INTENTIUS/choudoufu/.github/workflows/release.yml@refs/tags/v${version}`;
+}
+
+interface Provenance {
+  buildDefinition?: {
+    externalParameters?: { tag?: unknown; sourceRef?: unknown };
+    resolvedDependencies?: { uri?: unknown; digest?: { gitCommit?: unknown } }[];
+  };
+  runDetails?: { builder?: { id?: unknown } };
+}
+
+/**
+ * Check a choudoufu release archive against its three bundles and the
+ * release key: the signature over its bytes, then a SLSA provenance
+ * statement about these bytes whose builder is choudoufu's release workflow
+ * at `v<version>` and whose source is the commit that tag was built from,
+ * then an SPDX SBOM attestation about these bytes. A failure throws a
+ * ConfigError naming the release, the bundle and the reason.
+ */
+export function verifyChoudoufu(version: string, file: string, archive: Buffer, bundles: Partial<Record<keyof typeof CHOUDOUFU_BUNDLES, string>>, keyPem: string): void {
+  const tag = `v${version}`;
+  const refuse = (part: keyof typeof CHOUDOUFU_BUNDLES, reason: string): never => {
+    throw new ConfigError(`choudoufu ${tag}: ${file}.${CHOUDOUFU_BUNDLES[part]}: ${reason}; the binary was not installed`);
+  };
+  if (!keyPem.trim()) throw new ConfigError(`choudoufu ${tag}: no choudoufu release key is pinned in this terragucci release, so there is nothing to verify ${file} against`);
+  const key = publicKey(keyPem, "choudoufu's pinned release key");
+  const digest = `sha256:${createHash("sha256").update(archive).digest("hex")}`;
+  const checked = <T>(part: keyof typeof CHOUDOUFU_BUNDLES, check: () => T): T => {
+    if (bundles[part] === undefined) refuse(part, "the release publishes no such file, so it is not a signed release");
+    try {
+      return check();
+    } catch (e) {
+      if (e instanceof AttestationError || e instanceof SyntaxError) return refuse(part, e.message);
+      throw e;
+    }
+  };
+  checked("signature", () => verifySignature(bundles.signature, archive, key));
+  const statement = checked("provenance", () => verifyAttestation(bundles.provenance, digest, PROVENANCE_TYPE, key, "provenance"));
+  const p = (statement.predicate ?? {}) as Provenance;
+  const builder = p.runDetails?.builder?.id;
+  if (builder !== choudoufuBuilder(version)) refuse("provenance", `the provenance names its builder ${typeof builder === "string" ? builder : "as nothing"}, not ${choudoufuBuilder(version)}`);
+  const ext = p.buildDefinition?.externalParameters;
+  if (ext?.tag !== tag) refuse("provenance", `the provenance says it built ${typeof ext?.tag === "string" ? ext.tag : "no tag"}, not ${tag}`);
+  const commit = ext?.sourceRef;
+  if (typeof commit !== "string" || !/^[0-9a-f]{40}$/.test(commit)) refuse("provenance", "the provenance names no source commit");
+  const source = `git+https://github.com/INTENTIUS/choudoufu@refs/tags/${tag}`;
+  if (!(p.buildDefinition?.resolvedDependencies ?? []).some((d) => d.uri === source && d.digest?.gitCommit === commit)) {
+    refuse("provenance", `the provenance does not name ${source} at ${commit as string} as its source`);
+  }
+  checked("sbom", () => verifyAttestation(bundles.sbom, digest, SPDX_TYPE, key, "SBOM attestation"));
+}
+
+/** The bundle beside a release file, or undefined when the release publishes none. */
+async function bundle(url: string): Promise<string | undefined> {
+  const res = await fetch(url);
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new ConfigError(`${url} answered ${res.status}`);
+  return res.text();
+}
+
+export interface InstallOptions {
+  /** choudoufu only: verify the release's signature, provenance and SBOM attestation before the binary is installed. */
+  verify?: boolean;
+  /** The release key to verify against, as PEM. Default: CHOUDOUFU_RELEASE_KEY. */
+  key?: string;
+}
+
+/** Install `tool` at `version` and return the directory holding it. An existing install is reused, with `verify` only one that was verified. */
+export async function install(tool: Tool, version: string, dir = installDir(tool, version), options: InstallOptions = {}): Promise<string> {
+  if (options.verify && tool !== "choudoufu") throw new ConfigError(`--verify checks choudoufu releases, and ${tool} is not choudoufu`);
+  const keyPem = options.key ?? CHOUDOUFU_RELEASE_KEY;
+  if (options.verify && !keyPem.trim()) throw new ConfigError("--verify: no choudoufu release key is pinned in this terragucci release, so there is nothing to verify a release against");
   const target = join(dir, tool);
-  if (existsSync(target)) return dir;
+  const verified = join(dir, ".verified");
+  if (existsSync(target) && (!options.verify || existsSync(verified))) return dir;
   const r = release(tool, version);
   const [archive, sums] = await Promise.all([get(r.url), get(r.sums)]);
   const actual = createHash("sha256").update(archive).digest("hex");
   const expected = expectedSum(sums.toString("utf-8"), r.file);
   if (actual !== expected) throw new ConfigError(`${r.file} has sha256 ${actual}, but the release lists ${expected}`);
+  if (options.verify) {
+    const [signature, provenance, sbom] = await Promise.all(Object.values(CHOUDOUFU_BUNDLES).map((ext) => bundle(`${r.url}.${ext}`)));
+    verifyChoudoufu(version, r.file, archive, { signature, provenance, sbom }, keyPem);
+  }
 
   mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.${tool}.${process.pid}`);
@@ -169,5 +261,6 @@ export async function install(tool: Tool, version: string, dir = installDir(tool
   }
   chmodSync(tmp, 0o755);
   renameSync(tmp, target);
+  if (options.verify) writeFileSync(verified, `${r.file}\n`);
   return dir;
 }

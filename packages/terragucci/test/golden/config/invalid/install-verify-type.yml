@@ -1,0 +1,3 @@
+# install.verify takes true or false.
+install:
+  verify: "yes"

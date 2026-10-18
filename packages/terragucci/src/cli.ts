@@ -20,7 +20,7 @@
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
- *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>   (Linux builds, for a CI job)
+ *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version> [--verify]   (Linux builds, for a CI job; --verify checks a choudoufu release's signature and provenance)
  *   terragucci atmos write   (write each Atmos instance to <stack>/<component> from atmos describe stacks; run by the generated pipeline)
  *   terragucci terramate generate   (fail on stale Terramate generated code, then write each stack's order and inputs beside it; run by the generated pipeline)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
@@ -168,7 +168,7 @@ const USAGE = `usage:
   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]   (a root's module and provider sources under sources, before its init; --units: each Terragrunt unit's)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
-  terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
+  terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version> [--verify]   (Linux builds, for a CI job; --verify checks a choudoufu release's signature and provenance)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
   terragucci oidc-trade --out <file> [--reports-role <arn>]   (internal: a re-plan trades its OIDC token for the plan identities, run by the generated pipeline)
@@ -266,7 +266,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "verify"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -591,10 +591,10 @@ export async function main(argv: string[]): Promise<number> {
       case "install": {
         const [tool, version] = args;
         if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign", "atmos", "terramate"].includes(tool)) {
-          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>");
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version> [--verify]");
         }
         assertLinux();
-        console.log(await install(tool as Tool, version));
+        console.log(await install(tool as Tool, version, undefined, { verify: flags.verify === true }));
         return 0;
       }
       case "publish": {
