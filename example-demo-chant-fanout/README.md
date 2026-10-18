@@ -40,5 +40,7 @@ name with the cycle in it, and cluster-a gains a FIFO queue whose name lacks
 `.fifo`, which builds and lints and which SQS refuses at apply. On merge,
 cluster-a fails, its six apps are blocked, and cluster-b and its six apps
 apply. `scenarios/fan-out/fix/` is the second pull request, which adds the
-`.fifo` and applies cluster-a and its six apps. Each reset applies the base
+`.fifo` and applies cluster-a and its six apps. `scenarios/fan-out-fix/about.json` is
+the fix's own card, which demo.json's `about` carries during the fix's steps; it
+is a card, not a scenario. Each reset applies the base
 again, so the next cycle fails the same way.
