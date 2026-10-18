@@ -185,6 +185,7 @@ import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
+import { EARLIER_DIR } from "./blocked";
 import { groupsArg, type ApplyGroup } from "./groups";
 import { CHECK_DIR } from "./check";
 import { forgejoCheckoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./forgejo-handover";
@@ -1007,6 +1008,10 @@ interface ApplyJob {
   environment?: string;
   /** The roots it applies (PipelineApplyJob.applies). */
   applies: string[];
+  /** terragucci#1161: a later wave's job, or a share or group of one: it fetches the earlier waves' report artifacts, whose outcomes say which of its roots are blocked. */
+  fetchEarlier?: boolean;
+  /** terragucci#1161: a later wave's own job, which runs once the wave before it ended, applied or failed, so the roots no failure holds still apply. */
+  afterFailure?: boolean;
 }
 
 /** Share `share` of `shares` of a wave's roots: sorted, cut into contiguous slices whose sizes differ by at most one, as chant's opWaveShare cuts them. */
@@ -1055,6 +1060,8 @@ export interface ApplyWaveInput {
   group?: string;
   /** An environment's group: the `terragucci check-job` line that stops the job, before any token is fetched or traded, unless it runs where the environment's apply is set to run (checkJobLine). */
   checkJob?: string;
+  /** terragucci#1161: the stage reads the earlier waves' outcomes from EARLIER_DIR, writes its own, and blocks only the roots a failure holds. */
+  after?: boolean;
 }
 
 /**
@@ -1109,6 +1116,7 @@ export function applyScript(
     ...(input.branches ? ["--branches", sh(branchesArg(input.branches)), "--branch", forge === "gitlab" ? '"$CI_COMMIT_BRANCH"' : '"$GITHUB_REF_NAME"'] : []),
     ...(input.groups !== undefined ? ["--groups", sh(input.groups)] : []),
     ...(input.group !== undefined ? ["--group", input.group] : []),
+    ...(input.after ? ["--after", EARLIER_DIR] : []),
   ];
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
@@ -2254,15 +2262,19 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A split wave's jobs hold their run's shared lock tag on every forge, whatever the scope, so the shares apply side by side.
   const sharedLock = split;
   const applyJobs: ApplyJob[] = [];
+  // terragucci#1161: a push's waves of plain roots on GitHub and Forgejo hand each wave's outcome to the next, and a
+  // failure blocks only the roots that depend on it. A Terragrunt repo's waves and GitLab's still stop at a failed wave.
+  const blockOnly = !tg && forge !== "gitlab";
+  const later = (wave: number, own: boolean): Partial<ApplyJob> => (blockOnly && wave > 1 ? { fetchEarlier: true, ...(own ? { afterFailure: true } : {}) } : {});
   let before: string[] = [];
   for (let i = 0; i < waveCount; i++) {
     const wave = i + 1;
     const name = `apply-wave-${wave}`;
     if (groups) {
       // The wave's job plans every root with the plan identities and decides; then a job per group with roots in the wave.
-      const waveInput: ApplyWaveInput = { wave, canary: input.canary, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(waveJobs ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), groups: groupsFlag! };
+      const waveInput: ApplyWaveInput = { wave, canary: input.canary, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(waveJobs ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), groups: groupsFlag!, ...(blockOnly ? { after: true } : {}) };
       const decider = audienceMap(oidc);
-      applyJobs.push({ name, wave, needs: before, step: `Plan wave ${wave} of ${waveCount} and decide its gate`, body: applyScript(binary, layers, forge, decider, { ...waveInput, sharedLock: name }), decides: true, applies: [], ...(decider !== oidc ? { oidc: decider } : {}) });
+      applyJobs.push({ name, wave, needs: before, step: `Plan wave ${wave} of ${waveCount} and decide its gate`, body: applyScript(binary, layers, forge, decider, { ...waveInput, sharedLock: name }), decides: true, applies: [], ...(decider !== oidc ? { oidc: decider } : {}), ...later(wave, true) });
       before = [];
       for (const g of groups) {
         const mine = cut[i]!.filter((r) => g.roots.includes(r));
@@ -2274,20 +2286,20 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         const own: Partial<ApplyJob> = { group: g.name, ...(jobOidc ? { oidc: jobOidc } : {}), ...(g.runner !== undefined ? { runner: g.runner } : {}), ...(g.forgeEnvironment !== undefined && forge !== "forgejo" ? { environment: g.forgeEnvironment } : {}) };
         for (let s = 1; s <= n; s++) {
           const job = n > 1 ? `${name}-${g.name}-share-${s}` : `${name}-${g.name}`;
-          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job, ...(checkJob ? { checkJob } : {}) }), applies: n > 1 ? shareRoots(mine, s, n) : mine, ...(n > 1 ? { share: s } : {}) });
+          applyJobs.push({ ...own, name: job, wave, needs: [name], step: `Apply group ${g.name}${n > 1 ? `, share ${s} of ${n},` : ""} of wave ${wave}`, body: applyScript(binary, layers, forge, jobOidc, { ...waveInput, group: g.name, ...(n > 1 ? { share: s } : {}), sharedLock: job, ...(checkJob ? { checkJob } : {}) }), applies: n > 1 ? shareRoots(mine, s, n) : mine, ...(n > 1 ? { share: s } : {}), ...later(wave, false) });
           before.push(job);
         }
       }
       continue;
     }
     const n = sharesOf(i);
-    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
-    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), applies: n > 1 ? [] : [...cut[i]!], ...(n > 1 ? { decides: true } : {}) });
+    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), ...(blockOnly ? { after: true } : {}) };
+    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), applies: n > 1 ? [] : [...cut[i]!], ...(n > 1 ? { decides: true } : {}), ...later(wave, true) });
     before = [name];
     if (n > 1) {
       before = Array.from({ length: n }, (_, s) => `${name}-share-${s + 1}`);
       for (const [s, share] of before.entries()) {
-        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, ...(sharedLock ? { sharedLock: share } : {}) }), applies: shareRoots(cut[i]!, s + 1, n) });
+        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, ...(sharedLock ? { sharedLock: share } : {}) }), applies: shareRoots(cut[i]!, s + 1, n), ...later(wave, false) });
       }
     }
   }
@@ -2705,13 +2717,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
-  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string, estimator = false, fetch?: InstanceType<typeof Step>): InstanceType<typeof Step>[] => [
+  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string, estimator = false, fetch?: InstanceType<typeof Step> | InstanceType<typeof Step>[]): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4", ...(history ? { with: { "fetch-depth": 0 } } : {}) }),
     ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
     ...(estimator && costInstall ? [new Step({ name: `Install Infracost ${INFRACOST_VERSION}`, run: costInstall })] : []),
     ...(before ? [new Step({ name: `Install the AWS CLI ${AWS_CLI.version} unless the job has it`, shell: "bash", run: before })] : []),
     ...(cached && tg ? [new Step({ name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
-    ...(fetch ? [fetch] : []),
+    ...(fetch ? (Array.isArray(fetch) ? fetch : [fetch]) : []),
     main,
   ];
   const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
@@ -3054,9 +3066,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     entities.set(job.name, new Job({
       "runs-on": "ubuntu-latest",
       container: { image },
-      // Each wave needs the one before, so a wave that waits holds back every later one; a wave's shares need its own job, which decided it.
+      // Each wave needs the one before; a wave's shares need its own job, which decided it. A later wave's own job runs
+      // once the wave before it ended, applied or failed, and blocks only the roots a failure holds (terragucci#1161);
+      // a wave before it that was skipped or cancelled skips it.
       needs: job.needs.length === 0 ? "check" : job.needs.length === 1 ? job.needs[0] : job.needs,
-      if: applyIf,
+      if: job.afterFailure ? `!cancelled() && ${job.needs.map((n) => `(needs.${n}.result == 'success' || needs.${n}.result == 'failure')`).join(" && ")} && (${applyIf})` : applyIf,
       // contents: write only to record a waiting wave's plan on the chant/lifecycle branch, and with a wave split across jobs to hold the shared lock's tags.
       permissions: { contents: writesLedger || sharedLock || scope === "resource" ? "write" : "read", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
@@ -3075,7 +3089,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...costEnv,
       },
       steps: [
-        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, true, job.share !== undefined || job.group !== undefined ? new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never) : undefined),
+        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, true, [
+          ...(job.share !== undefined || job.group !== undefined ? [new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never)] : []),
+          // terragucci#1161: the earlier waves' apply reports, whose outcomes say which roots of this wave are blocked. None found blocks every root that depends on an earlier one.
+          ...(job.fetchEarlier
+            ? [new Step({ name: "Fetch the earlier waves' outcomes", uses: download, "continue-on-error": true, with: forge === "forgejo" ? { path: EARLIER_DIR } : { pattern: `${REPORT_DIR}-apply-wave-*`, path: EARLIER_DIR } } as never)]
+            : []),
+        ]),
         ...(job.decides ? [new Step({ name: groups ? "Hand the decision to the wave's groups" : "Hand the decision to the wave's shares", uses: upload, with: { name: `${DECIDED_DIR}-${job.wave}`, path: `${DECIDED_DIR}/`, "if-no-files-found": "error" } })] : []),
         new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-${job.name}`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ...(agentApply

@@ -201,6 +201,7 @@ const STATE_TEXT: Record<RunWave["state"], string> = {
   applied: "applied",
   refused: "refused",
   failed: "failed",
+  blocked: "blocked by an upstream that did not apply",
 };
 
 /** The run's blast radius: the roots its waves' plans change, and every root of the project that reads their state, followed through. */

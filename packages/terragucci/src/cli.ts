@@ -454,6 +454,7 @@ export async function main(argv: string[]): Promise<number> {
             ...(str(flags, "group") ? { group: str(flags, "group") } : {}),
             ...(str(flags, "on-held") ? { onHeld: onHeldFlag(str(flags, "on-held")!) } : {}),
             ...(flags["stand-down"] === true ? { standDown: true } : {}),
+            ...(str(flags, "after") ? { after: str(flags, "after") } : {}),
           });
         }
         const result = await runStage(args[0] ?? "", cwd, {
