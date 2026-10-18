@@ -1,0 +1,19 @@
+# The fan-out estate: network, cluster-a and cluster-b on it, and six apps on
+# each cluster. Fifteen roots of SQS queues and DynamoDB tables in floci, each
+# with its own state there; the plan reports and run views go to the reports
+# bucket there too (stack/demo.sh, scenario fan-out-tofu).
+forge: forgejo
+binary: tofu
+# Every job runs in the demo's tofu image, which carries hashicorp/aws 6.67.0
+# as a filesystem mirror (stack/demo-yodel/Dockerfile).
+image: terragucci-demo-tofu:local
+gate: on-destructive
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
+env:
+  # Installs hashicorp/aws from the image's mirror, so no job downloads it.
+  TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  TERRAGUCCI_METRICS_PER_RUN: "true"
