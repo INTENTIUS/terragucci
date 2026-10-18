@@ -1702,9 +1702,10 @@ fan_out_failed() {
   ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/$SCENARIO-fix/about.json" 2>/dev/null || echo "$ABOUT")"
   open_pull
   HOLD="$FANOUT_FIX_PLANNED" demo_hold planned "$(say planned)" "merge pull request $PULL"
+  # On choudoufu, an operator applies to app-01's estate beside the fix's wave 3: app-01's apply waits for it.
+  [ "$SCENARIO" != fan-out-choudoufu ] || operator_expect
   merge_pull
   demo_write applying "$(say applying)" "follow the waves"
-  # On choudoufu, an operator applies to app-01's estate beside the fix's wave 3.
   [ "$SCENARIO" != fan-out-choudoufu ] || operator_beat
 }
 
@@ -1732,32 +1733,70 @@ scenario_fan_out_choudoufu() {
   scenario_fan_out_tofu
 }
 
-# The operator's apply, once the fix's wave 3 has planned: the fix's merge
-# commit with scenarios/<scenario>/operator over it, applied in app-01 with
+# The operator's apply beside the pipeline's apply of app-01. Before the fix
+# merges, the driver names the cycle in <markers>/expected (operator_expect),
+# so app-01's before-apply step in the fix's wave 3 waits for the operator
+# (example-demo-choudoufu-fanout/ci/operator-gate.mjs). The operator plans on
+# the fix's merge commit with scenarios/<scenario>/operator over it, waits
+# until app-01's apply is about to start, marks its own start, and applies with
 # -target on the new queue alone, in DEMO_IMAGE on the stack's network, as an
-# operator's laptop would. demo.json's outside says what it is doing.
+# operator's laptop would. Both sides mark when their applies start and end,
+# and the driver checks the two windows overlapped. demo.json's outside says
+# what the operator is doing.
 OUTSIDE=null
 OPERATOR_TARGET="aws_sqs_queue.alarms"
+OPERATOR_MARKERS_IN_STACK="http://floci:4566/$REPORT_BUCKET/$REPORT_PREFIX/operator/demo-choudoufu-fanout"
+operator_markers() { echo "$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/operator/${REPO#*/}"; }
+operator_mark() { # marker name -> its time, or empty
+  curl -fsS "$(operator_markers)/$CYCLE/$1" 2>/dev/null || true
+}
+
+operator_expect() {
+  curl -fsS -o /dev/null -X PUT -H 'content-type: text/plain' --data-binary "$CYCLE" "$(operator_markers)/expected" \
+    || fail "could not name cycle $CYCLE for the operator's apply"
+}
+
 operator_beat() {
-  local deadline=$(( $(now) + LIMIT_RUN )) dir="$WORK/c$CYCLE/operator" logs="" out started rc=0
-  until grep -q 'wave 3 of 3: set digest' <<<"$logs"; do
-    [ "$(now)" -lt "$deadline" ] || fail "the fix's wave 3 did not plan within ${LIMIT_RUN}s ($RUN_URL)"
-    runs_export
-    sleep "$POLL"
-    logs="$(run_logs "$REPO" "$RUN_ID" 2>/dev/null || true)"
-  done
+  local deadline=$(( $(now) + LIMIT_RUN )) dir="$WORK/c$CYCLE/operator" outfile="$WORK/c$CYCLE/operator.out" pid started rc=0 shown=""
   { git clone -q "$REMOTE" "$dir" && git -C "$dir" checkout -q "$COMMIT"; } 2>/dev/null || fail "could not check out ${COMMIT:0:8} for the operator"
   overlay "$TREE/scenarios/$SCENARIO/operator" "$dir"
   started="$(now)"
-  OUTSIDE="$(outside_json applying "$started")"
-  demo_write applying "An operator applies a new queue to app-01's estate from outside the pipeline, while the pipeline's wave 3 applies app-01." "follow the waves"
-  out="$(operator_run "$dir" "choudoufu apply -auto-approve -input=false -no-color -target=$OPERATOR_TARGET")" || rc=$?
-  OUTSIDE="$(outside_json "$([ "$rc" = 0 ] && echo applied || echo failed)" "$started" "$(now)" "$out")"
+  operator_run "$dir" "choudoufu plan -input=false -no-color -target=$OPERATOR_TARGET >/dev/null; node ../ci/operator-gate.mjs operator-before; choudoufu apply -auto-approve -input=false -no-color -target=$OPERATOR_TARGET; node ../ci/operator-gate.mjs operator-after" >"$outfile" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -z "$shown" ] && [ -n "$(operator_mark operator-applying)" ]; then
+      shown=1
+      OUTSIDE="$(outside_json applying "$started")"
+      demo_write applying "An operator applies a new queue to app-01's estate from outside the pipeline, while the pipeline's wave 3 applies app-01." "follow the waves"
+    fi
+    [ "$(now)" -lt "$deadline" ] || { kill "$pid" 2>/dev/null || true; fail "the operator's apply ran past ${LIMIT_RUN}s"; }
+    runs_export
+    sleep "$POLL"
+  done
+  wait "$pid" || rc=$?
+  OUTSIDE="$(outside_json "$([ "$rc" = 0 ] && echo applied || echo failed)" "$started" "$(now)" "$(cat "$outfile")")"
   if [ "$rc" != 0 ]; then
-    printf '%s\n' "$out" >&2
+    cat "$outfile" >&2
     fail "the operator's apply to app-01's estate failed"
   fi
-  demo_write applying "Both landed, and neither waited: app-01's estate keeps one record per resource, and no state file to lock." "follow the waves"
+  if operator_overlapped; then
+    demo_write applying "Both landed, and neither waited: app-01's estate keeps one record per resource, and no state file to lock." "follow the waves"
+  else
+    log "operator: its apply and the pipeline's apply of app-01 did not overlap this cycle (operator $(operator_mark operator-applying) to $(operator_mark operator-applied), pipeline $(operator_mark pipeline-applying) to $(operator_mark pipeline-applied))"
+    demo_write applying "Both landed, one after the other this cycle: app-01's estate keeps one record per resource, and no state file to lock." "follow the waves"
+  fi
+}
+
+# Whether the operator's apply and the pipeline's apply of app-01 overlapped,
+# from the four marks: each started before the other ended. The pipeline's
+# end is waited for, as wave 3 may still be applying when the operator ends.
+operator_overlapped() {
+  local deadline=$(( $(now) + 120 )) oa ob pa pb
+  until [ -n "$(operator_mark pipeline-applied)" ] || [ "$(now)" -ge "$deadline" ]; do sleep "$POLL"; done
+  oa="$(operator_mark operator-applying)" ob="$(operator_mark operator-applied)" pa="$(operator_mark pipeline-applying)" pb="$(operator_mark pipeline-applied)"
+  [ -n "$oa" ] && [ -n "$ob" ] && [ -n "$pa" ] && [ -n "$pb" ] || return 1
+  # ISO times in UTC sort as strings.
+  [[ "$oa" < "$pb" && "$pa" < "$ob" ]]
 }
 
 # Run a choudoufu command in app-01 of a checkout, in DEMO_IMAGE on the stack's
@@ -1766,7 +1805,7 @@ operator_run() { # checkout dir, command
   tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" --entrypoint sh \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
     -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-    -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 \
+    -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e TG_DEMO_OPERATOR_MARKERS="$OPERATOR_MARKERS_IN_STACK" \
     "$DEMO_IMAGE" -c "set -e; mkdir /w; cd /w; tar xf -; cd app-01; choudoufu init -input=false -no-color >/dev/null; $2" 2>&1
 }
 

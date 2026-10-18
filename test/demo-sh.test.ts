@@ -161,8 +161,26 @@ describe("stack/demo.sh under pipefail", () => {
     expect(demo).toContain('OPERATOR_TARGET="aws_sqs_queue.alarms"');
     expect(fn("operator_beat")).toContain("-target=$OPERATOR_TARGET");
     expect(fn("operator_back")).toContain("choudoufu destroy -auto-approve -input=false -no-color -target=$OPERATOR_TARGET");
-    // The operator starts only once wave 3 has planned, so the pipeline's plan of app-01 never sees its queue.
-    expect(fn("operator_beat")).toContain("wave 3 of 3: set digest");
+    // app-01's apply waits for the operator, who waits for it, and both mark their starts and ends (ci/operator-gate.mjs).
+    expect(fn("operator_beat")).toContain("node ../ci/operator-gate.mjs operator-before; choudoufu apply -auto-approve");
+    expect(fn("fan_out_failed")).toMatch(/operator_expect\n\s+merge_pull/);
+    const config = readFileSync(join(tree, "terragucci.yml"), "utf8");
+    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-before\n    before: apply\n    roots: [\"app-01\"]");
+    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-after\n    after: apply\n    roots: [\"app-01\"]");
+    expect(config).toContain("TG_DEMO_OPERATOR_MARKERS: http://floci:4566/demo-reports/demo/operator/demo-choudoufu-fanout");
+    expect(demo).toContain('OPERATOR_MARKERS_IN_STACK="http://floci:4566/$REPORT_BUCKET/$REPORT_PREFIX/operator/demo-choudoufu-fanout"');
+  });
+
+  it("tells the two applies overlapped only when each started before the other ended", () => {
+    const check = (marks: Record<string, string>) => {
+      const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }\nnow() { date +%s; }\nPOLL=0`;
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stub}\n${fn("operator_overlapped")}\nif operator_overlapped; then echo yes; else echo no; fi`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    const t = (s: number) => `2026-10-19T10:00:${String(s).padStart(2, "0")}.000Z`;
+    expect(check({ "operator-applying": t(10), "operator-applied": t(14), "pipeline-applying": t(11), "pipeline-applied": t(13) })).toBe("yes");
+    expect(check({ "operator-applying": t(10), "operator-applied": t(12), "pipeline-applying": t(13), "pipeline-applied": t(15) })).toBe("no");
   });
 
   it("writes the operator's apply as demo.json's outside", () => {
