@@ -1,5 +1,0 @@
-{
-  "changes": "One shared root holds 14 resources in one state file: a network and three teams. The pipeline applies it.",
-  "watch": "Every resource lands in the one state. Any change to any team would plan the whole root and wait on its one lock.",
-  "shows": "Most estates start here. One root holds everything and applies the stock way."
-}

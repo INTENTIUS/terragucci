@@ -1,9 +1,9 @@
 # The demo's job image: terragucci's tofu CI image with SQL Yodeler and
 # choudoufu beside it, so app's wave runs app/schema's migrations
-# (example-demo/app/main.tf) and the terralith's roots run on choudoufu
-# (example-demo-terralith/terragucci.yml). stack/demo.sh up builds it as
-# terragucci-demo-tofu:local, and both trees' terragucci.yml name it as the
-# image every job runs in.
+# (example-demo/app/main.tf) and a demo tree whose terragucci.yml says
+# binary: choudoufu runs its roots on it. stack/demo.sh up builds it as
+# terragucci-demo-tofu:local, and each such tree's terragucci.yml names it as
+# the image every job runs in.
 #
 #   BASE                the tofu CI image (scripts/images.ts tags)
 #   CHOUDOUFU_VERSION   the choudoufu release (stack/demo.sh's CHOUDOUFU_VERSION)

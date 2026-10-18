@@ -112,9 +112,9 @@ services:
       default:
         aliases: [demo-postgres]
 
-  # The terralith scenario's record store front (stack/demo.sh): choudoufu's
-  # record store addresses its bucket virtual-hosted, at
-  # demo-terralith-records.demo-records, and this forwards each request to
+  # The record store front of a demo tree whose roots run on choudoufu
+  # (stack/demo.sh, records_up): choudoufu's record store addresses its bucket
+  # virtual-hosted, at demo-live-records.demo-records, and this forwards each request to
   # floci path-style (stack/fixtures/cdf-race/s3-hold.mjs, which holds nothing
   # unless told to). It runs in the demo's job image, which demo.sh up builds
   # before it starts this; the AWS provider's S3 Control host is
@@ -133,7 +133,7 @@ services:
     restart: unless-stopped
     networks:
       default:
-        aliases: [demo-records, demo-terralith-records.demo-records, 000000000000.demo-records]
+        aliases: [demo-records, demo-live-records.demo-records, 000000000000.demo-records]
 
   # ── forgejo ──────────────────────────────────────────────────────────────
   # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
