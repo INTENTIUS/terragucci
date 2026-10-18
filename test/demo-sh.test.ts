@@ -709,6 +709,58 @@ describe("prune_due", () => {
   });
 });
 
+// quiet holds a push only for a run with a wave still to end: a run whose
+// tips job alone is left does not hold the reset or the next pull request.
+describe("quiet", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** quiet with Forgejo stubbed: `runs` lists the runs, and run <id>'s jobs are jobs[id] until the poll `until`, then all success. */
+  const go = (runs: unknown[], jobs: Record<string, unknown[]>, until = 1000) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-quiet-"));
+    made.push(tmp);
+    writeFileSync(join(tmp, "n"), "0");
+    for (const [id, j] of Object.entries(jobs)) writeFileSync(join(tmp, `jobs-${id}`), JSON.stringify(j));
+    writeFileSync(join(tmp, "runs"), JSON.stringify(runs));
+    const stubs = [
+      'log() { echo "[demo] $*" >&2; }',
+      'fail() { echo "FAIL: $*" >&2; exit 1; }',
+      "now() { date +%s; }",
+      'URL=http://forge REPO=admin/demo-choudoufu HELD="" LIMIT_QUIET=5 POLL=0 DEMO_STEP=applied DEMO_LABEL=done',
+      "runner_watch() { :; }",
+      "runs_export() { :; }",
+      // Each poll counts; from poll `until` on, every run has ended.
+      `runs() { n=$(( $(cat ${tmp}/n) + 1 )); echo $n > ${tmp}/n; if [ "$n" -ge ${until} ]; then echo '[]'; else cat ${tmp}/runs; fi; }`,
+      `api() { id="\${1##*/runs/}"; id="\${id%/jobs}"; cat ${tmp}/jobs-$id; }`,
+      `demo_write() { echo "$1|$3" >> ${tmp}/writes; }`,
+      fn("only_tips_left"),
+      fn("quiet"),
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\nquiet\necho quiet`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    const writes = existsSync(join(tmp, "writes")) ? readFileSync(join(tmp, "writes"), "utf8").trim().split("\n") : [];
+    return { r, polls: Number(readFileSync(join(tmp, "n"), "utf8")), writes };
+  };
+  const waves = [{ name: "wave-1", status: "success" }, { name: "wave-2", status: "success" }];
+
+  it("goes on at once past a run whose waves ended and whose tips job alone runs", () => {
+    const { r, polls, writes } = go([{ id: 7, status: "running" }], { 7: [...waves, { name: "tips", status: "running" }] });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("quiet");
+    expect(polls).toBe(1);
+    expect(r.stderr).not.toContain("waiting for run");
+    expect(writes).toEqual([]);
+  });
+
+  it("waits for a run with a wave still running, says so once in the log and the next action, then goes on", () => {
+    const { r, polls, writes } = go([{ id: 7, status: "running" }], { 7: [...waves.slice(0, 1), { name: "wave-2", status: "running" }, { name: "tips", status: "waiting" }] }, 4);
+    expect(r.status, r.stderr).toBe(0);
+    expect(polls).toBe(4);
+    expect(r.stderr.match(/\[demo\] quiet: waiting for run 7 of admin\/demo-choudoufu to end before the next push/g)).toHaveLength(1);
+    expect(writes).toEqual(["applied|wait for run 7 to end"]);
+  });
+});
+
 // The driver goes on once a run's waves have ended and only its tips job is
 // left: that job opens advice pull requests and writes nothing behold reads.
 describe("only_tips_left", () => {

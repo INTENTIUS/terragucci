@@ -952,17 +952,34 @@ last_run_id() { runs | jq -r '[.[].id] | max // 0'; }
 # push waits here for no run of the repo to be in progress, and refuses while
 # this cycle has a wave waiting (HELD), unless the caller says the push is the
 # point (scenario 5's push to main, DEMO_PUSH_WHILE_HELD=1).
+#
+# A run whose waves have all ended and whose tips job alone is left
+# (only_tips_left) does not count: that job opens advice pull requests after
+# the last wave and plans and applies nothing, so no push can make a wave of
+# it stand down or plan again. It used to hold each reset until it ended,
+# about a minute after applied with nothing in the log (the cone-plan loop).
+# While a run does hold the push, the driver says which one: a log line, and
+# the step's next action, "wait for run <id> to end", once per set of runs.
 HELD=""
 quiet() {
-  local deadline=$(( $(now) + LIMIT_QUIET )) busy
+  local deadline=$(( $(now) + LIMIT_QUIET )) ids id busy said=""
   if [ -n "$HELD" ] && [ -z "${DEMO_PUSH_WHILE_HELD:-}" ]; then
     fail "a push was asked for while $HELD waits"
   fi
   while :; do
     runner_watch
     runs_export
-    busy="$(runs | jq -r '[.[] | select(.status == "running" or .status == "waiting" or .status == "blocked" or .status == "unknown")] | length' || true)"
-    [ "$busy" = 0 ] && return 0
+    ids="$(runs | jq -r '.[] | select(.status == "running" or .status == "waiting" or .status == "blocked" or .status == "unknown") | .id' || true)"
+    busy=""
+    for id in $ids; do
+      only_tips_left "$(api "$URL/api/v1/repos/$REPO/actions/runs/$id/jobs" 2>/dev/null || true)" || busy="${busy:+$busy, }$id"
+    done
+    [ -n "$busy" ] || return 0
+    if [ "$busy" != "$said" ]; then
+      said="$busy"
+      log "quiet: waiting for run $busy of $REPO to end before the next push"
+      [ -z "${DEMO_STEP:-}" ] || MIGRATION_WRITE=1 demo_write "$DEMO_STEP" "$DEMO_LABEL" "wait for run $busy to end"
+    fi
     [ "$(now)" -lt "$deadline" ] || fail "a run was still in progress after ${LIMIT_QUIET}s, so nothing was pushed"
     sleep "$POLL"
   done
