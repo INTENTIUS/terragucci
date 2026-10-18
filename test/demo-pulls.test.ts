@@ -206,7 +206,7 @@ describe("scripts/demo-pulls.ts", () => {
 });
 
 describe("stack/demo.sh", () => {
-  it("prunes the pull requests at each reset, after closing the open ones, and never fails the reset on it", () => {
+  it("prunes the pull requests at a reset whose prune is due, after closing the open ones, and never fails the reset on it", () => {
     const demo = readFileSync(join(root, "stack", "demo.sh"), "utf8");
     const work = demo.slice(demo.indexOf("\nreset_work() {"), demo.indexOf("\nreset_written() {"));
     expect(work.indexOf('state":"closed')).toBeGreaterThan(-1);

@@ -124,9 +124,9 @@
 # 30 pipeline runs of the repos the loop uses, with their jobs, steps and logs,
 # each run with its repo and tool, copied while they run and when they end
 # (runs_export, scripts/demo-runs.ts), so behold's kiosk shows them without
-# reaching Forgejo. Each reset deletes each of those repos' runs in Forgejo past
-# the newest DEMO_FORGE_RUNS (100) that have ended, so its database stays the
-# same size however long the loop runs. Each reset also deletes each repo's
+# reaching Forgejo. Every DEMO_PRUNE_EVERY-th reset (10) deletes each of those
+# repos' runs in Forgejo past the newest DEMO_FORGE_RUNS (100) that have ended,
+# so its database stays near one size however long the loop runs. That reset also deletes each repo's
 # closed pull requests, and their refs/pull/<n>/head, past the newest
 # DEMO_FORGE_PULLS (50), never an open one, the newest, or one the bucket's
 # cycles or runs name, and has Forgejo run git gc and its Actions cleanup at
@@ -142,6 +142,10 @@
 # so behold's kiosk can replay them, and the reset's prune drops the
 # audit.jsonl ledger entries it no longer holds that are older than the
 # project's oldest kept report.
+#
+# Once a cycle's reset is written, its publish to cycles/, its audit and the
+# DORA numbers run in the background (housekeeping_start), so the next cycle
+# opens its pull request while they finish.
 #
 # A step past its time limit (DEMO_LIMIT_*) writes "stalled", resets and goes
 # on with the next cycle. The host's watchdog restarts the driver itself if it
@@ -226,7 +230,17 @@ DEMO_IMAGE=terragucci-demo-tofu:local
 CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.1}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
-HOLD="${DEMO_HOLD:-20}"
+# DEMO_HOLD is every scenario's hold but cone-plan's, DEMO_HOLD_CONE (8 s):
+# its cycle has two holds, at planned and after applied, and each says one
+# short thing. The loop sets HOLD from scenario_hold before each cycle.
+HOLD_DEFAULT="${DEMO_HOLD:-20}"
+HOLD="$HOLD_DEFAULT"
+scenario_hold() { # scenario -> the seconds the driver holds each of its steps
+  case "$1" in
+    cone-plan) echo "${DEMO_HOLD_CONE:-8}" ;;
+    *) echo "$HOLD_DEFAULT" ;;
+  esac
+}
 LIMIT_PLAN="${DEMO_LIMIT_PLAN:-600}"    # a pull request's plan run and its note
 LIMIT_RUN="${DEMO_LIMIT_RUN:-900}"      # one apply run, from the push or comment that starts it
 LIMIT_START="${DEMO_LIMIT_START:-180}"  # for Forgejo to start a run after a push, merge or comment
@@ -236,6 +250,8 @@ RESUMES_MAX="${DEMO_RESUMES_MAX:-3}"    # approvals and re-runs one cycle may ta
 FORGE_RUNS="${DEMO_FORGE_RUNS:-100}"    # the runs Forgejo keeps of the demo repo; each reset deletes older ones that ended
 FORGE_PULLS="${DEMO_FORGE_PULLS:-50}"   # the closed pull requests Forgejo keeps of each demo repo; each reset deletes older ones
 REPORTS_KEEP="${DEMO_REPORTS_KEEP:-50}" # the commits whose wave reports the bucket keeps per project; each reset deletes older ones
+PRUNE_EVERY="${DEMO_PRUNE_EVERY:-10}"   # the reset prunes Forgejo's runs and pull requests and the bucket's reports every this many cycles
+LIMIT_HOUSEKEEPING="${DEMO_LIMIT_HOUSEKEEPING:-300}" # for the last cycle's housekeeping, when something has to wait for it
 POLL="${DEMO_POLL:-1}"                  # seconds between two looks at Forgejo while the driver waits on it
 # behold#571: a directory of checkouts the driver keeps at each step's commit,
 # for a viewer that draws the change (behold's demo host sets it to /view).
@@ -484,15 +500,70 @@ timeline_start() { : > "$DEMO_STATE/timeline.jsonl"; }
 # <prefix>/cycles/<tool>/<cycle>.json, keeping the newest 5 per tool. The
 # script publishes nothing for the base or for a cycle whose timeline holds a
 # stalled step, so a stalled cycle never replaces latest. A publish that fails
-# is logged, and the loop goes on.
-cycle_publish() {
+# is logged, and the loop goes on. It runs in the cycle's housekeeping, from a
+# copy of the timeline the next cycle cannot empty.
+cycle_publish() { # [timeline]
   runs_wait
-  (cd "$HERE/.." && DEMO_CYCLES_TIMELINE="$DEMO_STATE/timeline.jsonl" DEMO_CYCLES_MARKS="$RUNS_STATE/marks.jsonl" \
+  (cd "$HERE/.." && DEMO_CYCLES_TIMELINE="${1:-$DEMO_STATE/timeline.jsonl}" DEMO_CYCLES_MARKS="$RUNS_STATE/marks.jsonl" \
     DEMO_CYCLES_BUCKET_URL="$FLOCI/$REPORT_BUCKET" DEMO_CYCLES_PREFIX="$REPORT_PREFIX" \
     DEMO_CYCLES_TOOL="$TOOL" DEMO_CYCLES_REPO="$REPO" DEMO_CYCLES_CYCLE="$CYCLE" DEMO_CYCLES_SCENARIO="$SCENARIO" \
     node_modules/.bin/tsx scripts/demo-cycles.ts) || log "cycles: cycle $CYCLE was not published to floci; the loop goes on"
   return 0
 }
+
+# A cycle's housekeeping, in the background once its reset is written, so the
+# next cycle opens its pull request while it runs: the cycle's publish (from a
+# copy of its timeline), and after cycle_end its audit and the DORA numbers
+# (audit_trail, estate_page). It works under <work>/hk, which the loop's
+# cleanup of <work>/c<cycle> never touches. Its pid is in <state>/housekeeping.pid.
+# What must not overlap it waits for it (housekeeping_wait): the next
+# housekeeping, the prune of the bucket's reports, which rewrites the
+# audit.jsonl the audit appends to, and putting a chant/lifecycle back, which
+# deletes the branch the audit reads. Nothing in it fails the loop.
+HK_PID_FILE="$DEMO_STATE/housekeeping.pid"
+HK_AUDIT=""
+housekeeping_start() {
+  local snap="$DEMO_STATE/timeline.$CYCLE.jsonl" audit="$HK_AUDIT"
+  HK_AUDIT=""
+  cp "$DEMO_STATE/timeline.jsonl" "$snap" 2>/dev/null || : > "$snap"
+  housekeeping_wait
+  (
+    set +e
+    WORK="$WORK/hk"
+    mkdir -p "$WORK"
+    cycle_publish "$snap"
+    if [ -n "$audit" ]; then
+      audit_trail
+      estate_page
+      estate_wait
+    fi
+    rm -rf "$WORK/c$CYCLE" "$snap"
+  ) </dev/null &
+  echo "$!" > "$HK_PID_FILE" 2>/dev/null || true
+}
+
+housekeeping_wait() {
+  local pid deadline=$(( $(now) + LIMIT_HOUSEKEEPING ))
+  read -r pid 2>/dev/null <"$HK_PID_FILE" || return 0
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$(now)" -ge "$deadline" ]; then
+      log "housekeeping: pid $pid ran past ${LIMIT_HOUSEKEEPING}s; the driver goes on without it"
+      break
+    fi
+    sleep 0.2
+  done
+  : > "$HK_PID_FILE" 2>/dev/null || true
+  return 0
+}
+
+# Whether this cycle's reset prunes Forgejo's runs and pull requests and the
+# bucket's reports: every PRUNE_EVERY-th cycle. Each prune keeps a fixed number
+# (FORGE_RUNS, FORGE_PULLS, REPORTS_KEEP), so between two prunes each grows by
+# at most PRUNE_EVERY cycles' worth. The prunes stay in the reset, never beside
+# the next cycle: the reports prune rewrites index.json and the other indexes
+# that the next cycle's runs write too.
+prune_due() { [ "$PRUNE_EVERY" -le 1 ] || [ $(( CYCLE % PRUNE_EVERY )) -eq 0 ]; }
 
 # Check out the step's commit in <VIEWS>/<repo name>.change, once per commit.
 # The fetch names the admin's remote on the command line only: no FETCH_HEAD
@@ -707,6 +778,7 @@ pulls_prune() {
 # waited for first. A prune that fails is logged, and the reset goes on.
 reports_prune() {
   local held="$WORK/c$CYCLE/lifecycle-commits"
+  housekeeping_wait
   estate_wait
   mkdir -p "$WORK/c$CYCLE" 2>/dev/null || true
   lifecycle_commits > "$held" 2>/dev/null || : > "$held"
@@ -742,6 +814,8 @@ lifecycle_commits() {
 # latest. A delete that fails is logged, and the cycle goes on.
 lifecycle_back() {
   [ -n "$(remote_head "$REPO" chant/lifecycle)" ] || return 0
+  # The last cycle's audit reads this branch.
+  housekeeping_wait
   git push -q "$REMOTE" ":refs/heads/chant/lifecycle" 2>/dev/null \
     || log "lifecycle: could not put $REPO's chant/lifecycle back to its base; the cycle goes on"
   return 0
@@ -1299,6 +1373,8 @@ failure_failed() {
   # The failed wave's report stays in the bucket only until the re-run's wave 2
   # writes over it, so the trail records the failure now, during the hold: the
   # delivery numbers count it as a failed change and the re-run as its restore.
+  # The last cycle's audit may still run in its housekeeping: two never overlap.
+  housekeeping_wait
   audit_trail
   left=$(( at - $(now) ))
   [ "$left" -le 0 ] || sleep "$left"
@@ -1754,14 +1830,17 @@ run_cycle() {
   if [ -n "$LAST_STEP" ]; then
     cycle_end
   else
+    housekeeping_wait
     audit_trail
     estate_page
     estate_wait
   fi
 }
 
-# The cycle's last step, held HOLD seconds while the audit and the reset's work
-# go on behind it, then reset once both are done. The label is read from the
+# The cycle's last step, held HOLD seconds while the reset's work goes on
+# behind it, then reset once both are done. The audit and the DORA numbers
+# run after it, in the cycle's housekeeping (housekeeping_start), beside the
+# next cycle. The label is read from the
 # states before the reset writes them back, and what behold's kiosk shows does
 # not move until reset is written: it narrates demo.json, and draws the reports
 # pinned to this cycle's commit (runPin in behold's web/kiosk.js), never the
@@ -1771,12 +1850,10 @@ run_cycle() {
 cycle_end() {
   local at=$(( $(now) + HOLD )) left
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
-  audit_trail
-  estate_page
   reset_work
-  estate_wait
   left=$(( at - $(now) ))
   [ "$left" -le 0 ] || sleep "$left"
+  HK_AUDIT=1
   reset_written
 }
 
@@ -1924,18 +2001,24 @@ reset_work() {
       # While that run plans: delete the runs Forgejo holds past the newest
       # FORGE_RUNS that have ended. The copy keeps the newest 30 of the newest
       # 50 it lists, so it never reads a run this deletes.
-      runs_export force "$FORGE_RUNS"
-      pulls_prune
+      if prune_due; then
+        runs_export force "$FORGE_RUNS"
+        pulls_prune
+      fi
       run_ended "$LIMIT_RUN"
       # Once the push back's run has written its reports, so no write meets the prune's.
-      reports_prune
+      ! prune_due || reports_prune
       return 0
     fi
     [ -z "$BASE_RUN" ] || log "no run started for the push back to ${base:0:8}"
   fi
-  runs_export force "$FORGE_RUNS"
-  pulls_prune
-  reports_prune
+  if prune_due; then
+    runs_export force "$FORGE_RUNS"
+    pulls_prune
+    reports_prune
+  else
+    runs_export
+  fi
 }
 
 reset_written() {
@@ -1949,7 +2032,7 @@ reset_written() {
   else
     demo_write reset "Outside the pipeline, the driver resets every state to how it started. It also moves main back to ${base:0:8} for the next scenario." "start the next cycle"
   fi
-  cycle_publish
+  housekeeping_start
 }
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -2234,6 +2317,7 @@ OUT
         : > "$DEMO_STATE/reason"
         use_repo "$(scenario_tool "$s")"
         SCENARIO="$s" TITLE="$(scenario_title "$s")" ABOUT="$(scenario_about "$s")" STARTED="$(now)" PULL="" COMMIT="" OUTCOME=""
+        HOLD="$(scenario_hold "$s")"
         timeline_start
         # A step that fails or passes its limit ends the cycle's subshell; the
         # loop writes stalled and resets.
@@ -2252,5 +2336,7 @@ OUT
       done
       [ -z "$ONCE" ] || break
     done
+    # The last cycle's housekeeping, before the driver's exit removes its work directory.
+    housekeeping_wait
     ;;
 esac

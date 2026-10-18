@@ -513,6 +513,7 @@ describe("the cone-plan scenario", () => {
       "quiet() { :; }",
       "as_author() { :; }",
       "cycle_publish() { :; }",
+      "housekeeping_start() { :; }",
       `api() { case "$*" in *raw/service-b/iam.tf*) cat ${tmp}/main.tf ;; *comments*) echo '[{"body":"terragucci tf-plan"}]' ;; *) echo '{"merge_commit_sha":"${merge}"}' ;; esac; }`,
       `curl() { case "$*" in *forgejo:3000/admin/demo-choudoufu/index.json*) echo '${index}' ;; *forgejo:3000/admin/demo-choudoufu/2026/10/head/tf-plan/report.json*) cat ${tmp}/report.json ;; *tf-apply-wave-1/report.json*) cat ${tmp}/wave-1.json ;; *tf-apply-wave-2/report.json*) cat ${tmp}/wave-2.json ;; *) return 22 ;; esac; }`,
     ].join("\n");
@@ -589,6 +590,122 @@ describe("the cone-plan scenario", () => {
     const about = readFileSync(join(tree, "scenarios", "cone-plan", "about.json"), "utf8");
     const labels = demo.split("\n").filter((l) => /cone-plan|CONE_|choudoufu\)/.test(l)).join("\n");
     for (const t of [about, labels, ...files(tree).map((f) => readFileSync(f, "utf8"))]) expect(t.toLowerCase()).not.toContain("terralith");
+  });
+});
+
+// cone-plan holds each step DEMO_HOLD_CONE (8 s), every other scenario
+// DEMO_HOLD (20 s), and the loop sets HOLD from the scenario before each cycle.
+describe("scenario_hold", () => {
+  const hold = (scenario: string, env = "") => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${env}\nHOLD_DEFAULT="\${DEMO_HOLD:-20}"\n${fn("scenario_hold")}\nscenario_hold ${scenario}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("is 8 s for cone-plan and DEMO_HOLD's 20 s for the rest", () => {
+    expect(hold("cone-plan")).toBe("8");
+    for (const s of ["b-waves", "failure", "tg-planned-outputs", "chant-pr-loop"]) expect(hold(s)).toBe("20");
+  });
+
+  it("takes DEMO_HOLD_CONE for cone-plan and DEMO_HOLD for the rest, each without moving the other", () => {
+    expect(hold("cone-plan", "DEMO_HOLD_CONE=5 DEMO_HOLD=30")).toBe("5");
+    expect(hold("b-waves", "DEMO_HOLD_CONE=5")).toBe("20");
+    expect(hold("b-waves", "DEMO_HOLD=30")).toBe("30");
+  });
+
+  it("is what the loop holds each cycle for", () => {
+    expect(demo).toMatch(/^HOLD_DEFAULT="\$\{DEMO_HOLD:-20\}"$/m);
+    expect(demo).toContain('        HOLD="$(scenario_hold "$s")"\n');
+  });
+});
+
+// The cycle's publish, audit and DORA numbers run in the background once its
+// reset is written, so the next cycle's pull request does not wait for them.
+describe("housekeeping", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const go = (body: string) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-hk-"));
+    made.push(tmp);
+    const stubs = [
+      'log() { echo "[demo] $*" >&2; }',
+      "now() { date +%s; }",
+      `WORK=${tmp}/work DEMO_STATE=${tmp}/state CYCLE=7 LIMIT_HOUSEKEEPING=20`,
+      `mkdir -p ${tmp}/work ${tmp}/state`,
+      `HK_PID_FILE=${tmp}/state/housekeeping.pid HK_AUDIT=""`,
+      `printf '{"step":"applied"}\\n{"step":"reset"}\\n' > ${tmp}/state/timeline.jsonl`,
+      // The publish reads the timeline it is given a second after it starts, as a slow one would.
+      `cycle_publish() { sleep 1; cp "$1" ${tmp}/published; echo "$WORK" > ${tmp}/publish-work; }`,
+      `audit_trail() { echo audit >> ${tmp}/order; }`,
+      `estate_page() { echo estate >> ${tmp}/order; }`,
+      "estate_wait() { :; }",
+      fn("housekeeping_start"),
+      fn("housekeeping_wait"),
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\n${body}`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    const read = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8") : "");
+    return { r, tmp, read };
+  };
+
+  it("returns at once, and publishes the timeline as the reset left it, though the next cycle empties it", () => {
+    const { r, read, tmp } = go(`s=$(date +%s)\nhousekeeping_start\necho "took $(( $(date +%s) - s ))"\n: > "$DEMO_STATE/timeline.jsonl"\nhousekeeping_wait`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(Number(/took (\d+)/.exec(r.stdout)![1])).toBeLessThanOrEqual(0);
+    expect(read("published")).toBe('{"step":"applied"}\n{"step":"reset"}\n');
+    expect(read("publish-work").trim()).toBe(`${tmp}/work/hk`);
+    expect(read("order")).toBe("");
+  });
+
+  it("runs the audit and then the DORA numbers after cycle_end, and only then", () => {
+    const { r, read } = go("HK_AUDIT=1\nhousekeeping_start\nhousekeeping_wait\nhousekeeping_start\nhousekeeping_wait");
+    expect(r.status, r.stderr).toBe(0);
+    expect(read("order")).toBe("audit\nestate\n");
+  });
+
+  it("is waited for by the next housekeeping, the reports prune, putting chant/lifecycle back, and the audits outside it", () => {
+    expect(fn("housekeeping_start").indexOf("housekeeping_wait")).toBeLessThan(fn("housekeeping_start").indexOf("&\n"));
+    expect(fn("reports_prune")).toContain("housekeeping_wait");
+    const back = fn("lifecycle_back");
+    expect(back.indexOf("housekeeping_wait")).toBeGreaterThan(back.indexOf('remote_head "$REPO" chant/lifecycle'));
+    expect(fn("failure_failed").indexOf("housekeeping_wait")).toBeLessThan(fn("failure_failed").indexOf("audit_trail"));
+    const cycle = fn("run_cycle");
+    expect(cycle.indexOf("housekeeping_wait")).toBeLessThan(cycle.indexOf("audit_trail"));
+  });
+
+  it("leaves the audit out of cycle_end, which resets, holds and writes reset, and starts the housekeeping from reset_written", () => {
+    const end = fn("cycle_end");
+    expect(end).not.toContain("audit_trail");
+    expect(end).not.toContain("estate_page");
+    expect(end.indexOf("reset_work")).toBeLessThan(end.indexOf("reset_written"));
+    expect(fn("reset_written")).toContain("housekeeping_start");
+    expect(fn("reset_written")).not.toContain("cycle_publish");
+  });
+});
+
+// The reset prunes Forgejo and the bucket every DEMO_PRUNE_EVERY-th cycle (10).
+describe("prune_due", () => {
+  const due = (cycle: number, every = 10) => {
+    const r = spawnSync("bash", ["-c", `PRUNE_EVERY=${every} CYCLE=${cycle}\n${demo.split("\n").find((l) => l.startsWith("prune_due()"))}\nif prune_due; then echo yes; else echo no; fi`], { cwd: root, encoding: "utf8" });
+    return r.stdout.trim();
+  };
+
+  it("is due every 10th cycle by default, and every cycle at 1", () => {
+    expect([9, 10, 11, 20].map((c) => due(c))).toEqual(["no", "yes", "no", "yes"]);
+    expect([9, 10, 11].map((c) => due(c, 1))).toEqual(["yes", "yes", "yes"]);
+    expect(demo).toMatch(/^PRUNE_EVERY="\$\{DEMO_PRUNE_EVERY:-10\}"/m);
+  });
+
+  it("gates every prune in the reset, and still copies the runs when none is due", () => {
+    const work = fn("reset_work");
+    for (const p of ["pulls_prune", "reports_prune", 'runs_export force "$FORGE_RUNS"']) {
+      for (let i = work.indexOf(p); i >= 0; i = work.indexOf(p, i + 1)) {
+        const before = work.slice(0, i);
+        expect(before.lastIndexOf("prune_due"), p).toBeGreaterThan(-1);
+      }
+    }
+    expect(work).toMatch(/else\n\s+runs_export\n/);
   });
 });
 
