@@ -34,13 +34,6 @@ export const SAMPLES = {
   // chant's plan digest as the chant scenario shows it: its first 20 characters.
   $PLAN_DIGEST: "jcs1-sha256:3e43a1b2",
   "$(state_input app health_check)": "http://app:9080/healthz",
-  // Scenario terralith's cycle prefix, the migration a gate waits for (adopt or split), and the resource counts the
-  // driver reads from the tree: the stock shared root's, the carved team's and what the shared root keeps.
-  $TL_PREFIX: "tl503",
-  $MIGRATION: "adopt",
-  $TL_RESOURCES: "14",
-  $TL_CARVED: "5",
-  $TL_KEPT: "9",
   $was: "applying",
   $reason: "the plan run of pull request 1113 ended failure (http://localhost:3000/admin/demo/actions/runs/2509)",
 };
@@ -141,7 +134,7 @@ export function cardProblems(root = ".") {
   const intro = read("example-demo/scenarios/intro.json");
   check("example-demo/scenarios/intro.json", "problem", intro?.problem);
   check("example-demo/scenarios/intro.json", "delivery", intro?.delivery);
-  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios", "example-demo-terralith/scenarios"]) {
+  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios"]) {
     for (const d of readdirSync(join(root, dir), { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
       const file = `${dir}/${d.name}/about.json`;
       const about = read(file);
