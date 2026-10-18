@@ -1604,11 +1604,16 @@ scenario_chant_pr_loop() {
 # job seeds every stack's outputs (ci/stack-outputs.mjs), so cluster-a reads
 # network's outputs with network not in the run.
 FANOUT_HELD="app-01 app-02 app-03 app-04 app-05 app-06"
-# The scenario's planned and waiting holds, shorter than HOLD: a viewer walks
-# past four holds of 20 s in a cycle whose point is the failure. The first pull
-# request's, then the fix's. The failed and applied holds keep HOLD.
+# The scenario's holds, shorter than HOLD: a viewer walks past four holds of
+# 20 s in a cycle whose point is the failure. The first pull request's planned
+# and waiting steps hold FANOUT_HOLD; the fix's planned step FANOUT_FIX_PLANNED,
+# since its waiting step after it shows the same seven stacks, and its waiting
+# step FANOUT_FIX_HOLD; the applied step before the reset FANOUT_END_HOLD. The
+# failed step keeps HOLD: it is where the story lands.
 FANOUT_HOLD="${DEMO_FANOUT_HOLD:-12}"
+FANOUT_FIX_PLANNED="${DEMO_FANOUT_FIX_PLANNED:-4}"
 FANOUT_FIX_HOLD="${DEMO_FANOUT_FIX_HOLD:-8}"
+FANOUT_END_HOLD="${DEMO_FANOUT_END_HOLD:-12}"
 FANOUT_WENT="network cluster-b app-07 app-08 app-09 app-10 app-11 app-12"
 
 # A member's status in pr-apply's table at the end of its log, a line per
@@ -1645,10 +1650,11 @@ fanout_fixed() {
 # One pull request through chant's loop: opened, planned, approved by the
 # reviewer, merged, and its apply followed to its end. Its planned and waiting
 # steps hold for the seconds given.
-fanout_round() { # hold
+fanout_round() { # planned hold, waiting hold
   local HOLD="$1"
   open_pull
   demo_hold planned "$(say planned)" "ask for a review"
+  HOLD="$2"
   HELD="pr-apply"
   demo_hold waiting "$(say waiting)" "approve the plan's digest"
   chant_approve
@@ -1661,15 +1667,16 @@ fanout_round() { # hold
 
 scenario_fan_out() {
   CHANT_MEMBERS="network cluster-a cluster-b app-01 app-06 app-07 app-12"
-  fanout_round "$FANOUT_HOLD"
+  fanout_round "$FANOUT_HOLD" "$FANOUT_HOLD"
   fanout_failed
   demo_hold failed "cluster-a failed: SQS refuses a FIFO queue whose name lacks .fifo. Its six apps are held, and cluster-b's six went ahead." "open the fix"
   FIX=1 CHANT_MEMBERS="cluster-a app-01 app-06"
   PULL_FILES="$TREE/scenarios/fan-out/fix" PULL_BRANCH="demo-fan-out-fix" PULL_TITLE="cluster-a: the events queue's name ends in .fifo"
   # The fix's own card, so "What changes" says what the fix does; behold reads demo.json's about at every step.
   ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/fan-out-fix/about.json" 2>/dev/null || echo "$ABOUT")"
-  fanout_round "$FANOUT_FIX_HOLD"
+  fanout_round "$FANOUT_FIX_PLANNED" "$FANOUT_FIX_HOLD"
   fanout_fixed
+  END_HOLD="$FANOUT_END_HOLD"
   OUTCOME=applied
 }
 
@@ -1711,7 +1718,7 @@ run_cycle() {
   ABOUT="$(scenario_about "$1")"
   MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
-  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" CHANT_MEMBERS="network app edge"
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" CHANT_MEMBERS="network app edge" END_HOLD=""
   on_waiting() { default_waiting; }
   on_migrate() { default_migrate; }
   on_failed() { default_failed; }
@@ -1741,8 +1748,9 @@ run_cycle() {
   fi
 }
 
-# The cycle's last step, held HOLD seconds while the audit and the reset's work
-# go on behind it, then reset once both are done. The label is read from the
+# The cycle's last step, held HOLD seconds (END_HOLD when the scenario sets
+# it) while the audit and the reset's work go on behind it, then reset once
+# both are done. The label is read from the
 # states before the reset writes them back, and what behold's kiosk shows does
 # not move until reset is written: it narrates demo.json, and draws the reports
 # pinned to this cycle's commit (runPin in behold's web/kiosk.js), never the
@@ -1750,7 +1758,7 @@ run_cycle() {
 # the run started after the hold. reset is written after the push back's run
 # has ended, so the next cycle's first push finds no run in progress.
 cycle_end() {
-  local at=$(( $(now) + HOLD )) left
+  local at=$(( $(now) + ${END_HOLD:-$HOLD} )) left
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
   audit_trail
   estate_page
