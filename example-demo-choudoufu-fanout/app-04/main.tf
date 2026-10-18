@@ -37,7 +37,7 @@ data "terraform_estate_outputs" "cluster" {
 }
 
 resource "aws_sqs_queue" "work" {
-  name = "fan-out-app-04"
+  name = "fan-out-choudoufu-app-04"
   tags = {
     release = data.terraform_estate_outputs.cluster.values.release
     table   = data.terraform_estate_outputs.cluster.values.table

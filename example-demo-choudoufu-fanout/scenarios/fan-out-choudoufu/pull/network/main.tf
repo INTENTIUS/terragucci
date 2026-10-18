@@ -37,7 +37,7 @@ locals {
 }
 
 resource "aws_sqs_queue" "events" {
-  name                       = "fan-out-network-events"
+  name                       = "fan-out-choudoufu-network-events"
   visibility_timeout_seconds = 30
   tags                       = { release = local.release, tier = "network" }
 }

@@ -2,7 +2,7 @@
 // exits early (head -1, grep -q) kills its writer with SIGPIPE and the driver
 // with 141. v0.4.17's tree_bucket did that on every `up` (behold#571).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -108,6 +108,31 @@ describe("stack/demo.sh under pipefail", () => {
     expect(at("pull").replace('name                       = "fan-out-network-events"', 'name                       = "fan-out-cluster-a-events"')).toBe(at("fix"));
     // The name network's queue has, with another visibility timeout: SQS refuses it at apply.
     expect(readFileSync(join(root, "example-demo-fanout", "network", "main.tf"), "utf8")).toContain('name                       = "fan-out-network-events"');
+  });
+
+  it("gives no two demo trees a cloud resource of the same name, since every scenario shares one floci", () => {
+    // Each tree's AWS resources by their physical name: a resource's own `name` in .tf (two spaces in, so a
+    // nested block's name, such as a DynamoDB attribute's, is left out) and the names a chant source sets.
+    const names = new Map<string, Set<string>>();
+    const walk = (tree: string, dir: string): void => {
+      for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+        const rel = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "node_modules" && !e.name.startsWith(".")) walk(tree, rel);
+          continue;
+        }
+        const text = readFileSync(join(root, rel), "utf8");
+        const found = e.name.endsWith(".tf")
+          ? [...text.matchAll(/^resource "aws_[^"]+" "[^"]+" \{\n(?:(?!^\}).*\n)*?^ {2}name\s+=\s+"([^"$]+)"/gm)].map((m) => m[1])
+          : e.name.endsWith(".ts") ? [...text.matchAll(/(?:QueueName|TopicName|LogGroupName|tableName):\s*"([^"$]+)"/g)].map((m) => m[1]) : [];
+        for (const n of found) names.set(n, new Set([...(names.get(n) ?? []), tree]));
+      }
+    };
+    const trees = readdirSync(root).filter((d) => d.startsWith("example-demo"));
+    expect(trees).toEqual(expect.arrayContaining(["example-demo-fanout", "example-demo-choudoufu-fanout"]));
+    for (const t of trees) walk(t, t);
+    expect(names.size).toBeGreaterThan(20);
+    expect([...names].filter(([, ts]) => ts.size > 1).map(([n, ts]) => `${n}: ${[...ts].join(", ")}`)).toEqual([]);
   });
 
   it("reads the choudoufu fan-out tree's fifteen roots, which name estates and no state file", () => {
