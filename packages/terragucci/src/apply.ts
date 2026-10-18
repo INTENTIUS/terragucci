@@ -1252,18 +1252,14 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       const run = new Map<string, RootOutcome>(earlierOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], last));
       for (const [root, o] of Object.entries(rootOutcomes(code, j.w))) run.set(root, o);
       const held = onlyWaiting(run) ? EXIT.waiting : EXIT.failed;
-      if (j.w.blocked?.size) {
+      const summary = last === applyWaves(options.layers, options.canary).length ? runSummary(run.values()) : undefined;
+      if (j.w.blocked?.size || summary) {
         j.w.appliedRest = true;
         code = held;
-        writeOutcome(options.env, `wave ${last} applied its other roots; blocked: ${blockedWords(j.w.blocked)}`, j.w);
-      } else if (last === applyWaves(options.layers, options.canary).length) {
-        const summary = runSummary(run.values());
-        if (summary) {
-          j.w.appliedRest = true;
-          code = held;
-          console.log(`${j.label}: applied; the run did not apply every root: ${summary}`);
-          writeOutcome(options.env, `the run: ${summary}`, j.w);
-        }
+        if (j.w.blocked?.size) console.log(`${j.label}: applied its other roots; blocked: ${blockedWords(j.w.blocked)}`);
+        // The last wave says how the run came out: "the run: 8 applied, 1 failed, 6 blocked".
+        if (summary) console.log(`${j.label}: the run: ${summary}`);
+        writeOutcome(options.env, summary ? `the run: ${summary}` : `wave ${last} applied its other roots; blocked: ${blockedWords(j.w.blocked!)}`, j.w);
       }
     }
     if ((grouped || options.shares !== undefined) && !piece && code === EXIT.applied) {
