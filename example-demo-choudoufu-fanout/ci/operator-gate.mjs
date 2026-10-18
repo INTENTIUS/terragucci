@@ -6,7 +6,9 @@
 //
 //   node ci/operator-gate.mjs pipeline-before   app-01's before-apply step: marks pipeline-ready, waits up to
 //                                               60 s for operator-applying, then marks pipeline-applying
-//   node ci/operator-gate.mjs pipeline-after    app-01's after-apply step: marks pipeline-applied
+//   node ci/operator-gate.mjs pipeline-after    app-01's after-apply step: marks pipeline-applied, once, for
+//                                               the apply pipeline-before held; a later apply of app-01 in
+//                                               the same cycle (the reset's push back) marks nothing
 //   node ci/operator-gate.mjs operator-before   the operator, before its apply: waits up to 300 s for
 //                                               pipeline-ready, then marks operator-applying
 //   node ci/operator-gate.mjs operator-after    the operator, after its apply: marks operator-applied
@@ -55,7 +57,8 @@ switch (what) {
     await put(at("pipeline-applying"), now());
     break;
   case "pipeline-after":
-    await put(at("pipeline-applied"), now());
+    // Only the apply pipeline-before held ends the pipeline's window: the reset's apply of the base comes later in the cycle.
+    if ((await get(at("pipeline-applying"))) && !(await get(at("pipeline-applied")))) await put(at("pipeline-applied"), now());
     break;
   case "operator-before":
     if (!(await until(at("pipeline-ready"), 300))) console.error("operator-gate: the pipeline's app-01 was not ready within 300 s; the operator applies alone");
