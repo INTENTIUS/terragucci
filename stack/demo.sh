@@ -1070,7 +1070,7 @@ scenario_title() {
     b-composed) echo "A new subnet, read downstream, in one composed run" ;;
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
-    fan-out)    echo "One failed stack holds only what depends on it" ;;
+    fan-out)    echo "One failed stack blocks only what depends on it" ;;
     *) return 1 ;;
   esac
 }
@@ -1142,16 +1142,16 @@ say() { # step
     chant-pr-loop:applying) echo "The apply plans again and gets the approved digest. It applies network first, then app, then edge." ;;
     chant-pr-loop:applied)  echo "Done in three waves, under the approval the review gave. App now checks $(state_input app health_check)." ;;
     fan-out:pull-request)   echo "Pull request $PULL is open. Network's topic gets a new display name, and cluster-a gains a FIFO queue whose name lacks .fifo." ;;
-    fan-out:planned)        echo "The templates build and lint. The plan note lists fifteen stacks in three waves: network, then cluster-a and cluster-b, then twelve apps." ;;
+    fan-out:planned)        echo "The plan covers fifteen stacks in three waves: network, then cluster-a and cluster-b, then twelve apps." ;;
     fan-out:waiting)        echo "The plan waits for a reviewer's approval." ;;
     fan-out:approved)       echo "The driver approves the pull request and its digest as the reviewer, who had no hand in the change." ;;
     fan-out:applying)       echo "Network applies in wave 1. Cluster-a and cluster-b apply side by side in wave 2, and each one's six apps follow in wave 3." ;;
     fan-out-fix:pull-request) echo "The fix is pull request $PULL: the queue's name now ends in .fifo. It reaches cluster-a and its six apps, and nothing else." ;;
-    fan-out-fix:planned)    echo "The fix's plan note lists seven stacks: cluster-a, then app-01 to app-06. Network, cluster-b and its apps stay as they applied." ;;
+    fan-out-fix:planned)    echo "The fix's plan covers seven stacks: cluster-a, then app-01 to app-06. Network, cluster-b and its apps stay as they applied." ;;
     fan-out-fix:waiting)    echo "The fix's plan waits for a reviewer's approval." ;;
     fan-out-fix:approved)   echo "The driver approves the fix and its digest as the reviewer." ;;
     fan-out-fix:applying)   echo "The merge applies the plan the reviewer approved: cluster-a first, then its six apps." ;;
-    fan-out-fix:applied)    echo "All fifteen stacks are in. The first run applied eight. The fix applied the seven that cluster-a's failure held back." ;;
+    fan-out-fix:applied)    echo "All fifteen stacks are in. The first run applied eight. The fix applied the seven that cluster-a's failure blocked." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -1613,7 +1613,7 @@ FANOUT_HELD="app-01 app-02 app-03 app-04 app-05 app-06"
 FANOUT_HOLD="${DEMO_FANOUT_HOLD:-12}"
 FANOUT_FIX_PLANNED="${DEMO_FANOUT_FIX_PLANNED:-4}"
 FANOUT_FIX_HOLD="${DEMO_FANOUT_FIX_HOLD:-8}"
-FANOUT_END_HOLD="${DEMO_FANOUT_END_HOLD:-12}"
+FANOUT_END_HOLD="${DEMO_FANOUT_END_HOLD:-18}"
 FANOUT_WENT="network cluster-b app-07 app-08 app-09 app-10 app-11 app-12"
 
 # A member's status in pr-apply's table at the end of its log, a line per
@@ -1669,7 +1669,7 @@ scenario_fan_out() {
   CHANT_MEMBERS="network cluster-a cluster-b app-01 app-06 app-07 app-12"
   fanout_round "$FANOUT_HOLD" "$FANOUT_HOLD"
   fanout_failed
-  demo_hold failed "cluster-a failed: SQS refuses a FIFO queue whose name lacks .fifo. Its six apps are held, and cluster-b's six went ahead." "open the fix"
+  demo_hold failed "cluster-a failed because SQS refuses a FIFO queue whose name lacks .fifo. Its six apps are blocked; cluster-b's six went ahead." "open the fix"
   FIX=1 CHANT_MEMBERS="cluster-a app-01 app-06"
   PULL_FILES="$TREE/scenarios/fan-out/fix" PULL_BRANCH="demo-fan-out-fix" PULL_TITLE="cluster-a: the events queue's name ends in .fifo"
   # The fix's own card, so "What changes" says what the fix does; behold reads demo.json's about at every step.

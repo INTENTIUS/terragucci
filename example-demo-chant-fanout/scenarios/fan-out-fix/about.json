@@ -1,5 +1,5 @@
 {
   "changes": "The fix gives the queue a name that ends in .fifo. It touches cluster-a and its six apps, nothing else.",
   "watch": "chant plans only those seven stacks. A reviewer approves the fix. The merge applies cluster-a first and its six apps after it.",
-  "shows": "A failure holds only the stacks that depend on it, and the fix applies only what was left."
+  "shows": "A failure blocks only the stacks that depend on it, and the fix applies only what was left."
 }
