@@ -32,6 +32,32 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 
 A pin the image does not carry is installed in the job and checked against the release's SHA256SUMS. Images are pinned by digest.
 
+### Verify choudoufu releases
+
+The SHA256SUMS check proves the download matches the release. With `binary: choudoufu`, `install.verify` also checks who built the release and from which commit:
+
+```yaml
+binary: choudoufu
+install:
+  verify: true
+```
+
+Every job then installs the choudoufu release itself, including the one the image carries, and runs that binary. After the SHA256SUMS check, `terragucci install choudoufu <version> --verify` checks the three cosign bundles each choudoufu release publishes beside its archive against choudoufu's release key, which terragucci pins:
+
+| Bundle | What it proves |
+|---|---|
+| `<archive>.sig.bundle` | the archive's bytes were signed with choudoufu's release key |
+| `<archive>.provenance.bundle` | SLSA v1 provenance about those bytes, built by `INTENTIUS/choudoufu`'s release workflow at the release's own tag, from the commit that tag was cut from |
+| `<archive>.sbom.bundle` | an SPDX SBOM of the Go modules the binary was built from, attested about those bytes |
+
+The job needs no cosign, and nothing is looked up in a transparency log. A release without the bundles, or with one that does not verify, fails the install step before any root runs, naming the release, the file and the reason:
+
+```text
+choudoufu v0.29.1: choudoufu_v0.29.1_linux_amd64.tar.gz.sig.bundle: the signature does not verify against the trusted key over these bytes; the binary was not installed
+```
+
+With `install.verify` unset, choudoufu installs as the table above says. `install.verify` with another binary is a config error.
+
 ### A version per root
 
 A root pinned by its own `.opentofu-version`, `.terraform-version` or exact `required_version` runs that version; the rest of its wave runs the job's. `version` in `terragucci.yml` can also be a map of root glob to version:

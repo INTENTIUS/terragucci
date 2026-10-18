@@ -18,6 +18,7 @@ import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { parseReportsBucket, type BucketRef } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 import { declaredKind, shapeProblems } from "./refusals";
+import { CHOUDOUFU_RELEASE_KEY } from "./images";
 export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_GENERATE, SYNTH_ROLLOUTS } from "./refusals";
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
@@ -628,6 +629,8 @@ export interface ProjectSettings {
    * only: the same checks decide (comment.ts).
    */
   atlantis_comments?: boolean;
+  /** How the jobs install the binary; see InstallSettings. */
+  install?: InstallSettings;
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
@@ -1013,7 +1016,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "install", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1119,6 +1122,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.atlantis_comments !== undefined && typeof s.atlantis_comments !== "boolean") problems.push(`${where}.atlantis_comments must be true or false`);
+  if (s.install !== undefined) problems.push(...installProblems(s.install, `${where}.install`, s.binary));
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }
@@ -1874,6 +1878,36 @@ function checkDashboards(d: unknown, where: string, problems: string[]): void {
     else if ((DASHBOARD_DURATION_KEYS as readonly string[]).includes(k) && !DURATION.test(v)) problems.push(`${where}.${k} is ${JSON.stringify(v)}; use a duration such as 4h or 1d`);
   }
   if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);
+}
+
+/**
+ * `install`: how a job installs the binary. `verify: true` (choudoufu only,
+ * off by default) has every job install the choudoufu release with
+ * `terragucci install choudoufu <version> --verify`, which checks its
+ * signature, SLSA provenance and SBOM attestation against choudoufu's pinned
+ * release key after the SHA256SUMS check, and runs that binary, not the
+ * image's.
+ */
+export interface InstallSettings {
+  verify?: boolean;
+}
+
+export const INSTALL_KEYS = ["verify"] as const;
+
+/** Why `install.verify` is refused while this release pins no choudoufu key. */
+export const NO_CHOUDOUFU_KEY = "no choudoufu release key is pinned in this terragucci release, so there is nothing to verify a choudoufu release against; leave install.verify unset";
+
+/** The problems with an `install` block. `key` is the pinned choudoufu release key (a parameter for tests). */
+export function installProblems(v: unknown, where: string, binary: unknown, key: string = CHOUDOUFU_RELEASE_KEY): string[] {
+  if (!isObject(v)) return [`${where} must be a map (settings: ${INSTALL_KEYS.join(", ")})`];
+  const problems: string[] = [];
+  for (const k of Object.keys(v)) if (!(INSTALL_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${INSTALL_KEYS.join(", ")})`);
+  if (v.verify !== undefined && typeof v.verify !== "boolean") problems.push(`${where}.verify must be true or false`);
+  if (v.verify === true) {
+    if (binary !== undefined && binary !== "choudoufu") problems.push(`${where}.verify checks choudoufu releases, and binary is ${JSON.stringify(binary)}; leave install.verify unset or set binary: choudoufu`);
+    if (!key.trim()) problems.push(`${where}.verify: ${NO_CHOUDOUFU_KEY}`);
+  }
+  return problems;
 }
 
 export const ATMOS_KEYS = ["version"];

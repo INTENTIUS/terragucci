@@ -29,7 +29,7 @@
  */
 import { excludeFilter, TERRAGRUNT_DISCOVERY_EXCLUDES } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import type { Binary, ForgeName, RolePair } from "./config";
-import type { Tool } from "./install";
+import type { ToolInstall } from "./install";
 import { ROLES_ENV, rolesFor } from "./terragrunt";
 
 export interface TerragruntPipelineInput {
@@ -78,10 +78,13 @@ export function terragruntInstalls(
   binaryVersion: string,
   tgVersion: string,
   carried: Partial<Record<"tofu" | "terragrunt" | "choudoufu", string>>,
-): { tool: Tool; version: string }[] {
-  const out: { tool: Tool; version: string }[] = [];
+  verify = false,
+): ToolInstall[] {
+  const out: ToolInstall[] = [];
   if (tgVersion !== carried.terragrunt) out.push({ tool: "terragrunt", version: tgVersion });
-  if (binaryVersion !== carried[binary as keyof typeof carried]) out.push({ tool: binary, version: binaryVersion });
+  // install.verify: choudoufu is installed and verified even when the image carries the release.
+  if (verify && binary === "choudoufu") out.push({ tool: binary, version: binaryVersion, verify: true });
+  else if (binaryVersion !== carried[binary as keyof typeof carried]) out.push({ tool: binary, version: binaryVersion });
   return out;
 }
 
