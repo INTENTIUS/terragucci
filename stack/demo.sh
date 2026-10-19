@@ -18,7 +18,9 @@
 #   chant build --components --generate forgejo --pr-loop --env demo \
 #     --image terragucci-demo-chant:local --output .forgejo/workflows/chant-pr.yml
 #
-# (chant#4002 adds --image). Its jobs run in terragucci-demo-chant:local, which
+# at the chant the tree pins (chant#4002 adds --image), and `just
+# chant-pipelines` (scripts/chant-pipelines.mjs) fails if the committed file is
+# not what that command writes. Its jobs run in terragucci-demo-chant:local, which
 # up builds from terragucci's tofu image and the chant the tree pins
 # (stack/demo-chant.Dockerfile), so a job downloads no OpenTofu and no chant.
 # Its plan job runs `chant
