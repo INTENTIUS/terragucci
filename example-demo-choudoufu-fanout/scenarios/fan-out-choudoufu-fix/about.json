@@ -1,0 +1,5 @@
+{
+  "changes": "The fix gives cluster-a's queue a name of its own. An operator also adds a queue to app-01's estate by hand.",
+  "watch": "The pipeline applies cluster-a and its six apps. While it applies app-01, the operator applies to the same estate from outside it.",
+  "shows": "Each resource keeps its own record. Two applies to one estate both land, and neither waits for a lock."
+}

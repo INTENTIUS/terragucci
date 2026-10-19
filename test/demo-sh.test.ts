@@ -2,7 +2,7 @@
 // exits early (head -1, grep -q) kills its writer with SIGPIPE and the driver
 // with 141. v0.4.17's tree_bucket did that on every `up` (behold#571).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -110,6 +110,88 @@ describe("stack/demo.sh under pipefail", () => {
     expect(readFileSync(join(root, "example-demo-fanout", "network", "main.tf"), "utf8")).toContain('name                       = "fan-out-network-events"');
   });
 
+  it("gives no two demo trees a cloud resource of the same name, since every scenario shares one floci", () => {
+    // Each tree's AWS resources by their physical name: a resource's own `name` in .tf (two spaces in, so a
+    // nested block's name, such as a DynamoDB attribute's, is left out) and the names a chant source sets.
+    const names = new Map<string, Set<string>>();
+    const walk = (tree: string, dir: string): void => {
+      for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+        const rel = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "node_modules" && !e.name.startsWith(".")) walk(tree, rel);
+          continue;
+        }
+        const text = readFileSync(join(root, rel), "utf8");
+        const found = e.name.endsWith(".tf")
+          ? [...text.matchAll(/^resource "aws_[^"]+" "[^"]+" \{\n(?:(?!^\}).*\n)*?^ {2}name\s+=\s+"([^"$]+)"/gm)].map((m) => m[1])
+          : e.name.endsWith(".ts") ? [...text.matchAll(/(?:QueueName|TopicName|LogGroupName|tableName):\s*"([^"$]+)"/g)].map((m) => m[1]) : [];
+        for (const n of found) names.set(n, new Set([...(names.get(n) ?? []), tree]));
+      }
+    };
+    const trees = readdirSync(root).filter((d) => d.startsWith("example-demo"));
+    expect(trees).toEqual(expect.arrayContaining(["example-demo-fanout", "example-demo-choudoufu-fanout"]));
+    for (const t of trees) walk(t, t);
+    expect(names.size).toBeGreaterThan(20);
+    expect([...names].filter(([, ts]) => ts.size > 1).map(([n, ts]) => `${n}: ${[...ts].join(", ")}`)).toEqual([]);
+  });
+
+  it("reads the choudoufu fan-out tree's fifteen roots, which name estates and no state file", () => {
+    const tree = join(root, "example-demo-choudoufu-fanout");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_roots")}\ntree_roots example-demo-choudoufu-fanout`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(r.stdout.trim().split("\n")).toEqual([...apps, "cluster-a", "cluster-b", "network"]);
+    for (const root of ["network", "cluster-a", "app-07"]) {
+      const tf = readFileSync(join(tree, root, "main.tf"), "utf8");
+      expect(tf).toContain(`estate = "fo-${root}"`);
+      expect(tf).toContain('bucket = "demo-live-records"');
+      expect(tf).not.toMatch(/backend "/);
+    }
+    expect(readFileSync(join(tree, "terragucci.yml"), "utf8")).toMatch(/^binary: choudoufu$/m);
+  });
+
+  it("keeps an undeclared resource in app-01's estate alone, so the operator's queue and the pipeline's apply both land", () => {
+    const tree = join(root, "example-demo-choudoufu-fanout");
+    expect(readFileSync(join(tree, "app-01", "main.tf"), "utf8")).toContain('undeclared_tagged = "keep"');
+    for (const root of ["app-02", "cluster-a", "network"]) expect(readFileSync(join(tree, root, "main.tf"), "utf8")).not.toContain("undeclared_tagged");
+    // The operator adds one queue, applied with -target on it alone, and the reset destroys that one.
+    const operator = readFileSync(join(tree, "scenarios", "fan-out-choudoufu", "operator", "app-01", "operator.tf"), "utf8");
+    expect(operator.match(/^resource "/gm)).toHaveLength(1);
+    expect(operator).toContain('resource "aws_sqs_queue" "alarms"');
+    expect(demo).toContain('OPERATOR_TARGET="aws_sqs_queue.alarms"');
+    expect(fn("operator_beat")).toContain("-target=$OPERATOR_TARGET");
+    expect(fn("operator_back")).toContain("choudoufu destroy -auto-approve -input=false -no-color -target=$OPERATOR_TARGET");
+    // app-01's apply waits for the operator, who waits for it, and both mark their starts and ends (ci/operator-gate.mjs).
+    expect(fn("operator_beat")).toContain("node ../ci/operator-gate.mjs operator-before; choudoufu apply -auto-approve");
+    expect(fn("fan_out_failed")).toMatch(/operator_expect\n\s+merge_pull/);
+    const config = readFileSync(join(tree, "terragucci.yml"), "utf8");
+    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-before\n    before: apply\n    roots: [\"app-01\"]");
+    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-after\n    after: apply\n    roots: [\"app-01\"]");
+    expect(config).toContain("TG_DEMO_OPERATOR_MARKERS: http://floci:4566/demo-reports/demo/operator/demo-choudoufu-fanout");
+    expect(demo).toContain('OPERATOR_MARKERS_IN_STACK="http://floci:4566/$REPORT_BUCKET/$REPORT_PREFIX/operator/demo-choudoufu-fanout"');
+  });
+
+  it("tells the two applies overlapped only when each started before the other ended", () => {
+    const check = (marks: Record<string, string>) => {
+      const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }\nnow() { date +%s; }\nPOLL=0`;
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stub}\n${fn("operator_overlapped")}\nif operator_overlapped; then echo yes; else echo no; fi`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    const t = (s: number) => `2026-10-19T10:00:${String(s).padStart(2, "0")}.000Z`;
+    expect(check({ "operator-applying": t(10), "operator-applied": t(14), "pipeline-applying": t(11), "pipeline-applied": t(13) })).toBe("yes");
+    expect(check({ "operator-applying": t(10), "operator-applied": t(12), "pipeline-applying": t(13), "pipeline-applied": t(15) })).toBe("no");
+  });
+
+  it("writes the operator's apply as demo.json's outside", () => {
+    const script = [fn("outside_json"), demo.split("\n").find((l) => l.startsWith("iso()"))!, 'OPERATOR_TARGET="aws_sqs_queue.alarms"', 'outside_json applied 1792000000 1792000009 "$(printf "a\\nb\\n\\nApply complete!")"'].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const o = JSON.parse(r.stdout);
+    expect(o).toMatchObject({ who: "an operator", estate: "fo-app-01", state: "applied", resources: ["aws_sqs_queue.alarms"], log: ["a", "b", "Apply complete!"] });
+    expect(o.ended_at).not.toBeNull();
+  });
+
   it("numbers the fan-out steps in four chapters, and gives every other scenario's steps none", () => {
     const cases = [
       ["fan-out-tofu", "", "pull-request"],
@@ -130,6 +212,17 @@ describe("stack/demo.sh under pipefail", () => {
     expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, null, null]);
     expect(got.filter(Boolean).map((c) => c.short)).toEqual(["The change goes out", "The change goes out", "cluster-a breaks", "The fix", "The fix", "Done", "Done"]);
     expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
+  });
+
+  it("gives the choudoufu fan-out its own chapter 3, two applies on one estate", () => {
+    const steps = [["", "pull-request"], ["", "failed"], ["1", "applying"], ["1", "reset"]];
+    const lines = steps.map(([f, step]) => `SCENARIO=fan-out-choudoufu FIX="${f}"; echo "$(demo_chapter ${step})"`).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    expect(got.map((c) => [c.n, c.short])).toEqual([[1, "The change goes out"], [2, "cluster-a breaks"], [3, "Two applies, one estate"], [4, "Done"]]);
+    expect(got[2].headline).toBe("Same estate, two applies, both land");
+    expect(got[3].headline).toBe("All 15 are in, and no state file was locked or restored");
   });
 
   it("has no pipeline whose reader exits before its writer is done", () => {
