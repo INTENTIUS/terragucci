@@ -1,9 +1,9 @@
 # chant's pull-request pipeline for the fan-out estate, in the shape
 # `chant build --components --generate forgejo --pr-loop --env demo --image
 # terragucci-demo-chant-fanout:local --events-json --report-url` writes, with
-# two steps the generator has no option for: each job builds and lints the
-# fifteen templates (cfn-deploy applies dist/), and seeds every deployed stack's
-# outputs (cfn-deploy reads none while it plans, ci/stack-outputs.mjs).
+# one step the generator has no option for: each job builds and lints the
+# fifteen templates (cfn-deploy applies dist/). A stack the change does not
+# reach is read as deployed, so its dependents plan on its outputs.
 name: chant-pr-demo
 
 on:
@@ -36,15 +36,13 @@ jobs:
           fetch-depth: 0
       - name: Build and lint the fifteen templates
         run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build && npm run lint
-      - name: Read the stacks' outputs
-        run: node ci/stack-outputs.mjs .chant/seed-outputs.json
       - name: Plan the members this pull request reaches
         env:
           BASE_SHA: '${{ github.event.pull_request.base.sha }}'
           HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --seed-outputs .chant/seed-outputs.json --events-json --report-url "$CHANT_EVENTS_URL"
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --events-json --report-url "$CHANT_EVENTS_URL"
       - name: Keep the plan report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v3
@@ -71,13 +69,11 @@ jobs:
           restore-keys: chant-apply-demo-${{ github.sha }}-
       - name: Build and lint the fifteen templates
         run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build && npm run lint
-      - name: Read the stacks' outputs
-        run: node ci/stack-outputs.mjs .chant/seed-outputs.json
       - name: Apply the plan a reviewer approved
         env:
           BASE_SHA: '${{ github.event.before }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json --seed-outputs .chant/seed-outputs.json --events-json --report-url "$CHANT_EVENTS_URL"
+        run: chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json --events-json --report-url "$CHANT_EVENTS_URL"
       - name: Keep the record for a re-run
         if: always()
         uses: https://code.forgejo.org/actions/cache/save@v4

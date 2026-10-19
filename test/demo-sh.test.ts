@@ -92,14 +92,14 @@ describe("stack/demo.sh under pipefail", () => {
     expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
     expect(pipeline.match(/^ *fetch-depth: 0$/gm)).toHaveLength(2);
     const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
-    // Per job: the templates built and linted, the stacks' outputs read, then chant's stage, which copies its events itself.
-    expect(runs).toHaveLength(6);
+    // Per job: the templates built and linted, then chant's stage, which reads deployed outputs and copies its events itself.
+    expect(runs).toHaveLength(4);
     expect(runs.filter((r) => r.includes("npm run build && npm run lint"))).toHaveLength(2);
-    expect(runs.filter((r) => r === "node ci/stack-outputs.mjs .chant/seed-outputs.json")).toHaveLength(2);
+    expect(pipeline).not.toContain("seed-outputs");
     const stages = runs.filter((r) => r.startsWith("chant components "));
     expect(stages.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
     for (const r of stages) {
-      expect(r).toContain('--seed-outputs .chant/seed-outputs.json --events-json --report-url "$CHANT_EVENTS_URL"');
+      expect(r).toContain('--events-json --report-url "$CHANT_EVENTS_URL"');
       expect(r).toContain("--forge forgejo");
     }
     expect(stages[1]).toContain("--require-review --resume .chant/pr-resume/pr-apply.json");

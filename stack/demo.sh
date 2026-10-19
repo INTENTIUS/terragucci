@@ -1892,9 +1892,9 @@ scenario_chant_pr_loop() {
 # (no-pull-request), and the first approval is of pull request <n>'s gate
 # (pr-<n>), which no later commit's apply reads. The fix reaches cluster-a and
 # its six apps alone, so its plan and its apply hold those seven: network,
-# cluster-b and its apps are not in it, and no resume record is involved. Each
-# job seeds every stack's outputs (ci/stack-outputs.mjs), so cluster-a reads
-# network's outputs with network not in the run.
+# cluster-b and its apps are not in it, and no resume record is involved.
+# chant reads network's deployed outputs (cfn-deploy's describeStack), so
+# cluster-a plans on them with network not in the run.
 FANOUT_HELD="app-01 app-02 app-03 app-04 app-05 app-06"
 # The scenario's holds, shorter than HOLD: a viewer walks past four holds of
 # 20 s in a cycle whose point is the failure. The first pull request's planned
