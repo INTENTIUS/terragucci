@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.37
-description: "terragucci 0.4.37, released 2026-10-19."
+title: Changes in 0.4.38
+description: "terragucci 0.4.38, released 2026-10-19."
 ---
 
-Release `0.4.37` is on npm as `@intentius/terragucci@0.4.37`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.37) lists every change.
+Release `0.4.38` is on npm as `@intentius/terragucci@0.4.38`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.38) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.37 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.38 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.38
+
+- The fan-out demo's plan step says a wave waits for an approval only when its plan destroys something. It used to say a reviewer approves every plan, which this demo never asks for (#1181).
 
 ## In 0.4.37
 
