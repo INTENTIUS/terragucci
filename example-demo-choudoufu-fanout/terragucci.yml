@@ -6,7 +6,7 @@ forge: forgejo
 binary: choudoufu
 # Every job runs in the demo's tofu image, which carries choudoufu and
 # hashicorp/aws 6.67.0 as a filesystem mirror (stack/demo-yodel/Dockerfile).
-image: terragucci-demo-tofu:local
+image: terragucci-demo-choudoufu:local
 # Each reset applies the base tree again, which deletes what a cycle added, so
 # no wave waits for an approval of a destroy.
 gate: never

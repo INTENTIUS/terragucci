@@ -248,6 +248,9 @@ REPORT_PREFIX=demo
 # of the terraform repo runs in DEMO_IMAGE, the tofu CI image with SQL Yodeler
 # (stack/demo-yodel/Dockerfile), which example-demo/terragucci.yml names.
 DEMO_IMAGE=terragucci-demo-tofu:local
+# The same image under a second tag, which a tree whose roots run on choudoufu
+# names, so its jobs say the tool they run.
+DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
@@ -1766,7 +1769,8 @@ operator_beat() {
   while kill -0 "$pid" 2>/dev/null; do
     if [ -z "$shown" ] && [ -n "$(operator_mark operator-applying)" ]; then
       shown=1
-      OUTSIDE="$(outside_json applying "$started")"
+      # The operator's apply starts at its operator-applying mark, after its plan, not when the step began.
+      OUTSIDE="$(outside_json applying "$(operator_time operator-applying "$started")")"
       demo_write applying "An operator applies a new queue to app-01's estate from outside the pipeline, while the pipeline's wave 3 applies app-01." "follow the waves"
     fi
     [ "$(now)" -lt "$deadline" ] || { kill "$pid" 2>/dev/null || true; fail "the operator's apply ran past ${LIMIT_RUN}s"; }
@@ -1774,7 +1778,7 @@ operator_beat() {
     sleep "$POLL"
   done
   wait "$pid" || rc=$?
-  OUTSIDE="$(outside_json "$([ "$rc" = 0 ] && echo applied || echo failed)" "$started" "$(now)" "$(cat "$outfile")")"
+  OUTSIDE="$(outside_json "$([ "$rc" = 0 ] && echo applied || echo failed)" "$(operator_time operator-applying "$started")" "$(operator_time operator-applied "$(now)")" "$(cat "$outfile")")"
   if [ "$rc" != 0 ]; then
     cat "$outfile" >&2
     fail "the operator's apply to app-01's estate failed"
@@ -1806,7 +1810,7 @@ operator_run() { # checkout dir, command
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
     -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e TG_DEMO_OPERATOR_MARKERS="$OPERATOR_MARKERS_IN_STACK" \
-    "$DEMO_IMAGE" -c "set -e; mkdir /w; cd /w; tar xf -; cd app-01; choudoufu init -input=false -no-color >/dev/null; $2" 2>&1
+    "$DEMO_IMAGE_CHOUDOUFU" -c "set -e; mkdir /w; cd /w; tar xf -; cd app-01; choudoufu init -input=false -no-color >/dev/null; $2" 2>&1
 }
 
 # The reset's first step on choudoufu: destroy the operator's queue, which
@@ -1824,8 +1828,18 @@ operator_back() {
 }
 
 # demo.json's outside: the operator's apply.
-outside_json() { # state, started (epoch seconds), [ended], [output]
-  jq -cn --arg s "$1" --arg st "$(iso "$2")" --arg en "${3:+$(iso "${3:-0}")}" --arg log "${4:-}" --arg cmd "choudoufu apply -target=$OPERATOR_TARGET" --arg r "$OPERATOR_TARGET" \
+# A mark's time to the second, or the time given (epoch seconds) when it has none.
+operator_time() { # marker name, epoch seconds
+  local at
+  at="$(operator_mark "$1")"
+  case "$at" in
+    ????-??-??T??:??:??*) echo "${at:0:19}Z" ;;
+    *) iso "$2" ;;
+  esac
+}
+
+outside_json() { # state, started_at, [ended_at], [output]: times as ISO 8601
+  jq -cn --arg s "$1" --arg st "$2" --arg en "${3:-}" --arg log "${4:-}" --arg cmd "choudoufu apply -target=$OPERATOR_TARGET" --arg r "$OPERATOR_TARGET" \
     '{who: "an operator", estate: "fo-app-01", command: $cmd, state: $s, started_at: $st,
       ended_at: (if $en == "" then null else $en end), resources: [$r],
       log: ($log | split("\n") | map(select(length > 0)) | .[-5:])}'
@@ -2253,20 +2267,25 @@ case "$CMD" in
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
     for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
-    # DEMO_IMAGE is the terraform tree's image, the fan-out tree's, which installs
-    # hashicorp/aws from its mirror, and any tree's whose roots run on
-    # choudoufu, since it carries the choudoufu binary.
+    # DEMO_IMAGE is the terraform tree's image and the fan-out tree's, which
+    # installs hashicorp/aws from its mirror. A tree whose roots run on
+    # choudoufu names the same image as DEMO_IMAGE_CHOUDOUFU, since it carries
+    # the choudoufu binary.
     image_tools=()
     for t in "${LOOP_TOOLS[@]}"; do
-      if [ "$t" = terraform ] || [ "$t" = tofu-fanout ] || tool_choudoufu "$t"; then
-        grep -qx "image: $DEMO_IMAGE" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
-          || fail "$(tool_tree "$t")/terragucci.yml does not name $DEMO_IMAGE as its image"
+      image=""
+      if tool_choudoufu "$t"; then image="$DEMO_IMAGE_CHOUDOUFU"
+      elif [ "$t" = terraform ] || [ "$t" = tofu-fanout ]; then image="$DEMO_IMAGE"
+      fi
+      if [ -n "$image" ]; then
+        grep -qx "image: $image" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
+          || fail "$(tool_tree "$t")/terragucci.yml does not name $image as its image"
         image_tools+=("$t")
       fi
     done
     if [ "${#image_tools[@]}" -gt 0 ]; then
-      log "building $DEMO_IMAGE with choudoufu $CHOUDOUFU_VERSION…"
-      docker build -q -t "$DEMO_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
+      log "building $DEMO_IMAGE and $DEMO_IMAGE_CHOUDOUFU with choudoufu $CHOUDOUFU_VERSION…"
+      docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
         --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
       if tool_present terraform; then
