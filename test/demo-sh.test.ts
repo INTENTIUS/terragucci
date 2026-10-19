@@ -614,3 +614,175 @@ describe("only_tips_left", () => {
     expect(body).toMatch(/only_tips_left[\s\S]*status=success/);
   });
 });
+
+// Every scenario holds each step DEMO_HOLD (20 s) unless DEMO_HOLD_<SCENARIO>
+// names its own, and the loop sets HOLD from the scenario before each cycle.
+describe("scenario_hold", () => {
+  const hold = (scenario: string, env = "") => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${env}\nHOLD_DEFAULT="\${DEMO_HOLD:-20}"\n${fn("scenario_hold")}\nscenario_hold ${scenario}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("is DEMO_HOLD's 20 s for every scenario by default", () => {
+    for (const s of ["b-waves", "failure", "tg-planned-outputs", "chant-pr-loop", "fan-out-choudoufu"]) expect(hold(s)).toBe("20");
+    expect(hold("b-waves", "DEMO_HOLD=30")).toBe("30");
+  });
+
+  it("takes DEMO_HOLD_<SCENARIO> for that scenario alone", () => {
+    expect(hold("fan-out-tofu", "DEMO_HOLD_FAN_OUT_TOFU=8 DEMO_HOLD=30")).toBe("8");
+    expect(hold("fan-out-choudoufu", "DEMO_HOLD_FAN_OUT_TOFU=8")).toBe("20");
+  });
+
+  it("is what the loop holds each cycle for", () => {
+    expect(demo).toMatch(/^HOLD_DEFAULT="\$\{DEMO_HOLD:-20\}"$/m);
+    expect(demo).toContain('        HOLD="$(scenario_hold "$s")"\n');
+  });
+});
+
+// The cycle's publish, audit and DORA numbers run in the background once its
+// reset is written, so the next cycle's pull request does not wait for them.
+describe("housekeeping", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const go = (body: string) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-hk-"));
+    made.push(tmp);
+    const stubs = [
+      'log() { echo "[demo] $*" >&2; }',
+      "now() { date +%s; }",
+      `WORK=${tmp}/work DEMO_STATE=${tmp}/state CYCLE=7 LIMIT_HOUSEKEEPING=20`,
+      `mkdir -p ${tmp}/work ${tmp}/state`,
+      `HK_PID_FILE=${tmp}/state/housekeeping.pid HK_AUDIT=""`,
+      `printf '{"step":"applied"}\\n{"step":"reset"}\\n' > ${tmp}/state/timeline.jsonl`,
+      // The publish reads the timeline it is given a second after it starts, as a slow one would.
+      `cycle_publish() { sleep 1; cp "$1" ${tmp}/published; echo "$WORK" > ${tmp}/publish-work; }`,
+      `audit_trail() { echo audit >> ${tmp}/order; }`,
+      `estate_page() { echo estate >> ${tmp}/order; }`,
+      "estate_wait() { :; }",
+      fn("housekeeping_start"),
+      fn("housekeeping_wait"),
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\n${body}`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    const read = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8") : "");
+    return { r, tmp, read };
+  };
+
+  it("returns at once, and publishes the timeline as the reset left it, though the next cycle empties it", () => {
+    const { r, read, tmp } = go(`s=$(date +%s)\nhousekeeping_start\necho "took $(( $(date +%s) - s ))"\n: > "$DEMO_STATE/timeline.jsonl"\nhousekeeping_wait`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(Number(/took (\d+)/.exec(r.stdout)![1])).toBeLessThanOrEqual(0);
+    expect(read("published")).toBe('{"step":"applied"}\n{"step":"reset"}\n');
+    expect(read("publish-work").trim()).toBe(`${tmp}/work/hk`);
+    expect(read("order")).toBe("");
+  });
+
+  it("runs the audit and then the DORA numbers after cycle_end, and only then", () => {
+    const { r, read } = go("HK_AUDIT=1\nhousekeeping_start\nhousekeeping_wait\nhousekeeping_start\nhousekeeping_wait");
+    expect(r.status, r.stderr).toBe(0);
+    expect(read("order")).toBe("audit\nestate\n");
+  });
+
+  it("is waited for by the next housekeeping, the reports prune, putting chant/lifecycle back, the audits outside it and the loop's exit", () => {
+    expect(fn("housekeeping_start").indexOf("housekeeping_wait")).toBeLessThan(fn("housekeeping_start").indexOf("&\n"));
+    expect(fn("reports_prune")).toContain("housekeeping_wait");
+    const back = fn("lifecycle_back");
+    expect(back.indexOf("housekeeping_wait")).toBeGreaterThan(back.indexOf('remote_head "$REPO" chant/lifecycle'));
+    expect(fn("failure_failed").indexOf("housekeeping_wait")).toBeLessThan(fn("failure_failed").indexOf("audit_trail"));
+    const cycle = fn("run_cycle");
+    expect(cycle.indexOf("housekeeping_wait")).toBeLessThan(cycle.indexOf("audit_trail"));
+    expect(demo).toMatch(/\[ -z "\$ONCE" \] \|\| break\n {4}done\n {4}# The last cycle's housekeeping[^\n]*\n {4}housekeeping_wait\n/);
+  });
+
+  it("leaves the audit out of cycle_end, which resets, holds and writes reset, and starts the housekeeping from reset_written", () => {
+    const end = fn("cycle_end");
+    expect(end).not.toContain("audit_trail");
+    expect(end).not.toContain("estate_page");
+    expect(end.indexOf("HK_AUDIT=1")).toBeLessThan(end.indexOf("reset_written"));
+    expect(end.indexOf("reset_work")).toBeLessThan(end.indexOf("reset_written"));
+    expect(fn("reset_written")).toContain("housekeeping_start");
+    expect(fn("reset_written")).not.toContain("cycle_publish");
+  });
+});
+
+// The reset prunes Forgejo and the bucket every DEMO_PRUNE_EVERY-th cycle (10).
+describe("prune_due", () => {
+  const due = (cycle: number, every = 10) => {
+    const r = spawnSync("bash", ["-c", `PRUNE_EVERY=${every} CYCLE=${cycle}\n${demo.split("\n").find((l) => l.startsWith("prune_due()"))}\nif prune_due; then echo yes; else echo no; fi`], { cwd: root, encoding: "utf8" });
+    return r.stdout.trim();
+  };
+
+  it("is due every 10th cycle by default, and every cycle at 1", () => {
+    expect([9, 10, 11, 20].map((c) => due(c))).toEqual(["no", "yes", "no", "yes"]);
+    expect([9, 10, 11].map((c) => due(c, 1))).toEqual(["yes", "yes", "yes"]);
+    expect(demo).toMatch(/^PRUNE_EVERY="\$\{DEMO_PRUNE_EVERY:-10\}"/m);
+  });
+
+  it("gates every prune in the reset, and still copies the runs when none is due", () => {
+    const work = fn("reset_work");
+    for (const p of ["pulls_prune", "reports_prune", 'runs_export force "$FORGE_RUNS"']) {
+      for (let i = work.indexOf(p); i >= 0; i = work.indexOf(p, i + 1)) {
+        expect(work.slice(0, i).lastIndexOf("prune_due"), p).toBeGreaterThan(-1);
+      }
+    }
+    expect(work).toMatch(/else\n\s+runs_export\n/);
+  });
+});
+
+// quiet holds a push only for a run with a wave still to end: a run whose
+// tips job alone is left does not hold the reset or the next pull request.
+describe("quiet", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** quiet with Forgejo stubbed: `runs` lists the runs, and run <id>'s jobs are jobs[id], until the poll `until`, when no run is left. */
+  const go = (runs: unknown[], jobs: Record<string, unknown[]>, until = 1000) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-quiet-"));
+    made.push(tmp);
+    writeFileSync(join(tmp, "n"), "0");
+    for (const [id, j] of Object.entries(jobs)) writeFileSync(join(tmp, `jobs-${id}`), JSON.stringify(j));
+    writeFileSync(join(tmp, "runs"), JSON.stringify(runs));
+    const stubs = [
+      'log() { echo "[demo] $*" >&2; }',
+      'fail() { echo "FAIL: $*" >&2; exit 1; }',
+      "now() { date +%s; }",
+      'URL=http://forge REPO=admin/demo-choudoufu HELD="" LIMIT_QUIET=5 POLL=0',
+      "runner_watch() { :; }",
+      "runs_export() { :; }",
+      // Each look at the runs counts as a poll; from poll `until` on, no run is left.
+      `runs() { n=$(( $(cat ${tmp}/n) + 1 )); echo $n > ${tmp}/n; if [ "$n" -ge ${until} ]; then echo '[]'; else cat ${tmp}/runs; fi; }`,
+      `api() { id="\${1##*/runs/}"; id="\${id%/jobs}"; cat ${tmp}/jobs-$id; }`,
+      fn("only_tips_left"),
+      fn("jobs_ended"),
+      fn("quiet"),
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\nquiet\necho quiet`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    return { r, polls: Number(readFileSync(join(tmp, "n"), "utf8")) };
+  };
+  const waves = [{ name: "wave-1", status: "success" }, { name: "wave-2", status: "success" }];
+
+  it("goes on at once past a run whose waves ended and whose tips job alone runs", () => {
+    const { r, polls } = go([{ id: 7, status: "running" }], { 7: [...waves, { name: "tips", status: "running" }] });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("quiet");
+    // One look for the runs in progress, one for the failed runs.
+    expect(polls).toBe(2);
+    expect(r.stderr).not.toContain("waiting for run");
+  });
+
+  it("waits for a run with a wave still running, says so once in the log, then goes on", () => {
+    const { r } = go([{ id: 7, status: "running" }], { 7: [waves[0], { name: "wave-2", status: "running" }, { name: "tips", status: "waiting" }] }, 4);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("quiet");
+    expect(r.stderr.match(/\[demo\] quiet: waiting for run 7 of admin\/demo-choudoufu to end before the next push/g)).toHaveLength(1);
+  });
+
+  it("still waits for a failed run with a later wave running (terragucci#1161)", () => {
+    const { r } = go([{ id: 8, status: "failure" }], { 8: [{ name: "wave-1", status: "failure" }, { name: "wave-2", status: "running" }] }, 4);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toMatch(/waiting for run 8 of/);
+  });
+});
