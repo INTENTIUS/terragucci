@@ -1,14 +1,30 @@
 ---
-title: Changes in 0.4.35
-description: "terragucci 0.4.35, released 2026-10-17."
+title: Changes in 0.4.36
+description: "terragucci 0.4.36, released 2026-10-18."
 ---
 
-Release `0.4.35` is on npm as `@intentius/terragucci@0.4.35`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.35) lists every change.
+Release `0.4.36` is on npm as `@intentius/terragucci@0.4.36`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.36) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.35 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.36 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.36
+
+- A failed root blocks only the roots that depend on it (#1164). The rest of the next wave still applies, and the wave report lists each blocked root and what blocked it.
+- On Forgejo, every job that plans ends with the step that runs the change's code (#1151).
+- The audit records state versions that no wave or migration wrote (#1149).
+- `terragucci mcp --propose` and `terragucci guard` (#1148).
+- A tip for running plan and apply on one persistent runner, and runners in the threat model (#1147).
+- The docs have a batch of new estate guides (#1150).
+- The demo's new fan-out runs fifteen roots on stock OpenTofu. When cluster-a fails, only its six apps are blocked (#1165).
+- The same fan-out on choudoufu (#1166, #1168). The fix plans cluster-a as a cone of one block, and an operator applies to an estate while the pipeline applies to it, and both land.
+- The demo runs its choudoufu roots on release 0.30.0 (#1168).
+- The demo's chant pipeline is checked against chant's generator output (#1170).
+- The demo's runs copy reads a failed run again until its later waves end (#1171).
+- The demo's housekeeping runs beside the next cycle, and its prunes run every tenth reset (#1169).
+- The demo's thin shared-root scenario is removed (#1155, #1156, #1158).
 
 ## In 0.4.35
 
