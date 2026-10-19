@@ -1,0 +1,39 @@
+# The fan-out estate on choudoufu: network, cluster-a and cluster-b on it, and
+# six apps on each cluster. Fifteen estates of SQS queues and DynamoDB tables
+# in floci, with no state files: each resource's record is in the demo's record
+# store (stack/demo.sh, scenario fan-out-choudoufu).
+forge: forgejo
+binary: choudoufu
+# Every job runs in the demo's tofu image, which carries choudoufu and
+# hashicorp/aws 6.67.0 as a filesystem mirror (stack/demo-yodel/Dockerfile).
+image: terragucci-demo-choudoufu:local
+# Each reset applies the base tree again, which deletes what a cycle added, so
+# no wave waits for an approval of a destroy.
+gate: never
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
+# app-01's apply and the demo's operator start together (fan-out-choudoufu):
+# each marks when it starts and ends, so the driver can tell the two applies
+# overlapped (ci/operator-gate.mjs). With no operator expected, nothing waits.
+steps:
+  - name: wait for the operator
+    run: node ../ci/operator-gate.mjs pipeline-before
+    before: apply
+    roots: ["app-01"]
+  - name: mark the apply done
+    run: node ../ci/operator-gate.mjs pipeline-after
+    after: apply
+    roots: ["app-01"]
+env:
+  # Where app-01's apply and the operator mark their starts and ends.
+  TG_DEMO_OPERATOR_MARKERS: http://floci:4566/demo-reports/demo/operator/demo-choudoufu-fanout
+  # Installs hashicorp/aws from the image's mirror, so no job downloads it.
+  TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc
+  # choudoufu's record store addresses its bucket virtual-hosted
+  # (<bucket>.<host>). demo-records forwards those requests to floci
+  # path-style (stack/docker-compose.yml, profile demo).
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  TERRAGUCCI_METRICS_PER_RUN: "true"

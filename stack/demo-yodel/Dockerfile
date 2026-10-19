@@ -2,8 +2,9 @@
 # choudoufu beside it, so app's wave runs app/schema's migrations
 # (example-demo/app/main.tf) and a demo tree whose terragucci.yml says
 # binary: choudoufu runs its roots on it. stack/demo.sh up builds it as
-# terragucci-demo-tofu:local, and each such tree's terragucci.yml names it as
-# the image every job runs in.
+# terragucci-demo-tofu:local, and tags it terragucci-demo-choudoufu:local too.
+# Each such tree's terragucci.yml names one of them as the image every job runs
+# in: a tree whose roots run on choudoufu names the second.
 #
 #   BASE                the tofu CI image (scripts/images.ts tags)
 #   CHOUDOUFU_VERSION   the choudoufu release (stack/demo.sh's CHOUDOUFU_VERSION)
