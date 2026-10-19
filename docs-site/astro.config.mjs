@@ -276,7 +276,7 @@ export default defineConfig({
 						{ label: 'Supply chain', slug: 'standards/supply-chain' },
 					],
 				},
-				{ label: 'Changes in 0.4.37', slug: 'reference/whats-new' },
+				{ label: 'Changes in 0.4.38', slug: 'reference/whats-new' },
 				{ label: 'The launch party', slug: 'launch-party' },
 			],
 		}),
