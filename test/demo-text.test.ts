@@ -28,7 +28,7 @@ describe("the kiosk's top pane", () => {
   it("reads the step lines of every scenario and the driver's own labels", () => {
     const strings = demoStrings(demo);
     const where = strings.map((s) => s.where);
-    for (const scenario of ["a-known", "a-output", "b-waves", "b-composed", "failure", "stale-plan", "tg-planned-outputs", "chant-pr-loop", "fan-out-tofu"]) {
+    for (const scenario of ["a-known", "a-output", "b-waves", "b-composed", "failure", "stale-plan", "tg-planned-outputs", "chant-pr-loop", "fan-out-tofu", "fan-out-choudoufu"]) {
       expect(where.some((w) => w.startsWith(`say ${scenario}:pull-request `))).toBe(true);
       expect(where.some((w) => w.startsWith(`scenario_title ${scenario} `))).toBe(true);
       expect(where.some((w) => w.startsWith(`scenario_name ${scenario} `))).toBe(true);
