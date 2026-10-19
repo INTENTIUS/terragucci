@@ -247,6 +247,28 @@ describe("stack/demo.sh under pipefail", () => {
     expect(check({ "operator-applying": t(10), "operator-applied": t(12), "pipeline-applying": t(13), "pipeline-applied": t(15) })).toBe("no");
   });
 
+  it("writes a highlight on the steps that carry one, and null on every other", () => {
+    const at = (scenario: string, fix: string, step: string, extra = "") => {
+      const script = [fn("highlight_title"), fn("highlight_body"), fn("highlight_json"), `SCENARIO=${scenario} FIX="${fix}" CONE_BLOCKS=1 CONE_OF=5 ${extra}`, `highlight_json ${step}`].join("\n");
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout);
+    };
+    expect(at("fan-out-tofu", "", "planned").title).toBe("Same orchestration as the commercial platforms");
+    expect(at("fan-out-tofu", "", "failed").title).toBe("A failure stops only what depends on it");
+    expect(at("fan-out-tofu", "1", "planned").title).toBe("The fix re-runs only what was blocked");
+    expect(at("fan-out-choudoufu", "1", "planned").body).toContain("The fix reaches 1 of cluster-a's 5 blocks");
+    expect(at("fan-out-choudoufu", "1", "applying", "HIGHLIGHT_AT=landed").title).toBe("Two applies on one estate, and no lock");
+    expect(at("fan-out-choudoufu", "1", "applying")).toBeNull();
+    expect(at("fan-out-tofu", "1", "applying")).toBeNull();
+    expect(at("b-waves", "", "planned")).toBeNull();
+    expect(fn("demo_write")).toContain('--argjson highlight "$(highlight_json "$step" 2>/dev/null || echo null)"');
+    // Only the write that says both applies overlapped carries the operator's highlight.
+    const beat = fn("operator_beat");
+    expect(beat.match(/HIGHLIGHT_AT=landed demo_write/g)).toHaveLength(1);
+    expect(beat).toMatch(/if operator_overlapped; then\n\s+HIGHLIGHT_AT=landed demo_write applying "Both landed, and neither waited/);
+  });
+
   it("writes the operator's apply as demo.json's outside", () => {
     const script = [fn("outside_json"), demo.split("\n").find((l) => l.startsWith("iso()"))!, 'OPERATOR_TARGET="aws_sqs_queue.alarms"', 'outside_json applied 2026-10-18T00:31:14Z 2026-10-18T00:31:40Z "$(printf "a\\nb\\n\\nApply complete!")"'].join("\n");
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });

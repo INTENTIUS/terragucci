@@ -117,6 +117,10 @@
 #   "ended_at": "..." or null, "resources": ["aws_sqs_queue.alarms"],
 #   "log": [the last lines of its output] }. Only fan-out-choudoufu writes one
 # (operator_beat), from its operator's apply to the end of its cycle.
+# highlight is what behold opens as a modal over the step, or null:
+# { "title": "...", "body": "..." }, the one thing that step shows a viewer
+# should not miss (highlight_title, highlight_body). The fan-out scenarios
+# write one on a few steps, and every other step writes null.
 # pull and commit are null until the cycle has them. about is the scenario's
 # card, read from <tool's tree>/scenarios/<scenario>/about.json at the start of
 # its cycle: what the change is, what to watch for, and what it shows. It is
@@ -709,9 +713,10 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
     --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" --argjson chapter "$chapter" --argjson outside "${OUTSIDE:-null}" \
+    --argjson highlight "$(highlight_json "$step" 2>/dev/null || echo null)" \
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
       pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end),
-      chapter: $chapter, outside: $outside, about: $about}' \
+      chapter: $chapter, outside: $outside, highlight: $highlight, about: $about}' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: $step: $label${MIGRATION_WRITE:+ ($action)}"
@@ -1330,6 +1335,39 @@ COST_STUB="Its cost line uses made-up prices"
 # scenario has none of its own. The fan-out scenario's fix sets FIX, so its
 # second pull request's steps read fan-out-fix:<step>, fan-out-tofu-fix:<step> or
 # fan-out-choudoufu-fix:<step>.
+# A highlight is the one thing a step shows that a viewer should not miss,
+# which behold opens as a modal over the step: demo.json's highlight,
+# {title, body}, or null on every other step. The key is say()'s, with
+# HIGHLIGHT_AT added when one step is written more than once and only one of
+# its writes carries it (the operator's apply, once both applies landed).
+highlight_title() { # key
+  case "$1" in
+    fan-out-tofu:planned) echo "Same orchestration as the commercial platforms" ;;
+    fan-out-tofu:failed) echo "A failure stops only what depends on it" ;;
+    fan-out-tofu-fix:planned) echo "The fix re-runs only what was blocked" ;;
+    fan-out-choudoufu-fix:planned) echo "The fix plans only the blocks it reaches" ;;
+    fan-out-choudoufu-fix:applying:landed) echo "Two applies on one estate, and no lock" ;;
+    *) return 1 ;;
+  esac
+}
+
+highlight_body() { # key
+  case "$1" in
+    fan-out-tofu:planned) echo "Fifteen OpenTofu states, applied in dependency order: network first, then the clusters, then the apps. A reviewer approves the plan before anything applies. This is the stack-dependency orchestration Terraform automation platforms sell. Here terragucci runs it on plain OpenTofu and Forgejo." ;;
+    fan-out-tofu:failed) echo "Cluster-a failed, so its six apps are held back. Cluster-b and its six apps applied anyway, and the rollout did not stall." ;;
+    fan-out-tofu-fix:planned) echo "The fix plans seven roots: cluster-a and the six apps it held back. The eight that already applied are left alone." ;;
+    fan-out-choudoufu-fix:planned) echo "The fix reaches $CONE_BLOCKS of cluster-a's $CONE_OF blocks, and the plan covers only those. The rest of cluster-a is not planned at all." ;;
+    fan-out-choudoufu-fix:applying:landed) echo "An operator and the pipeline applied to app-01's estate at the same time, and both landed. Each resource keeps its own record, so neither waited." ;;
+    *) return 1 ;;
+  esac
+}
+
+highlight_json() { # step
+  local key="$SCENARIO${FIX:+-fix}:$1${HIGHLIGHT_AT:+:$HIGHLIGHT_AT}" title body
+  title="$(highlight_title "$key")" && body="$(highlight_body "$key")" || { echo null; return 0; }
+  jq -cn --arg t "$title" --arg b "$body" '{title: $t, body: $b}'
+}
+
 say() { # step
   local values
   case "$SCENARIO${FIX:+-fix}:$1" in
@@ -2083,7 +2121,7 @@ operator_beat() {
     fail "the operator's apply to app-01's estate failed"
   fi
   if operator_overlapped; then
-    demo_write applying "Both landed, and neither waited: app-01's estate keeps one record per resource, and no state file to lock." "follow the waves"
+    HIGHLIGHT_AT=landed demo_write applying "Both landed, and neither waited: app-01's estate keeps one record per resource, and no state file to lock." "follow the waves"
   else
     log "operator: its apply and the pipeline's apply of app-01 did not overlap this cycle (operator $(operator_mark operator-applying) to $(operator_mark operator-applied), pipeline $(operator_mark pipeline-applying) to $(operator_mark pipeline-applied))"
     demo_write applying "Both landed, one after the other this cycle: app-01's estate keeps one record per resource, and no state file to lock." "follow the waves"

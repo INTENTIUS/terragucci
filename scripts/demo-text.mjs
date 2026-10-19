@@ -6,7 +6,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-export const BUDGETS = { problem: 220, delivery: 120, changes: 120, watch: 220, shows: 120, title: 60, headline: 80, name: 24, step: 200, action: 60 };
+export const BUDGETS = { problem: 220, delivery: 120, changes: 120, watch: 220, shows: 120, title: 60, headline: 80, name: 24, step: 200, action: 60, highlight: 60, "highlight body": 300 };
 
 const ID = "4b6e2c1a-9f3d-4e8b-a1c7-2d5f8e0b3c69";
 
@@ -94,6 +94,8 @@ export function demoStrings(src) {
   echoes("say", "step");
   echoes("waiting_label", "step");
   echoes("base_label", "step");
+  echoes("highlight_title", "highlight");
+  echoes("highlight_body", "highlight body");
   const lineOf = (index) => src.slice(0, index).split("\n").length;
   // demo_write and demo_hold calls: step, label, [next action], [at]. A literal label is a step line, and a literal
   // or bare-word next action is an action.
