@@ -4,8 +4,8 @@
   "type": "module",
   "description": "The terragucci demo fan-out scenario: chant fan-out-estate, fifteen CloudFormation stacks planned on each pull request and applied on merge",
   "dependencies": {
-    "@intentius/chant": "0.124.28",
-    "@intentius/chant-lexicon-aws": "0.124.28"
+    "@intentius/chant": "0.124.29",
+    "@intentius/chant-lexicon-aws": "0.124.29"
   },
   "scripts": {
     "build": "npm run build:network && npm run build:clusters && npm run build:apps",

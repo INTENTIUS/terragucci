@@ -1,10 +1,9 @@
 # chant's pull-request pipeline for the fan-out estate, in the shape
 # `chant build --components --generate forgejo --pr-loop --env demo --image
-# terragucci-demo-chant-fanout:local` writes, with three steps the generator
-# has no option for: each job builds and lints the fifteen templates (cfn-deploy
-# applies dist/), seeds every deployed stack's outputs (cfn-deploy reads none
-# while it plans, ci/stack-outputs.mjs), and keeps the stage's events in floci
-# as it runs (ci/with-events.mjs).
+# terragucci-demo-chant-fanout:local --events-json --report-url` writes, with
+# two steps the generator has no option for: each job builds and lints the
+# fifteen templates (cfn-deploy applies dist/), and seeds every deployed stack's
+# outputs (cfn-deploy reads none while it plans, ci/stack-outputs.mjs).
 name: chant-pr-demo
 
 on:
@@ -22,16 +21,9 @@ env:
   AWS_SECRET_ACCESS_KEY: test
   AWS_REGION: us-east-1
   # Each stage's events, report and change set land at
-  # <CHANT_EVENTS_URL>/<pull request>/<commit>/ (chant#4083's layout).
+  # <CHANT_EVENTS_URL>/<pull request>/<commit>/ (chant's --report-url), where
+  # behold finds them (behold#740).
   CHANT_EVENTS_URL: 's3://demo-reports/demo/chant/${{ github.repository }}'
-  # TODO(chant 0.124.29): regenerate with the PR-loop options events: true and
-  # reportUrl (chant build --components --generate forgejo --pr-loop
-  # --events-json --report-url "${CHANT_EVENTS_URL}"), which put --events-json
-  # and --report-url on both stage lines, where behold finds it (behold#740), and
-  # CHANT_RUN_EVENTS_DIR=.chant/pr/run-events in both jobs; keep the three steps
-  # above, and drop this and ci/with-events.mjs. 0.124.28 refuses --report-url
-  # as an unknown flag, so it stays off until the bump.
-  CHANT_REPORT_FLAGS: ''
 
 jobs:
   plan:
@@ -52,7 +44,7 @@ jobs:
           HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: node ci/with-events.mjs plan -- chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --seed-outputs .chant/seed-outputs.json --events-json $CHANT_REPORT_FLAGS
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --seed-outputs .chant/seed-outputs.json --events-json --report-url "$CHANT_EVENTS_URL"
       - name: Keep the plan report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v3
@@ -85,7 +77,7 @@ jobs:
         env:
           BASE_SHA: '${{ github.event.before }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: node ci/with-events.mjs apply -- chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json --seed-outputs .chant/seed-outputs.json --events-json $CHANT_REPORT_FLAGS
+        run: chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json --seed-outputs .chant/seed-outputs.json --events-json --report-url "$CHANT_EVENTS_URL"
       - name: Keep the record for a re-run
         if: always()
         uses: https://code.forgejo.org/actions/cache/save@v4

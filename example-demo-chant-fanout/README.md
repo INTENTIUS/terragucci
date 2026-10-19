@@ -30,8 +30,8 @@ component's `stackOutput` inputs. chant derives the waves from the change.
 - `.forgejo/workflows/chant-pr.yml` is chant's pull-request pipeline: `chant
   components pr-plan` on each pull request and `pr-apply --require-review` on
   each push to main. Each job also builds and lints the templates, seeds every
-  stack's outputs (`ci/stack-outputs.mjs`), and copies the stage's events to
-  floci as it runs (`ci/with-events.mjs`).
+  stack's outputs (`ci/stack-outputs.mjs`). chant's `--report-url` copies each
+  stage's events, report and change set to floci as it runs.
 
 ## The scenario
 
