@@ -18,7 +18,9 @@
 #   chant build --components --generate forgejo --pr-loop --env demo \
 #     --image terragucci-demo-chant:local --output .forgejo/workflows/chant-pr.yml
 #
-# (chant#4002 adds --image). Its jobs run in terragucci-demo-chant:local, which
+# at the chant the tree pins (chant#4002 adds --image), and `just
+# chant-pipelines` (scripts/chant-pipelines.mjs) fails if the committed file is
+# not what that command writes. Its jobs run in terragucci-demo-chant:local, which
 # up builds from terragucci's tofu image and the chant the tree pins
 # (stack/demo-chant.Dockerfile), so a job downloads no OpenTofu and no chant.
 # Its plan job runs `chant
@@ -253,10 +255,13 @@ REPORT_PREFIX=demo
 # of the terraform repo runs in DEMO_IMAGE, the tofu CI image with SQL Yodeler
 # (stack/demo-yodel/Dockerfile), which example-demo/terragucci.yml names.
 DEMO_IMAGE=terragucci-demo-tofu:local
+# The same image under a second tag, which a tree whose roots run on choudoufu
+# names, so its jobs say the tool they run.
+DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
-CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.29.1}"
+CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold unless DEMO_HOLD_<SCENARIO> names one
@@ -768,7 +773,12 @@ chapter_headline() { # chapter number
   case "$SCENARIO:$1" in
     fan-out-choudoufu:1) echo "A change to the shared network goes out to all 15 estates" ;;
     fan-out-choudoufu:2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 estates ship anyway" ;;
-    fan-out-choudoufu:3) echo "Same estate, two applies, both land" ;;
+    fan-out-choudoufu:3)
+      if [ -n "${CONE_BLOCKS:-}" ]; then
+        echo "The fix plans as a cone: $CONE_BLOCKS of cluster-a's $CONE_OF blocks"
+      else
+        echo "The fix plans as a cone"
+      fi ;;
     fan-out-choudoufu:4) echo "All 15 are in, and no state file was locked or restored" ;;
     *:1) echo "A change to the shared network goes out to all 15 stacks" ;;
     *:2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway" ;;
@@ -779,7 +789,7 @@ chapter_headline() { # chapter number
 
 chapter_short() { # chapter number
   case "$SCENARIO:$1" in
-    fan-out-choudoufu:3) echo "Two applies, one estate" ;;
+    fan-out-choudoufu:3) echo "The fix, as a cone" ;;
     *:1) echo "The change goes out" ;;
     *:2) echo "cluster-a breaks" ;;
     *:3) echo "The fix" ;;
@@ -1319,10 +1329,11 @@ say() { # step
     fan-out-tofu-fix:applying) echo "The waves run again. Cluster-a applies, then its six apps. Network, cluster-b and its apps plan no changes." ;;
     fan-out-tofu-fix:applied) echo "All fifteen roots are in. The first run applied eight. The fix applied the seven that cluster-a's failure blocked." ;;
     fan-out-choudoufu:pull-request) echo "Pull request $PULL is open. Network gets release r$CYCLE, which all fifteen estates tag themselves with. Cluster-a also gains a queue." ;;
-    fan-out-choudoufu:planned) echo "The plan note shows three waves of estates that each change: network, then cluster-a and cluster-b, then twelve apps." ;;
+    fan-out-choudoufu:planned) echo "The plan note shows all fifteen estates in three waves. Every estate reads the new release, so each is planned in full rather than as a cone." ;;
     fan-out-choudoufu:applying) echo "Network applies in wave 1. Cluster-a and cluster-b apply side by side in wave 2, and each one's six apps follow in wave 3." ;;
     fan-out-choudoufu-fix:pull-request) echo "The fix is pull request $PULL: cluster-a's queue gets a name of its own. It reaches cluster-a and its six apps, and nothing else." ;;
-    fan-out-choudoufu-fix:planned) echo "The fix's plan note shows seven estates: cluster-a, then app-01 to app-06. The other eight plan no changes." ;;
+    fan-out-choudoufu-fix:planned) echo "The fix's plan covers cluster-a as a cone of $CONE_BLOCKS of its $CONE_OF blocks. Its six apps read it, and choudoufu plans each of them in full." ;;
+    fan-out-choudoufu-fix:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}. The merge plans each estate in full, as every apply does: only the pull request's plan was a cone." ;;
     fan-out-choudoufu-fix:applying) echo "The waves run again. Cluster-a applies, then its six apps. While wave 3 applies app-01, an operator applies to app-01 too." ;;
     fan-out-choudoufu-fix:applied) echo "All fifteen estates are in. The operator's queue landed in app-01's estate beside the fix, and no state file was locked." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
@@ -1792,6 +1803,8 @@ fan_out_failed() {
   # The fix's own card, so "What changes" says what the fix does; behold reads demo.json's about at every step.
   ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/$SCENARIO-fix/about.json" 2>/dev/null || echo "$ABOUT")"
   open_pull
+  # On choudoufu the fix's plan is a cone of cluster-a, read from its report.
+  [ "$SCENARIO" != fan-out-choudoufu ] || fix_cone
   HOLD="$FANOUT_FIX_PLANNED" demo_hold planned "$(say planned)" "merge pull request $PULL"
   # On choudoufu, an operator applies to app-01's estate beside the fix's wave 3: app-01's apply waits for it.
   [ "$SCENARIO" != fan-out-choudoufu ] || operator_expect
@@ -1822,6 +1835,42 @@ scenario_fan_out_tofu() {
 # whose apply deletes what the fix added and puts every tag back.
 scenario_fan_out_choudoufu() {
   scenario_fan_out_tofu
+}
+
+# The fix's pull request plan on choudoufu, from its report.json in the reports
+# bucket (the project's index row of the tf-plan of this pull request, by
+# number or head commit, then that run's report). cluster-a is planned as a
+# cone (choudoufu's plan -cone=origin/main, packages/terragucci/src/cone.ts):
+# CONE_BLOCKS of its CONE_OF blocks. Its six apps read it and have no changed
+# files, so choudoufu plans each in full and the note names its guard. A
+# cluster-a the guard planned in full, or a plan of any other estate, stalls the
+# cycle rather than show a cone it did not make.
+CONE_BLOCKS="" CONE_OF=""
+FIX_CONE_PLANNED="app-01 app-02 app-03 app-04 app-05 app-06 cluster-a"
+fix_cone() {
+  local index="$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/forgejo:3000/$REPO" path="" report cone planned deadline=$(( $(now) + 60 ))
+  while :; do
+    path="$(curl -fsS "$index/index.json" 2>/dev/null | jq -r --arg p "$PULL" --arg c "$COMMIT" \
+      '[.reports[]? | select(.stage == "tf-plan" and (.pull_request == $p or .commit == $c))][0].path // empty' 2>/dev/null || true)"
+    [ -z "$path" ] || break
+    [ "$(now)" -lt "$deadline" ] || fail "the reports bucket has no tf-plan report of pull request $PULL"
+    sleep "$POLL"
+  done
+  report="$(curl -fsS "$index/$path/report.json")" || fail "could not read $path/report.json of pull request $PULL"
+  fix_cone_read "$report"
+}
+
+fix_cone_read() { # report.json
+  local planned cone
+  planned="$(jq -r '[.roots[]?.path] | sort | join(" ")' <<<"$1")" || fail "pull request $PULL's report does not read as JSON"
+  [ "$planned" = "$FIX_CONE_PLANNED" ] || fail "pull request $PULL planned ${planned:-no estate}, not cluster-a and its six apps"
+  cone="$(jq -c '[.roots[] | select(.path == "cluster-a")][0].cone // empty' <<<"$1")"
+  [ -n "$cone" ] || fail "cluster-a was not planned with -cone"
+  if jq -e '.fallback' <<<"$cone" >/dev/null; then
+    fail "cluster-a planned its whole estate: $(jq -r '"\(.fallback.reason) (guard \(.fallback.kind))"' <<<"$cone")"
+  fi
+  CONE_BLOCKS="$(jq -r '.blocks // empty' <<<"$cone")" CONE_OF="$(jq -r '.of // empty' <<<"$cone")"
+  [ -n "$CONE_BLOCKS" ] && [ -n "$CONE_OF" ] || fail "cluster-a's cone has no block counts in its report"
 }
 
 # The operator's apply beside the pipeline's apply of app-01. Before the fix
@@ -1857,7 +1906,8 @@ operator_beat() {
   while kill -0 "$pid" 2>/dev/null; do
     if [ -z "$shown" ] && [ -n "$(operator_mark operator-applying)" ]; then
       shown=1
-      OUTSIDE="$(outside_json applying "$started")"
+      # The operator's apply starts at its operator-applying mark, after its plan, not when the step began.
+      OUTSIDE="$(outside_json applying "$(operator_time operator-applying "$started")")"
       demo_write applying "An operator applies a new queue to app-01's estate from outside the pipeline, while the pipeline's wave 3 applies app-01." "follow the waves"
     fi
     [ "$(now)" -lt "$deadline" ] || { kill "$pid" 2>/dev/null || true; fail "the operator's apply ran past ${LIMIT_RUN}s"; }
@@ -1865,7 +1915,7 @@ operator_beat() {
     sleep "$POLL"
   done
   wait "$pid" || rc=$?
-  OUTSIDE="$(outside_json "$([ "$rc" = 0 ] && echo applied || echo failed)" "$started" "$(now)" "$(cat "$outfile")")"
+  OUTSIDE="$(outside_json "$([ "$rc" = 0 ] && echo applied || echo failed)" "$(operator_time operator-applying "$started")" "$(operator_time operator-applied "$(now)")" "$(cat "$outfile")")"
   if [ "$rc" != 0 ]; then
     cat "$outfile" >&2
     fail "the operator's apply to app-01's estate failed"
@@ -1897,7 +1947,7 @@ operator_run() { # checkout dir, command
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
     -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e TG_DEMO_OPERATOR_MARKERS="$OPERATOR_MARKERS_IN_STACK" \
-    "$DEMO_IMAGE" -c "set -e; mkdir /w; cd /w; tar xf -; cd app-01; choudoufu init -input=false -no-color >/dev/null; $2" 2>&1
+    "$DEMO_IMAGE_CHOUDOUFU" -c "set -e; mkdir /w; cd /w; tar xf -; cd app-01; choudoufu init -input=false -no-color >/dev/null; $2" 2>&1
 }
 
 # The reset's first step on choudoufu: destroy the operator's queue, which
@@ -1915,8 +1965,18 @@ operator_back() {
 }
 
 # demo.json's outside: the operator's apply.
-outside_json() { # state, started (epoch seconds), [ended], [output]
-  jq -cn --arg s "$1" --arg st "$(iso "$2")" --arg en "${3:+$(iso "${3:-0}")}" --arg log "${4:-}" --arg cmd "choudoufu apply -target=$OPERATOR_TARGET" --arg r "$OPERATOR_TARGET" \
+# A mark's time to the second, or the time given (epoch seconds) when it has none.
+operator_time() { # marker name, epoch seconds
+  local at
+  at="$(operator_mark "$1")"
+  case "$at" in
+    ????-??-??T??:??:??*) echo "${at:0:19}Z" ;;
+    *) iso "$2" ;;
+  esac
+}
+
+outside_json() { # state, started_at, [ended_at], [output]: times as ISO 8601
+  jq -cn --arg s "$1" --arg st "$2" --arg en "${3:-}" --arg log "${4:-}" --arg cmd "choudoufu apply -target=$OPERATOR_TARGET" --arg r "$OPERATOR_TARGET" \
     '{who: "an operator", estate: "fo-app-01", command: $cmd, state: $s, started_at: $st,
       ended_at: (if $en == "" then null else $en end), resources: [$r],
       log: ($log | split("\n") | map(select(length > 0)) | .[-5:])}'
@@ -1960,7 +2020,7 @@ run_cycle() {
   ABOUT="$(scenario_about "$1")"
   MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
-  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" END_HOLD="" OUTSIDE=null
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" END_HOLD="" OUTSIDE=null CONE_BLOCKS="" CONE_OF=""
   on_waiting() { default_waiting; }
   on_migrate() { default_migrate; }
   on_failed() { default_failed; }
@@ -2350,20 +2410,25 @@ case "$CMD" in
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
     for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
-    # DEMO_IMAGE is the terraform tree's image, the fan-out tree's, which installs
-    # hashicorp/aws from its mirror, and any tree's whose roots run on
-    # choudoufu, since it carries the choudoufu binary.
+    # DEMO_IMAGE is the terraform tree's image and the fan-out tree's, which
+    # installs hashicorp/aws from its mirror. A tree whose roots run on
+    # choudoufu names the same image as DEMO_IMAGE_CHOUDOUFU, since it carries
+    # the choudoufu binary.
     image_tools=()
     for t in "${LOOP_TOOLS[@]}"; do
-      if [ "$t" = terraform ] || [ "$t" = tofu-fanout ] || tool_choudoufu "$t"; then
-        grep -qx "image: $DEMO_IMAGE" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
-          || fail "$(tool_tree "$t")/terragucci.yml does not name $DEMO_IMAGE as its image"
+      image=""
+      if tool_choudoufu "$t"; then image="$DEMO_IMAGE_CHOUDOUFU"
+      elif [ "$t" = terraform ] || [ "$t" = tofu-fanout ]; then image="$DEMO_IMAGE"
+      fi
+      if [ -n "$image" ]; then
+        grep -qx "image: $image" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
+          || fail "$(tool_tree "$t")/terragucci.yml does not name $image as its image"
         image_tools+=("$t")
       fi
     done
     if [ "${#image_tools[@]}" -gt 0 ]; then
-      log "building $DEMO_IMAGE with choudoufu $CHOUDOUFU_VERSION…"
-      docker build -q -t "$DEMO_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
+      log "building $DEMO_IMAGE and $DEMO_IMAGE_CHOUDOUFU with choudoufu $CHOUDOUFU_VERSION…"
+      docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
         --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
       if tool_present terraform; then

@@ -28,6 +28,15 @@ cluster-a fails and its six apps are blocked, while cluster-b and its six apps
 apply.
 
 The fix (`scenarios/fan-out-choudoufu/fix/`) gives the queue its own name.
+Its pull request's plan is a cone (`choudoufu plan -cone=origin/main`,
+choudoufu's `live/PLAN-CONE.md`). cluster-a plans only the queue block the
+change touches, 1 of its 5 resource and data blocks; the dead-letter queue and
+the log group are there so that one block stays under the 30% a cone may hold.
+Its six apps read cluster-a and have no changed files, so choudoufu plans each
+in full and the plan note names the guard (`empty-cone`). The other eight
+estates are not planned at all, since the change does not reach them. Every
+merge's waves plan each estate in full, as every apply does. In chapter 1 the
+release reaches every estate, so each is planned in full there too.
 While its wave 3 applies app-01, an operator applies
 `scenarios/fan-out-choudoufu/operator/app-01/operator.tf` to app-01's estate
 from outside the pipeline, with `-target` on its new queue alone. Both land, and

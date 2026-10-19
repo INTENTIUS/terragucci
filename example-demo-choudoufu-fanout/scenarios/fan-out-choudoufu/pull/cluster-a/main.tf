@@ -56,6 +56,20 @@ resource "aws_sqs_queue" "events" {
   tags                       = { tier = "cluster" }
 }
 
+# Two of cluster-a's own resources that no change in the demo touches. They
+# keep a one-block change under the 30% of the estate's blocks a cone plan may
+# hold (choudoufu's live/PLAN-CONE.md), so the fix plans as a cone.
+resource "aws_sqs_queue" "dead_letters" {
+  name = "fan-out-choudoufu-cluster-a-dead-letters"
+  tags = { tier = "cluster" }
+}
+
+resource "aws_cloudwatch_log_group" "jobs" {
+  name              = "/fan-out-choudoufu/cluster-a/jobs"
+  retention_in_days = 7
+  tags              = { tier = "cluster" }
+}
+
 output "release" {
   value = data.terraform_estate_outputs.network.values.release
 }

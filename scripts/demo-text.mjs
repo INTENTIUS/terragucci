@@ -33,6 +33,9 @@ export const SAMPLES = {
   "$(tg_mock)": "mock-bucket",
   // chant's plan digest as the chant scenario shows it: its first 20 characters.
   $PLAN_DIGEST: "jcs1-sha256:3e43a1b2",
+  // A choudoufu cone plan's counts, from its report: the blocks it planned and the estate's.
+  $CONE_BLOCKS: "12",
+  $CONE_OF: "40",
   "$(state_input app health_check)": "http://app:9080/healthz",
   $was: "applying",
   $reason: "the plan run of pull request 1113 ended failure (http://localhost:3000/admin/demo/actions/runs/2509)",

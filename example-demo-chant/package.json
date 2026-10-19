@@ -4,7 +4,11 @@
   "type": "module",
   "description": "The terragucci demo's chant scenario: three Terraform roots as chant components, planned on each pull request and applied on merge",
   "dependencies": {
-    "@intentius/chant": "0.124.27",
-    "@intentius/chant-lexicon-terraform": "0.124.27"
+    "@intentius/chant": "0.124.28",
+    "@intentius/chant-lexicon-terraform": "0.124.28"
+  },
+  "devDependencies": {
+    "@intentius/chant-lexicon-forgejo": "0.124.28",
+    "@intentius/chant-lexicon-github": "0.124.28"
   }
 }
