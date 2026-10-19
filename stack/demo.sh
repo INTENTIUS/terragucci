@@ -1302,7 +1302,7 @@ highlight_title() { # key
 
 highlight_body() { # key
   case "$1" in
-    fan-out-tofu:planned) echo "Fifteen OpenTofu states, applied in dependency order: network first, then the clusters, then the apps. A reviewer approves the plan before anything applies. This is the stack-dependency orchestration Terraform automation platforms sell. Here terragucci runs it on plain OpenTofu and Forgejo." ;;
+    fan-out-tofu:planned) echo "Fifteen OpenTofu states apply in dependency order: network, then clusters, then apps. A wave waits for an approval only when its plan destroys something, and this one destroys nothing. Terraform automation platforms sell this orchestration. Here terragucci runs it on plain OpenTofu and Forgejo." ;;
     fan-out-tofu:failed) echo "Cluster-a failed, so its six apps are held back. Cluster-b and its six apps applied anyway, and the rollout did not stall." ;;
     fan-out-tofu-fix:planned) echo "The fix plans seven roots: cluster-a and the six apps it held back. The eight that already applied are left alone." ;;
     fan-out-choudoufu-fix:planned) echo "The fix reaches $CONE_BLOCKS of cluster-a's $CONE_OF blocks, and the plan covers only those. The rest of cluster-a is not planned at all." ;;
