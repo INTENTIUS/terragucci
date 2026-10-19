@@ -262,6 +262,10 @@ describe("stack/demo.sh under pipefail", () => {
     expect(at("fan-out-choudoufu", "1", "applying")).toBeNull();
     expect(at("fan-out-tofu", "1", "applying")).toBeNull();
     expect(at("b-waves", "", "planned")).toBeNull();
+    expect(at("fan-out", "", "planned").title).toBe("chant runs the whole rollout");
+    expect(at("fan-out", "", "failed").body).toContain("chant held back its six apps");
+    expect(at("fan-out", "1", "applying").title).toBe("The fix applies only the seven");
+    expect(at("fan-out", "1", "planned")).toBeNull();
     expect(fn("demo_write")).toContain('--argjson highlight "$(highlight_json "$step" 2>/dev/null || echo null)"');
     // Only the write that says both applies overlapped carries the operator's highlight.
     const beat = fn("operator_beat");

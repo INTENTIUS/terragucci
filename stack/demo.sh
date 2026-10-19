@@ -1347,6 +1347,9 @@ highlight_title() { # key
     fan-out-tofu-fix:planned) echo "The fix re-runs only what was blocked" ;;
     fan-out-choudoufu-fix:planned) echo "The fix plans only the blocks it reaches" ;;
     fan-out-choudoufu-fix:applying:landed) echo "Two applies on one estate, and no lock" ;;
+    fan-out:planned) echo "chant runs the whole rollout" ;;
+    fan-out:failed) echo "A failure stops only what depends on it" ;;
+    fan-out-fix:applying) echo "The fix applies only the seven" ;;
     *) return 1 ;;
   esac
 }
@@ -1357,6 +1360,9 @@ highlight_body() { # key
     fan-out-tofu:failed) echo "Cluster-a failed, so its six apps are held back. Cluster-b and its six apps applied anyway, and the rollout did not stall." ;;
     fan-out-tofu-fix:planned) echo "The fix plans seven roots: cluster-a and the six apps it held back. The eight that already applied are left alone." ;;
     fan-out-choudoufu-fix:planned) echo "The fix reaches $CONE_BLOCKS of cluster-a's $CONE_OF blocks, and the plan covers only those. The rest of cluster-a is not planned at all." ;;
+    fan-out:planned) echo "chant's own pull-request pipeline orders the fifteen stacks into waves and holds back what depends on a failure. Forgejo only starts it." ;;
+    fan-out:failed) echo "Cluster-a failed, so chant held back its six apps. Cluster-b and its six apps applied anyway." ;;
+    fan-out-fix:applying) echo "The merge applies cluster-a and the six apps it held back. The eight stacks that applied before are left alone." ;;
     fan-out-choudoufu-fix:applying:landed) echo "An operator and the pipeline applied to app-01's estate at the same time, and both landed. Each resource keeps its own record, so neither waited." ;;
     *) return 1 ;;
   esac
