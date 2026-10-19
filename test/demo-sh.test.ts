@@ -86,6 +86,12 @@ describe("stack/demo.sh under pipefail", () => {
     expect(keys).toEqual([...apps, "cluster-a", "cluster-b", "network"].map((root) => `${root} ${root}.tfstate`));
   });
 
+  it("tags the job image for choudoufu too, and the choudoufu tree's jobs run under that name", () => {
+    expect(readFileSync(join(root, "example-demo-choudoufu-fanout", "terragucci.yml"), "utf8")).toContain("image: terragucci-demo-choudoufu:local\n");
+    expect(demo).toContain('docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU"');
+    expect(fn("operator_run")).toContain('"$DEMO_IMAGE_CHOUDOUFU"');
+  });
+
   it("installs the fan-out tree's hashicorp/aws from the demo image's mirror, checked against the release's sums", () => {
     const config = readFileSync(join(root, "example-demo-fanout", "terragucci.yml"), "utf8");
     expect(config).toContain("image: terragucci-demo-tofu:local\n");
@@ -184,12 +190,27 @@ describe("stack/demo.sh under pipefail", () => {
   });
 
   it("writes the operator's apply as demo.json's outside", () => {
-    const script = [fn("outside_json"), demo.split("\n").find((l) => l.startsWith("iso()"))!, 'OPERATOR_TARGET="aws_sqs_queue.alarms"', 'outside_json applied 1792000000 1792000009 "$(printf "a\\nb\\n\\nApply complete!")"'].join("\n");
+    const script = [fn("outside_json"), demo.split("\n").find((l) => l.startsWith("iso()"))!, 'OPERATOR_TARGET="aws_sqs_queue.alarms"', 'outside_json applied 2026-10-18T00:31:14Z 2026-10-18T00:31:40Z "$(printf "a\\nb\\n\\nApply complete!")"'].join("\n");
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     const o = JSON.parse(r.stdout);
     expect(o).toMatchObject({ who: "an operator", estate: "fo-app-01", state: "applied", resources: ["aws_sqs_queue.alarms"], log: ["a", "b", "Apply complete!"] });
-    expect(o.ended_at).not.toBeNull();
+    expect([o.started_at, o.ended_at]).toEqual(["2026-10-18T00:31:14Z", "2026-10-18T00:31:40Z"]);
+  });
+
+  it("times the operator's apply from its marks, to the second, and from the step only when a mark is missing", () => {
+    const at = (marks: Record<string, string>, name: string) => {
+      const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }`;
+      const script = [stub, demo.split("\n").find((l) => l.startsWith("iso()"))!, fn("operator_time"), `operator_time ${name} 1792000000`].join("\n");
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    expect(at({ "operator-applying": "2026-10-18T00:31:14.836Z" }, "operator-applying")).toBe("2026-10-18T00:31:14Z");
+    expect(at({}, "operator-applied")).toBe("2026-10-14T17:46:40Z");
+    const beat = fn("operator_beat");
+    expect(beat).toContain('outside_json applying "$(operator_time operator-applying "$started")"');
+    expect(beat).toContain('"$(operator_time operator-applied "$(now)")"');
   });
 
   it("numbers the fan-out steps in four chapters, and gives every other scenario's steps none", () => {

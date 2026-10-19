@@ -481,6 +481,27 @@ export function parseRepos(lines: string | undefined, repo?: string, tool?: stri
   return out;
 }
 
+/**
+ * Whether a run is settled: it has ended and so has every job of it. Forgejo
+ * marks a run failed as soon as one wave fails, while later waves still start
+ * and run (terragucci#1161), so a failed run can hold a job that is running.
+ */
+export function settled(status: Status, jobs: Pick<Job, "status">[]): boolean {
+  return ENDED.has(status) && jobs.every((j) => ENDED.has(j.status));
+}
+
+/**
+ * When a run ended: Forgejo's stop time, or its last job's end when a job
+ * ended after it; none while a job of it runs.
+ */
+export function runEnded(status: Status, stopped: string | null, jobs: Pick<Job, "status" | "ended_at">[]): string | null {
+  if (!settled(status, jobs)) return null;
+  const times = [stopped, ...jobs.map((j) => j.ended_at)].filter((t): t is string => !!t && !Number.isNaN(Date.parse(t)));
+  // Forgejo's stop time is to the second and a log's to the millisecond: a job end in the same second is the stop.
+  const sec = (t: string) => Math.floor(Date.parse(t) / 1000);
+  return times.reduce<string | null>((a, t) => (a === null || sec(t) > sec(a) ? t : a), null);
+}
+
 export function buildRun(run: ForgeRun, jobs: Job[], mark: Mark | undefined, where?: DemoRepo): { doc: RunDoc; entry: IndexEntry } {
   const pr = /^#(\d+)$/.exec(run.prettyref ?? "");
   const pull = mark?.pull ?? (pr ? Number(pr[1]) : null);
@@ -500,7 +521,7 @@ export function buildRun(run: ForgeRun, jobs: Job[], mark: Mark | undefined, whe
     status,
     created_at: run.created,
     started_at: forgeTime(run.started),
-    ended_at: ENDED.has(status) ? forgeTime(run.stopped) : null,
+    ended_at: runEnded(status, forgeTime(run.stopped), jobs),
   };
   const summaries: JobSummary[] = jobs.map(({ steps: _s, ...j }) => j);
   return {
