@@ -57,8 +57,12 @@ bundle-check: build-cli
 provider-test:
     cd terraform-provider-terragucci && test -z "$(gofmt -l .)" && go vet ./... && go test ./...
 
-[doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial and the rendered workflows. CI's static job.")]
-check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check
+[doc("Fail when a chant example's committed pipeline is not what chant's generator writes at the chant the tree pins. --write writes the generator's output.")]
+chant-pipelines *args:
+    node scripts/chant-pipelines.mjs {{args}}
+
+[doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial, the rendered workflows and the chant examples' pipelines. CI's static job.")]
+check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines
 
 [doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle, the provider and the rendered workflows. What CI runs: its static job and its test jobs.")]
 check: check-static test
