@@ -1661,7 +1661,7 @@ prove_modules() {
 # recorder (AWS_ENDPOINT_URL_STS), so no request reaches AWS. The job keeps
 # the bucket's objects and what the recorder found as the sandbox-stand-in
 # artifact, since floci is gone with the job.
-FLOCI_IMAGE=ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813
+FLOCI_IMAGE=ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d
 STS_PORT=4599
 REPORTS_PREFIX=sandbox
 # floci keeps each account's buckets apart, so every role is in its account.

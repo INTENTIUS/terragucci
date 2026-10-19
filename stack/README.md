@@ -197,7 +197,7 @@ The `lock/wait-span` claim needs choudoufu, because OpenTofu sends no span for a
 
 | Piece | Pin |
 |---|---|
-| floci | `ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813` (`iam-boundary`, resolved 2026-10-03, amd64 and arm64) |
+| floci | `ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d` (`b491869`, branch `fix/cfn-change-set-changes`, resolved 2026-10-18, amd64 and arm64: a role's permissions boundary on read, a change set's changes, and SNS tags) |
 | Forgejo | `codeberg.org/forgejo/forgejo:16.0.5` |
 | forgejo-runner | `data.forgejo.org/forgejo/runner:13.2.0` |
 | job image | `public.ecr.aws/docker/library/node:22-bookworm` |

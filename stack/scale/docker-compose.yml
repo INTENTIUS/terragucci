@@ -24,7 +24,7 @@ volumes:
 
 services:
   floci:
-    image: ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813
+    image: ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d
     container_name: tgscale-floci
     environment:
       FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: "false"
