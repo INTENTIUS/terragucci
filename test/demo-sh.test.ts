@@ -214,15 +214,35 @@ describe("stack/demo.sh under pipefail", () => {
     expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
   });
 
-  it("gives the choudoufu fan-out its own chapter 3, two applies on one estate", () => {
-    const steps = [["", "pull-request"], ["", "failed"], ["1", "applying"], ["1", "reset"]];
-    const lines = steps.map(([f, step]) => `SCENARIO=fan-out-choudoufu FIX="${f}"; echo "$(demo_chapter ${step})"`).join("\n");
+  it("gives the choudoufu fan-out its own chapter 3, the fix as a cone, with the cone's counts once the report has them", () => {
+    const steps = [["", "", "pull-request"], ["", "", "failed"], ["1", "", "pull-request"], ["1", "1 5", "applying"], ["1", "1 5", "reset"]];
+    const lines = steps.map(([f, cone, step]) => `SCENARIO=fan-out-choudoufu FIX="${f}"; read -r CONE_BLOCKS CONE_OF <<<"${cone}" || true; echo "$(demo_chapter ${step})"`).join("\n");
     const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
-    expect(got.map((c) => [c.n, c.short])).toEqual([[1, "The change goes out"], [2, "cluster-a breaks"], [3, "Two applies, one estate"], [4, "Done"]]);
-    expect(got[2].headline).toBe("Same estate, two applies, both land");
-    expect(got[3].headline).toBe("All 15 are in, and no state file was locked or restored");
+    expect(got.map((c) => [c.n, c.short])).toEqual([[1, "The change goes out"], [2, "cluster-a breaks"], [3, "The fix, as a cone"], [3, "The fix, as a cone"], [4, "Done"]]);
+    expect(got[2].headline).toBe("The fix plans as a cone");
+    expect(got[3].headline).toBe("The fix plans as a cone: 1 of cluster-a's 5 blocks");
+    expect(got[4].headline).toBe("All 15 are in, and no state file was locked or restored");
+  });
+
+  it("reads the fix's cone from its plan report, and stalls on a full plan of cluster-a or a plan of another estate", () => {
+    const apps = Array.from({ length: 6 }, (_, i) => ({ path: `app-0${i + 1}`, cone: { base: "origin/main", fallback: { kind: "empty-cone", reason: "the change reaches no block" } } }));
+    const read = (roots: unknown[]) => {
+      const script = `set -euo pipefail\nfail() { echo "FAIL: $*"; exit 1; }\nPULL=9\n${demo.split("\n").find((l) => l.startsWith("FIX_CONE_PLANNED="))!}\n${fn("fix_cone_read")}\nfix_cone_read "$1"\necho "$CONE_BLOCKS of $CONE_OF"`;
+      return spawnSync("bash", ["-c", script, "x", JSON.stringify({ roots })], { cwd: root, encoding: "utf8" }).stdout.trim();
+    };
+    expect(read([...apps, { path: "cluster-a", cone: { base: "origin/main", blocks: 1, of: 5 } }])).toBe("1 of 5");
+    expect(read([...apps, { path: "cluster-a", cone: { base: "origin/main", fallback: { kind: "cone-too-large", reason: "the cone holds 2 of 3 blocks" } } }])).toBe("FAIL: cluster-a planned its whole estate: the cone holds 2 of 3 blocks (guard cone-too-large)");
+    expect(read([...apps, { path: "cluster-a", cone: { base: "origin/main", blocks: 1, of: 5 } }, { path: "network" }])).toMatch(/^FAIL: pull request 9 planned app-01 .* network, not cluster-a and its six apps$/);
+  });
+
+  it("gives cluster-a enough blocks that the fix's one changed block stays under a cone's 30%", () => {
+    const blocks = (f: string) => (readFileSync(join(root, "example-demo-choudoufu-fanout", f), "utf8").match(/^(resource|data) "/gm) ?? []).length;
+    const fix = blocks("scenarios/fan-out-choudoufu/fix/cluster-a/main.tf");
+    expect(fix).toBe(5);
+    expect(1 / fix).toBeLessThan(0.3);
+    expect(blocks("cluster-a/main.tf")).toBe(4);
   });
 
   it("has no pipeline whose reader exits before its writer is done", () => {

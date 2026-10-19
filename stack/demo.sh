@@ -697,7 +697,12 @@ chapter_headline() { # chapter number
   case "$SCENARIO:$1" in
     fan-out-choudoufu:1) echo "A change to the shared network goes out to all 15 estates" ;;
     fan-out-choudoufu:2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 estates ship anyway" ;;
-    fan-out-choudoufu:3) echo "Same estate, two applies, both land" ;;
+    fan-out-choudoufu:3)
+      if [ -n "${CONE_BLOCKS:-}" ]; then
+        echo "The fix plans as a cone: $CONE_BLOCKS of cluster-a's $CONE_OF blocks"
+      else
+        echo "The fix plans as a cone"
+      fi ;;
     fan-out-choudoufu:4) echo "All 15 are in, and no state file was locked or restored" ;;
     *:1) echo "A change to the shared network goes out to all 15 stacks" ;;
     *:2) echo "cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway" ;;
@@ -708,7 +713,7 @@ chapter_headline() { # chapter number
 
 chapter_short() { # chapter number
   case "$SCENARIO:$1" in
-    fan-out-choudoufu:3) echo "Two applies, one estate" ;;
+    fan-out-choudoufu:3) echo "The fix, as a cone" ;;
     *:1) echo "The change goes out" ;;
     *:2) echo "cluster-a breaks" ;;
     *:3) echo "The fix" ;;
@@ -1230,10 +1235,11 @@ say() { # step
     fan-out-tofu-fix:applying) echo "The waves run again. Cluster-a applies, then its six apps. Network, cluster-b and its apps plan no changes." ;;
     fan-out-tofu-fix:applied) echo "All fifteen roots are in. The first run applied eight. The fix applied the seven that cluster-a's failure blocked." ;;
     fan-out-choudoufu:pull-request) echo "Pull request $PULL is open. Network gets release r$CYCLE, which all fifteen estates tag themselves with. Cluster-a also gains a queue." ;;
-    fan-out-choudoufu:planned) echo "The plan note shows three waves of estates that each change: network, then cluster-a and cluster-b, then twelve apps." ;;
+    fan-out-choudoufu:planned) echo "The plan note shows all fifteen estates in three waves. Every estate reads the new release, so each is planned in full rather than as a cone." ;;
     fan-out-choudoufu:applying) echo "Network applies in wave 1. Cluster-a and cluster-b apply side by side in wave 2, and each one's six apps follow in wave 3." ;;
     fan-out-choudoufu-fix:pull-request) echo "The fix is pull request $PULL: cluster-a's queue gets a name of its own. It reaches cluster-a and its six apps, and nothing else." ;;
-    fan-out-choudoufu-fix:planned) echo "The fix's plan note shows seven estates: cluster-a, then app-01 to app-06. The other eight plan no changes." ;;
+    fan-out-choudoufu-fix:planned) echo "The fix's plan covers cluster-a as a cone of $CONE_BLOCKS of its $CONE_OF blocks. Its six apps read it, and choudoufu plans each of them in full." ;;
+    fan-out-choudoufu-fix:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}. The merge plans each estate in full, as every apply does: only the pull request's plan was a cone." ;;
     fan-out-choudoufu-fix:applying) echo "The waves run again. Cluster-a applies, then its six apps. While wave 3 applies app-01, an operator applies to app-01 too." ;;
     fan-out-choudoufu-fix:applied) echo "All fifteen estates are in. The operator's queue landed in app-01's estate beside the fix, and no state file was locked." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
@@ -1701,6 +1707,8 @@ fan_out_failed() {
   # The fix's own card, so "What changes" says what the fix does; behold reads demo.json's about at every step.
   ABOUT="$(jq -ce '{changes, watch, shows}' "$TREE/scenarios/$SCENARIO-fix/about.json" 2>/dev/null || echo "$ABOUT")"
   open_pull
+  # On choudoufu the fix's plan is a cone of cluster-a, read from its report.
+  [ "$SCENARIO" != fan-out-choudoufu ] || fix_cone
   HOLD="$FANOUT_FIX_PLANNED" demo_hold planned "$(say planned)" "merge pull request $PULL"
   # On choudoufu, an operator applies to app-01's estate beside the fix's wave 3: app-01's apply waits for it.
   [ "$SCENARIO" != fan-out-choudoufu ] || operator_expect
@@ -1731,6 +1739,42 @@ scenario_fan_out_tofu() {
 # whose apply deletes what the fix added and puts every tag back.
 scenario_fan_out_choudoufu() {
   scenario_fan_out_tofu
+}
+
+# The fix's pull request plan on choudoufu, from its report.json in the reports
+# bucket (the project's index row of the tf-plan of this pull request, by
+# number or head commit, then that run's report). cluster-a is planned as a
+# cone (choudoufu's plan -cone=origin/main, packages/terragucci/src/cone.ts):
+# CONE_BLOCKS of its CONE_OF blocks. Its six apps read it and have no changed
+# files, so choudoufu plans each in full and the note names its guard. A
+# cluster-a the guard planned in full, or a plan of any other estate, stalls the
+# cycle rather than show a cone it did not make.
+CONE_BLOCKS="" CONE_OF=""
+FIX_CONE_PLANNED="app-01 app-02 app-03 app-04 app-05 app-06 cluster-a"
+fix_cone() {
+  local index="$FLOCI/$REPORT_BUCKET/$REPORT_PREFIX/forgejo:3000/$REPO" path="" report cone planned deadline=$(( $(now) + 60 ))
+  while :; do
+    path="$(curl -fsS "$index/index.json" 2>/dev/null | jq -r --arg p "$PULL" --arg c "$COMMIT" \
+      '[.reports[]? | select(.stage == "tf-plan" and (.pull_request == $p or .commit == $c))][0].path // empty' 2>/dev/null || true)"
+    [ -z "$path" ] || break
+    [ "$(now)" -lt "$deadline" ] || fail "the reports bucket has no tf-plan report of pull request $PULL"
+    sleep "$POLL"
+  done
+  report="$(curl -fsS "$index/$path/report.json")" || fail "could not read $path/report.json of pull request $PULL"
+  fix_cone_read "$report"
+}
+
+fix_cone_read() { # report.json
+  local planned cone
+  planned="$(jq -r '[.roots[]?.path] | sort | join(" ")' <<<"$1")" || fail "pull request $PULL's report does not read as JSON"
+  [ "$planned" = "$FIX_CONE_PLANNED" ] || fail "pull request $PULL planned ${planned:-no estate}, not cluster-a and its six apps"
+  cone="$(jq -c '[.roots[] | select(.path == "cluster-a")][0].cone // empty' <<<"$1")"
+  [ -n "$cone" ] || fail "cluster-a was not planned with -cone"
+  if jq -e '.fallback' <<<"$cone" >/dev/null; then
+    fail "cluster-a planned its whole estate: $(jq -r '"\(.fallback.reason) (guard \(.fallback.kind))"' <<<"$cone")"
+  fi
+  CONE_BLOCKS="$(jq -r '.blocks // empty' <<<"$cone")" CONE_OF="$(jq -r '.of // empty' <<<"$cone")"
+  [ -n "$CONE_BLOCKS" ] && [ -n "$CONE_OF" ] || fail "cluster-a's cone has no block counts in its report"
 }
 
 # The operator's apply beside the pipeline's apply of app-01. Before the fix
@@ -1869,7 +1913,7 @@ run_cycle() {
   ABOUT="$(scenario_about "$1")"
   MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
-  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" END_HOLD="" OUTSIDE=null
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" END_HOLD="" OUTSIDE=null CONE_BLOCKS="" CONE_OF=""
   on_waiting() { default_waiting; }
   on_migrate() { default_migrate; }
   on_failed() { default_failed; }
