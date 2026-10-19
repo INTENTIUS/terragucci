@@ -26,6 +26,9 @@ RUN set -e; case "$TARGETARCH" in \
 FROM ${BASE}
 COPY --from=awscli /usr/local/aws-cli /usr/local/aws-cli
 COPY package.json package-lock.json /opt/demo-chant-fanout/
+# The stack's floci, for chant's cfn-deploy, the AWS CLI and --report-url's
+# copies: the pipeline is chant's generated one, which names no endpoint.
+ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
 # chant loads its lexicons from beside itself, so both live in one prefix; a
 # job links /opt/demo-chant-fanout/node_modules into its checkout, so the
 # templates' imports of the aws lexicon resolve. The tofu image's

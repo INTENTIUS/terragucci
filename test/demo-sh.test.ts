@@ -85,21 +85,23 @@ describe("stack/demo.sh under pipefail", () => {
     expect(r.stdout.trim().split("\n")).toEqual(["network", "cluster-a", "cluster-b", ...apps]);
   });
 
-  it("runs the fan-out repo's jobs in the image up builds, each building, seeding and streaming its events", () => {
+  it("runs the fan-out repo's jobs in the image up builds, each building, linting and streaming its events", () => {
     const image = /^FANOUT_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1];
     expect(image).toBe("terragucci-demo-chant-fanout:local");
     const pipeline = readFileSync(join(root, "example-demo-chant-fanout", ".forgejo", "workflows", "chant-pr.yml"), "utf8");
     expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
     expect(pipeline.match(/^ *fetch-depth: 0$/gm)).toHaveLength(2);
     const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
-    // Per job: the templates built and linted, then chant's stage, which reads deployed outputs and copies its events itself.
-    expect(runs).toHaveLength(4);
-    expect(runs.filter((r) => r.includes("npm run build && npm run lint"))).toHaveLength(2);
+    // Per job, all of it chant's generated pipeline: the templates built, the project linted, then chant's stage,
+    // which reads deployed outputs and copies its events itself.
+    expect(runs).toHaveLength(6);
+    expect(runs.filter((r) => r === "ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build")).toHaveLength(2);
+    expect(runs.filter((r) => r === "chant lint")).toHaveLength(2);
     expect(pipeline).not.toContain("seed-outputs");
     const stages = runs.filter((r) => r.startsWith("chant components "));
     expect(stages.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
     for (const r of stages) {
-      expect(r).toContain('--events-json --report-url "$CHANT_EVENTS_URL"');
+      expect(r).toContain('--events-json --report-url "s3://demo-reports/demo/chant/${{ github.repository }}"');
       expect(r).toContain("--forge forgejo");
     }
     expect(stages[1]).toContain("--require-review --resume .chant/pr-resume/pr-apply.json");
@@ -108,6 +110,8 @@ describe("stack/demo.sh under pipefail", () => {
     // The image's node_modules is the one each job links into its checkout.
     const dockerfile = readFileSync(join(root, "stack", "demo-chant-fanout.Dockerfile"), "utf8");
     expect(dockerfile).toContain("COPY package.json package-lock.json /opt/demo-chant-fanout/");
+    // The generated pipeline names no endpoint: the image points the AWS CLI and chant at the stack's floci.
+    expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
     expect(pipeline).toContain("ln -s /opt/demo-chant-fanout/node_modules node_modules");
     expect(demo).toContain(`-f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)"`);
   });

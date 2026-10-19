@@ -27,11 +27,14 @@ component's `stackOutput` inputs. chant derives the waves from the change.
 - `package.json` pins chant and its aws lexicon, which
   `stack/demo-chant-fanout.Dockerfile` installs into the job image, and keeps
   only the build and lint scripts.
-- `.forgejo/workflows/chant-pr.yml` is chant's pull-request pipeline: `chant
-  components pr-plan` on each pull request and `pr-apply --require-review` on
-  each push to main. Each job also builds and lints the templates. chant reads
-  the deployed outputs of a stack the change does not reach, and its `--report-url` copies each
-  stage's events, report and change set to floci as it runs.
+- `.forgejo/workflows/chant-pr.yml` is chant's pull-request pipeline, exactly
+  as chant generates it (`just chant-pipelines` checks it): `chant components
+  pr-plan` on each pull request and `pr-apply --require-review` on each push to
+  main. Each job builds the templates (`--pr-build-command`) and runs `chant
+  lint` first. chant reads the deployed outputs of a stack the change does not
+  reach, and `--report-url` copies each stage's events, report and change set
+  to floci as it runs. The job image (`stack/demo-chant-fanout.Dockerfile`)
+  points chant and the AWS CLI at the stack's floci.
 
 ## The scenario
 

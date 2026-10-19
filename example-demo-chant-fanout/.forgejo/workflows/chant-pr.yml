@@ -1,9 +1,3 @@
-# chant's pull-request pipeline for the fan-out estate, in the shape
-# `chant build --components --generate forgejo --pr-loop --env demo --image
-# terragucci-demo-chant-fanout:local --events-json --report-url` writes, with
-# one step the generator has no option for: each job builds and lints the
-# fifteen templates (cfn-deploy applies dist/). A stack the change does not
-# reach is read as deployed, so its dependents plan on its outputs.
 name: chant-pr-demo
 
 on:
@@ -16,14 +10,6 @@ on:
 
 env:
   CHANT_ENV: demo
-  AWS_ENDPOINT_URL: http://floci:4566
-  AWS_ACCESS_KEY_ID: test
-  AWS_SECRET_ACCESS_KEY: test
-  AWS_REGION: us-east-1
-  # Each stage's events, report and change set land at
-  # <CHANT_EVENTS_URL>/<pull request>/<commit>/ (chant's --report-url), where
-  # behold finds them (behold#740).
-  CHANT_EVENTS_URL: 's3://demo-reports/demo/chant/${{ github.repository }}'
 
 jobs:
   plan:
@@ -34,15 +20,17 @@ jobs:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Build and lint the fifteen templates
-        run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build && npm run lint
+      - name: Build the templates
+        run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build
+      - name: Lint the project
+        run: chant lint
       - name: Plan the members this pull request reaches
         env:
           BASE_SHA: '${{ github.event.pull_request.base.sha }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --events-json --report-url "$CHANT_EVENTS_URL"
+          CHANT_RUN_EVENTS_DIR: .chant/pr/run-events
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --events-json --report-url "s3://demo-reports/demo/chant/${{ github.repository }}"
       - name: Keep the plan report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v3
@@ -61,19 +49,22 @@ jobs:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Build the templates
+        run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build
+      - name: Lint the project
+        run: chant lint
       - name: Restore the record of an earlier attempt at this commit
         uses: https://code.forgejo.org/actions/cache/restore@v4
         with:
           path: .chant/pr-resume/pr-apply.json
           key: chant-apply-demo-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: chant-apply-demo-${{ github.sha }}-
-      - name: Build and lint the fifteen templates
-        run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build && npm run lint
       - name: Apply the plan a reviewer approved
         env:
           BASE_SHA: '${{ github.event.before }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json --events-json --report-url "$CHANT_EVENTS_URL"
+          CHANT_RUN_EVENTS_DIR: .chant/pr/run-events
+        run: chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --events-json --report-url "s3://demo-reports/demo/chant/${{ github.repository }}" --require-review --resume .chant/pr-resume/pr-apply.json
       - name: Keep the record for a re-run
         if: always()
         uses: https://code.forgejo.org/actions/cache/save@v4
