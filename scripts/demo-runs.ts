@@ -29,7 +29,6 @@ import {
   buildIndex,
   buildJob,
   buildRun,
-  ENDED,
   FORGE_KEEP_MIN,
   forgeRunsToDelete,
   type ForgeJob,
@@ -42,6 +41,7 @@ import {
   type Mark,
   parseRepos,
   readMarks,
+  settled,
   type WorkflowStep,
   workflowSteps,
   runKeys,
@@ -215,7 +215,8 @@ async function main(): Promise<void> {
     const mark = marks.get(id);
     const was = cache.runs[id];
     const markHash = hash(mark ?? null);
-    if (was && was.forge === run.status && was.mark === markHash && ENDED.has(was.entry.status)) {
+    // A run is read again until it and every job of it have ended: a failed run's later waves still run.
+    if (was && was.forge === run.status && was.mark === markHash && settled(was.entry.status, was.entry.jobs)) {
       entries.push(was.entry);
       continue;
     }

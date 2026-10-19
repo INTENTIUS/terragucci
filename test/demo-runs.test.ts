@@ -24,8 +24,11 @@ import {
   parseRepos,
   parseSteps,
   readMarks,
+  runEnded,
   runKeys,
   type RunDoc,
+  settled,
+  type Status,
   toPrune,
   UNNAMED,
   workflowSteps,
@@ -84,6 +87,30 @@ describe("statuses", () => {
     expect(mapStatus("failure")).toBe("failure");
     expect(mapStatus("failure", true)).toBe("waiting");
     expect(mapStatus("cancelled")).toBe("cancelled");
+  });
+});
+
+// Forgejo marks a run failed once one wave fails, while its later waves still
+// start and run (terragucci#1161): run 6652 failed at 00:43:34, and its
+// apply-wave-3 started at 00:43:37.
+describe("a failed run whose later wave still runs", () => {
+  const wave = (status: Status, ended_at: string | null) => ({ status, ended_at });
+
+  it("is not settled until every job has ended, so the copy reads it again", () => {
+    expect(settled("failure", [wave("failure", "2026-10-18T00:43:30Z"), wave("running", null)])).toBe(false);
+    expect(settled("failure", [wave("failure", "2026-10-18T00:43:30Z"), wave("success", "2026-10-18T00:44:10Z")])).toBe(true);
+    expect(settled("running", [wave("success", "2026-10-18T00:43:30Z")])).toBe(false);
+    expect(settled("waiting", [wave("waiting", "2026-10-18T00:43:30Z")])).toBe(true);
+  });
+
+  it("has no end while a job runs, and then ends with its last job", () => {
+    expect(runEnded("failure", "2026-10-18T00:43:34Z", [wave("failure", "2026-10-18T00:43:30Z"), wave("running", null)])).toBeNull();
+    expect(runEnded("failure", "2026-10-18T00:43:34Z", [wave("failure", "2026-10-18T00:43:30Z"), wave("success", "2026-10-18T00:44:10.25Z")])).toBe("2026-10-18T00:44:10.25Z");
+    expect(runEnded("success", "2026-10-18T00:43:34Z", [wave("success", "2026-10-18T00:43:33.9Z")])).toBe("2026-10-18T00:43:34Z");
+  });
+
+  it("is what the copy checks before it reuses a run it read", () => {
+    expect(readFileSync(join(root, "scripts", "demo-runs.ts"), "utf8")).toContain("settled(was.entry.status, was.entry.jobs)");
   });
 });
 
