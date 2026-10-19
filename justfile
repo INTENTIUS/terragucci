@@ -377,6 +377,10 @@ record-digests run="":
 release-preflight version commit="":
     scripts/release-preflight.sh {{version}} {{commit}}
 
+[doc("Create each VERSION's GitHub release on its existing tag, with its notes from the Changes page's \"In <version>\" section; the newest named is marked latest. --dry-run prints the notes.")]
+github-release *versions:
+    node scripts/github-release.mjs {{versions}}
+
 [doc("Build the terragucci CLI into one bundled file, as a release does.")]
 build-cli:
     node scripts/build-cli.mjs
