@@ -288,6 +288,19 @@ describe("a move between two estates", () => {
     expect(lines.join("\n")).toContain("mono would still change; nothing was written");
   });
 
+  it("reads an applied migration from origin in a checkout that holds no copy of chant/lifecycle, as a later wave's job does (#1145)", async () => {
+    const { work, origin } = retagRepo();
+    const exec = choudoufu(work);
+    const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: () => {} });
+    approve(work, "carve-jobs", first.records[0]!.digest, T(2));
+    expect((await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} })).code).toBe(0);
+    // Wave 2's job: a fresh checkout of main alone, which runs no migration step before it plans its roots.
+    const wave2 = join(tmp("tg-estate-wave2-"), "work");
+    git(origin, "clone", "-q", "--single-branch", "-b", "main", origin, wave2);
+    expect(git(wave2, "for-each-ref", "refs/remotes/origin/chant/lifecycle").trim()).toBe("");
+    expect([...pendingEstateMigrations(wave2)]).toEqual([]);
+  });
+
   it("is proved by the dry runs when choudoufu refuses to plan the joining root before the retag, and plans it once retagged", async () => {
     const { work } = retagRepo();
     const calls: Calls = [];
