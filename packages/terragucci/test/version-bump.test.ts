@@ -35,7 +35,7 @@ function repoWith(messages: string[], extra: Record<string, string> = {}): strin
   commit("first");
   git(dir, "tag", "modules/net/v1.2.0");
   messages.forEach((m, i) => {
-    writeFileSync(join(dir, "modules/net/main.tf"), `variable "cidr" {}\nvariable "extra${i}" {}\n`);
+    writeFileSync(join(dir, "modules/net/main.tf"), `variable "cidr" {}\nresource "null_resource" "extra${i}" {}\n`);
     commit(m);
   });
   return dir;
@@ -82,7 +82,7 @@ describe("version-bump: free-text commits", () => {
     expect(calls).toHaveLength(1);
     const asked = calls[0]!;
     expect(JSON.stringify(asked.state)).toContain("add an extra input to the network module");
-    expect(JSON.stringify(asked.state)).toContain('+variable \\"extra0\\"');
+    expect(JSON.stringify(asked.state)).toContain('+resource \\"null_resource\\" \\"extra0\\"');
     expect(out.suggestions[0]).toMatchObject({ source: "suggested", bump: "minor", version: "1.3.0", probability: 0.85 });
     const [p] = out.proposals;
     expect(p!.title).toBe("Release modules/net 1.3.0");
@@ -153,7 +153,7 @@ describe("version-bump --since", () => {
     commit("first");
     const base = git(dir, "rev-parse", "HEAD").trim();
     messages.forEach((m, i) => {
-      writeFileSync(join(dir, "modules/net/main.tf"), `variable "cidr" {}\nvariable "extra${i}" {}\n`);
+      writeFileSync(join(dir, "modules/net/main.tf"), `variable "cidr" {}\nresource "null_resource" "extra${i}" {}\n`);
       commit(m);
     });
     return { dir, base };
@@ -189,5 +189,33 @@ describe("version-bump --since", () => {
     expect((await versionBumps(dir, { decide: SETTINGS }, { since: "nope" })).suggestions[0]!.note).toMatch(/not a ref/);
     const tagged = repoWith(["fix: a"]);
     expect((await versionBumps(tagged, { decide: SETTINGS }, { since: "HEAD" })).suggestions[0]).toMatchObject({ last: "1.2.0", version: "1.2.1" });
+  });
+});
+
+describe("version-bump: the interface", () => {
+  /** `net` released at 1.2.0 with one variable, then changed to `next` by one commit. */
+  function changed(message: string, next: string, extra: Record<string, string> = {}): string {
+    const dir = repoWith([], extra);
+    writeFileSync(join(dir, "modules/net/main.tf"), next);
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qam", message);
+    return dir;
+  }
+
+  it("shows the commit bump next to the interface bump, and says when tf-publish refuses", async () => {
+    const out = await versionBumps(changed("fix: drop cidr", "# none\n"), { decide: SETTINGS }, {});
+    expect(out.suggestions[0]).toMatchObject({ source: "conventional", version: "1.2.1", commits: "patch", interface: "major", changes: 'variable "cidr" removed (major)' });
+    expect(out.suggestions[0]!.note).toContain("the interface needs a major, so tf-publish refuses the release");
+    const r = await respond("version-bump", changed("fix: drop cidr", "# none\n", { "terragucci.yml": "respond:\n  version-bump: suggest\n" }), {});
+    expect(r.text).toContain("modules/net 1.2.0 -> 1.2.1 (commits: patch, interface: major)");
+  });
+
+  it("raises a suggested bump to the one the interface needs in the release pull request", async () => {
+    const { fetch } = service({ major: 0.05, minor: 0.05, patch: 0.9 });
+    const out = await versionBumps(changed("add a zone", 'variable "cidr" {}\nvariable "zone" { default = "a" }\n'), { decide: SETTINGS }, { fetch });
+    expect(out.suggestions[0]).toMatchObject({ source: "suggested", commits: "patch", interface: "minor", bump: "minor", version: "1.3.0" });
+    const body = out.proposals[0]!.body;
+    expect(body).toContain("Suggested bump: **patch**, with probability 0.90");
+    expect(body).toContain('The module\'s interface needs a **minor**, so this proposes 1.2.0 to 1.3.0: variable "zone" added with a default (minor).');
+    expect(out.proposals[0]!.files.get("modules/net/version")).toBe("1.3.0\n");
   });
 });

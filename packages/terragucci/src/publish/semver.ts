@@ -34,6 +34,13 @@ export function bumpFor(messages: string[]): Bump {
   return bump;
 }
 
+/** The bump that takes `from` to `to`, a later version: the largest part that moved. */
+export function bumpBetween(from: Semver, to: Semver): Bump {
+  if (to.major !== from.major) return "major";
+  if (to.minor !== from.minor) return "minor";
+  return "patch";
+}
+
 export function applyBump(v: Semver, bump: Bump): Semver {
   if (bump === "major") return { major: v.major + 1, minor: 0, patch: 0 };
   if (bump === "minor") return { major: v.major, minor: v.minor + 1, patch: 0 };

@@ -240,7 +240,10 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   } else if (ev === "version-bump") {
     const { suggestions, proposals } = await versionBumps(repo, settings, { module: o.module, since: o.since, env, fetch: o.decideFetch });
     const proposed = await propose(repo, settings, proposals, { mode, env, fetch: o.fetch });
-    const lines = suggestions.map((s) => `${s.module} ${s.last}${s.version ? ` -> ${s.version}` : ""}: ${s.note}`);
+    const lines = suggestions.map((s) => {
+      const bumps = s.commits && s.interface ? ` (commits: ${s.commits}, interface: ${s.interface})` : "";
+      return `${s.module} ${s.last}${s.version ? ` -> ${s.version}` : ""}${bumps}: ${s.note}`;
+    });
     r = { text: [...lines, ...proposed.map(said)].join("\n") || "no module", data: suggestions, proposals: proposed };
   } else if (ev === "description") {
     const dir = resolve(repo, o.report ?? "terragucci-report");

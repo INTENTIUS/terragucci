@@ -18,6 +18,11 @@
  * so its download can point at the git tag or OCI artifact just published.
  * With `modules.test`, a module is tested before any target writes a release
  * of it (./test.ts), and a module whose tests do not pass is refused.
+ *
+ * A module whose bump, from its commits or its `version` file, is smaller than
+ * its interface change since the previous release calls for is refused too
+ * (./interface.ts). The previous interface is read at the commit that release
+ * was cut from.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -32,7 +37,8 @@ import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, 
 import { fetchLedger, LEDGER_PATH } from "./ledger";
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, moduleManifest, parseOci, type Fetch } from "./oci";
-import { applyBump, bumpFor, compareSemver, formatSemver, parseSemver, type Semver } from "./semver";
+import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
+import { applyBump, bumpBetween, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "./semver";
 import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
 import { testModule, type TestBinary, type TestRunner } from "./test";
 
@@ -380,10 +386,21 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
     const tar = moduleTar(dir);
     const content = sha256(tar);
     const pinned = readVersionFile(dir);
+    let current: ModuleInterface | undefined;
+    const before = new Map<string, ModuleInterface | undefined>();
+    /** The interface changes since the release cut from `revision`; undefined when that commit does not hold the module. */
+    const changesSince = (revision: string): InterfaceChange[] | undefined => {
+      if (!before.has(revision)) before.set(revision, interfaceAt(repo, revision, mod.rel));
+      const prev = before.get(revision);
+      if (!prev) return undefined;
+      current ??= interfaceOf(dir);
+      return interfaceChanges(prev, current);
+    };
     for (const target of list) {
       const row = { module: mod.name, target: target.label };
       const last = await target.latest(mod);
       let version: Semver;
+      let bumps: { commits: Bump; iface: Bump; changes: InterfaceChange[] } | undefined;
       if (last) {
         if (last.content === content) {
           results.push({ ...row, status: "unchanged", version: formatSemver(last.version), detail: "content matches the last release" });
@@ -411,12 +428,27 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
           }
           version = pinned;
         } else version = applyBump(last.version, bumpFor(messages));
+        const changes = last.revision ? changesSince(last.revision) : undefined;
+        if (changes) bumps = { commits: pinned ? bumpBetween(last.version, pinned) : bumpFor(messages), iface: interfaceBump(changes), changes };
       } else {
         version = pinned ?? { major: 0, minor: 1, patch: 0 };
       }
+      if (last && bumps && smallerThan(bumps.commits, bumps.iface)) {
+        const { commits, iface } = bumps;
+        const from = pinned ? `${mod.rel}/version says ${formatSemver(pinned)}, a ${commits} bump` : `the commits since ${formatSemver(last.version)} call for a ${commits}`;
+        const fix = iface === "major" ? "a feat!: commit or a BREAKING CHANGE: footer" : "a feat: commit";
+        results.push({
+          ...row,
+          status: "refused",
+          version: formatSemver(version),
+          detail: `${opts.dryRun ? "dry run: " : ""}${from}, and the interface needs a ${iface}: ${describeChanges(bumps.changes.filter((c) => smallerThan(commits, c.bump)))}; publish it with ${fix}, or ${mod.rel}/version at ${formatSemver(applyBump(last.version, iface))}`,
+        });
+        continue;
+      }
       if (opts.dryRun) {
         const would = ["test", "publish", "sign and record"].filter((w) => (w === "test" ? settings.modules?.test === true : w === "sign and record" ? keyPath && target.attests !== false : true));
-        results.push({ ...row, status: "published", version: formatSemver(version), detail: `dry run: would ${would.join(", ")}` });
+        const bumpNote = bumps ? `; commits: ${bumps.commits}, interface: ${bumps.iface}` : "";
+        results.push({ ...row, status: "published", version: formatSemver(version), detail: `dry run: would ${would.join(", ")}${bumpNote}` });
         continue;
       }
       const held = await target.existing?.(mod, version);
