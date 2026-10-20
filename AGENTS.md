@@ -4,6 +4,7 @@
 - A release tags the commit `just release-preflight <version>` names, the newest green one (`chant ci last-green`), never a hand-picked commit.
 - Workflows are declared in `ci/` and `pages/`. Edit the TypeScript and run `just ci`. Never edit `.github/workflows/*.yml` by hand; `just ci-check` fails on it.
 - Pins shared by both workflows live in `workflows/shared.ts`.
+- Pictures and other binaries go through Git LFS; `just lfs-check` (in `just check` and `diff-guard`) enforces it.
 - The site is for customers. Notes about this repo stay out of it, and so do issue links and build details such as capture dates. Contributor material goes in CONTRIBUTING.md.
 - Docs live in `docs-site/src/content/docs/`. `just lint-docs` must pass, and `just site` must build.
 - Every page describes what works today and is true as written. Nothing a user reads (the site, `llms.txt`, a CLI message) says a feature is coming. A feature that does not work stays out of the docs and out of config validation until it does.
@@ -14,5 +15,4 @@
 - The scale workflow is disabled, and there is no nightly or capture workflow. Only CI's checks run on their own; no claim runs in CI.
 - For a person: `just claims-affected` runs the claims a change can affect and records their rows in `smoke.json`. `just coverage-fill` fills the validation page's gaps a source at a time. GitLab runs on its own lab: boot it with `just gitlab-lab up` only on a quiet host, and stop it with `just gitlab-lab down` when done.
 - The example lives in `example/`. An edit there needs `just example-patches`. The tutorial's captures then go stale; `just tutorial-check` lists them and passes. A person recaptures by hand with `just tutorial-capture`.
-- Pictures, videos and PDFs go through Git LFS (`.gitattributes`). `just lfs-check`, part of `just check` and `diff-guard`, fails on a tracked one that is not an LFS pointer and on any blob over 512 KB a branch adds. Fix it with `git lfs track` and `git add --renormalize`.
 - Commits carry no AI attribution lines.
