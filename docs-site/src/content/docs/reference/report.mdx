@@ -265,7 +265,7 @@ Digests are taken before redaction, so an approval binds the plan as planned.
 
 ## Report storage
 
-By default a report is a CI artifact of the plan's run, kept as long as your forge keeps artifacts: the plan job's, and on Forgejo the `plan-note` job's, which keeps the report the plan job hands on. To keep them longer, name a bucket in `terragucci.yml` and rerun `npx terragucci init`.
+By default a report is a CI artifact of the plan's run, kept as long as your forge keeps artifacts. On GitHub and Forgejo the `plan-note` job keeps it: the plan job hands its report on as job outputs, up to about 330 KB gzipped on GitHub and 3 MB on Forgejo. A larger report is cut to the note, the status, `report.json` and `drift-schedule.json`, and the plan log says so; a bucket keeps the whole report. To keep reports longer, name a bucket in `terragucci.yml` and rerun `npx terragucci init`.
 
 | `reports.bucket` | Store | API |
 |---|---|---|

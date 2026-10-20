@@ -398,13 +398,13 @@ describe("the re-plan's Terragrunt cache", () => {
 
   it.each(["github", "forgejo"] as const)("%s: every other job that cached keeps saving as before", (forge) => {
     const doc = render(forge, tgInput({ drift: "0 6 * * *" }));
-    // On Forgejo the plan job restores and saves none: a save is a step after the plan's, which would hold the run's token.
-    const restoring = forge === "forgejo" ? ["replan", "plan"] : ["replan"];
+    // The plan job restores and saves none: a save is a step after the plan's, which would hold a token.
+    const restoring = ["replan", "plan"];
     const saving = Object.entries(doc.jobs as Record<string, { steps?: Step[] }>)
       .filter(([name]) => !restoring.includes(name))
       .flatMap(([name, job]) => cacheSteps(job.steps ?? []).map((c) => [name, c] as const));
-    expect(saving.map(([name]) => name)).toEqual([...(forge === "github" ? ["plan"] : []), "apply-comment", "apply-wave-1", "apply-wave-2", "drift"]);
-    if (forge === "forgejo") expect(cacheSteps(steps(doc, "plan")).map((x) => action(x.uses))).toEqual([RESTORE]);
+    expect(saving.map(([name]) => name)).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "drift"]);
+    expect(cacheSteps(steps(doc, "plan")).map((x) => action(x.uses))).toEqual([RESTORE]);
     for (const [name, c] of saving) {
       expect(action(c.uses), name).toBe(SAVE);
       expect(c.with, name).toEqual({ path: ".terragrunt-cache", key: "terragucci-tg-${{ hashFiles('**/*.hcl') }}", "restore-keys": "terragucci-tg-" });

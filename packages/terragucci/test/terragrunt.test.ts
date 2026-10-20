@@ -353,12 +353,12 @@ describe("init in a Terragrunt repo", () => {
     const text = r.files[0].content;
     const doc = body(text);
     expect(doc.env).toMatchObject({ TG_TF_PATH: "tofu", TG_NON_INTERACTIVE: "true", TG_PARALLELISM: "16", TG_PROVIDER_CACHE: "1" });
-    const check = doc.jobs.check.steps.at(-2).run as string;
+    const check = doc.jobs.check.steps.at(-1).run as string;
     expect(check).toContain("terragrunt hcl fmt --check --diff");
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
     expect(check).toContain("terragucci check-pins");
     expect(check).toContain("terragucci check-policy");
-    const plan = doc.jobs.plan.steps.at(-2).run as string;
+    const plan = doc.jobs.plan.steps.at(-1).run as string;
     const layers = "'live/dev/vpc;live/dev/app;live/prod/vpc;live/prod/app'";
     expect(plan).toContain(`--layers ${layers}`);
     expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "apply-wave-3", "apply-wave-4"]);
@@ -372,7 +372,9 @@ describe("init in a Terragrunt repo", () => {
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
     // approval: ledger is the default, so no gate is declared for a seal.
     expect(r.files.find((f) => f.path.endsWith("chant.workspace.json"))).toBeUndefined();
-    for (const job of ["plan", "apply-wave-1", "apply-wave-4", "apply-comment"]) {
+    // The plan job, which runs the change's code, restores the cache and saves none; the jobs that run merged code save it.
+    expect(doc.jobs.plan.steps.find((s: { uses?: string }) => s.uses === "actions/cache/restore@v4")?.with.path).toBe(".terragrunt-cache");
+    for (const job of ["apply-wave-1", "apply-wave-4", "apply-comment"]) {
       expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === "actions/cache@v4")?.with.path).toBe(".terragrunt-cache");
     }
     expect(text).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
@@ -386,7 +388,7 @@ describe("init in a Terragrunt repo", () => {
       const doc = body((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
       const plan = forge === "github" ? doc.jobs.plan : doc.plan;
       const apply = forge === "github" ? doc.jobs["apply-wave-1"] : doc["apply-wave-1"];
-      const script = (job: Record<string, any>): string => (forge === "github" ? (job === plan ? job.steps.at(-2) : job.steps.find((s: { run?: string }) => s.run?.includes("TERRAGUCCI_PHASE=apply"))).run : job.script.join("\n"));
+      const script = (job: Record<string, any>): string => (forge === "github" ? (job === plan ? job.steps.at(-1) : job.steps.find((s: { run?: string }) => s.run?.includes("TERRAGUCCI_PHASE=apply"))).run : job.script.join("\n"));
       if (forge === "github") {
         expect(plan.permissions["id-token"]).toBe("write");
         expect(apply.permissions["id-token"]).toBe("write");

@@ -92,16 +92,9 @@ describe("the check job", () => {
     expect(run.split("\n")[0]).toBe(dropForgeTokens("sh"));
     const withPolicy = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content).jobs.check;
     expect(check.env.TG_BRANCH).toBe("${{ github.event.repository.default_branch }}");
-    if (forge === "github") {
-      // Without `policy:` the clone is shallow; with it the policy tests have the history. Neither keeps credentials.
-      expect(check.steps[0].with).toEqual({ "persist-credentials": false });
-      expect(withPolicy.steps[0].with["fetch-depth"]).toBe(0);
-      // The check runs the branch's code, so the job and its step hold no forge token.
-      expect(JSON.stringify(check)).not.toContain("TG_TOKEN:");
-      const keep = check.steps.find((s: { name?: string }) => s.name === "Keep the check report");
-      expect(keep.with.path).toBe("terragucci-check/");
-    } else {
-      // Forgejo: a script checks out, with the token in its own step alone; the check step is the job's last.
+    {
+      // A script checks out, with the token in its own step alone; the check step is the job's last. Without `policy:`
+      // the clone is shallow; with it the policy tests have the history.
       expect(check.steps[0].name).toBe("Check out the change");
       expect(check.steps[0].env).toEqual({ TG_TOKEN: "${{ github.token }}" });
       expect(check.steps[0].run).toContain("--depth=1");
@@ -116,7 +109,7 @@ describe("the check job", () => {
       expect(keeper.needs).toBe("check");
       expect(keeper.steps[0].run).toContain("${{ toJSON(needs.check.outputs.report_0) }}");
       const keep = keeper.steps.find((s: { name?: string }) => s.name === "Keep the check report");
-      expect(keep.uses).toMatch(/upload-artifact@v3$/);
+      expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
       expect(keep.with).toMatchObject({ name: "terragucci-check", path: "terragucci-check/" });
       expect(JSON.stringify(keeper)).not.toMatch(/checkout|TG_TOKEN/);
     }
@@ -320,14 +313,19 @@ describe("the comment trigger", () => {
     expect(decide).toContain('>>"$GITHUB_OUTPUT"');
     const job = body(render("github")).jobs.replan;
     const names = job.steps.map((s: any) => s.id ?? s.uses ?? s.name);
-    expect(names.indexOf("decide")).toBeLessThan(names.lastIndexOf("actions/checkout@v4"));
+    expect(names.indexOf("decide")).toBeLessThan(names.indexOf("Check out the pull request's head"));
     expect(job.steps.find((s: any) => s.id === "decide").env).toEqual({ TG_TOKEN: "${{ github.token }}" });
     const plan = job.steps.find((s: any) => typeof s.run === "string" && s.run.includes("terragucci stage tf-plan"));
     expect(plan.env.TG_TOKEN).toBeUndefined();
     expect(plan.run).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
     expect(plan.run.split("\n")[0]).toBe(dropForgeTokens("bash", true));
     expect(JSON.stringify(job.env ?? {})).not.toContain("TG_TOKEN");
-    for (const s of job.steps.filter((s: any) => s.uses === "actions/checkout@v4")) expect(s.with["persist-credentials"]).toBe(false);
+    // The checkouts are a script with the token in their own steps alone, and the plan step is the job's last.
+    const checkouts = job.steps.filter((s: any) => s.name?.startsWith("Check out"));
+    expect(checkouts).toHaveLength(2);
+    for (const s of checkouts) expect(s.env.TG_TOKEN).toBe("${{ github.token }}");
+    expect(job.steps.at(-1)).toBe(plan);
+    expect(JSON.stringify(job.steps)).not.toContain("actions/checkout");
   });
 
   it("a re-plan of a root the change does not reach is answered by the replan-note job, which leaves the note and status", () => {
@@ -1516,18 +1514,18 @@ describe("the plan stage", () => {
     expect(driftScript("tofu", layers, "github", undefined, { reports })).toContain("--bucket-url 'https://reports.example'");
   });
 
-  it.each(FORGES)("%s: the plan job keeps the report with the job", (forge) => {
+  it.each(FORGES)("%s: the run keeps the plan report as its artifact", (forge) => {
     const doc = body(render(forge));
     if (forge === "gitlab") {
       expect(doc.plan.artifacts).toEqual({ name: "terragucci-report", when: "always", paths: ["terragucci-report/"], reports: { terraform: "terragucci-report/gitlab-terraform.json" } });
       expect(doc.plan.script.join("\n")).toContain('--report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html"');
     } else {
-      // On Forgejo the plan job hands the report on, and the plan-note job keeps it.
-      const keep = forge === "forgejo" ? doc.jobs["plan-note"].steps.find((s: { name?: string }) => s.name === "Keep the plan report") : doc.jobs.plan.steps.at(-1);
+      // The plan job hands the report on, and the plan-note job keeps it.
+      const keep = doc.jobs["plan-note"].steps.find((s: { name?: string }) => s.name === "Keep the plan report");
       expect(keep.if).toBe("always()");
       expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
       expect(keep.with).toMatchObject({ name: "terragucci-report", path: "terragucci-report/" });
-      if (forge === "forgejo") expect(JSON.stringify(doc.jobs.plan.steps)).not.toContain("upload-artifact");
+      expect(JSON.stringify(doc.jobs.plan.steps)).not.toContain("upload-artifact");
     }
   });
 
@@ -2779,13 +2777,13 @@ describe("no forge token where the change's code runs", () => {
     const plan = body(render(forge, OIDC)).jobs.plan;
     expect(plan.env.TG_TOKEN).toBeUndefined();
     const steps = plan.steps as { name?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }[];
-    const checkout = steps.findIndex((s) => String(s.uses).endsWith("actions/checkout@v4") || s.name === "Check out the change");
-    // Only the step before the checkout holds the token; on Forgejo the checkout script too, for its fetches.
+    const checkout = steps.findIndex((s) => s.name === "Check out the change");
+    // Only the step before the checkout holds the token, and the checkout script, for its fetches.
     expect(steps.findIndex((s) => s.env?.TG_TOKEN)).toBe(0);
-    expect(steps.filter((s) => s.env?.TG_TOKEN)).toHaveLength(forge === "forgejo" ? 2 : 1);
+    expect(steps.filter((s) => s.env?.TG_TOKEN)).toHaveLength(2);
     expect(checkout).toBe(1);
-    if (forge === "github") expect(steps[checkout].with!["persist-credentials"]).toBe(false);
-    else expect(steps[checkout].env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    expect(steps[checkout].env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    expect(JSON.stringify(steps)).not.toContain("actions/checkout");
     const run = steps.find((s) => s.run?.includes("terragucci stage tf-plan"))!.run!;
     expect(run.split("\n")[0]).toBe(dropForgeTokens());
     expect(run).not.toContain("tg note");
