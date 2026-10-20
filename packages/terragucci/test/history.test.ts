@@ -214,7 +214,16 @@ describe("the history in the bucket and beside the estate page", () => {
     expect(objects.has("acme-reports:reports/history.json")).toBe(false);
   });
 
-  it("escapes what the history holds", () => {
+  it("links no report for a row whose report was deleted", () => {
+    const rows = changeRows(applyOf(1, null, "x"), "p");
+    const live = buildHistory([{ project: RUN.project, changes: rows, base: "https://r/" }], undefined, NOW);
+    expect(live.resources[0].applies[0].report).toBe("https://r/p/report.html");
+    const gone = buildHistory([{ project: RUN.project, changes: rows.map((c) => ({ ...c, deleted: true })), base: "https://r/" }], undefined, NOW);
+    expect(gone.resources[0].applies[0].report).toBeUndefined();
+    expect(renderHistoryHtml(gone)).not.toContain("https://r/p/report.html");
+  });
+
+    it("escapes what the history holds", () => {
     const rows = changeRows(applyOf(1, null, "x"), "p").map((c) => ({ ...c, address: 'a["</script><b>"]' }));
     const html = renderHistoryHtml(buildHistory([{ project: RUN.project, changes: rows }], undefined, NOW));
     expect(html).not.toContain("</script><b>");

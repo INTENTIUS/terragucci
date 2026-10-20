@@ -86,7 +86,7 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
 | `what` | the gate: `wave-<k>`, a migration's name, or for an override, a lock's release or an unrecorded write the root |
 | `digest` | the plan digest: the wave's set digest, or the digest an override binds; `null` when a root failed to plan |
 | `result` | the outcome; see the next table |
-| `evidence` | `source` (`ledger`, `report` or `state`); for the ledger `branch`, `path` and `commit`; for a report `bucket`, `key` and `job_url`; for a state its `location` and `version_id`; `url`, the commit's page or the run's `report.html`, when it is known |
+| `evidence` | `source` (`ledger`, `report` or `state`); for the ledger `branch`, `path` and `commit`; for a report `bucket`, `key` and `job_url`; for a state its `location` and `version_id`; `url`, the commit's page or the run's `report.html`, when it is known; `deleted: true` on a report entry whose report was deleted, which has no `url` and which the page lists without a link |
 | `detail` | what else the source says, by kind |
 
 ## Kinds and results

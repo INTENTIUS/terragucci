@@ -29,6 +29,7 @@ import {
   readLedgerCommits,
   recount,
   REPORTS_KEEP_MIN,
+  REPORTS_TRAIL_SECONDS,
   runCommit,
 } from "../scripts/demo-reports-lib";
 
@@ -203,6 +204,58 @@ describe("the documents, without the runs that go", () => {
     const summary = { schema: "terragucci.audit-summary/v1", generated: OLD, record: "audit.jsonl", entries: 4, added: 1, kinds: { apply: 3, approval: 1 }, projects: [] };
     expect(recount(JSON.stringify(summary), got?.entries as AuditEntry[])).toMatchObject({ entries: 3, added: 1, kinds: { apply: 2, approval: 1 } });
     expect(recount("{}", [])).toBeNull();
+  });
+});
+
+describe("the runs of the last day, whose reports go", () => {
+  // Runs 1 and 3 go; run 1 finished before `since`, run 3 at it.
+  const kept = new Set([sha(2)]);
+  const since = Date.parse(finished(3));
+
+  it("keeps a day of audit.jsonl's report entries, marked deleted and without a url, and drops the older ones", () => {
+    const entry = (n: number) =>
+      JSON.stringify({ schema: "terragucci.audit/v1", id: `sha256:${n}`, kind: "apply", project: P, at: finished(n), who: null, what: "wave-1", digest: null, result: "applied", evidence: { source: "report", bucket: "demo-reports", key: `${DIR}${runPath(n, "tf-apply-wave-1")}/report.json`, url: `https://r/${n}/report.html` } });
+    const text = [entry(1), entry(2), entry(3)].join("\n") + "\n";
+    const got = pruneAudit(text, new Map([[P, kept]]), undefined, since);
+    expect(got).toMatchObject({ dropped: 1, marked: 1 });
+    expect(got?.entries.map((e) => e.id)).toEqual(["sha256:2", "sha256:3"]);
+    expect(got?.entries[0].evidence).toMatchObject({ url: "https://r/2/report.html" });
+    expect(got?.entries[0].evidence.deleted).toBeUndefined();
+    const marked = got?.entries[1] as AuditEntry;
+    expect(marked.evidence).toMatchObject({ source: "report", key: `${DIR}${runPath(3, "tf-apply-wave-1")}/report.json`, deleted: true });
+    expect(marked.evidence.url).toBeUndefined();
+    expect(JSON.parse(got!.text.split("\n")[1])).toEqual(marked);
+    // Without `since`, the run goes as before; the next prune finds the marked entry and rewrites nothing.
+    expect(pruneAudit(text, new Map([[P, kept]]))?.entries.map((e) => e.id)).toEqual(["sha256:2"]);
+    expect(pruneAudit(got!.text, new Map([[P, kept]]), undefined, since)).toBeNull();
+  });
+
+  it("keeps a ledger entry of the last day that chant/lifecycle no longer holds", () => {
+    const ledger = (id: string, when: string) =>
+      JSON.stringify({ schema: "terragucci.audit/v1", id, kind: "approval", project: P, at: when, who: "reviewer", what: "wave-1", digest: null, result: "approved", evidence: { source: "ledger", branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl", commit: "lost" } });
+    const text = [ledger("sha256:old", finished(1)), ledger("sha256:day", finished(3))].join("\n") + "\n";
+    const held = { commits: new Map([["admin/demo", new Set<string>()]]), oldest: new Map([[P, Date.parse(finished(10))]]) };
+    expect(pruneAudit(text, new Map([[P, kept]]), held, since)?.entries.map((e) => e.id)).toEqual(["sha256:day"]);
+  });
+
+  it("keeps a day of changes.json rows marked deleted, and of the history's applies without their report link", () => {
+    const change = (n: number) => ({ path: runPath(n, "tf-apply-wave-1"), address: `a${n}`, finished: finished(n) });
+    const changes = pruneChanges(JSON.stringify({ schema: "terragucci.changes/v1", changes: [change(3), change(2), change(1)] }), kept, since);
+    expect(changes).toMatchObject({ dropped: 1, marked: 1 });
+    expect(changes?.doc.changes.map((c) => `${c.address} ${c.deleted ?? false}`)).toEqual(["a3 true", "a2 false"]);
+    expect(pruneChanges(JSON.stringify(changes!.doc), kept, since)).toBeNull();
+
+    const apply = (n: number) => ({ actions: ["update"], attributes: [], commit: sha(n), finished: finished(n), plan_digest: null, set_digest: null, report: `${P}/${runPath(n, "tf-apply-wave-1")}/report.html` });
+    const history = { schema: "terragucci.history/v1", generated: OLD, audit: true, resources: [{ id: "h-1", project: P, root: "app", address: "a", type: "t", applies: [apply(1), apply(2), apply(3)] }] };
+    const got = pruneHistory(JSON.stringify(history), new Map([[P, kept]]), since);
+    expect(got).toMatchObject({ dropped: 1, marked: 1 });
+    const applies = (got?.history as History).resources[0].applies;
+    expect(applies.map((a) => `${a.commit.slice(-1)} ${a.report !== undefined}`)).toEqual(["2 true", "3 false"]);
+    expect(pruneHistory(JSON.stringify(got!.history), new Map([[P, kept]]), since)).toBeNull();
+  });
+
+  it("covers a day", () => {
+    expect(REPORTS_TRAIL_SECONDS).toBe(86_400);
   });
 });
 

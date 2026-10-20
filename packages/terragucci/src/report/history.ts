@@ -91,6 +91,8 @@ export interface ChangeRow extends ReportAppliedChange {
   /** The wave's set digest, the digest its approval binds. */
   set_digest: string | null;
   pull_request?: string;
+  /** True when the wave's report was deleted after the row was written: its history apply has no report link. */
+  deleted?: boolean;
 }
 
 export interface Changes {
@@ -223,7 +225,7 @@ export function buildHistory(projects: ProjectChanges[], audit: AuditEntry[] | u
         set_digest: c.set_digest,
         ...(audit ? { approver: entry ? entry.who : undefined } : {}),
         ...(entry && typeof entry.detail?.approval === "string" ? { approval: entry.detail.approval } : {}),
-        ...(base !== undefined ? { report: `${base}${c.path}/report.html` } : {}),
+        ...(base !== undefined && !c.deleted ? { report: `${base}${c.path}/report.html` } : {}),
         ...(c.pull_request ? { pull_request: c.pull_request } : {}),
       });
     }
