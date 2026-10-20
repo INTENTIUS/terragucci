@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config";
 import { describeQuery, query, QUERY_TABLES, runQuery, type QueryOptions } from "../src/query";
 import type { ObjectStore } from "../src/report/object-store";
-import { changesKey, edgesKey, inventoryKey } from "../src/report/store";
+import { changesKey, edgesKey, inventoryKey, versionsKey } from "../src/report/store";
 
 const PREFIX = "tg";
 const PROJECT = "github.com/acme/infra";
@@ -70,6 +70,9 @@ function bucket(withAudit = true): { store: ReturnType<typeof memoryStore>; obje
     inventoryKey(PROJECT, PREFIX),
     JSON.stringify({ schema: "terragucci.inventory/v1", roots: [{ root: "app", commit: c, finished: daysAgo(1), wave: 1, path: path(c), resources: [{ address: "aws_sqs_queue.jobs", type: "aws_sqs_queue", provider: "registry.opentofu.org/hashicorp/aws" }, { address: "terraform_data.app", type: "terraform_data", provider: "terraform.io/builtin/terraform" }] }] }),
   );
+  const versions = (aws: string, vpc: string) => ({ binary: { name: "tofu", version: "1.10.6", pin: ".opentofu-version" }, providers: [{ provider: "registry.opentofu.org/hashicorp/aws", version: aws }], modules: [{ call: "module.vpc", source: "registry.opentofu.org/acme/vpc/aws", version: vpc }] });
+  objects.set(versionsKey(PROJECT, PREFIX), JSON.stringify({ schema: "terragucci.versions/v1", roots: [{ root: "app", commit: c, finished: daysAgo(1), wave: 1, path: path(c), ...versions("5.80.0", "1.2.0") }] }));
+  objects.set(versionsKey(OTHER, PREFIX), JSON.stringify({ schema: "terragucci.versions/v1", roots: [{ root: "shop", commit: d, finished: daysAgo(2), wave: 1, path: path(d), ...versions("5.70.0", "1.2.0") }] }));
   objects.set(edgesKey(PROJECT, PREFIX), JSON.stringify({ schema: "terragucci.state-edges/v1", roots: [{ root: "app", reads: [{ root: "network", via: "terraform_remote_state" }], reads_seen: daysAgo(1) }, { root: "network", reads: [] }] }));
   if (withAudit) {
     objects.set(
@@ -107,10 +110,20 @@ describe("terragucci query", () => {
     expect(r.tables.audit).toBe(0);
   });
 
-  it("loads the inventory, changes, audit trail and state edges", async () => {
+  it("loads the inventory, versions, changes, audit trail and state edges", async () => {
     const { store } = bucket();
     const r = await query({}, "SELECT 1", opts(store));
-    expect(r.tables).toEqual({ inventory: 2, changes: 5, history: 5, audit: 4, edges: 1 });
+    expect(r.tables).toEqual({ inventory: 2, versions: 6, changes: 5, history: 5, audit: 4, edges: 1 });
+    // Which roots run which version of a provider across the estate.
+    const aws = await query({}, "SELECT version, count(*) AS roots FROM versions WHERE kind = 'provider' AND name LIKE '%/hashicorp/aws' GROUP BY version ORDER BY version", opts(store));
+    expect(aws.rows).toEqual([{ version: "5.70.0", roots: 1 }, { version: "5.80.0", roots: 1 }]);
+    const vpc = await query({}, "SELECT project, root, call, version, wave FROM versions WHERE kind = 'module' ORDER BY project", opts(store));
+    expect(vpc.rows).toEqual([
+      { project: PROJECT, root: "app", call: "module.vpc", version: "1.2.0", wave: 1 },
+      { project: OTHER, root: "shop", call: "module.vpc", version: "1.2.0", wave: 1 },
+    ]);
+    const bin = await query({}, "SELECT DISTINCT name, version FROM versions WHERE kind = 'binary'", opts(store));
+    expect(bin.rows).toEqual([{ name: "tofu", version: "1.10.6" }]);
     const inv = await query({}, "SELECT type, provider, wave FROM inventory ORDER BY address", opts(store));
     expect(inv.rows[0]).toEqual({ type: "aws_sqs_queue", provider: "registry.opentofu.org/hashicorp/aws", wave: 1 });
     const edges = await query({}, "SELECT root, reads, via FROM edges", opts(store));
@@ -130,7 +143,7 @@ describe("terragucci query", () => {
   });
 
   it("runs only a statement that reads", async () => {
-    const data = { inventory: [], changes: [], history: [], audit: [], edges: [] };
+    const data = { inventory: [], versions: [], changes: [], history: [], audit: [], edges: [] };
     for (const sql of ["DELETE FROM history", "  -- a comment\n INSERT INTO audit (id) VALUES ('x')", "ATTACH DATABASE '/tmp/x.db' AS x", "PRAGMA query_only = OFF", "DROP TABLE history"]) {
       await expect(runQuery(sql, data)).rejects.toThrow(/runs one SELECT/);
     }
@@ -139,7 +152,7 @@ describe("terragucci query", () => {
   });
 
   it("says why a statement does not run", async () => {
-    const data = { inventory: [], changes: [], history: [], audit: [], edges: [] };
+    const data = { inventory: [], versions: [], changes: [], history: [], audit: [], edges: [] };
     await expect(runQuery("SELECT * FROM states", data)).rejects.toThrow(new ConfigError("the query does not run: no such table: states"));
     await expect(runQuery("SELECT commit FROM history", data)).rejects.toThrow('quote the column: "commit"');
     await expect(runQuery('SELECT "commit" FROM history', data)).resolves.toMatchObject({ columns: ["commit"] });
@@ -151,7 +164,7 @@ describe("terragucci query", () => {
   });
 
   it("prints an aligned table and a count", async () => {
-    expect(describeQuery({ columns: ["address", "approver"], rows: [{ address: "aws_sqs_queue.jobs", approver: "bo" }, { address: "aws_sqs_queue.x", approver: null }], tables: { inventory: 0, changes: 0, history: 0, audit: 0, edges: 0 } })).toBe(
+    expect(describeQuery({ columns: ["address", "approver"], rows: [{ address: "aws_sqs_queue.jobs", approver: "bo" }, { address: "aws_sqs_queue.x", approver: null }], tables: { inventory: 0, versions: 0, changes: 0, history: 0, audit: 0, edges: 0 } })).toBe(
       ["address             approver", "------------------  --------", "aws_sqs_queue.jobs  bo", "aws_sqs_queue.x", "(2 rows)"].join("\n"),
     );
   });

@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 41;
+export const REPORT_MINOR = 42;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -241,6 +241,20 @@ export interface ReportRootBinary {
   terragrunt?: { version: string; pin?: string };
 }
 
+/** The provider and module versions a root ran (minor 42). */
+export interface ReportRootVersions {
+  /** Each provider in its `.terraform.lock.hcl`, by its full address, with the version the file locks. */
+  providers: { provider: string; version: string }[];
+  /**
+   * Each remote module call `init` recorded in `.terraform/modules/modules.json`,
+   * nested calls included: the call's address (`module.vpc`, `module.vpc.module.nat`),
+   * its source without a `?` query, and its version: the registry version
+   * `init` resolved, else the `ref`, `tag` or `version` the source's query
+   * names. Absent version: the source names none. Local calls are left out.
+   */
+  modules: { call: string; source: string; version?: string }[];
+}
+
 /** A root's binary as the note, the report and the log name it: `tofu 1.10.6 (.opentofu-version)`. */
 export function binaryText(b: ReportRootBinary): string {
   const tg = b.terragrunt?.pin ? ` under Terragrunt ${b.terragrunt.version} (${b.terragrunt.pin})` : "";
@@ -296,6 +310,13 @@ export interface ReportRoot {
    * and where the state is, never its contents.
    */
   state?: ReportStateVersion;
+  /**
+   * On a `tf-apply` wave, a root that applied or had nothing to apply: the
+   * provider versions its lock file holds and the module versions `init`
+   * fetched, at the applied commit (minor 42). Absent on a root that did not
+   * apply.
+   */
+  versions?: ReportRootVersions;
   /** The steps that ran for it (minor 17), in the order they ran. Absent when none did. */
   steps?: ReportStep[];
   /** The roots whose state it reads through `terraform_remote_state`, and which outputs it planned on (minor 21). Absent when it reads none. */

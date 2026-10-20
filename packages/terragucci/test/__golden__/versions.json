@@ -1,0 +1,73 @@
+{
+  "schema": "terragucci.versions/v1",
+  "roots": [
+    {
+      "root": "envs/dev/orders",
+      "commit": "4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d",
+      "finished": "2026-10-07T09:00:00.000Z",
+      "wave": 1,
+      "path": "2026/10/4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d/tf-apply-wave-1",
+      "binary": {
+        "name": "tofu",
+        "version": "1.10.6",
+        "pin": ".opentofu-version"
+      },
+      "providers": [
+        {
+          "provider": "registry.opentofu.org/hashicorp/aws",
+          "version": "5.80.0"
+        },
+        {
+          "provider": "registry.opentofu.org/hashicorp/random",
+          "version": "3.6.3"
+        }
+      ],
+      "modules": [
+        {
+          "call": "module.vpc",
+          "source": "registry.opentofu.org/acme/vpc/aws",
+          "version": "1.2.0"
+        },
+        {
+          "call": "module.vpc.module.nat",
+          "source": "git::https://example.com/acme/nat.git",
+          "version": "v0.4.0"
+        }
+      ]
+    },
+    {
+      "root": "envs/dev/platform",
+      "commit": "4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d",
+      "finished": "2026-10-07T09:00:00.000Z",
+      "wave": 1,
+      "path": "2026/10/4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d/tf-apply-wave-1",
+      "binary": {
+        "name": "tofu",
+        "version": "1.10.6",
+        "pin": ".opentofu-version"
+      },
+      "providers": [
+        {
+          "provider": "registry.opentofu.org/hashicorp/aws",
+          "version": "5.70.0"
+        },
+        {
+          "provider": "registry.opentofu.org/hashicorp/random",
+          "version": "3.6.3"
+        }
+      ],
+      "modules": [
+        {
+          "call": "module.vpc",
+          "source": "registry.opentofu.org/acme/vpc/aws",
+          "version": "1.2.0"
+        },
+        {
+          "call": "module.vpc.module.nat",
+          "source": "git::https://example.com/acme/nat.git",
+          "version": "v0.4.0"
+        }
+      ]
+    }
+  ]
+}

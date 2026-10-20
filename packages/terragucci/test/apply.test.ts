@@ -295,6 +295,20 @@ describe("a wave behind its gate", () => {
     expect(lines).toContain("a: state state/a.tfstate, versions off (a local backend keeps only the latest state)");
   });
 
+  it("the wave's report names the provider and module versions an applied root ran, from its lock file and modules.json", async () => {
+    const { work, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    mkdirSync(join(work, "a", ".terraform", "modules"), { recursive: true });
+    writeFileSync(join(work, "a", ".terraform.lock.hcl"), 'provider "registry.opentofu.org/hashicorp/aws" {\n  version     = "5.80.0"\n  constraints = "~> 5.0"\n}\n');
+    writeFileSync(join(work, "a", ".terraform", "modules", "modules.json"), JSON.stringify({ Modules: [{ Key: "", Source: "", Dir: "." }, { Key: "vpc", Source: "registry.opentofu.org/acme/vpc/aws", Version: "1.2.0", Dir: ".terraform/modules/vpc" }] }));
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {} })).toBe(0);
+    const root = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).roots[0];
+    expect(root.versions).toEqual({
+      providers: [{ provider: "registry.opentofu.org/hashicorp/aws", version: "5.80.0" }],
+      modules: [{ call: "module.vpc", source: "registry.opentofu.org/acme/vpc/aws", version: "1.2.0" }],
+    });
+  });
+
   it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
     const { work, origin, bin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});

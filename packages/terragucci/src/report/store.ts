@@ -7,7 +7,9 @@
  * index at the project's path and at the top of the prefix gains a row.
  * Links inside a report are relative, so they resolve in both layouts.
  * A `tf-apply` wave's upload also replaces the resource lists of the roots it
- * applied in `<prefix>/<project>/inventory.json` (inventory.ts), and adds
+ * applied in `<prefix>/<project>/inventory.json` (inventory.ts) and their
+ * binary, provider and module versions in `<prefix>/<project>/versions.json`
+ * (versions.ts), and adds
  * what it did to each resource to `<prefix>/<project>/changes.json`
  * (history.ts), and adds each state version an applied root's backend holds
  * to `<prefix>/<project>/states.json` (state-versions.ts).
@@ -27,6 +29,7 @@ import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
 import { addToChanges, changeRows } from "./history";
 import { addToInventory, inventoryRoots } from "./inventory";
+import { addToVersions, versionsRoots } from "./versions";
 import { addToStateVersions, stateRecords } from "./state-versions";
 import { addToStateEdges, hasEdgeFacts } from "./state-edges";
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
@@ -337,6 +340,8 @@ export interface Uploaded {
   indexes: string[];
   /** The project's inventory, when a tf-apply wave's roots applied. */
   inventory?: string;
+  /** The project's versions report, when a tf-apply wave's roots applied. */
+  versions?: string;
   /** The project's resource changes, when an applied root changed something. */
   changes?: string;
   /** The project's state versions, when an applied root recorded its state. */
@@ -385,6 +390,9 @@ export async function updateIndex(s3: ObjectStore, key: string, entry: IndexEntr
 
 /** The key of a project's inventory: `<prefix>/<project>/inventory.json`. */
 export const inventoryKey = (project: string, prefix = ""): string => joinKey(prefix, project, "inventory.json");
+
+/** The key of a project's versions report: `<prefix>/<project>/versions.json`. */
+export const versionsKey = (project: string, prefix = ""): string => joinKey(prefix, project, "versions.json");
 
 /** The key of a project's state versions: `<prefix>/<project>/states.json`. */
 export const statesKey = (project: string, prefix = ""): string => joinKey(prefix, project, "states.json");
@@ -445,6 +453,13 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
     inventory = inventoryKey(project, top);
     await updateJson(s3, inventory, (body) => addToInventory(body, applied), "its resources", wait);
   }
+  // And their binary, provider and module versions replace theirs in the project's versions report.
+  const pinned = versionsRoots(report, run);
+  let versions: string | undefined;
+  if (pinned.length > 0) {
+    versions = versionsKey(project, top);
+    await updateJson(s3, versions, (body) => addToVersions(body, pinned), "its versions", wait);
+  }
   const rows = changeRows(report, run);
   let changes: string | undefined;
   if (rows.length > 0) {
@@ -463,7 +478,7 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
     edges = edgesKey(project, top);
     await updateJson(s3, edges, (body) => addToStateEdges(body, report, run), "its cross-state edges", wait);
   }
-  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}) };
+  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}), ...(versions ? { versions } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}) };
 }
 
 /**

@@ -33,7 +33,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
-| `query` | runs one SQL statement over the inventory, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
+| `query` | runs one SQL statement over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
 | `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request and reads its plan |
 | `guard` | writes wrappers for the binaries and a Claude Code hook that refuse an apply in a root of the pipeline, for a coding agent's shell |
 | `view` | runs [behold](https://intentius.io/behold/using/terragucci/) on your machine over the repo and its reports bucket: the roots as one graph, each resource marked with what the newest runs found; `--export` writes a static copy |
@@ -187,7 +187,7 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 
 | | `estate` |
 |---|---|
-| Reads | each project's `index.json`, `inventory.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there, for the approvers and each root's [unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes) |
+| Reads | each project's `index.json`, `inventory.json`, `versions.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there, for the approvers and each root's [unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes) |
 | Writes | `estate.html`, `estate.json` and `dora.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
 | Projects | in a control repo, its `projects:`, each read from its own `reports`, the page written to `defaults.reports`; in a repo of its own, the ones the top `index.json` lists |
 | Also | links the audit trail when `audit.json` is beside the page; computes the [delivery metrics](/terragucci/reference/delivery-metrics/) and sends them as gauges when an OTLP endpoint is set |
@@ -524,7 +524,7 @@ Loads the bucket's files into an in-memory SQLite database, runs the statement a
 
 | | `query` |
 |---|---|
-| Reads | each project's `inventory.json`, `changes.json` and `edges.json`, and `audit.jsonl` |
+| Reads | each project's `inventory.json`, `versions.json`, `changes.json` and `edges.json`, and `audit.jsonl` |
 | Projects | as `estate`: a control repo's `projects:`, with `audit.jsonl` from `defaults.reports`; otherwise the ones the top `index.json` lists |
 | Refuses | a statement that does not begin with `SELECT`, `WITH` or `VALUES`, and any write |
 

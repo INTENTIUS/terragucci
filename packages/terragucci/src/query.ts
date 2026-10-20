@@ -2,7 +2,7 @@
  * `terragucci query "<sql>"`: SQL over what runs already wrote to the reports
  * bucket, in this process, with no server and no database to run.
  *
- * It reads each project's `inventory.json`, `changes.json` and `edges.json`
+ * It reads each project's `inventory.json`, `versions.json`, `changes.json` and `edges.json`
  * and the audit trail (`audit.jsonl`) the way `terragucci estate` does
  * (./estate.ts), loads them into tables of an in-memory SQLite database, runs
  * the one statement it is given, and prints the rows. The history table is
@@ -21,13 +21,14 @@
  * runs.
  */
 import { ConfigError, type TerragucciConfig } from "./config";
-import { auditEntries, clients, readChangesOf, readEdgesOf, readInventoryOf, sources } from "./estate";
+import { auditEntries, clients, readChangesOf, readEdgesOf, readInventoryOf, readVersionsOf, sources } from "./estate";
 import type { AuditEntry } from "./report/audit";
 import { buildHistory, type ChangeRow } from "./report/history";
 import type { Inventory } from "./report/inventory";
 import type { ObjectStore, StoreFetch } from "./report/object-store";
 import type { StateEdges } from "./report/state-edges";
-import { changesKey, edgesKey, inventoryKey } from "./report/store";
+import { changesKey, edgesKey, inventoryKey, versionsKey } from "./report/store";
+import type { Versions } from "./report/versions";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
 type Value = string | number | null;
@@ -37,6 +38,8 @@ type Row = Record<string, Value>;
 export const QUERY_TABLES = {
   /** Each resource a root holds, as its newest applied wave left it. */
   inventory: ["project", "root", "address", "type", "provider", "commit", "wave", "finished"],
+  /** Each binary, provider and module version a root runs, as its newest applied wave left them: `kind` is binary, provider or module, `name` the binary, the provider's address or the module's source, `call` the module call. */
+  versions: ["project", "root", "kind", "name", "call", "version", "commit", "wave", "finished"],
   /** One row per resource each applied wave changed. */
   changes: ["project", "root", "address", "type", "actions", "attributes", "previous_address", "commit", "wave", "finished", "plan_digest", "set_digest", "pull_request"],
   /** The changes, each with its wave's approver and approval entry from the audit trail. */
@@ -72,11 +75,17 @@ export interface QueryResult {
 const joined = (a: readonly string[]): string => a.join("+");
 
 /** The tables' rows from what the bucket holds. */
-export function queryData(projects: { project: string; inventory?: Inventory; changes?: ChangeRow[]; edges?: StateEdges }[], audit: AuditEntry[] | undefined, now: Date): QueryData {
-  const data: QueryData = { inventory: [], changes: [], history: [], audit: [], edges: [] };
+export function queryData(projects: { project: string; inventory?: Inventory; versions?: Versions; changes?: ChangeRow[]; edges?: StateEdges }[], audit: AuditEntry[] | undefined, now: Date): QueryData {
+  const data: QueryData = { inventory: [], versions: [], changes: [], history: [], audit: [], edges: [] };
   for (const p of projects) {
     for (const r of p.inventory?.roots ?? []) {
       for (const res of r.resources) data.inventory.push({ project: p.project, root: r.root, address: res.address, type: res.type, provider: res.provider, commit: r.commit, wave: r.wave ?? null, finished: r.finished });
+    }
+    for (const r of p.versions?.roots ?? []) {
+      const at = { commit: r.commit, wave: r.wave ?? null, finished: r.finished };
+      if (r.binary) data.versions.push({ project: p.project, root: r.root, kind: "binary", name: r.binary.name, call: null, version: r.binary.version ?? null, ...at });
+      for (const v of r.providers) data.versions.push({ project: p.project, root: r.root, kind: "provider", name: v.provider, call: null, version: v.version, ...at });
+      for (const m of r.modules) data.versions.push({ project: p.project, root: r.root, kind: "module", name: m.source, call: m.call, version: m.version ?? null, ...at });
     }
     for (const c of p.changes ?? []) {
       data.changes.push({ project: p.project, root: c.root, address: c.address, type: c.type, actions: joined(c.actions), attributes: JSON.stringify(c.attributes), previous_address: c.previous_address ?? null, commit: c.commit, wave: c.wave ?? null, finished: c.finished, plan_digest: c.plan_digest, set_digest: c.set_digest, pull_request: c.pull_request ?? null });
@@ -104,13 +113,13 @@ function historyRows(history: ReturnType<typeof buildHistory>): Row[] {
 export async function readQueryData(config: TerragucciConfig, options: QueryOptions = {}): Promise<QueryData> {
   const client = options.store ?? clients(options.env ?? process.env, options.fetch);
   const { projects, out } = await sources(config, options, client, "query");
-  const read: { project: string; inventory?: Inventory; changes?: ChangeRow[]; edges?: StateEdges }[] = [];
+  const read: { project: string; inventory?: Inventory; versions?: Versions; changes?: ChangeRow[]; edges?: StateEdges }[] = [];
   for (const p of projects) {
     if (!p.reports?.bucket) continue;
     const store = client(p.reports);
     const prefix = p.reports.prefix ?? "";
-    const [inventory, changes, edges] = await Promise.all([readInventoryOf(store, inventoryKey(p.project, prefix)), readChangesOf(store, changesKey(p.project, prefix)), readEdgesOf(store, edgesKey(p.project, prefix))]);
-    read.push({ project: p.project, ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(edges ? { edges } : {}) });
+    const [inventory, versions, changes, edges] = await Promise.all([readInventoryOf(store, inventoryKey(p.project, prefix)), readVersionsOf(store, versionsKey(p.project, prefix)), readChangesOf(store, changesKey(p.project, prefix)), readEdgesOf(store, edgesKey(p.project, prefix))]);
+    read.push({ project: p.project, ...(inventory ? { inventory } : {}), ...(versions ? { versions } : {}), ...(changes ? { changes } : {}), ...(edges ? { edges } : {}) });
   }
   const audit = out?.bucket ? await auditEntries(client(out), out.prefix ?? "") : undefined;
   return queryData(read, audit, options.now ?? new Date());

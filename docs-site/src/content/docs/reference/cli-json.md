@@ -250,4 +250,4 @@ The issuer is `https://token.actions.githubusercontent.com` on github.com and `h
 |---|---|
 | `columns` | the column names, in order |
 | `rows` | one object per row, by column name; SQL `NULL` is `null` |
-| `tables` | the row count of each table: `inventory`, `changes`, `history`, `audit` and `edges` |
+| `tables` | the row count of each table: `inventory`, `versions`, `changes`, `history`, `audit` and `edges` |

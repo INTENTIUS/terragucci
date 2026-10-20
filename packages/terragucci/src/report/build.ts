@@ -24,6 +24,7 @@ import {
   type ReportPolicy,
   type ReportRootPolicy,
   type ReportStateVersion,
+  type ReportRootVersions,
   type ReportRecordVersions,
   type ReportAppliedChange,
   type ReportRootBinary,
@@ -65,6 +66,8 @@ export interface RootInput {
   applied?: boolean;
   /** The state version the root's backend holds after the apply. */
   state?: ReportStateVersion;
+  /** The provider and module versions it ran at the applied commit, read after its init. */
+  versions?: ReportRootVersions;
   /** A choudoufu root's record versions after the apply, by the address the apply changed. */
   recordVersions?: ReadonlyMap<string, ReportRecordVersions>;
   /** The steps that ran for it. */
@@ -381,6 +384,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.policy ? { policy: src.policy } : {}),
       ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: withRecordVersions(planAppliedChanges(src.plan), src.recordVersions) } : {}),
       ...(src.applied && src.state ? { state: src.state } : {}),
+      ...(src.applied && m.status === "planned" && src.versions ? { versions: src.versions } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
       ...(src.unknownReads?.length ? { unknown_reads: src.unknownReads } : {}),

@@ -9,7 +9,9 @@
  * wave has waited, and the roots that failed. Below that, the newest runs
  * across every project, and the resources each root holds, from the
  * project's inventory.json (./inventory.ts): addresses, types and providers,
- * never a value. Last, the state versions each root's applies left, from the
+ * never a value. Then the versions every root runs, from each project's
+ * versions.json (./versions.ts): per module, provider and binary, the
+ * versions in use and the roots on each. Last, the state versions each root's applies left, from the
  * project's states.json (./state-versions.ts): version ids, never contents.
  *
  * The dependency graph comes from the run view of each project's newest
@@ -26,6 +28,7 @@
  */
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
+import { estateVersions, type EstateVersionRow, type EstateVersions, type Versions } from "./versions";
 import type { ReportResource } from "./schema";
 import type { ChangeRow } from "./history";
 import type { AuditEntry } from "./audit";
@@ -55,6 +58,8 @@ export interface ProjectIndex {
   base?: string;
   /** Its inventory.json, when an apply wrote one. */
   inventory?: Inventory;
+  /** Its versions.json, when an apply wrote one. */
+  versions?: Versions;
   /** Its changes.json rows, when an apply wrote them: the history page's, never the estate page's. */
   changes?: ChangeRow[];
   /** Its states.json, when an apply recorded a root's state. */
@@ -209,6 +214,8 @@ export interface Estate {
   dora?: { file: string; generated: string; deployments: number };
   /** The dependency graph, from the projects' run views. Absent when no project has one. */
   graph?: EstateGraph;
+  /** Per module, provider and binary, the versions the roots run and the roots on each, from the projects' versions.json. Absent until an apply records them. */
+  versions?: EstateVersions;
 }
 
 const at = (iso: string): number => Date.parse(iso) || 0;
@@ -448,6 +455,11 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
       const graph = estateGraph(indexes);
       return graph ? { graph } : {};
     })(),
+    ...((): { versions?: EstateVersions } => {
+      // An index that could not be read leaves its project out, as it leaves its inventory out.
+      const versions = estateVersions(indexes.filter((p) => p.reports && p.error === undefined));
+      return versions ? { versions } : {};
+    })(),
   };
 }
 
@@ -539,6 +551,33 @@ function resourcesSection(estate: Estate, now: Date): string {
 <div class="scroll"><table class="resources"><thead><tr><th>Address</th><th>Type</th><th>Provider</th></tr></thead>${roots.join("\n")}</table></div>`;
   });
   return `<p><input type="search" id="resources-filter" placeholder="Filter by root, address, type or provider" aria-label="Filter resources" hidden></p>\n${blocks.join("\n")}`;
+}
+
+/**
+ * The versions section: per module source, provider and binary, each version
+ * in use, newest first, and the roots on it. A rollout that finished leaves
+ * one version of what it moved.
+ */
+function versionsSection(estate: Estate): string {
+  const v = estate.versions;
+  if (!v) return `<p class="none">No apply has recorded its versions yet.</p>`;
+  const where = (r: EstateVersionRow["roots"][number]): string => `${esc(r.project)}: <code>${esc(r.root)}</code>${r.call ? ` <small>${esc(r.call)}</small>` : ""}`;
+  const table = (title: string, kind: string, none: string, groups: { name: string; versions: EstateVersionRow[] }[]): string => {
+    if (groups.length === 0) return "";
+    const bodies = groups.map((g) => {
+      const live = g.versions.length;
+      const head = `<tr class="head"><th colspan="2"><code>${esc(g.name)}</code>: ${live === 1 ? "1 version" : `<span class="warn">${live} versions</span>`} live</th></tr>`;
+      const rows = g.versions.map((x) => `<tr data-version="${esc(x.version ?? "")}"><td>${x.version !== undefined ? `<code>${esc(x.version)}</code>` : `<span class="none">${none}</span>`}</td><td>${x.roots.map(where).join("<br>")}</td></tr>`);
+      return `<tbody class="ver" data-${kind}="${esc(g.name)}" data-live="${live}">${head}${rows.join("")}</tbody>`;
+    });
+    return `<h3>${title}</h3>
+<div class="scroll"><table id="versions-${title.toLowerCase()}"><thead><tr><th>Version</th><th>Roots</th></tr></thead>${bodies.join("\n")}</table></div>`;
+  };
+  return [
+    table("Modules", "module", "no version in its source", v.modules.map((m) => ({ name: m.source, versions: m.versions }))),
+    table("Providers", "provider", "not locked", v.providers.map((p) => ({ name: p.provider, versions: p.versions }))),
+    table("Binaries", "binary", "version not reported", v.binaries.map((b) => ({ name: b.binary, versions: b.versions }))),
+  ].filter(Boolean).join("\n");
 }
 
 /**
@@ -674,7 +713,7 @@ ${TACO_ICON}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
 .applying .pbar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--line);margin:4px 0}.p-done{background:#2e7d32}.p-in-flight{background:var(--warn)}.p-waiting{background:var(--line)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th,tbody.edges th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th,tbody.edges th,tbody.ver th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
 ${estate.audit ? `<p>Audit trail: <a href="${esc(estate.audit.page)}" id="audit-trail">${estate.audit.entries} ${estate.audit.entries === 1 ? "entry" : "entries"}</a>, built <time datetime="${esc(estate.audit.generated)}">${esc(estate.audit.generated)}</time>.</p>` : ""}
@@ -693,6 +732,8 @@ ${graphSection(estate)}
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
 ${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}<h2 id="resources">Resources</h2>
 ${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id="resource-history">${estate.history.resources} ${estate.history.resources === 1 ? "resource" : "resources"}</a>, each apply that changed one with its approver.</p>\n` : ""}${resourcesSection(estate, now)}
+<h2 id="versions">Versions</h2>
+${versionsSection(estate)}
 <h2 id="state-versions">State versions</h2>
 ${statesSection(estate, now)}
 <h2 id="state-edges">Cross-state edges</h2>
