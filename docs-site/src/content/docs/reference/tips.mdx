@@ -4,7 +4,7 @@ description: The advice terragucci gives on how a repo is set up, and the rule b
 ---
 
 
-Each tip shows in the [plan report](/terragucci/reference/report/#tips) and its pull request note, and in the `terragucci reconcile` dry run; `tips: false` turns them off.
+Each tip shows in the [plan report](/terragucci/reference/report/#tips) and its pull request note, and in the `terragucci reconcile` dry run; `tips: false` turns them off. [`terragucci-choudoufu-secrets`](#terragucci-choudoufu-secrets) for [choudoufu](/terragucci/concepts/glossary/#choudoufu) roots also shows in the `tf-check` log and check report.
 
 They only advise. None fails a run or changes a gate, and no digest includes one.
 
@@ -83,6 +83,43 @@ Two or more groups apply as the project's own `oidc.apply_role` (or `oidc.gcp.ap
 ### terragucci-gitlab-audience
 
 This tip is for GitLab with AWS. Two or more groups' apply jobs carry the same AWS token audience, and one of them is an environment with no `oidc.audience`. AWS cannot read GitLab's environment claims, so a different audience per environment is what lets each apply role accept its own jobs alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Set each environment's `oidc.audience`.
+
+## Secrets tips
+
+### terragucci-secret-in-state
+
+A plan tip. The plan leaves a sensitive value in state that the root's binary and provider could keep out of it. Every identity that can read the state can read the value. The tip names the address, the attribute and what keeps it out:
+
+| In state | Kept out by |
+|---|---|
+| a resource's sensitive attribute, such as `aws_db_instance.password` | the resource's write-only argument of the same name with `_wo`, such as `password_wo`, with its `_wo_version` when it has one. A write-only argument reaches the provider and is never stored |
+| a data source's sensitive attribute, such as `data.aws_secretsmanager_secret_version.secret_string` | the ephemeral resource of the same type, whose value can go to a write-only argument or a provider's configuration. An ephemeral resource is read on each run and never stored |
+
+The provider schema comes from `providers schema -json` in the root once it has planned, so the provider version the root locks decides it. The schema is read only when the plan leaves a sensitive value in state and the binary has write-only arguments or ephemeral resources:
+
+| Binary | Write-only arguments | Ephemeral resources |
+|---|---|---|
+| OpenTofu | 1.11 and later | 1.11 and later |
+| Terraform | 1.11 and later | 1.10 and later |
+| choudoufu | every release | every release |
+
+A root on an older binary, or on a provider version without the counterpart, gets no tip. Its report still counts the sensitive values in its state, under `roots[].secrets`: how many there are, and how many could stay out. The [estate page](/terragucci/guides/see-every-project/#secrets-in-state) lists those counts per root, so you can see which states need the tightest read access. Only names and counts are read, never a value. A Terragrunt unit and a root of a [composed run](/terragucci/concepts/waves-and-approvals/#a-composed-run) are not read. Nor is a choudoufu root whose `live` block sets `secrets = "refuse"`, since choudoufu then keeps sensitive arguments out of its records.
+
+### terragucci-choudoufu-secrets
+
+A tip in `tf-check` and in the plan report. A choudoufu root's `live` block does not set `secrets = "refuse"` in its `strict` block. The default, `store`, keeps a sensitive argument, and the value of a type that generates a secret such as `random_password`, in the estate's record store, as a state file would. The `tf-check` report shows the block to add:
+
+```hcl
+terraform {
+  live {
+    strict {
+      secrets = "refuse"
+    }
+  }
+}
+```
+
+With it, choudoufu leaves sensitive arguments out of the records and refuses resource types that generate secrets. A root whose `live` block sets nothing gets no tip when the job's environment sets `CHOUDOUFU_STRICT_PIN=1`, which makes choudoufu refuse for it. terragucci never writes the setting; the `live` block is your code. The [estate page](/terragucci/guides/see-every-project/#secrets-in-state) shows each estate's setting beside its record store.
 
 ## Plan tips
 

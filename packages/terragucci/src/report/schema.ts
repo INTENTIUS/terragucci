@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 41;
+export const REPORT_MINOR = 42;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -333,6 +333,26 @@ export interface ReportRoot {
    * part's, which groups and compares it and binds nothing on its own.
    */
   composed?: { wave: number; module: string };
+  /**
+   * The sensitive attributes its state holds once its plan applies (minor
+   * 42): `in_state` counts each resource instance's top-level attribute that
+   * is marked sensitive and set, and `movable` those a write-only argument or
+   * an ephemeral resource could keep out, on the root's binary and provider
+   * versions. Names and counts only, never a value. Absent when its plan
+   * leaves none.
+   */
+  secrets?: { in_state: number; movable: number };
+  /** A choudoufu root under a `live` block (minor 42): its estate, its record store, and its `strict { secrets }` setting (`store` when unset). */
+  live?: ReportLive;
+}
+
+/** A choudoufu root's estate, as its `live` block names it (minor 42). */
+export interface ReportLive {
+  estate: string;
+  /** `s3://<bucket>/<prefix>`, `local`, or the store's type. */
+  record_store: string;
+  /** `store` or `refuse`, as written; `store` when the block does not set it. */
+  secrets: string;
 }
 
 /** What a root's `plan -cone=<base>` planned (minor 34). */

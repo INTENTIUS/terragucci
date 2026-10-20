@@ -60,7 +60,25 @@
         "pull_request": { "type": "string" },
         "pull_request_url": { "type": "string" },
         "job_url": { "type": "string" },
-        "trace_url": { "type": "string" }
+        "trace_url": { "type": "string" },
+        "secrets": {
+          "type": "array",
+          "description": "A tf-plan or tf-drift row: each root whose plan leaves sensitive attributes in state, how many, and how many a write-only argument or an ephemeral resource could keep out. Absent when none.",
+          "items": {
+            "type": "object",
+            "required": ["root", "in_state", "movable"],
+            "properties": { "root": { "type": "string" }, "in_state": { "type": "integer" }, "movable": { "type": "integer" } }
+          }
+        },
+        "estates": {
+          "type": "array",
+          "description": "A tf-plan or tf-drift row: each choudoufu root's estate, record store and strict { secrets } setting. Absent when none.",
+          "items": {
+            "type": "object",
+            "required": ["root", "estate", "record_store", "secrets"],
+            "properties": { "root": { "type": "string" }, "estate": { "type": "string" }, "record_store": { "type": "string" }, "secrets": { "type": "string" } }
+          }
+        }
       }
     }
   }

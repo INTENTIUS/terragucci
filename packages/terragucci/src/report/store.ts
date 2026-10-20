@@ -186,7 +186,10 @@ export interface IndexEntry {
   /** The CI job that produced the report. */
   job_url?: string;
   /** The run's trace, when a viewer is configured. */
-  trace_url?: string;
+  trace_url?: string;  /** A tf-plan or tf-drift row: each root whose plan leaves sensitive attributes in state, how many, and how many could stay out (`roots[].secrets`). Absent when none. */
+  secrets?: { root: string; in_state: number; movable: number }[];
+  /** A tf-plan or tf-drift row: each choudoufu root's estate, record store and `strict { secrets }` setting (`roots[].live`). Absent when none. */
+  estates?: { root: string; estate: string; record_store: string; secrets: string }[];
 }
 
 export interface ReportIndex {
@@ -208,6 +211,9 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   const approval = wave && wave.approval !== "not-requested" ? wave.approval : undefined;
   const overridden = report.roots.filter((r) => r.policy?.override).length;
   const digests = report.run.stage === "tf-plan" ? [...new Set(report.waves.flatMap((w) => [w.set_digest, w.review_digest]).filter((d): d is string => !!d))] : [];
+  const planning = report.run.stage === "tf-plan" || report.run.stage === "tf-drift";
+  const secrets = planning ? report.roots.flatMap((r) => (r.secrets ? [{ root: r.path, ...r.secrets }] : [])) : [];
+  const estates = planning ? report.roots.flatMap((r) => (r.live ? [{ root: r.path, ...r.live }] : [])) : [];
   const drifted = report.run.stage === "tf-drift" ? report.roots.filter((r) => r.status === "planned" && r.changes.length > 0).map((r) => r.path).sort() : [];
   return {
     project: report.run.project,
@@ -236,6 +242,8 @@ export function indexEntry(report: Report, path: string): IndexEntry {
     ...(report.run.pull_request_url ? { pull_request_url: report.run.pull_request_url } : {}),
     ...(report.run.job_url ? { job_url: report.run.job_url } : {}),
     ...(report.run.trace_url ? { trace_url: report.run.trace_url } : {}),
+    ...(secrets.length > 0 ? { secrets } : {}),
+    ...(estates.length > 0 ? { estates } : {}),
   };
 }
 

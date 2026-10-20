@@ -8,6 +8,8 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { findConfig, loadConfig, resolveRepo } from "./config";
+import { CHOUDOUFU_SECRETS_TIP, TIPS_URL } from "./tips";
+import { choudoufuSecretsMessage, REFUSE_BLOCK } from "./tips/secrets";
 import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, shownUrl, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
 
 /** Where the check report is written, relative to the checkout. */
@@ -33,7 +35,8 @@ export interface CheckOptions {
   exec?: PolicyExec;
   env?: NodeJS.ProcessEnv;
   /** `modules.require: attested`: the root's pins checked before validate; each line names a refused pin. */
-  pins?: (dir: string) => Promise<{ refused: string[]; verified: string[] }>;
+  pins?: (dir: string) => Promise<{ refused: string[]; verified: string[] }>;  /** `tips` in the config: false leaves the tips out. Default true. */
+  tips?: boolean;
 }
 
 /** `file:line:col-line:col` for a diagnostic, with the root's directory in front of the file. */
@@ -221,6 +224,12 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
         report.push("- live-check passed");
       }
     }
+  }
+  // A tip never fails the check (./tips/secrets.ts).
+  const secrets = options.tips === false ? undefined : choudoufuSecretsMessage(repo, dir, options.env ?? process.env);
+  if (secrets) {
+    log.push(`tip (${CHOUDOUFU_SECRETS_TIP}): ${dir}: ${secrets}`);
+    report.push(`- tip ([\`${CHOUDOUFU_SECRETS_TIP}\`](${TIPS_URL}#${CHOUDOUFU_SECRETS_TIP})): ${secrets}`, "", "  ```hcl", ...REFUSE_BLOCK.split("\n").map((l) => `  ${l}`), "  ```");
   }
   report.push("");
   return { ok, log, report };
