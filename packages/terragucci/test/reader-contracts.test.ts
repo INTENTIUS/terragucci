@@ -89,7 +89,11 @@ function runs(): Report[] {
     // A share of a wave split across jobs (waves.jobs).
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 4, share: 2, finished: at(10, 40) }, roots: smallFixture().slice(1, 2), waves: [{ number: 4, roots: ["envs/dev/search"], approval: "approved" }] }),
     // b reads a's state: a plan of the default branch finds the edge, and a pull request plans b after a applied.
-    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-drift", finished: at(9) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
+    // Its drift check counts b's secret in state and records the choudoufu estate of c.
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-drift", finished: at(9) }, roots: [
+      { path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }], secrets: [{ address: "aws_db_instance.main", mode: "managed", type: "aws_db_instance", provider: "registry.opentofu.org/hashicorp/aws", attribute: "password", instances: 1, counterpart: { kind: "write-only", argument: "password_wo" } }] },
+      { path: "c", planner: "tofu", plan: plan([]), live: { estate: "c", record_store: "s3://records/tofu-records/c/", secrets: "store" } },
+    ] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, finished: at(9, 10) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
     buildReport({ run: { ...RUN, project: NET, ...LINKS, finished: at(9, 30) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
   ];
