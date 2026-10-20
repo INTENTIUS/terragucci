@@ -157,7 +157,7 @@ const missing = (what, expected, found, page) => {
 // The demo kiosk's scenario cards (<tree>/scenarios/<id>/about.json in each tool's tree, behold reads them
 // through demo.json's about): three fields of prose shown on a TV, linted at the top strictness with no finding
 // allowed. The intro, with its delivery line, is example-demo's alone.
-for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios", "example-demo-fanout/scenarios", "example-demo-choudoufu-fanout/scenarios"]) {
+for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios", "example-demo-chant-fanout/scenarios", "example-demo-fanout/scenarios", "example-demo-choudoufu-fanout/scenarios"]) {
   // intro.json: the problem the whole demo is about, written into demo.json as intro on every step.
   if (dir === "example-demo/scenarios") {
     const file = join(dir, "intro.json");

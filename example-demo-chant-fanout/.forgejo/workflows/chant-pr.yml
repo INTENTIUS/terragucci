@@ -1,0 +1,80 @@
+name: chant-pr-demo
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  CHANT_ENV: demo
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: docker
+    container: terragucci-demo-chant-fanout:local
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Build the templates
+        run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build
+      - name: Lint the project
+        run: chant lint
+      - name: Plan the members this pull request reaches
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_RUN_EVENTS_DIR: .chant/pr/run-events
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env demo --gate pr-apply --output .chant/pr --forge forgejo --events-json --report-url "s3://demo-reports/demo/chant/${{ github.repository }}"
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: chant-pr-plan
+          path: .chant/pr
+          if-no-files-found: ignore
+  apply:
+    if: github.event_name == 'push'
+    runs-on: docker
+    container: terragucci-demo-chant-fanout:local
+    concurrency:
+      group: chant-apply-demo
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Build the templates
+        run: ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build
+      - name: Lint the project
+        run: chant lint
+      - name: Restore the record of an earlier attempt at this commit
+        uses: https://code.forgejo.org/actions/cache/restore@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-demo-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: chant-apply-demo-${{ github.sha }}-
+      - name: Apply the plan a reviewer approved
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_RUN_EVENTS_DIR: .chant/pr/run-events
+        run: chant components pr-apply --base "$BASE_SHA" --env demo --gate pr-apply --output .chant/pr --forge forgejo --events-json --report-url "s3://demo-reports/demo/chant/${{ github.repository }}" --require-review --resume .chant/pr-resume/pr-apply.json
+      - name: Keep the record for a re-run
+        if: always()
+        uses: https://code.forgejo.org/actions/cache/save@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-demo-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Keep the apply report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: chant-pr-apply
+          path: .chant/pr
+          if-no-files-found: ignore
