@@ -83,7 +83,7 @@
 2026-10-15T04:09:44.2100242Z Nothing in wave 2 or after it ran. Read the plans, then approve: chant approve tf-apply wave-2 --plan jcs1-sha256:0accc105ba060b9974468c91def518039d935ad6629f8a15869f6e89ef748b61 (with --resume, the approval also starts this job again)
 2026-10-15T04:09:44.2249661Z wave 2: report in terragucci-report/, slowest root app (0.19s)
 2026-10-15T04:09:44.2792750Z wave 2: report copied to demo/forgejo:3000/terragucci-admin/demo/2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-2
-2026-10-15T04:09:44.2900688Z wave 2: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:09:44.2900688Z wave 2: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:09:44.4889837Z ⚙️ [runner]: exitcode '3': failure
 2026-10-15T04:09:44.6046167Z With the provided path, there will be 7 files uploaded
 2026-10-15T04:09:44.6046469Z Starting artifact upload
