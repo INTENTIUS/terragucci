@@ -1,14 +1,26 @@
 ---
-title: Changes in 0.4.38
-description: "terragucci 0.4.38, released 2026-10-19."
+title: Changes in 0.4.39
+description: "terragucci 0.4.39, released 2026-10-20."
 ---
 
-Release `0.4.38` is on npm as `@intentius/terragucci@0.4.38`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.38) lists every change.
+Release `0.4.39` is on npm as `@intentius/terragucci@0.4.39`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.39) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.38 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.39 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.39
+
+- On GitHub, the `check`, `plan` and `replan` jobs end with the step that runs the change's code, as they do on Forgejo, so no later step in those jobs holds an API token (#1193). The report goes to the next job as job outputs, which GitHub caps at 1 MB: a plan report over about 330 KB gzipped reaches the note as the note, the status, `report.json` and `drift-schedule.json`, and a reports bucket still keeps all of it.
+- Each applied root's binary, provider and module versions go to `versions.json` in the reports bucket and to `roots[].versions` in the report. The estate page lists every version in use with the roots on it, and `terragucci query` has a `versions` table (#1190).
+- A change the root's last 3 applied waves each made again folds into its own plan note section, Changes on every run, with the usual fixes beside it (#1189).
+- `tf-publish` refuses a module whose version bump is smaller than its interface change, and names each change and the bump it needs (#1191).
+- Two tips: `terragucci-secret-in-state`, for a sensitive value in state that a write-only argument or an ephemeral resource could keep out, and `terragucci-choudoufu-secrets`, for a choudoufu root whose records can hold secret values (#1192).
+- A later wave's report lists the roots it applied. It used to list none when an earlier wave ran a migration (#1187).
+- A migration's `progress.moved` counts each resource once, also when it follows two resources (#1186).
+- `terragucci apply` names the run view it writes as a bucket object, `s3://<bucket>/<key>` (or `gs://`, `az://`), not a path that reads like a link (#1184).
+- The repository's history before 0.4.38 is now one commit, which keeps a clone to a few megabytes. Every earlier version stays on npm and its pull requests still show each change, but the git tags and GitHub releases before 0.4.39 are gone: pin terragucci by its npm version, not by a git tag.
 
 ## In 0.4.38
 

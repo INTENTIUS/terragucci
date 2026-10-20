@@ -55,6 +55,8 @@ The client is `packages/terragucci/src/decide/` (`decide`, `isConfident`, `summa
 
 ## Releasing
 
+The history on main starts at one commit, "terragucci, from 0.4.38", made on 2026-10-20 when the earlier history was squashed to keep clones small. The changes before it are in pull requests #1 to #1194, and release tags and GitHub releases start at v0.4.39.
+
 A release puts the CI images on GHCR and then `@intentius/terragucci` on npm. The npm package must name the images by digest, and the digests exist only after the images are pushed, so the order is fixed:
 
 1. Run `just version-bump <version>` and merge the result to main. It sets the version in `packages/terragucci/package.json` and `package-lock.json`, renders the five images' Dockerfiles with the new version label, and regenerates both examples' pipelines, their patches and the cli-json goldens. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`), and `image-digests.json` has no digest for the new tags yet, so `init` writes them bare and the bump commit passes CI as it is. `just release-preflight <version>` then names the newest green commit at that version (`chant ci last-green`, never a hand-picked commit) and prints the `git tag v<version> <sha> && git push origin v<version>` to run.
