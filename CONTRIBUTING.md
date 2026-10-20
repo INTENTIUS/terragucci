@@ -139,6 +139,8 @@ Every clone downloads every version of a plain git blob, so pictures, videos and
 
 `scripts/lfs-check.sh` enforces it. `just check` runs it on the index (`just lfs-check`), and `diff-guard` runs it on the pull request's head. It fails when a tracked file of one of those types is not an LFS pointer, or when a commit on the branch adds a blob over 512 KB, of any type. It names the file and the fix: `git lfs track "*.<ext>"` for a type `.gitattributes` lacks, then `git add --renormalize <file>`. A large blob stays in the branch's history until the commit that added it is rewritten, so amend or rebase it out before pushing.
 
+Media too large even for LFS, such as the launch video, stays out of the repository. It lives as an asset of the `site-media` GitHub release, and `scripts/fetch-media.sh` downloads it into `docs-site/public/media/`, checked against a pinned sha256, whenever `just site`, `just site-dev` or `just docs` runs. To add or replace one, upload it with `gh release upload site-media <file> --clobber` and add or update its line in that script.
+
 ### Green commits
 
 `chant.workspace.json` declares `ci.green` for main over the `ci.yml` jobs, `static` and the three `test` jobs by name, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.

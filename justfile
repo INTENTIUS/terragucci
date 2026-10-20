@@ -182,6 +182,7 @@ ci-check:
 site:
     #!/usr/bin/env bash
     set -euo pipefail
+    scripts/fetch-media.sh
     cd docs-site
     if [ -f package-lock.json ]; then npm ci; else npm install; fi
     npm run build
@@ -189,10 +190,12 @@ site:
 
 [doc("Serve the docs site locally with hot reload.")]
 site-dev:
+    scripts/fetch-media.sh
     cd docs-site && npm install && npm run dev
 
 [doc("Serve the docs with hot reload and open them in the browser, at /terragucci/ as on Pages.")]
 docs:
+    scripts/fetch-media.sh
     cd docs-site && npm install && npm run dev -- --open
 
 [doc("Build the docs the way CI does, then serve that build and open it: the site as Pages serves it.")]

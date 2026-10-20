@@ -35,7 +35,8 @@ export const build = new Job({
   timeoutMinutes: 10,
   permissions: { contents: "read", pages: "read" },
   steps: [
-    // The site's pictures and videos are in Git LFS; the build needs the files, not their pointers.
+    // The site's pictures are in Git LFS; the build needs the files, not their pointers.
+    // `just site` downloads the launch video from the site-media release (scripts/fetch-media.sh).
     new Step({ name: "Checkout", uses: CHECKOUT, with: { lfs: true } }),
     // `just site` installs docs-site's own packages, so its lockfile keys the cache.
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", cacheFilePath: "docs-site/package-lock.json", defaults: { step: { uses: SETUP_NODE } } }).step,

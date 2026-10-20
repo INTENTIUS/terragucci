@@ -10,3 +10,6 @@ packages/terragucci/dist/
 # Tarballs and the commit from `just chant-local`.
 .chant-local/
 __pycache__/
+
+# Large site media, downloaded by scripts/fetch-media.sh from the site-media release.
+docs-site/public/media/launch-party.mp4
