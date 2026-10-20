@@ -482,7 +482,8 @@ async function progressOf(repo: string, plan: PlannedMigration, exec: BinaryExec
   const e = plan.estate!;
   const first = plan.places.get(e.kind === "retag" ? (e.retags[0]?.to ?? "") : (e.adopts[0]?.root ?? ""));
   if (!first || !(await takesProgressJson(exec, options.binary, first.dir, first.env))) return undefined;
-  const total = e.kind === "retag" ? e.retags.reduce((n, t) => n + 1 + t.followers.length, 0) : (plan.record.stamps?.length ?? 0);
+  // A follower of two leaders is one resource: each address counts once.
+  const total = e.kind === "retag" ? new Set(e.retags.flatMap((t) => [t.address, ...t.followers])).size : (plan.record.stamps?.length ?? 0);
   const p: MigrationProgress = new MigrationProgress({
     repo,
     name: plan.record.name,

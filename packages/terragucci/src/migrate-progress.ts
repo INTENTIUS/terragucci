@@ -82,11 +82,17 @@ export function parseProgressLine(text: string): ProgressLine | undefined {
   };
 }
 
-/** The counts after `lines`, of `total` resources the migration writes. */
-export function countsOf(lines: readonly Pick<ProgressLine, "outcome">[], total: number): MigrationCounts {
+/**
+ * The counts after `lines`, of `total` resources the migration writes. Each
+ * address counts once, as its last line says: a follower of two leaders gets
+ * a line from each leader's write.
+ */
+export function countsOf(lines: readonly Pick<ProgressLine, "address" | "outcome">[], total: number): MigrationCounts {
+  const last = new Map<string, ProgressOutcome>();
+  for (const l of lines) last.set(l.address, l.outcome);
   const c: MigrationCounts = { moved: 0, stamped: 0, refused: 0, skipped: 0, left: 0 };
-  for (const l of lines) c[l.outcome]++;
-  c.left = Math.max(0, total - lines.length);
+  for (const o of last.values()) c[o]++;
+  c.left = Math.max(0, total - last.size);
   return c;
 }
 
@@ -132,7 +138,7 @@ export interface MigrationProgressOptions extends ProgressSinks {
   repo: string;
   name: string;
   change: "retag" | "adopt";
-  /** How many resources the migration writes: each retag and its followers, or each instance of the adopted states. */
+  /** How many resources the migration writes: each retag and its followers, each address once, or each instance of the adopted states. */
   total: number;
   /** The record as it is now, rewritten with the counts at each copy. */
   record: () => unknown;
@@ -147,6 +153,8 @@ export interface MigrationProgressOptions extends ProgressSinks {
  */
 export class MigrationProgress {
   readonly lines: ProgressLine[] = [];
+  /** Each address's outcome, as its last line said. */
+  private readonly outcomes = new Map<string, ProgressOutcome>();
   /** Each line of the progress file, as written. */
   private readonly rows: string[] = [];
   counts: MigrationCounts;
@@ -176,9 +184,17 @@ export class MigrationProgress {
     return true;
   };
 
+  /**
+   * One line from the binary. A follower's line for an address that already
+   * has a line with the same outcome is dropped: a follower of two leaders
+   * moves with both writes and has no write of its own, so the second line
+   * says nothing new. It goes to neither the file nor the span.
+   */
   line(line: ProgressLine): void {
+    if (line.follows && this.outcomes.get(line.address) === line.outcome) return;
+    this.outcomes.set(line.address, line.outcome);
     this.lines.push(line);
-    this.counts = countsOf(this.lines, Math.max(this.o.total, this.lines.length));
+    this.counts = countsOf(this.lines, Math.max(this.o.total, this.outcomes.size));
     const row: ProgressRecord = { ...line, migration: this.o.name, counts: { ...this.counts } };
     const text = JSON.stringify(row);
     this.rows.push(text);

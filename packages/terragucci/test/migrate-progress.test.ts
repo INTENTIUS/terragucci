@@ -15,7 +15,9 @@ const git = (cwd: string, ...args: string[]): string => execFileSync("git", args
 // $STUB_REPO/live.json is the account: each resource's id and its markers. A
 // root's want.json lists what its code declares; its live block names its
 // estate. `live-mv` rewrites the markers and, with -progress-json, writes one
-// line to stderr per resource. Its `-help` names the flag only with
+// line to stderr per resource. A live.json entry with `follows` is a follower:
+// it moves with each leader it names, and each leader's write prints a line
+// for it, as choudoufu's does. Its `-help` names the flag only with
 // STUB_PROGRESS=1, as an older choudoufu's does not. Every call is appended
 // to $STUB_REPO/calls.txt.
 const STUB = String.raw`#!/usr/bin/env node
@@ -53,13 +55,18 @@ if (cmd === "live-mv") {
   const address = argv[argv.length - 1];
   const all = live();
   const r = all.find((l) => l.estate === from && l.address === address);
-  const doc = (written) => JSON.stringify({ resource: r ? { live_id: r.id } : undefined, from: { estate: from, address }, to: { estate, address }, followers: [], dry_run: argv.includes("-dry-run"), written, refusal: r ? null : { code: "not_found", summary: "nothing carries " + address } });
+  const followers = all.filter((l) => (l.follows || []).includes(address));
+  const doc = (written) => JSON.stringify({ resource: r ? { live_id: r.id } : undefined, from: { estate: from, address }, to: { estate, address }, followers: followers.map((f) => ({ address: f.address })), dry_run: argv.includes("-dry-run"), written, refusal: r ? null : { code: "not_found", summary: "nothing carries " + address } });
   if (!r) { out(doc(false)); process.exit(1); }
   if (argv.includes("-dry-run")) { out(doc(false)); process.exit(0); }
   r.estate = estate;
+  for (const f of followers) f.estate = estate;
   fs.writeFileSync(liveFile, JSON.stringify(all));
   process.stderr.write("Moving " + address + "...\n");
-  if (argv.includes("-progress-json")) process.stderr.write(JSON.stringify({ at: new Date().toISOString(), estate_from: from, estate_to: estate, address, live_id: r.id, outcome: "moved" }) + "\n");
+  if (argv.includes("-progress-json")) {
+    process.stderr.write(JSON.stringify({ at: new Date().toISOString(), estate_from: from, estate_to: estate, address, live_id: r.id, outcome: "moved" }) + "\n");
+    for (const f of followers) process.stderr.write(JSON.stringify({ at: new Date().toISOString(), estate_from: from, estate_to: estate, address: f.address, live_id: "", outcome: "moved", follows: address }) + "\n");
+  }
   out(doc(true));
   process.exit(0);
 }
@@ -71,29 +78,54 @@ const liveBlock = (estate: string): string => `terraform {\n  live {\n    estate
 
 /** Estate mono owns the queues jobs, dlq and keep; the code now declares jobs and dlq in team. A stub choudoufu sits in bin/. */
 function carveRepo() {
+  return stubRepo(
+    {
+      "mono/main.tf": `${liveBlock("mono")}resource "aws_sqs_queue" "keep" {}\n`,
+      "mono/want.json": JSON.stringify(["aws_sqs_queue.keep"]),
+      "team/main.tf": `${liveBlock("team")}resource "aws_sqs_queue" "jobs" {}\nresource "aws_sqs_queue" "dlq" {}\n`,
+      "team/want.json": JSON.stringify(["aws_sqs_queue.dlq", "aws_sqs_queue.jobs"]),
+      "migrations/carve.yml": "moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs, aws_sqs_queue.dlq]\n",
+    },
+    [
+      { id: "q-jobs", estate: "mono", address: "aws_sqs_queue.jobs" },
+      { id: "q-dlq", estate: "mono", address: "aws_sqs_queue.dlq" },
+      { id: "q-keep", estate: "mono", address: "aws_sqs_queue.keep" },
+    ],
+  );
+}
+
+/** Estate mono owns a role and a policy, and the attachment that follows both; the code now declares all three in team. */
+function attachRepo() {
+  const attach = "aws_iam_role_policy_attachment.attach";
+  return stubRepo(
+    {
+      "mono/main.tf": `${liveBlock("mono")}`,
+      "mono/want.json": JSON.stringify([]),
+      "team/main.tf": `${liveBlock("team")}resource "aws_iam_role" "role" {}\nresource "aws_iam_policy" "policy" {}\nresource "aws_iam_role_policy_attachment" "attach" {}\n`,
+      "team/want.json": JSON.stringify(["aws_iam_policy.policy", "aws_iam_role.role", attach]),
+      "migrations/carve.yml": "moves:\n  - from: mono\n    to: team\n    addresses: [aws_iam_role.role, aws_iam_policy.policy]\n",
+    },
+    [
+      { id: "role", estate: "mono", address: "aws_iam_role.role" },
+      { id: "arn:policy", estate: "mono", address: "aws_iam_policy.policy" },
+      { id: "role/arn:policy", estate: "mono", address: attach, follows: ["aws_iam_role.role", "aws_iam_policy.policy"] },
+    ],
+  );
+}
+
+function stubRepo(files: Record<string, string>, live: { id: string; estate: string; address: string; follows?: string[] }[]) {
   const dir = tmp("tg-progress-");
   const origin = join(dir, "origin.git");
   git(dir, "init", "-q", "--bare", origin);
   const work = join(dir, "work");
   mkdirSync(work);
-  write(work, {
-    ".gitignore": "live.json\ncalls.txt\nterragucci-report/\n",
-    "mono/main.tf": `${liveBlock("mono")}resource "aws_sqs_queue" "keep" {}\n`,
-    "mono/want.json": JSON.stringify(["aws_sqs_queue.keep"]),
-    "team/main.tf": `${liveBlock("team")}resource "aws_sqs_queue" "jobs" {}\nresource "aws_sqs_queue" "dlq" {}\n`,
-    "team/want.json": JSON.stringify(["aws_sqs_queue.dlq", "aws_sqs_queue.jobs"]),
-    "migrations/carve.yml": "moves:\n  - from: mono\n    to: team\n    addresses: [aws_sqs_queue.jobs, aws_sqs_queue.dlq]\n",
-  });
+  write(work, { ".gitignore": "live.json\ncalls.txt\nterragucci-report/\n", ...files });
   git(work, "init", "-q", "-b", "main");
   git(work, "add", "-A");
   git(work, "commit", "-q", "-m", "base");
   git(work, "remote", "add", "origin", origin);
   git(work, "push", "-q", "origin", "main");
-  writeFileSync(join(work, "live.json"), JSON.stringify([
-    { id: "q-jobs", estate: "mono", address: "aws_sqs_queue.jobs" },
-    { id: "q-dlq", estate: "mono", address: "aws_sqs_queue.dlq" },
-    { id: "q-keep", estate: "mono", address: "aws_sqs_queue.keep" },
-  ]));
+  writeFileSync(join(work, "live.json"), JSON.stringify(live));
   const bin = join(dir, "bin");
   mkdirSync(bin);
   const binary = join(bin, "choudoufu");
@@ -177,6 +209,27 @@ describe("a moves migration's progress, against a stub choudoufu that prints -pr
     expect(readFileSync(join(work, "calls.txt"), "utf-8")).not.toContain("-progress-json -from-estate");
     expect(existsSync(join(work, "terragucci-report", progressPath("carve")))).toBe(false);
   });
+
+  it("writes a follower of two leaders once, and counts it once", async () => {
+    const { work, binary } = attachRepo();
+    const env = { PATH: process.env.PATH, STUB_REPO: work, STUB_PROGRESS: "1" };
+    const first = await runMigrations(work, { binary, env, now: T(1), log: () => {} });
+    expect(first.code).toBe(3);
+    approve(work, "carve", first.records[0]!.digest, T(2));
+    const events: string[] = [];
+    const second = await runMigrations(work, { binary, env, now: T(3), log: () => {}, progress: () => ({ event: (_, a) => void events.push(String(a["terragucci.migration.address"])) }) });
+    expect(second.code).toBe(0);
+    const attach = "aws_iam_role_policy_attachment.attach";
+    const lines = readLines(join(work, "terragucci-report", progressPath("carve")));
+    expect(lines.map((l) => [l.address, l.follows])).toEqual([
+      ["aws_iam_role.role", undefined],
+      [attach, "aws_iam_role.role"],
+      ["aws_iam_policy.policy", undefined],
+    ]);
+    expect(events).toEqual(["aws_iam_role.role", attach, "aws_iam_policy.policy"]);
+    expect(lines.map((l) => l.counts.left)).toEqual([2, 1, 0]);
+    expect(second.records[0]).toMatchObject({ status: "applied", progress: { moved: 3, stamped: 0, refused: 0, skipped: 0, left: 0 } });
+  });
 });
 
 describe("the progress lines", () => {
@@ -196,8 +249,10 @@ describe("the progress lines", () => {
   });
 
   it("counts each outcome and what is left, and says it in one line", () => {
-    const c = countsOf([{ outcome: "moved" }, { outcome: "refused" }, { outcome: "moved" }, { outcome: "skipped" }], 79);
+    const c = countsOf([{ address: "a", outcome: "moved" }, { address: "b", outcome: "refused" }, { address: "c", outcome: "moved" }, { address: "d", outcome: "skipped" }], 79);
     expect(c).toEqual({ moved: 2, stamped: 0, refused: 1, skipped: 1, left: 75 });
+    // An address counts once, as its last line says.
+    expect(countsOf([{ address: "a", outcome: "moved" }, { address: "a", outcome: "refused" }, { address: "a", outcome: "refused" }], 2)).toEqual({ moved: 0, stamped: 0, refused: 1, skipped: 0, left: 1 });
     expect(countsLine("carve", { ...c, moved: 36, left: 41 }, "retag")).toBe("carve: 36 of 79 moved, 1 refused, 1 skipped");
     expect(countsLine("adopt", { moved: 0, stamped: 3, refused: 0, skipped: 0, left: 1 }, "adopt")).toBe("adopt: 3 of 4 stamped");
   });
@@ -214,6 +269,22 @@ describe("the progress lines", () => {
     expect(ran.stdout).toBe('{"done":true}\n');
     expect(ran.out).not.toContain("x.y");
     expect(ran.out).toContain("starting");
+  });
+
+  it("drops a follower's second line when it says what the first did, and keeps one that says otherwise", async () => {
+    const repo = tmp("tg-progress-follow-");
+    const p = new MigrationProgress({ repo, name: "split", change: "retag", total: 3, record: () => ({ name: "split" }) });
+    const at = { at: T(1), estate_from: "mono", estate_to: "team" };
+    const attach = "aws_iam_role_policy_attachment.attach";
+    p.line({ ...at, address: "aws_iam_role.role", live_id: "role", outcome: "moved" });
+    p.line({ ...at, address: attach, live_id: "", outcome: "moved", follows: "aws_iam_role.role" });
+    p.line({ ...at, address: "aws_iam_policy.policy", live_id: "arn:policy", outcome: "moved" });
+    p.line({ ...at, address: attach, live_id: "", outcome: "moved", follows: "aws_iam_policy.policy" });
+    expect(p.progress).toEqual({ moved: 3, stamped: 0, refused: 0, skipped: 0, left: 0 });
+    expect(readLines(join(repo, "terragucci-report", progressPath("split"))).map((l) => l.address)).toEqual(["aws_iam_role.role", attach, "aws_iam_policy.policy"]);
+    p.line({ ...at, address: attach, live_id: "", outcome: "refused", reason: "r", follows: "aws_iam_policy.policy" });
+    expect(await p.stop()).toEqual({ moved: 2, stamped: 0, refused: 1, skipped: 0, left: 0 });
+    expect(p.lines).toHaveLength(4);
   });
 
   it("copies at most once per interval while lines arrive, and once more at the end", async () => {
