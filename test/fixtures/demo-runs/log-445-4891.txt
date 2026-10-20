@@ -94,7 +94,7 @@
 2026-10-15T04:10:13.7824541Z wave 1 of 3 applied
 2026-10-15T04:10:13.8080917Z wave 1: report in terragucci-report/, slowest root other (0.3s)
 2026-10-15T04:10:13.8741219Z wave 1: report copied to demo/forgejo:3000/terragucci-admin/demo/2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-1
-2026-10-15T04:10:13.8863995Z wave 1: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:10:13.8863995Z wave 1: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:10:14.2841651Z wave 2 of 3: planning app
 2026-10-15T04:10:14.2874698Z wave 2 of 3: app plans on the state network (wave 1) applied
 2026-10-15T04:10:14.5291435Z app: Plan: 0 to add, 1 to change, 0 to destroy.
@@ -109,13 +109,13 @@
 2026-10-15T04:10:14.8982236Z wave 2 of 3: approved by terragucci-admin for this digest
 2026-10-15T04:10:14.9634059Z wave 2 (wave-2): gate on-destructive (read at 255866bf1bc2), digest jcs1-sha256:0accc105ba060b9974468c91def518039d935ad6629f8a15869f6e89ef748b61: approved by terragucci-admin; held by after-plan hook held
 2026-10-15T04:10:15.3388290Z wave 2 (wave-2) applies under the approval by terragucci-admin at 2026-10-15T04:10:08.707Z, which is now spent
-2026-10-15T04:10:15.4437610Z wave 2: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:10:15.4437610Z wave 2: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:10:15.4938440Z applied app: Resources: 0 added, 1 changed, 0 destroyed
 2026-10-15T04:10:15.4990168Z app: state s3://demo-terraform-state/app.tfstate, versions off (bucket versioning is off for demo-terraform-state, so it keeps only the latest state)
 2026-10-15T04:10:15.4991649Z wave 2 of 3 applied
 2026-10-15T04:10:15.5185018Z wave 2: report in terragucci-report/, slowest root app (0.24s)
 2026-10-15T04:10:15.5918531Z wave 2: report copied to demo/forgejo:3000/terragucci-admin/demo/2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-2
-2026-10-15T04:10:15.5994615Z wave 2: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:10:15.5994615Z wave 2: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:10:15.9799370Z wave 3 of 3: planning edge
 2026-10-15T04:10:15.9831815Z wave 3 of 3: edge plans on the state app (wave 2) applied
 2026-10-15T04:10:16.2215647Z edge: Plan: 0 to add, 1 to change, 0 to destroy.
@@ -124,13 +124,13 @@
 2026-10-15T04:10:16.2794853Z wave 3 of 3: set digest jcs1-sha256:f584a4e83096fbaf4403579e5ea1abfecc03abbc20ec59c897c439531990ca21, 1 change, 0 destroys
 2026-10-15T04:10:16.3042583Z wave 3 of 3: edge reads no output of app that wave 2's plan of app in this push (2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-2) left unknown
 2026-10-15T04:10:16.3754224Z wave 3 (wave-3): gate on-destructive (read at 255866bf1bc2), digest jcs1-sha256:f584a4e83096fbaf4403579e5ea1abfecc03abbc20ec59c897c439531990ca21: not-required
-2026-10-15T04:10:16.4768931Z wave 3: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:10:16.4768931Z wave 3: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:10:16.5272234Z applied edge: Resources: 0 added, 1 changed, 0 destroyed
 2026-10-15T04:10:16.5322555Z edge: state s3://demo-terraform-state/edge.tfstate, versions off (bucket versioning is off for demo-terraform-state, so it keeps only the latest state)
 2026-10-15T04:10:16.5324164Z wave 3 of 3 applied
 2026-10-15T04:10:16.5552528Z wave 3: report in terragucci-report/, slowest root edge (0.24s)
 2026-10-15T04:10:16.6351717Z wave 3: report copied to demo/forgejo:3000/terragucci-admin/demo/2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-3
-2026-10-15T04:10:16.6417826Z wave 3: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:10:16.6417826Z wave 3: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:10:17.1390519Z With the provided path, there will be 13 files uploaded
 2026-10-15T04:10:17.1392379Z Starting artifact upload
 2026-10-15T04:10:17.1392535Z For more detailed logs during the artifact upload process, enable step-debugging: https://docs.github.com/actions/monitoring-and-troubleshooting-workflows/enabling-debug-logging#enabling-step-debug-logging

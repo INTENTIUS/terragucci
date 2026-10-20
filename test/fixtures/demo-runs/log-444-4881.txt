@@ -73,7 +73,7 @@
 2026-10-15T04:09:37.1636160Z wave 1 of 3: cost: 0.00 USD a month over 2 of 2 roots
 2026-10-15T04:09:37.1642795Z wave 1 of 3: set digest jcs1-sha256:f8851fb619215c0eab373fd9af26b8d46169f350f4b59317c426ea53f070f4c5, 1 change, 0 destroys
 2026-10-15T04:09:37.2260055Z wave 1 (wave-1): gate on-destructive (read at 255866bf1bc2), digest jcs1-sha256:f8851fb619215c0eab373fd9af26b8d46169f350f4b59317c426ea53f070f4c5: not-required
-2026-10-15T04:09:37.6111993Z wave 1: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:09:37.6111993Z wave 1: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:09:37.6820954Z applied other: Resources: 0 added, 0 changed, 0 destroyed
 2026-10-15T04:09:37.6822527Z applied network: Resources: 0 added, 1 changed, 0 destroyed
 2026-10-15T04:09:37.6886537Z network: state s3://demo-terraform-state/network.tfstate, versions off (bucket versioning is off for demo-terraform-state, so it keeps only the latest state)
@@ -81,7 +81,7 @@
 2026-10-15T04:09:37.6888247Z wave 1 of 3 applied
 2026-10-15T04:09:37.7078650Z wave 1: report in terragucci-report/, slowest root network (0.23s)
 2026-10-15T04:09:37.7803655Z wave 1: report copied to demo/forgejo:3000/terragucci-admin/demo/2026/10/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/tf-apply-wave-1
-2026-10-15T04:09:37.7868022Z wave 1: run view at demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
+2026-10-15T04:09:37.7868022Z wave 1: run view written to s3://demo-reports/demo/forgejo:3000/terragucci-admin/demo/runs/ef959409b8d590f4c3b05f0b7154cd576c9e1abf/run.html
 2026-10-15T04:09:37.7979622Z wave 1 of 3 applied
 2026-10-15T04:09:37.9134888Z With the provided path, there will be 9 files uploaded
 2026-10-15T04:09:37.9136974Z Starting artifact upload
